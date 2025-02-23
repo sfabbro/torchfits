@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "pybind11>=2.6.0", "torch"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchfits"  # Correct package name
+version = "0.1.0"  # MATCH THE VERSION IN version.py!
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}, # REPLACE
+]
+description = "A fast FITS reader for PyTorch, optimized for cutout extraction."
+readme = "README.md"
+requires-python = ">=3.7"  # Adjust as needed
+license = {file = "LICENSE"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",  # Or your chosen license
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=1.10",  # Specify minimum PyTorch version
+  "numpy",        # NumPy is a dependency
+  "astropy",      # Required for test and examples
+  "requests",    # For downloading data in examples
+  "tqdm",          # For progress bars in examples
+  "pandas"       #For galaxy 10 example
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/torchfits"  # REPLACE with your repo
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dist]
+include-package-data = false
+
+
+[tool.setuptools.extension]
+"torchfits.fits_reader" = {sources = [
+    "src/torchfits/fits_reader.cpp",
+    "src/torchfits/fits_utils.cpp",
+    "src/torchfits/wcs_utils.cpp",
+    "src/torchfits/bindings.cpp"
+], include_dirs = ["src/torchfits"],
+ libraries=["cfitsio", "wcs", "m"],
+ extra_compile_args=["-std=c++11", "-DWCSLIB_VERSION=7010000"]}
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
