@@ -98,13 +98,14 @@ print(f"NAXIS = {naxis}, Number of HDUs = {num_hdus}, Cutout Shape = {cutout_dat
 
 The `examples/` directory contains several example scripts demonstrating various use cases:
 
-*   `example_basic_reading.py`: Basic reading of full HDUs and headers.
-*   `example_cutouts.py`: Reading cutouts using both CFITSIO strings and `start`/`shape`.
-*   `example_mef.py`: Working with Multi-Extension FITS files.
-*   `example_tables.py`: Reading data from FITS binary tables.
-*   `example_datacube.py`: Reading slices and spectra from a 3D data cube.
-*   `example_dataset.py`: Integrating `torchfits` with PyTorch's `Dataset` and `DataLoader`
-*   `example_mnist.py`: for a simple FITS-converted MNIST classification task.
+*   **`example_basic_reading.py`:** Basic reading of full HDUs and headers.  Demonstrates using `torchfits.read` with simple filenames and accessing header information.
+*   **`example_cutouts.py`:**  Shows how to read cutouts using both CFITSIO-style strings (passed directly to `torchfits.read`) and the `start`/`shape` parameters of the `torchfits.read` function.
+*   **`example_mef.py`:**  Illustrates working with Multi-Extension FITS (MEF) files, including iterating through HDUs and accessing HDUs by number and name.
+*   **`example_tables.py`:** Focuses on reading data from FITS binary tables, showing how to access individual columns.
+*   **`example_datacube.py`:**  Demonstrates reading slices and 1D spectra from a 3D data cube, using both CFITSIO strings and `start`/`shape` parameters.
+*   **`example_dataset.py`:**  A basic example of integrating `torchfits` with PyTorch's `Dataset` and `DataLoader` for efficient data loading.
+*   **`example_mnist.py`:** A complete, self-contained example that downloads the MNIST dataset, converts it to FITS, and trains a simple CNN classifier using `torchfits` for FITS I/O.
+*   **`example_sdss_classification.py`:**  A complete example that downloads a small subset of SDSS spectroscopic data, loads the spectra using `torchfits`, and trains a simple CNN classifier to distinguish between stars, galaxies, and quasars.
 
 To run the examples, navigate to the `examples/` directory and run, for instance:
 
