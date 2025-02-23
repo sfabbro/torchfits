@@ -1,6 +1,8 @@
 # torchfits
 
-[![PyPI version](https://badge.fury.io/py/torchfits.svg)](https://badge.fury.io/py/torchfits)  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) `torchfits` is a high-performance Python package for reading FITS files directly into PyTorch tensors. It leverages `cfitsio` and `wcslib` for speed and accuracy, making it ideal for astronomy and machine learning applications that require efficient access to large FITS datasets.
+[![PyPI version](https://badge.fury.io/py/torchfits.svg)](https://badge.fury.io/py/torchfits) [![License](https://img.shields.io/badge/License-GPL_2.0-blue.svg)](https://opensource.org/licenses/GPL-2.0)
+
+`torchfits` is a high-performance Python package for reading FITS files directly into PyTorch tensors. It leverages `cfitsio` and `wcslib` for speed and accuracy, making it ideal for astronomy and machine learning applications that require efficient access to large FITS datasets. It is designed to be easy to use, with a simple and consistent API.
 
 ## Features
 
@@ -63,7 +65,7 @@ This will automatically build the C++ extension.
 
 Clone the Repository:
 ```bash
-git clone [https://github.com/yourusername/torchfits.git](https://www.google.com/search?q=https://github.com/yourusername/torchfits.git)  # REPLACE with your repo URL
+git clone [https://github.com/sfabbro/torchfits.git](https://github.com/sfabbro/torchfits.git)
 cd torchfits
 ```
 
@@ -101,8 +103,8 @@ The `examples/` directory contains several example scripts demonstrating various
 *   `example_mef.py`: Working with Multi-Extension FITS files.
 *   `example_tables.py`: Reading data from FITS binary tables.
 *   `example_datacube.py`: Reading slices and spectra from a 3D data cube.
-*   `example_pytorch_dataset.py`: Integrating `torchfits` with PyTorch's `Dataset` and `DataLoader` for a simple MNIST classification task (using FITS files).
-*  `example_galaxy10_classification.py`: Galaxy morphology classification using a subset of the Galaxy10 DECals dataset.
+*   `example_dataset.py`: Integrating `torchfits` with PyTorch's `Dataset` and `DataLoader`
+*   `example_mnist.py`: for a simple FITS-converted MNIST classification task.
 
 To run the examples, navigate to the `examples/` directory and run, for instance:
 
@@ -140,7 +142,7 @@ The examples that use external datasets will automatically download and cache th
     *  `filename` (str): The path to the FITS file.
 
 ## Contributing
-Contributions are welcome!  Please see the CONTRIBUTING.md file (you should create this file) for guidelines.
+Contributions are welcome! Traditional GitHub contributions style welcome.
 
 ## License
 This project is licensed under the GPL-2 License - see the LICENSE file for details.
