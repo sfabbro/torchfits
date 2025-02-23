@@ -1,4 +1,3 @@
-# examples/example_cutouts.py
 import torchfits
 import numpy as np
 import os
@@ -14,6 +13,8 @@ def create_test_file(filename):
         hdu.header['CTYPE2'] = 'DEC--TAN'
         hdu.header['CRVAL1'] = 202.5
         hdu.header['CRVAL2'] = 47.5
+        hdu.header['CDELT1'] = -0.001
+        hdu.header['CDELT2'] = 0.001
         hdu.writeto(filename, overwrite=True)
 
 def main():
@@ -27,9 +28,10 @@ def main():
         data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
         print("Cutout (Start/Shape):")
         print(f"  Data shape: {data.shape}")  # Expected: (5, 8)
-        # Check that CRPIX is updated correctly
-        self.assertAlmostEqual(header['CRPIX1'], 6.0)
-        self.assertAlmostEqual(header['CRPIX2'], 1.0)
+        # Check that CRPIX is updated correctly:
+        print(f"  Updated CRPIX1: {header['CRPIX1']}")
+        print(f"  Updated CRPIX2: {header['CRPIX2']}")
+
 
     except RuntimeError as e:
         print(f"  Error: {e}")
@@ -44,22 +46,38 @@ def main():
         shape = [5, 8]
         data, _ = torchfits.read(test_file, hdu=1, start=start, shape=shape)
         assert np.allclose(data.numpy(), cutout.numpy())
-        self.assertAlmostEqual(header['CRPIX1'], 6.0)
-        self.assertAlmostEqual(header['CRPIX2'], 1.0)
-
+        # Check that CRPIX is updated correctly
+        print(f"  Updated CRPIX1: {header['CRPIX1']}")
+        print(f"  Updated CRPIX2: {header['CRPIX2']}")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
     # Read to end of dimension
     try:
         start = [10,15]
-        shape = [-1, 5]
-        data, _ = torchfits.read(test_file, hdu=1, start=start, shape=shape)
+        shape = [5, -1] #Read to the end of the second dimension
+        data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
         print("\nCutout (Read to end):")
-        print(f"Data shape: {data.shape}")
-        print(data.numpy())
+        print(f"  Data shape: {data.shape}") # Expected (5, 17)
+        print(f" Updated CRPIX1: {header['CRPIX1']}")
+        print(f" Updated CRPIX2: {header['CRPIX2']}")
+
 
     except RuntimeError as e:
         print(f" Error: {e}")
+
+
+     # --- Test different cache capacities ---
+    print("\n--- Testing with different cache capacities ---")
+    for capacity in [0, 10, 100]:
+        try:
+            start = [5, 5]
+            shape = [10, 10]
+            data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape, cache_capacity=capacity)
+            print(f"\nCache Capacity: {capacity}")
+            print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
+        except RuntimeError as e:
+            print(f"  Error with cache_capacity={capacity}: {e}")
+
 if __name__ == "__main__":
     main()

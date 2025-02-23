@@ -3,7 +3,6 @@ import torch
 import torchfits
 import numpy as np
 import os
-import pytest  # Using pytest
 from astropy.io import fits
 from astropy.table import Table
 
@@ -254,6 +253,7 @@ class TestFitsReader(unittest.TestCase):
             torchfits.read(self.table_file, hdu=1, start_row=1, num_rows=100)
         with self.assertRaises(RuntimeError):
             torchfits.read(self.table_file, hdu=1, columns=["NOT_A_COLUMN"]) #Invalid column
+
     def test_mef_iteration(self):
         # Test iterating through HDUs
         num_hdus = torchfits.get_num_hdus(self.mef_file)
@@ -326,6 +326,73 @@ class TestFitsReader(unittest.TestCase):
         #Test read an empty primary HDU
         data, header = torchfits.read(self.mef_file)
         self.assertIsNone(data)
+
+    def test_cache(self):
+        # Ensure the cache is initially empty (might be persistent across tests if not cleared)
+        torchfits._clear_cache()
+
+        # Create a small test file
+        test_file = os.path.join(self.test_dir, "cache_test.fits")
+        data = np.arange(100, dtype=np.float32).reshape(10, 10)
+        hdu = fits.PrimaryHDU(data)
+        hdu.writeto(test_file, overwrite=True)
+
+        # Read a cutout, capacity=0 means no cache
+        cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=0)
+
+        # Read the *same* cutout again. With capacity = 0, this is not a cache hit
+        cutout2, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=0)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout2.numpy()))  # Verify data
+
+        # Read a *different* cutout.
+        cutout3, _ = torchfits.read(test_file, hdu=1, start=[5, 5], shape=[5, 5], cache_capacity=0)
+        self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
+
+        #Clear cache
+        torchfits._clear_cache()
+        # Read with cache.
+        cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+
+        # Read the *same* cutout again.  This should be a cache hit.
+        cutout2, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout2.numpy()))  # Verify data
+
+        # Read a *different* cutout.
+        cutout3, _ = torchfits.read(test_file, hdu=1, start=[5, 5], shape=[5, 5], cache_capacity=10)
+        self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
+
+        # Read the first cutout *again*. This should *still* be a cache hit
+        cutout4, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout4.numpy()))
+
+
+        #Clear cache, and check data are still correctly read.
+        torchfits._clear_cache()
+        cutout5, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout5.numpy()))
+
+
+    def test_cache_eviction(self):
+
+        torchfits._clear_cache()
+        test_file = os.path.join(self.test_dir, "cache_eviction_test.fits")
+
+        if not os.path.exists(test_file): #Create only if needed
+            data = np.arange(100, dtype=np.float32).reshape(10, 10)
+            hdu = fits.PrimaryHDU(data)
+            hdu.writeto(test_file, overwrite=True)
+        # We can't *directly* control the cache size from Python (it's a
+        # static variable in the C++ code), but we can test the LRU behavior
+        # by reading *more* cutouts than the cache capacity.
+        cache_size = 10  # Set in C++ for the test.
+        for i in range(cache_size + 2):  # Read more than the capacity
+            cutout, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[i+1, i+1], cache_capacity = cache_size)
+
+        # Now, try to read the *first* cutout again. It *should* have been
+        # evicted. We verify we can still read it:
+        first_cutout, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[1, 1], cache_capacity= cache_size)
+        self.assertTrue(np.allclose(first_cutout.numpy(), data[0:1,0:1]))
+        # Add more checks if you modify the C++ code to expose some cache statistics.
 
 if __name__ == '__main__':
     unittest.main()

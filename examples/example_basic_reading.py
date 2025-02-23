@@ -1,4 +1,3 @@
-# examples/example_basic_reading.py
 import torchfits
 import numpy as np
 import os
@@ -16,7 +15,7 @@ def create_test_file(filename):
         hdu.header['CRPIX2'] = 5.0
         hdu.header['CDELT1'] = -0.001
         hdu.header['CDELT2'] = 0.001
-        hdu.header['OBJECT'] = 'Test Object' # Add a non-WCS keyword
+        hdu.header['OBJECT'] = 'Test Object'  # Add a non-WCS keyword
         hdu.writeto(filename, overwrite=True)
 
 def main():
@@ -58,6 +57,16 @@ def main():
         print(f"Dimensions: {dims}")
     except RuntimeError as e:
         print(f" Error: {e}")
+
+     # --- Test different cache capacities ---
+    print("\n--- Testing with different cache capacities ---")
+    for capacity in [0, 10, 100]:  # Test no cache, small cache, larger cache
+        try:
+            data, header = torchfits.read(test_file, cache_capacity=capacity)
+            print(f"\nCache Capacity: {capacity}")
+            print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
+        except RuntimeError as e:
+            print(f"  Error with cache_capacity={capacity}: {e}")
 
 if __name__ == "__main__":
     main()

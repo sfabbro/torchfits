@@ -117,30 +117,35 @@ The examples that use external datasets will automatically download and cache th
 
 ## API Reference
 
-*   **`torchfits.read(filename_with_cutout, hdu=None, start=None, shape=None)`:** Reads FITS data.  Handles images, cubes, and tables.  Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
-    *   `filename_with_cutout` (str):  FITS file path, optionally with a CFITSIO-style cutout string (e.g., `'myimage.fits[1][10:20,30:40]'`).
-    *   `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string is provided that specifies the HDU.
+*   **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0)`:** Reads FITS data.  Handles images, cubes, and tables.  Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
+    *   `filename_or_url` (str or dict): Path to the FITS file, or a dictionary with `fsspec` parameters for remote files, or a CFITSIO-compatible URL.
+    *   `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies the HDU.
     *   `start` (list[int], optional): Starting pixel coordinates (0-based) for a cutout.
-    *   `shape` (list[int], optional): Shape of the cutout.  Use `-1` or `None` for a dimension to read to the end.  If `start` is given, `shape` *must* also be given.
+    *   `shape` (list[int], optional): Shape of the cutout. Use `-1` for a dimension to read to the end. If `start` is given, `shape` *must* also be given.
+    *   `columns` (list[str], optional): List of column names to read from a table. Reads all columns if `None`.
+    *   `start_row` (int, optional): Starting row index (0-based) for table reads. Defaults to 0.
+    *   `num_rows` (int or None, optional): Number of rows to read from a table. Reads all remaining rows if `None`.
+    *   `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to a maximum of 2GB). Set to 0 to disable caching.
 
 *   **`torchfits.get_header(filename, hdu_num)`:** Returns the FITS header as a dictionary.
-    *   `filename` (str):  FITS file path.
-    *    `hdu_num` (int or str): HDU number (1-based) or name (string).
-
-*   **`torchfits.get_dims(filename, hdu_num)`:** Returns the dimensions of an image/cube HDU.
-    *   `filename` (str):  FITS file path.
-    *    `hdu_num` (int or str): HDU number (1-based) or name (string).
-*   **`torchfits.get_header_value(filename, hdu_num, key)`:** Returns the value of a single header keyword.
-    *   `filename` (str):  FITS file path.
+    *   `filename` (str): Path to the FITS file.
     *   `hdu_num` (int or str): HDU number (1-based) or name (string).
-    *    `key` (str): The header keyword.
+
+*   **`torchfits.get_dims(filename, hdu_num)`:** Returns the dimensions of a FITS image/cube HDU.
+    *   `filename` (str): Path to the FITS file.
+    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
+
+*   **`torchfits.get_header_value(filename, hdu_num, key)`:** Returns the value of a single header keyword.
+    *   `filename` (str): Path to the FITS file.
+    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
+    *   `key` (str): The header keyword.
 
 *   **`torchfits.get_hdu_type(filename, hdu_num)`:** Returns the HDU type as a string ("IMAGE", "BINTABLE", "TABLE", or "UNKNOWN").
-    *   `filename` (str):  FITS file path.
+    *   `filename` (str): Path to the FITS file.
     *   `hdu_num` (int or str): HDU number (1-based) or name (string).
 
 *   **`torchfits.get_num_hdus(filename)`:** Returns the total number of HDUs in the FITS file.
-    *  `filename` (str): The path to the FITS file.
+    *   `filename` (str): Path to the FITS file.
 
 ## Contributing
 Contributions are welcome! Traditional GitHub contributions style welcome.

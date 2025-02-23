@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from astropy.io import fits
-from tqdm import tqdm # for progress bar
+from tqdm import tqdm
 
 # --- Data Download and Caching ---
 
@@ -33,9 +33,10 @@ def download_sdss_spectrum(plate, mjd, fiberid, base_url, save_dir):
 # --- PyTorch Dataset ---
 
 class SDSSDataset(Dataset):
-    def __init__(self, file_list, label_map):
+    def __init__(self, file_list, label_map, cache_capacity=0): # Add cache
         self.file_list = file_list
         self.label_map = label_map  # Dictionary mapping class strings to integer labels
+        self.cache_capacity = cache_capacity # Add cache capacity
 
     def __len__(self):
         return len(self.file_list)
@@ -45,7 +46,7 @@ class SDSSDataset(Dataset):
         try:
             # Read the spectrum data (flux) and the class (from header or table).
             # Assuming the flux is in HDU 1 and class is in HDU 2, 'CLASS' keyword.
-            data = torchfits.read(filename, hdu=2) # Read HDU 2 (Binary Table)
+            data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity) # Pass cache capacity
             flux = data['flux'] # A torch Tensor
 
             # You could get the header using torchfits, and extract the CLASS keyword
@@ -73,7 +74,7 @@ class SDSSDataset(Dataset):
         Get wavelengths, for plotting proposes
         """
         filename = self.file_list[idx]
-        data = torchfits.read(filename, hdu=2)
+        data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity)
         return data['loglam']
 
 
@@ -131,9 +132,10 @@ def main():
     label_map = {"STAR": 0, "GALAXY": 1, "QSO": 2}
     num_classes = len(label_map)
 
-    # Create Dataset and DataLoader
-    dataset = SDSSDataset(file_list, label_map)
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0, collate_fn=collate_fn)
+    # Create Dataset and DataLoader.  Demonstrate different cache sizes.
+    print("--- Training with cache_capacity=10 ---")
+    dataset = SDSSDataset(file_list, label_map, cache_capacity=10)
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=True)
     #Get wavelengths, assuming they are the same
     wavelengths = np.power(10, dataset.get_wavelength(0).numpy())
 
@@ -209,6 +211,30 @@ def main():
         print("Matplotlib is not installed. Skipping plotting.")
 
 
+    # --- Now, demonstrate training *without* caching ---
+    print("\n--- Training with cache_capacity=0 (no caching) ---")
+    dataset_no_cache = SDSSDataset(file_list, label_map, cache_capacity=0)  # No cache
+    dataloader_no_cache = DataLoader(dataset_no_cache, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn)
+
+    # Re-initialize the model (so we start from scratch)
+    model = SimpleCNN(input_size, num_classes)
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+        for i, (inputs, labels) in enumerate(tqdm(dataloader_no_cache, desc=f"Epoch {epoch+1}/{num_epochs}")):
+            if inputs.numel() == 0:
+                continue
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        print(f"Epoch {epoch+1}, Loss: {running_loss / len(dataloader_no_cache):.4f}")
+    print("Training finished (no cache)!")
+
+
 if __name__ == "__main__":
     main()
-    

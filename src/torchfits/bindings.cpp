@@ -5,28 +5,48 @@
 
 namespace py = pybind11;
 
+// Need to define this here, *before* including the LRUCache,
+// since it's used by the cache.
+struct CacheEntry {
+    torch::Tensor data;
+    std::map<std::string, std::string> header;
+};
+
+// Forward declare the LRUCache (so we can use it in _clear_cache)
+class LRUCache {
+public:
+  LRUCache(size_t capacity) {} // Dummy constructor
+  void clear() {} // Dummy
+};
+//Keep reference to the static cache, for the _clear_cache function
+static std::unique_ptr<LRUCache> cache = nullptr;
+
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("read", &read,
-        "Read FITS data (image or table) with optional cutout, HDU selection, column selection and row selection.\n\n"
-        "Args:\n"
-        "    filename_or_url (str or dict): Path to the FITS file, or a dictionary with fsspec parameters, or a CFITSIO-compatible URL.\n"
-        "    hdu (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies it.\n"
-        "    start (list[int], optional): Starting pixel coordinates (0-based) for a cutout.\n"
-        "    shape (list[int], optional): Shape of the cutout. Use -1 for a dimension to read to the end.\n"
-        "    columns (list[str], optional): List of column names to read from a table. Reads all if None.\n"
-        "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
-        "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n\n"
-        "Returns:\n"
-        "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch.Tensor]]:\n"
-        "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
-        ,
-        py::arg("filename_or_url"),
-        py::arg("hdu") = py::none(),
-        py::arg("start") = py::none(),
-        py::arg("shape") = py::none(),
-        py::arg("columns") = py::none(),
-        py::arg("start_row") = 0,  // Default value
-        py::arg("num_rows") = py::none()
+          "Read FITS data (image or table) with optional cutout, HDU selection, column selection and row selection.\n\n"
+          "Args:\n"
+          "    filename_or_url (str or dict): Path to the FITS file, or a dictionary with fsspec parameters, or a CFITSIO-compatible URL.\n"
+          "    hdu (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies it.\n"
+          "    start (list[int], optional): Starting pixel coordinates (0-based) for a cutout.\n"
+          "    shape (list[int], optional): Shape of the cutout. Use -1 for a dimension to read to the end.\n"
+          "    columns (list[str], optional): List of column names to read from a table. Reads all if None.\n"
+          "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
+          "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n"
+          "    cache_capacity (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB).\n\n"
+          "Returns:\n"
+          "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch::Tensor]]:\n"
+          "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
+          ,
+          py::arg("filename_or_url"),
+          py::arg("hdu") = py::none(),
+          py::arg("start") = py::none(),
+          py::arg("shape") = py::none(),
+          py::arg("columns") = py::none(),
+          py::arg("start_row") = 0,  // Default value
+          py::arg("num_rows") = py::none(),
+          py::arg("cache_capacity") = 0  // Default cache capacity.  0 means automatic.
     );
 
 
@@ -78,4 +98,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // Expose helper functions for testing (optional, but good practice)
     m.def("_parse_header_card", &parse_header_card, "Parses a FITS header card (internal use).");
     m.def("_fits_status_to_string", &fits_status_to_string, "Converts CFITSIO status code to string.");
+    // Expose cache clearing function (for testing)
+    m.def("_clear_cache", []() {
+        if (cache) {  // Check if cache is initialized
+            cache->clear();
+        }
+    }, "Clears the internal cache (for testing).");
 }

@@ -36,13 +36,13 @@ def main():
                 print(f"  Type: {hdu_type}")
 
                 header = torchfits.get_header(test_file, i)
-                print(f"  EXTNAME: {header.get('EXTNAME', 'N/A')}") # Use get with default
+                print(f"  EXTNAME: {header.get('EXTNAME', 'N/A')}")  # Get EXTNAME, default to 'N/A'
 
                 if hdu_type == "IMAGE":
-                    data, _ = torchfits.read(test_file, hdu=i) #Read by index
+                    data, _ = torchfits.read(test_file, hdu=i)  # Read by index
                     print(f"  Data shape: {data.shape}")
                 elif hdu_type == "BINTABLE":
-                    table = torchfits.read(test_file, hdu=i) #Read by index
+                    table = torchfits.read(test_file, hdu=i) # Read by index
                     print(f"  Table columns: {list(table.keys())}")
 
             except RuntimeError as e:
@@ -51,11 +51,21 @@ def main():
 
         # Access by name:
         print("\n--- Accessing HDU by Name ---")
-        data, _ = torchfits.read(test_file, hdu="SCI")
+        data, _ = torchfits.read(test_file, hdu="SCI") # String name
         print(f"  SCI data shape: {data.shape}")
 
-        table_data = torchfits.read(test_file, hdu='CATALOG')
+        table_data = torchfits.read(test_file, hdu='CATALOG') #String name
         print(f"  CATALOG columns: {list(table_data.keys())}")
+
+        # --- Test different cache capacities ---
+        print("\n--- Testing with different cache capacities ---")
+        for capacity in [0, 10, 100]:
+            try:
+                data, _ = torchfits.read(test_file, hdu="SCI", cache_capacity=capacity)
+                print(f"\nCache Capacity: {capacity}")
+                print(f"  Data shape: {data.shape}")
+            except RuntimeError as e:
+                print(f"  Error with cache_capacity={capacity}: {e}")
 
 
     except RuntimeError as e:

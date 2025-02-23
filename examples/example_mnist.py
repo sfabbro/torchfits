@@ -33,10 +33,11 @@ def create_mnist_fits(data_dir):
 # --- PyTorch Dataset ---
 
 class MNIST_FITS_Dataset(Dataset):
-    def __init__(self, data_dir, train=True):
+    def __init__(self, data_dir, train=True, cache_capacity=0): # Add cache
         self.data_dir = data_dir
         self.file_list = []
         self.labels = []
+        self.cache_capacity = cache_capacity #Add cache capacity
 
         prefix = "train" if train else "test"
         for filename in os.listdir(data_dir):
@@ -45,10 +46,10 @@ class MNIST_FITS_Dataset(Dataset):
                 # Extract label from filename (more robust than header for this example)
                 label = int(filename.split("_")[-1].split(".")[0])
                 self.labels.append(label)
-        # Sort for reproducibility
-        self.file_list.sort()
-        self.labels.sort()
-
+        #Sort files and labels (for reproducibility)
+        self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
+        self.file_list = list(self.file_list)
+        self.labels = list(self.labels)
 
     def __len__(self):
         return len(self.file_list)
@@ -57,7 +58,7 @@ class MNIST_FITS_Dataset(Dataset):
         filename = self.file_list[idx]
         label = self.labels[idx]
         try:
-            data, _ = torchfits.read(filename)  # Read the image data
+            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity)  # Read the image data
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:
                 data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
@@ -105,10 +106,12 @@ def main():
         create_mnist_fits(data_dir)
 
     # --- Create Datasets and DataLoaders ---
-    train_dataset = MNIST_FITS_Dataset(data_dir, train=True)
-    test_dataset = MNIST_FITS_Dataset(data_dir, train=False)
+    #Demonstrate with and without cache
+    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100) #Example with cache
+    test_dataset = MNIST_FITS_Dataset(data_dir, train=False) #Example without cache
+
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn,  pin_memory=True)
 
     # --- Initialize Model, Loss, and Optimizer ---
     model = MNIST_Classifier()

@@ -1,14 +1,14 @@
 #ifndef FITS_READER_H
 #define FITS_READER_H
 
-#include <torch/extension.h>  // For PyTorch C++ API
-#include <fitsio.h>          // For CFITSIO
-#include <wcslib/wcs.h>     // For WCSLIB
+#include <torch/extension.h>
+#include <fitsio.h>
+#include <wcslib/wcs.h>
 #include <vector>
 #include <map>
 #include <string>
-#include <memory>         // For std::unique_ptr
-#include <pybind11/pybind11.h> //For pybind
+#include <memory>
+#include <pybind11/pybind11.h> // Required for pybind11::object
 
 // --- Function Prototypes ---
 
@@ -29,7 +29,8 @@ std::pair<torch::Tensor, torch::Tensor> pixel_to_world(const torch::Tensor& pixe
 
 // --- Core Data Reading Functions (defined in fits_reader.cpp) ---
 torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs);  // Internal use
-std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr);          // Internal use
-pybind11::object read(const std::string& filename_with_cutout, pybind11::object hdu = pybind11::none(), pybind11::object start = pybind11::none(), pybind11::object shape = pybind11::none());
+std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows); // Internal use
+pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu = pybind11::none(), pybind11::object start = pybind11::none(), pybind11::object shape = pybind11::none(), pybind11::object columns = pybind11::none(), int start_row = 0, pybind11::object num_rows = pybind11::none(), size_t cache_capacity = 0); //Added cache_capacity
+
 
 #endif // FITS_READER_H

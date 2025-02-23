@@ -2,8 +2,94 @@
 #include "wcs_utils.h"
 #include <sstream>
 #include <algorithm>
+#include <list>
+#include <unordered_map>
+#include <memory>
+#include <mutex>
 #include <pybind11/stl.h> // Make sure this is included!
 
+// --- Cross-Platform Memory Check ---
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/sysinfo.h>
+#endif
+
+size_t get_available_memory() {
+    #ifdef _WIN32
+        MEMORYSTATUSEX status;
+        status.dwLength = sizeof(status);
+        GlobalMemoryStatusEx(&status);
+        return static_cast<size_t>(status.ullAvailPhys);
+    #else
+        struct sysinfo info;
+        sysinfo(&info);
+        return static_cast<size_t>(info.freeram * info.mem_unit);
+    #endif
+}
+
+// --- In-Memory LRU Cache ---
+// We'll use a simple struct to hold the cached data and header.
+struct CacheEntry {
+    torch::Tensor data;
+    std::map<std::string, std::string> header;
+};
+
+class LRUCache {
+public:
+    LRUCache(size_t capacity) : capacity_(capacity) {}
+
+    // Get an item from the cache.
+    std::shared_ptr<CacheEntry> get(const std::string& key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cache_map_.find(key);
+        if (it == cache_map_.end()) {
+            return nullptr;  // Not found
+        }
+        // Move the accessed item to the front of the list (most recently used).
+        cache_list_.splice(cache_list_.begin(), cache_list_, it->second);
+        return it->second->second; // Return the CacheEntry
+    }
+
+    // Put an item into the cache.
+    void put(const std::string& key, const std::shared_ptr<CacheEntry>& entry) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cache_map_.find(key);
+        if (it != cache_map_.end()) {
+            // Already in cache; move to front.
+            cache_list_.splice(cache_list_.begin(), cache_list_, it->second);
+            it->second->second = entry; // Update the value (in case it changed)
+            return;
+        }
+
+        // Not in cache.  Add it.
+        cache_list_.push_front({key, entry});
+        cache_map_[key] = cache_list_.begin();
+
+        // Evict LRU item if necessary.
+        if (cache_list_.size() > capacity_) {
+            auto last = cache_list_.end();
+            --last;  // Get an iterator to the last element
+            cache_map_.erase(last->first);
+            cache_list_.pop_back();
+        }
+    }
+     // Method to clear the cache (useful for testing or resource management).
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cache_list_.clear();
+        cache_map_.clear();
+    }
+
+
+private:
+    size_t capacity_;
+    std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>> cache_list_;
+    std::unordered_map<std::string, typename std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>>::iterator> cache_map_;
+    std::mutex mutex_;
+};
 
 // --- Core Data Reading Logic (Image HDUs) ---
 
@@ -54,7 +140,7 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
         READ_AND_RETURN(TSHORT, torch::kInt16, int16_t);
     } else if (bitpix == LONG_IMG) {
         READ_AND_RETURN(TINT, torch::kInt32, int32_t);
-    } else if (bitpix == LONGLONG_IMG) {
+     } else if (bitpix == LONGLONG_IMG) {
         READ_AND_RETURN(TLONGLONG, torch::kInt64, int64_t);
     } else if (bitpix == FLOAT_IMG) {
         READ_AND_RETURN(TFLOAT, torch::kFloat32, float);
@@ -190,7 +276,8 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::o
 
 pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
                       pybind11::object start, pybind11::object shape,
-                      pybind11::object columns, int start_row, pybind11::object num_rows) {
+                      pybind11::object columns, int start_row, pybind11::object num_rows,
+                      size_t cache_capacity) {
 
     fitsfile* fptr = nullptr;
     int status = 0;
@@ -217,25 +304,23 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
     // --- HDU Handling ---
     if (!hdu.is_none()) {
         if (pybind11::isinstance<pybind11::int_>(hdu)) {
-            hdu_num = hdu.cast<int>();  // Use explicit HDU number.
-            if (hdu_num < 0 )
-            {
-                 throw std::runtime_error("HDU number must be >= 0");
+            hdu_num = hdu.cast<int>();
+             if(hdu_num < 0){
+                throw std::runtime_error("HDU number must be > 0");
             }
         } else if (pybind11::isinstance<pybind11::str>(hdu)) {
-            // Try to open as named extension.  CFITSIO will handle the lookup.
-            filename = filename + "[" + hdu.cast<std::string>() + "]" + cutout_str; // reconstruct filename
+            //CFITSIO handles name
+            filename = filename + "[" + hdu.cast<std::string>() + "]" + cutout_str;
         } else {
             throw std::runtime_error("Invalid 'hdu' argument.  Must be int or str.");
         }
-    }
-    else{ //If not, append cutout if exists
+    }  else { //If not, append cutout if exists
         filename = filename + cutout_str;
     }
 
     // --- Cutout Handling (start and shape) ---
     if (!start.is_none() || !shape.is_none()) {
-        // If hdu is a number, reconstruct the full filename
+        //If hdu is a number, reconstruct the full filename
         if (pybind11::isinstance<pybind11::int_>(hdu)) {
             filename = filename + "[" + std::to_string(hdu_num) + "]";
         }
@@ -279,6 +364,52 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
     }
 
 
+    // --- Caching (Lookup) ---
+    // Initialize the cache (if it hasn't been initialized yet).
+    static std::unique_ptr<LRUCache> cache = nullptr;
+    static std::mutex init_mutex; //Mutex for thread safety
+    {   //limit scope of lock guard
+        std::lock_guard<std::mutex> init_lock(init_mutex); //Lock for initialization
+        if (!cache) {
+            size_t capacity = (cache_capacity > 0) ? cache_capacity : static_cast<size_t>(0.25 * get_available_memory() / (1024 * 1024)); // Use 25% of available RAM (in MB) if 0.
+            //Limit to 2GB (avoid excesive memory usage)
+            capacity = std::min(capacity, static_cast<size_t>(2048));
+            std::cout<<"Initializing cache with capacity: "<< capacity << " MB" << std::endl;
+            cache = std::make_unique<LRUCache>(capacity);
+        }
+    }
+
+    std::string cache_key;
+    //Create the cache key
+    std::stringstream key_builder;
+    key_builder << filename; //Filename is already cutout and hdu aware.
+     // Add column selection to the cache key, if applicable
+    if (!columns.is_none()) {
+        auto cols_list = columns.cast<std::vector<std::string>>();
+        for (const auto& col : cols_list) {
+            key_builder << "_col_" << col;
+        }
+    }
+    // Add row selection to the cache key.
+    key_builder << "_row_" << start_row;
+    if (!num_rows.is_none()) {
+         key_builder << "_" << num_rows.cast<long long>();
+    }
+    cache_key = key_builder.str();
+    std::shared_ptr<CacheEntry> cached_entry = cache->get(cache_key); // Use ->, cache is a pointer
+
+    if (cached_entry) {
+        // Cache hit! Return the cached data.
+        if (hdu_type == IMAGE_HDU){ //Cannot determine hdu_type before opening. So, check it here.
+            return pybind11::make_tuple(cached_entry->data, cached_entry->header);
+        }
+        else{
+            return pybind11::cast(cached_entry->data); //Return the tensor
+        }
+    }
+
+    // --- Cache Miss: Read Data ---
+
     // --- File Opening (using constructed filename) ---
     if (fits_open_file(&fptr, filename.c_str(), READONLY, &status)) {
         throw_fits_error(status, "Error opening FITS file/cutout: " + filename);
@@ -291,23 +422,41 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         throw_fits_error(status, "Error getting HDU type");
     }
 
-    // --- Data Reading (Based on HDU Type) ---
+     //Create cache entry
+    auto new_entry = std::make_shared<CacheEntry>();
 
     if (hdu_type == IMAGE_HDU) {
         auto wcs = read_wcs_from_header(fptr);  // From wcs_utils.cpp
-        torch::Tensor data = read_image_data(fptr, wcs);
-        std::map<std::string, std::string> header = read_fits_header(fptr);  // From fits_utils.cpp
+        new_entry->data = read_image_data(fptr, wcs); // Store the tensor
+        new_entry->header = read_fits_header(fptr);  // From fits_utils.cpp. Store the header.
           if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
         }
-        return pybind11::make_tuple(data, header);  // Return tuple for images
+        cache->put(cache_key, new_entry); //Cache it. Use ->
+        return pybind11::make_tuple(new_entry->data, new_entry->header);  // Return tuple for images
 
     } else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
-        std::map<std::string, torch::Tensor> table_data = read_table_data(fptr, columns, start_row, num_rows);
-        std::map<std::string, std::string> header = read_fits_header(fptr); // From fits_utils.cpp
-        if (fits_close_file(fptr, &status)) {  // Close file
+        auto table_data = read_table_data(fptr, columns, start_row, num_rows);
+        new_entry->header = read_fits_header(fptr); // From fits_utils.cpp
+        if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
         }
+
+        //Combine the map into a single tensor (required by the cache)
+        if (table_data.size() > 0){
+            int i = 0;
+            for (auto const& [key, val] : table_data){ //find first element to get the shape
+                if (i==0){ //First iteration, create tensor
+                    //Check if tensor is string
+                    if(pybind11::isinstance<pybind11::list>(val))
+                        break; //For strings we do nothing.
+                    new_entry->data = torch::empty({int(table_data.size()), val.size(0)},val.options());
+                }
+                new_entry->data[i] = val; //Copy to the tensor
+                i++;
+            }
+        }
+        cache->put(cache_key, new_entry); //Cache the result
         return pybind11::cast(table_data);  // Return dict for tables
 
     } else {
