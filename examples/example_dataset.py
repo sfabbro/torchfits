@@ -41,7 +41,7 @@ class SimpleFitsDataset(Dataset):
                     # In a real dataset, you'd probably have a better way
                     # to handle missing/corrupted files.
                     continue #Skip if error.
-        
+
         #Sort files and labels
         self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
         self.file_list = list(self.file_list)
@@ -83,7 +83,7 @@ def main():
 
     # Create dataset and dataloader
     dataset = SimpleFitsDataset(data_dir)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=True)
 
     # Iterate through a few batches
     print("Iterating through DataLoader:")

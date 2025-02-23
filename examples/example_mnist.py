@@ -6,7 +6,6 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-
 from astropy.io import fits
 from tqdm import tqdm
 from torchvision import datasets, transforms  # Use torchvision for MNIST
@@ -58,11 +57,14 @@ class MNIST_FITS_Dataset(Dataset):
         filename = self.file_list[idx]
         label = self.labels[idx]
         try:
-            data, _ = torchfits.read(filename)  # Read entire image (primary HDU)
+            data, _ = torchfits.read(filename)  # Read the image data
+            # Add a channel dimension if it's a 2D image (for consistency)
+            if data.ndim == 2:
+                data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
             return data, torch.tensor(label, dtype=torch.long)
-        except Exception as e:
+        except RuntimeError as e:
             print(f"Error reading or processing {filename}: {e}")
-            return None, None  # Return None for both data and label
+            return None  # Return None if there's an error
 
 # --- Model (Simple CNN) ---
 
@@ -86,12 +88,11 @@ class MNIST_Classifier(nn.Module):
 
 # --- Collate Function (to handle potential None values) ---
 def collate_fn(batch):
-    # Filter out None values (from failed reads) and unpack the remaining ones
-    batch = [(data, label) for data, label in batch if data is not None and label is not None]
-    if not batch:
-        return torch.Tensor(), torch.Tensor()  # Return empty tensors
+    # Remove any None values from the batch (caused by read errors)
+    batch = [item for item in batch if item is not None]
+    if not batch:  # Handle the case where *all* items in a batch are None
+        return torch.Tensor(), torch.Tensor()
     return torch.utils.data.dataloader.default_collate(batch)
-
 
 
 # --- Main Script ---
@@ -106,8 +107,8 @@ def main():
     # --- Create Datasets and DataLoaders ---
     train_dataset = MNIST_FITS_Dataset(data_dir, train=True)
     test_dataset = MNIST_FITS_Dataset(data_dir, train=False)
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn, pin_memory=True)
 
     # --- Initialize Model, Loss, and Optimizer ---
     model = MNIST_Classifier()

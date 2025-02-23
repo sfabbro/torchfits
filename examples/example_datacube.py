@@ -23,24 +23,24 @@ def main():
         print("2D Slice:")
         print(f"  Shape: {slice_2d.shape}")  # Expected: (2, 3, 1)
 
-        #Read to the end
-        slice_2d, _ = torchfits.read(test_file, hdu=1, start=[0, 0, 1], shape=[-1, -1, 1])
-        print("2D Slice:")
-        print(f"  Shape: {slice_2d.shape}")
-
         # Read a 1D spectrum (velocity profile)
         spectrum_1d, _ = torchfits.read(test_file, hdu=1, start=[1, 2, 0], shape=[1, 1, -1])
         print("\n1D Spectrum:")
         print(f"  Shape: {spectrum_1d.shape}")  # Expected: (1, 1, 2)
 
-        #Using CFITSIO strings
-        spectrum_1d, _ = torchfits.read(f"{test_file}[1][2,3,*]")
+        #Using CFITSIO strings (should give same results)
+        slice_2d_c, _ = torchfits.read(f"{test_file}[1][*,*,2]")
+        print("\n2D Slice (using CFITSIO):")
+        print(f"  Shape: {slice_2d.shape}")
+        assert np.allclose(slice_2d.numpy(), slice_2d_c.numpy())
+
+        spectrum_1d_c, _ = torchfits.read(f"{test_file}[1][2,3,*]")
         print("\n1D Spectrum (using CFITSIO):")
-        print(f"  Shape: {spectrum_1d.shape}")
+        print(f"  Shape: {spectrum_1d_c.shape}")
+        assert np.allclose(spectrum_1d.numpy().squeeze(), spectrum_1d_c.numpy().squeeze())
 
     except RuntimeError as e:
         print(f"  Error: {e}")
 
 if __name__ == "__main__":
     main()
-    

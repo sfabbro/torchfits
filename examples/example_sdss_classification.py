@@ -47,7 +47,7 @@ class SDSSDataset(Dataset):
             # Assuming the flux is in HDU 1 and class is in HDU 2, 'CLASS' keyword.
             data = torchfits.read(filename, hdu=2) # Read HDU 2 (Binary Table)
             flux = data['flux'] # A torch Tensor
-            
+
             # You could get the header using torchfits, and extract the CLASS keyword
             #header = torchfits.get_header(filename, 1)
             #obj_class = header.get('CLASS')
@@ -66,7 +66,7 @@ class SDSSDataset(Dataset):
         except Exception as e:
             print(f"Error reading or processing {filename}: {e}")
             # Return None if there's an error.  The collate_fn will handle it.
-            return None
+            return None, None
 
     def get_wavelength(self, idx):
         """
@@ -109,7 +109,7 @@ def collate_fn(batch):
 
 def main():
     base_url = "https://dr17.sdss.org/sas/dr17/sdss/spectro/redux/v5_13_2/spectra/lite"  # Example URL
-    data_dir = "data"
+    data_dir = "data_sdss"
     os.makedirs(data_dir, exist_ok=True)
 
     # Example plate/mjd/fiber combinations (replace with a larger sample if desired)

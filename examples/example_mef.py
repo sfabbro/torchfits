@@ -29,20 +29,20 @@ def main():
         num_hdus = torchfits.get_num_hdus(test_file)
         print(f"Number of HDUs: {num_hdus}")
 
-        for i in range(1, num_hdus + 1):
+        for i in range(1, num_hdus + 1):  # Iterate through HDUs (1-based)
             print(f"\n--- HDU {i} ---")
             try:
                 hdu_type = torchfits.get_hdu_type(test_file, i)
                 print(f"  Type: {hdu_type}")
 
                 header = torchfits.get_header(test_file, i)
-                print(f"  EXTNAME: {header.get('EXTNAME', 'N/A')}")  # Get EXTNAME, default to 'N/A'
+                print(f"  EXTNAME: {header.get('EXTNAME', 'N/A')}") # Use get with default
 
                 if hdu_type == "IMAGE":
-                    data, _ = torchfits.read(test_file, hdu=i)
+                    data, _ = torchfits.read(test_file, hdu=i) #Read by index
                     print(f"  Data shape: {data.shape}")
                 elif hdu_type == "BINTABLE":
-                    table = torchfits.read(test_file, hdu=i)
+                    table = torchfits.read(test_file, hdu=i) #Read by index
                     print(f"  Table columns: {list(table.keys())}")
 
             except RuntimeError as e:
@@ -51,11 +51,12 @@ def main():
 
         # Access by name:
         print("\n--- Accessing HDU by Name ---")
-        data, _ = torchfits.read(test_file, hdu="SCI")  # String name
+        data, _ = torchfits.read(test_file, hdu="SCI")
         print(f"  SCI data shape: {data.shape}")
 
         table_data = torchfits.read(test_file, hdu='CATALOG')
         print(f"  CATALOG columns: {list(table_data.keys())}")
+
 
     except RuntimeError as e:
         print(f"Error: {e}")

@@ -7,20 +7,28 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("read", &read,
-          "Read FITS data (image or table) with optional cutout.\n\n"
-          "Args:\n"
-          "    filename_with_cutout (str): Path to the FITS file, optionally with a cutout specification.\n"
-          "    hdu (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU.\n"
-          "    start (list[int], optional): Starting pixel coordinates (0-based) for a cutout.\n"
-          "    shape (list[int], optional): Shape of the cutout. Use -1 for a dimension to read to the end.\n\n"
-          "Returns:\n"
-          "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch.Tensor]]:\n"
-          "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
-          ,
-          py::arg("filename_with_cutout"),
-          py::arg("hdu") = py::none(),
-          py::arg("start") = py::none(),
-          py::arg("shape") = py::none());
+        "Read FITS data (image or table) with optional cutout, HDU selection, column selection and row selection.\n\n"
+        "Args:\n"
+        "    filename_or_url (str or dict): Path to the FITS file, or a dictionary with fsspec parameters, or a CFITSIO-compatible URL.\n"
+        "    hdu (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies it.\n"
+        "    start (list[int], optional): Starting pixel coordinates (0-based) for a cutout.\n"
+        "    shape (list[int], optional): Shape of the cutout. Use -1 for a dimension to read to the end.\n"
+        "    columns (list[str], optional): List of column names to read from a table. Reads all if None.\n"
+        "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
+        "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n\n"
+        "Returns:\n"
+        "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch.Tensor]]:\n"
+        "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
+        ,
+        py::arg("filename_or_url"),
+        py::arg("hdu") = py::none(),
+        py::arg("start") = py::none(),
+        py::arg("shape") = py::none(),
+        py::arg("columns") = py::none(),
+        py::arg("start_row") = 0,  // Default value
+        py::arg("num_rows") = py::none()
+    );
+
 
     m.def("get_header", &get_header,
           "Get the FITS header as a dictionary.\n\n"

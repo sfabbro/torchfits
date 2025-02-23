@@ -2,16 +2,18 @@
 #include "wcs_utils.h"
 #include <sstream>
 #include <algorithm>
+#include <pybind11/stl.h> // Make sure this is included!
+
 
 // --- Core Data Reading Logic (Image HDUs) ---
 
 torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
     int status = 0;
     int bitpix, naxis, anynul;
-    long long naxes[3] = {1, 1, 1};  // CFITSIO supports up to 999 dimensions; we handle up to 3 here
+    long long naxes[3] = {1, 1, 1};  // CFITSIO supports up to 999 dimensions
     long long nelements;
 
-    if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) { //Use a more general function
+    if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) {
         throw_fits_error(status, "Error getting image parameters");
     }
 
@@ -26,18 +28,16 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
     }
 
     // --- WCS Handling ---
-    // CFITSIO automatically updates CRPIX in the header when a cutout is read
-    // or when opening with fits_file_open.
     auto updated_wcs = read_wcs_from_header(fptr); // wcs_utils.cpp
     if (updated_wcs) {
         wcs = std::move(updated_wcs);  // Take ownership if WCS is valid
     }
 
     torch::TensorOptions options;
-    // Use a macro for code reuse.  This avoids code duplication.
+    // Use a macro for code reuse.
     #define READ_AND_RETURN(cfitsio_type, torch_type, data_type) \
         options = torch::TensorOptions().dtype(torch_type); \
-        /* Create tensor with correct dimensions, and order (z,y,x) for Pytorch compatibility*/  \
+        /* Create tensor with correct dimensions and order (z,y,x) for Pytorch compatibility*/  \
         auto data = torch::empty({(naxis > 2) ? naxes[2] : 1,  \
                                  (naxis > 1) ? naxes[1] : 1,  \
                                  naxes[0]}, options); \
@@ -54,7 +54,7 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
         READ_AND_RETURN(TSHORT, torch::kInt16, int16_t);
     } else if (bitpix == LONG_IMG) {
         READ_AND_RETURN(TINT, torch::kInt32, int32_t);
-     } else if (bitpix == LONGLONG_IMG) {
+    } else if (bitpix == LONGLONG_IMG) {
         READ_AND_RETURN(TLONGLONG, torch::kInt64, int64_t);
     } else if (bitpix == FLOAT_IMG) {
         READ_AND_RETURN(TFLOAT, torch::kFloat32, float);
@@ -67,26 +67,66 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
 }
 
 // --- Core Data Reading Logic (Binary and ASCII Tables) ---
-std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr) {
+std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows_obj) {
     int status = 0;
     int num_cols, typecode;
-    long long num_rows;
+    long long num_rows_total;
 
-    if (fits_get_num_rowsll(fptr, &num_rows, &status)) {
+    if (fits_get_num_rowsll(fptr, &num_rows_total, &status)) {
         throw_fits_error(status, "Error getting number of rows in table");
     }
     if (fits_get_num_cols(fptr, &num_cols, &status)) {
         throw_fits_error(status, "Error getting number of columns in table");
     }
 
-    std::map<std::string, torch::Tensor> table_data;
+    // --- Column Selection ---
+    std::vector<int> selected_cols;  // Store selected column *numbers*
+    if (!columns.is_none()) {
+        auto cols_list = columns.cast<std::vector<std::string>>();
+        for (const auto& col_name : cols_list) {
+            int col_num;
+            // fits_get_colnum is case-insensitive.
+            if (fits_get_colnum(fptr, CASEINSEN, (char*)col_name.c_str(), &col_num, &status)) {
+                 if (fits_close_file(fptr, &status)) { // Close file
+                    throw_fits_error(status, "Error closing file");
+                }
+                throw_fits_error(status, "Error getting column number for: " + col_name);
+            }
+            selected_cols.push_back(col_num);
+        }
+    } else {
+        // No columns specified: read all columns.
+        for (int i = 1; i <= num_cols; ++i) {
+            selected_cols.push_back(i);
+        }
+    }
+     // --- Row Handling ---
+    long long n_rows_to_read;
+    if (!num_rows_obj.is_none()) {
+        n_rows_to_read = num_rows_obj.cast<long long>();
+    } else {
+        n_rows_to_read = num_rows_total - start_row;  // Read all remaining rows
+    }
+     // Check for valid start_row and num_rows
+    if (start_row < 0) {
+        throw std::runtime_error("start_row must be >= 0");
+    }
+    if (n_rows_to_read < 0) {
+        throw std::runtime_error("num_rows must be >= 0");
+    }
+    if (start_row + n_rows_to_read > num_rows_total) {
+        throw std::runtime_error("start_row + num_rows exceeds the total number of rows in the table.");
+    }
 
-    char col_name[FLEN_VALUE]; //CFITSIO constant
-    for (int col_num = 1; col_num <= num_cols; ++col_num) { //FITS standard: Columns start at 1
+    std::map<std::string, torch::Tensor> table_data;
+    char col_name[FLEN_VALUE];
+    //Iterate only on selected columns
+    for (int col_num : selected_cols) {
         long long repeat, width;
         if (fits_get_coltype(fptr, col_num, &typecode, &repeat, &width, &status)) {
             throw_fits_error(status, "Error getting column type for column " + std::to_string(col_num));
         }
+        //Get column name
         if (fits_get_colname(fptr, CASEINSEN, "*", col_name, &col_num, &status)) {
             throw_fits_error(status, "Error getting column name for column " + std::to_string(col_num));
         }
@@ -94,53 +134,51 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr) {
 
         #define READ_COL_AND_STORE(cfitsio_type, torch_type, data_type) \
             { \
-                auto tensor = torch::empty({num_rows}, torch::TensorOptions().dtype(torch_type)); \
+                auto tensor = torch::empty({n_rows_to_read}, torch::TensorOptions().dtype(torch_type)); \
                 data_type* data_ptr = tensor.data_ptr<data_type>(); \
-                if (fits_read_col(fptr, cfitsio_type, col_num, 1, 1, num_rows, nullptr, data_ptr, nullptr, &status)) { \
+                if (fits_read_col(fptr, cfitsio_type, col_num, start_row + 1, 1, n_rows_to_read, nullptr, data_ptr, nullptr, &status)) { \
                     throw_fits_error(status, "Error reading column " + col_name_str + " (data type " #cfitsio_type ")"); \
                 } \
                 table_data[col_name_str] = tensor; \
             }
 
-        // Select appropriate read function and PyTorch data type based on typecode.
         if (typecode == TBYTE) {
             READ_COL_AND_STORE(TBYTE, torch::kUInt8, uint8_t);
         } else if (typecode == TSHORT) {
             READ_COL_AND_STORE(TSHORT, torch::kInt16, int16_t);
         } else if (typecode == TINT) {
-            READ_COL_AND_STORE(TINT, torch::kInt32, int32_t); //Should work in most cases
-        }else if (typecode == TLONG) { //fits_read_col does not support int, so map TINT to int32_t, and TLONG to int
-             READ_COL_AND_STORE(TLONG, torch::kInt32, int32_t);
-        }else if (typecode == TLONGLONG) {
+            READ_COL_AND_STORE(TINT, torch::kInt32, int32_t);
+        } else if (typecode == TLONG) {
+            READ_COL_AND_STORE(TLONG, torch::kInt32, int32_t);
+        } else if (typecode == TLONGLONG) {
             READ_COL_AND_STORE(TLONGLONG, torch::kInt64, int64_t);
         } else if (typecode == TFLOAT) {
             READ_COL_AND_STORE(TFLOAT, torch::kFloat32, float);
         } else if (typecode == TDOUBLE) {
             READ_COL_AND_STORE(TDOUBLE, torch::kFloat64, double);
         } else if (typecode == TSTRING) {
-            //For strings, we read an array of chars
-            std::vector<char*> string_array(num_rows);
-            for (int i = 0; i < num_rows; i++) {
-                string_array[i] = new char[width + 1]; // +1 for null terminator
-                string_array[i][width] = '\0'; // Ensure null termination
+            std::vector<char*> string_array(n_rows_to_read);
+            for (int i = 0; i < n_rows_to_read; i++) {
+                string_array[i] = new char[width + 1];
+                string_array[i][width] = '\0';
             }
-            if (fits_read_col(fptr, TSTRING, col_num, 1, 1, num_rows, nullptr, string_array.data(), nullptr, &status)){
-                 throw_fits_error(status, "Error reading column " + col_name_str + " (data type " #cfitsio_type ")");
+            if (fits_read_col(fptr, TSTRING, col_num, start_row + 1, 1, n_rows_to_read, nullptr, string_array.data(), nullptr, &status)) {
+                for (int i = 0; i < n_rows_to_read; i++) {
+                    delete[] string_array[i];
+                }
+                throw_fits_error(status, "Error reading column " + col_name_str + " (data type TSTRING)");
             }
-            //Convert to a list of strings to return
+
             std::vector<std::string> string_list;
-            for (int i = 0; i < num_rows; i++) {
+            for (int i = 0; i < n_rows_to_read; i++) {
                 string_list.emplace_back(string_array[i]);
-                delete[] string_array[i];  // Free the allocated memory.
+                delete[] string_array[i];
             }
-
-           table_data[col_name_str] = pybind11::cast(string_list); //Return a python list of strings
-
-        }
-        else {
-             if (fits_close_file(fptr, &status)) {
-                 throw_fits_error(status, "Error closing file");
-             }
+            table_data[col_name_str] = pybind11::cast(string_list);
+        } else {
+            if (fits_close_file(fptr, &status)) {
+                throw_fits_error(status, "Error closing file");
+            }
             throw_fits_error(0, "Unsupported column data type (" + std::to_string(typecode) + ") in column " + col_name_str);
         }
         #undef READ_COL_AND_STORE
@@ -148,11 +186,12 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr) {
 
     return table_data;
 }
-// --- Public API Functions ---
+// --- Main `read` function (Handles Images, Tables, Cutouts, and HDU Selection) ---
 
-// Main read function: Handles images, tables, cutouts, and HDU selection.
-pybind11::object read(const std::string& filename_with_cutout, pybind11::object hdu,
-                      pybind11::object start, pybind11::object shape) {
+pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
+                      pybind11::object start, pybind11::object shape,
+                      pybind11::object columns, int start_row, pybind11::object num_rows) {
+
     fitsfile* fptr = nullptr;
     int status = 0;
     int hdu_type;
@@ -162,21 +201,21 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
     std::string cutout_str;
 
     //Check if filename_with_cutout contains brackets
-    size_t first_bracket = filename_with_cutout.find('[');
+    size_t first_bracket = filename_or_url.cast<std::string>().find('[');
     if(first_bracket !=  std::string::npos) {
         //Cutout
-        filename = filename_with_cutout.substr(0, first_bracket);
-        cutout_str = filename_with_cutout.substr(first_bracket);
+        filename = filename_or_url.cast<std::string>().substr(0, first_bracket);
+        cutout_str = filename_or_url.cast<std::string>().substr(first_bracket);
     }
     else{
         //No cutout
-        filename = filename_with_cutout;
+        filename = filename_or_url.cast<std::string>();
         cutout_str = "";
     }
 
 
     // --- HDU Handling ---
-    if (!hdu.is_none()) { //If hdu is provided
+    if (!hdu.is_none()) {
         if (pybind11::isinstance<pybind11::int_>(hdu)) {
             hdu_num = hdu.cast<int>();  // Use explicit HDU number.
             if (hdu_num < 0 )
@@ -194,15 +233,12 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
         filename = filename + cutout_str;
     }
 
-
     // --- Cutout Handling (start and shape) ---
-    //If got start and shape arguments, create the cutout string
-    if (!start.is_none() || !shape.is_none())
-    {
-          //If hdu is a number, reconstruct the full filename
-         if (pybind11::isinstance<pybind11::int_>(hdu)) {
-             filename = filename + "[" + std::to_string(hdu_num) + "]";
-         } // else,  filename is ok.
+    if (!start.is_none() || !shape.is_none()) {
+        // If hdu is a number, reconstruct the full filename
+        if (pybind11::isinstance<pybind11::int_>(hdu)) {
+            filename = filename + "[" + std::to_string(hdu_num) + "]";
+        }
 
         if (start.is_none() || shape.is_none()) {
             throw std::runtime_error("If 'start' is provided, 'shape' must also be provided, and vice-versa.");
@@ -223,27 +259,26 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
         std::stringstream cutout_builder;
         cutout_builder << "[";
         for (size_t i = 0; i < start_list.size(); ++i) {
-            if(shape_list[i] <= 0 && ! (shape_list[i] == -1) ) // Use -1 as None
+             if(shape_list[i] <= 0 && ! (shape_list[i] == -1) ) // Use -1 as None
                 throw std::runtime_error("Shape values must be > 0, or -1 (None)");
             // Special case: None in shape means read to the end.
-            long long start_val = start_list[i] + 1; //FITS are 1-indexed
+            long long start_val = start_list[i] + 1;  // FITS indexing
             long long end_val;
-            if(shape_list[i] == -1) { //None, read all
-                end_val = -1;
+            if (shape_list[i] == -1) {
+                end_val = -1;  // CFITSIO convention for reading to end
+            } else {
+                end_val = start_list[i] + shape_list[i]; // end is inclusive
             }
-            else{
-                end_val = start_list[i] + shape_list[i]; //end is inclusive
-            }
-
             cutout_builder << start_val << ":" << end_val;
             if (i < start_list.size() - 1) {
                 cutout_builder << ",";
             }
         }
         cutout_builder << "]";
-        filename = filename + cutout_builder.str(); //Append to filename
-
+        filename = filename + cutout_builder.str(); // Append to filename
     }
+
+
     // --- File Opening (using constructed filename) ---
     if (fits_open_file(&fptr, filename.c_str(), READONLY, &status)) {
         throw_fits_error(status, "Error opening FITS file/cutout: " + filename);
@@ -257,6 +292,7 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
     }
 
     // --- Data Reading (Based on HDU Type) ---
+
     if (hdu_type == IMAGE_HDU) {
         auto wcs = read_wcs_from_header(fptr);  // From wcs_utils.cpp
         torch::Tensor data = read_image_data(fptr, wcs);
@@ -267,9 +303,9 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
         return pybind11::make_tuple(data, header);  // Return tuple for images
 
     } else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
-        std::map<std::string, torch::Tensor> table_data = read_table_data(fptr);
+        std::map<std::string, torch::Tensor> table_data = read_table_data(fptr, columns, start_row, num_rows);
         std::map<std::string, std::string> header = read_fits_header(fptr); // From fits_utils.cpp
-        if (fits_close_file(fptr, &status)) { // Close file
+        if (fits_close_file(fptr, &status)) {  // Close file
            throw_fits_error(status, "Error closing file");
         }
         return pybind11::cast(table_data);  // Return dict for tables

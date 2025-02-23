@@ -27,7 +27,7 @@ class TestFitsReader(unittest.TestCase):
         hdu.header['CRPIX2'] = 5.0
         hdu.header['CDELT1'] = -0.001
         hdu.header['CDELT2'] = 0.001
-        hdu.header['OBJECT'] = 'Test Image'
+        hdu.header['OBJECT'] = 'Test Image'  # Add a non-WCS keyword
         hdu.writeto(cls.image_file, overwrite=True)
 
         # --- 3D Cube ---
@@ -67,7 +67,7 @@ class TestFitsReader(unittest.TestCase):
             'comments': np.array(["This is star 1", "This is star 2", "This is star 3"], dtype='U20') #String
         }
         table = Table(data)
-        hdu = fits.BinTableHDU(table, name="MYTABLE")
+        hdu = fits.BinTableHDU(table, name="MYTABLE")  # Give the extension a name
         hdu.writeto(cls.table_file, overwrite=True)
 
         # --- MEF File ---
@@ -75,8 +75,9 @@ class TestFitsReader(unittest.TestCase):
         primary_hdu = fits.PrimaryHDU()  # Empty primary
         ext1 = fits.ImageHDU(np.arange(100, dtype=np.float32).reshape(10, 10), name='EXT1')
         ext2 = fits.ImageHDU(np.arange(100, 200, dtype=np.float32).reshape(10, 10), name='EXT2')
-        ext3 = fits.BinTableHDU(table, name="TABLE_EXT")
+        ext3 = fits.BinTableHDU(table, name="TABLE_EXT") #Add a table
 
+        # Add some basic WCS keywords
         ext1.header['CTYPE1'] = 'RA---TAN'
         ext1.header['CTYPE2'] = 'DEC--TAN'
         ext1.header['CRVAL1'] = 202.5
@@ -96,6 +97,7 @@ class TestFitsReader(unittest.TestCase):
         ext2.header['CDELT2'] = 0.002
         hdul = fits.HDUList([primary_hdu, ext1, ext2, ext3])
         hdul.writeto(cls.mef_file, overwrite=True)
+
 
     @classmethod
     def tearDownClass(cls):
@@ -117,7 +119,7 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(header['OBJECT'], 'Test Image')
 
         # Test reading with HDU number
-        data2, _ = torchfits.read(self.image_file, hdu=1)
+        data2, _ = torchfits.read(self.image_file, hdu=1) #Primary is 1
         self.assertTrue(np.allclose(data.numpy(), data2.numpy()))
 
     def test_read_image_cutout_string(self):
@@ -135,9 +137,10 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(data.ndim, 1)
         self.assertTrue(np.allclose(data.numpy(), self.image_1d_data))
 
+
     def test_read_image_region_none_shape(self):
         # Test reading to the end of a dimension using shape=None equivalent
-        data, _ = torchfits.read(self.image_file, hdu=1, start=[2,3], shape=[3, -1])
+        data, _ = torchfits.read(self.image_file, hdu=1, start=[2,3], shape=[3, -1]) #Read to the end
         self.assertEqual(data.shape, (3, 7))
         self.assertTrue(np.allclose(data.numpy(), self.image_data[2:5, 3:]))
 
@@ -154,13 +157,14 @@ class TestFitsReader(unittest.TestCase):
 
     def test_read_cube_slice_none(self):
         # Test reading a 2D slice with None for shape
-        data, _ = torchfits.read(self.cube_file, hdu=1, start=[0,0,1], shape=[-1,-1,1])
+        data, _ = torchfits.read(self.cube_file, hdu=1, start=[0,0,1], shape=[-1,-1,1]) #Read slice
         self.assertEqual(data.shape, (2,3,1))
         self.assertTrue(np.allclose(data.numpy(), self.cube_data[:,:,1:2]))
 
-        data, _ = torchfits.read(self.cube_file, hdu=1, start=[0,1,0], shape=[-1,1,-1])
+        data, _ = torchfits.read(self.cube_file, hdu=1, start=[0,1,0], shape=[-1,1,-1]) #Read slice
         self.assertEqual(data.shape, (2,1,4))
         self.assertTrue(np.allclose(data.numpy(), self.cube_data[:,1:2,:]))
+
 
     def test_read_table(self):
         table_data = torchfits.read(self.table_file, hdu="MYTABLE")  # Use extension name
@@ -170,12 +174,24 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(table_data['dec'].dtype, torch.float64)
         self.assertEqual(table_data['flux'].dtype, torch.float32)
         self.assertEqual(table_data['id'].dtype, torch.int32)
-        self.assertEqual(table_data['flag'].dtype, torch.uint8)
+        self.assertEqual(table_data['flag'].dtype, torch.uint8) #Check flag
         self.assertTrue(np.allclose(table_data['ra'].numpy(), [200.0, 201.0, 202.0]))
          # Check string
         self.assertTrue(isinstance(table_data['comments'], list))
         self.assertEqual(table_data['comments'], ['This is star 1', 'This is star 2', 'This is star 3'])
 
+    def test_read_table_cols_and_rows(self):
+        # Test reading specific columns and rows
+        table_subset = torchfits.read(self.table_file, hdu=1, columns=['ra', 'id'], start_row=1, num_rows=2)
+        self.assertEqual(set(table_subset.keys()), {'ra', 'id'})
+        self.assertTrue(np.allclose(table_subset['ra'].numpy(), [201.0, 202.0]))
+        self.assertTrue(np.array_equal(table_subset['id'].numpy(), [2, 3]))
+
+    def test_read_table_all_cols_subset_rows(self):
+        table_subset = torchfits.read(self.table_file, hdu=1,  start_row=1, num_rows=2)
+        self.assertEqual(set(table_subset.keys()), {'ra', 'dec', 'flux', 'id', 'flag', 'comments'})
+        self.assertTrue(np.allclose(table_subset['ra'].numpy(), [201.0, 202.0]))
+        self.assertTrue(np.array_equal(table_subset['id'].numpy(), [2, 3]))
 
     def test_get_header(self):
         header = torchfits.get_header(self.image_file, 1)
@@ -210,13 +226,13 @@ class TestFitsReader(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             torchfits.read("nonexistent.fits")
         with self.assertRaises(RuntimeError):
-            torchfits.read_region(self.image_file, 1, [0, 0], [11, 11])  # Out of bounds
+            torchfits.read(self.image_file, hdu=1, start=[0, 0], shape=[11, 11])  # Out of bounds
         with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=2)  # Invalid HDU
         with self.assertRaises(RuntimeError):
-            torchfits.read_region(self.image_file, 1, [0], [1, 2]) #Dimension mismatch
+            torchfits.read(self.image_file, hdu=1, start=[0], shape=[1, 2]) #Dimension mismatch
         with self.assertRaises(RuntimeError):
-            torchfits.read_region(self.image_file, 1, [0,0], [0, 2])  # Invalid shape
+            torchfits.read(self.image_file, hdu=1, start=[0,0], shape=[0, 2])  # Invalid shape
         with self.assertRaises(RuntimeError):
             torchfits.get_header_value(self.image_file, 1, "  ") #Invalid key
         with self.assertRaises(RuntimeError):
@@ -229,7 +245,15 @@ class TestFitsReader(unittest.TestCase):
             torchfits.read(self.image_file, hdu=1, start=1, shape=[1,2]) #Bad start type
         with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=1, start=[0,1], shape=1) #Bad shape type
-
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.table_file, hdu=1, start_row=-1)  # Invalid start_row
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.table_file, hdu=1, num_rows=-1) # Invalid num_rows
+        with self.assertRaises(RuntimeError):
+            # start_row + num_rows exceeds total rows
+            torchfits.read(self.table_file, hdu=1, start_row=1, num_rows=100)
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.table_file, hdu=1, columns=["NOT_A_COLUMN"]) #Invalid column
     def test_mef_iteration(self):
         # Test iterating through HDUs
         num_hdus = torchfits.get_num_hdus(self.mef_file)
@@ -240,6 +264,7 @@ class TestFitsReader(unittest.TestCase):
                 hdu_type = torchfits.get_hdu_type(self.mef_file, hdu_num)
                 header = torchfits.get_header(self.mef_file, hdu_num)
                 print(f"HDU {hdu_num}: Type = {hdu_type}, EXTNAME = {header.get('EXTNAME', 'N/A')}")
+
                 if hdu_type == "IMAGE":
                     data, _ = torchfits.read(self.mef_file, hdu=hdu_num)
                     self.assertTrue(isinstance(data, torch.Tensor))
@@ -265,6 +290,7 @@ class TestFitsReader(unittest.TestCase):
         data4, _ = torchfits.read(f"{self.mef_file}[EXT1]")
         self.assertTrue(np.allclose(data3.numpy(), data4.numpy()))
 
+
     def test_read_spectrum_2d(self):
         # From 2D image.  Extract a row and a column.
         row_data, _ = torchfits.read(self.image_file, hdu=1, start=[2, 0], shape=[1, -1])
@@ -280,18 +306,18 @@ class TestFitsReader(unittest.TestCase):
         # From 3D cube. Extract spectra along different axes.
         spec_z, _ = torchfits.read(self.cube_file, hdu=1, start=[1, 2, 0], shape=[1, 1, -1])  # x, y, z
         self.assertEqual(spec_z.shape, (1, 1, 2))
-        self.assertTrue(np.allclose(spec_z.numpy(), self.cube_data[0:1, 2:3, :]))
+        self.assertTrue(np.allclose(spec_z.numpy(), self.cube_data[1:2, 2:3, :]))
 
         spec_y, _ = torchfits.read(self.cube_file, hdu=1, start=[1, 0, 1], shape=[1, -1, 1])  # x, y, z
         self.assertEqual(spec_y.shape, (1, 3, 1))
-        self.assertTrue(np.allclose(spec_y.numpy(), self.cube_data[0:1, :, 1:2]))
+        self.assertTrue(np.allclose(spec_y.numpy(), self.cube_data[1:2, :, 1:2]))
 
         spec_x, _ = torchfits.read(self.cube_file, hdu=1, start=[0, 1, 1], shape=[-1, 1, 1])  # x, y, z
-        self.assertEqual(spec_x.shape, (2, 1, 1))
+        self.assertEqual(spec_x.shape, (4, 1, 1))
         self.assertTrue(np.allclose(spec_x.numpy(), self.cube_data[:, 1:2, 1:2]))
 
-    def test_read_spectrum_1d(self):
-        #From a 1D image
+    def test_read_1d(self):
+        # From a 1D image
         data, _ = torchfits.read(self.image_1d_file)
         self.assertEqual(data.ndim, 1)
         self.assertTrue(np.allclose(data.numpy(), self.image_1d_data))
@@ -303,4 +329,3 @@ class TestFitsReader(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-    

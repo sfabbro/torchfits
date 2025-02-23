@@ -1,3 +1,4 @@
+# examples/example_tables.py
 import torchfits
 import numpy as np
 import os
@@ -18,7 +19,6 @@ def create_test_file(filename):
         table = Table(data)
         hdu = fits.BinTableHDU(table)
         hdu.writeto(filename, overwrite=True)
-
 def main():
     test_file = "table_example.fits"
     create_test_file(test_file)
@@ -32,6 +32,35 @@ def main():
             print(f"    Data Type: {table_data[col_name].dtype}")
     except RuntimeError as e:
         print(f"  Error: {e}")
+
+    # Read specific columns
+    try:
+        table_subset = torchfits.read(test_file, hdu=1, columns=['ra', 'dec'])
+        print("\nSubset of Columns (ra, dec):")
+        for col_name in table_subset:
+            print(f"  Column '{col_name}': {table_subset[col_name]}")
+    except RuntimeError as e:
+        print(f"  Error: {e}")
+
+    # Read a subset of rows
+    try:
+        table_rows = torchfits.read(test_file, hdu=1, start_row=1, num_rows=2)
+        print("\nSubset of Rows (start_row=1, num_rows=2):")
+        for col_name in table_rows:
+            print(f"  Column '{col_name}': {table_rows[col_name]}")
+    except RuntimeError as e:
+        print(f" Error: {e}")
+
+    # Read specific columns and rows
+    try:
+        table_subset = torchfits.read(test_file, hdu=1, columns=['id', 'comments'], start_row=0, num_rows=2)
+        print("\nSubset of Columns and Rows:")
+        for col_name in table_subset:
+            print(f"  Column '{col_name}': {table_subset[col_name]}")
+    except RuntimeError as e:
+        print(f"  Error: {e}")
+
+
 
 if __name__ == "__main__":
     main()
