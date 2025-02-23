@@ -1,39 +1,36 @@
-#include "fits_reader.h" // For helper functions and types
+#include "fits_reader.h"
 #include "wcs_utils.h"
 #include <sstream>
 
-// --- WCS-Related Functions ---
-
-// Reads the minimal set of WCS keywords from the header and constructs a wcsprm object.
 std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
     int status = 0;
     char card[FLEN_CARD];
     std::stringstream wcs_header_stream;
-
-    // List of essential WCS keywords (null-terminated).  We read these directly.
-    const char* wcs_keys[] = {"CTYPE", "CRPIX", "CRVAL", "CDELT", "PC", "CD", "NAXIS", nullptr};
+    const char* wcs_keys[] = {"CTYPE", "CRPIX", "CRVAL", "CDELT", "PC", "CD", "NAXIS", nullptr}; // Null-terminated
     int key_index = 0;
 
+    // Loop to add the basics to the header (to work with wcslib)
     while (wcs_keys[key_index] != nullptr) {
         const char* key = wcs_keys[key_index];
         int exact = 0;
-        // Use fits_read_key_str to read keyword values.  Handles different types.
-        if (fits_read_key_str(fptr, key, card, nullptr, &status)) {
-            if (status == KEY_NO_EXIST) {
-                // If a key doesn't exist, that's OK for WCS.  Just skip it.
-                status = 0; // Reset status
+        if (fits_read_key_str(fptr, key, card, nullptr, &status))
+        {
+              if (status == KEY_NO_EXIST) {
+                status = 0; // Reset the status
                 key_index++;
                 continue;
-            } else {
-                throw_fits_error(status, std::string("Error reading WCS key: ") + key);
+
+            }
+            else{
+               throw_fits_error(status, std::string("Error reading WCS key: ") + key);
             }
         }
 
-        // fits_read_key_str gives at most 70 chars (without the =)
-        // Pad with spaces up to 80 characters, as required for a valid header.
+        // fits_read_key_str gives at most 70 chars.
+        //Pad with spaces up to 80 characters, as required by wcslib
         std::string card_str(card);
-        int spaces_to_add = 80 - card_str.length() - strlen(key) - 2; // -2 for " = "
-        if(spaces_to_add < 0) spaces_to_add = 0; //Just in case
+        int spaces_to_add = 80 - card_str.length() - strlen(key) - 2;
+        if(spaces_to_add < 0) spaces_to_add = 0;
         wcs_header_stream << key << " = " << card_str;
         for (int i = 0; i < spaces_to_add; ++i) {
             wcs_header_stream << " ";
@@ -42,26 +39,26 @@ std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
         key_index++;
     }
 
-    // Add END card (required by wcspih).
+    // Add END card
     wcs_header_stream << "END";
-    for (int i = 0; i < 77; ++i) { // 80 - length("END") = 77
-        wcs_header_stream << " ";
+     for (int i = 0; i < 77; ++i) {
+            wcs_header_stream << " ";
     }
-    // Parse the minimal header string with wcslib.
+
+    // Parse the header string with wcslib to create the WCS object.
     int nreject, nwcs;
     struct wcsprm* wcs = nullptr;
-    const std::string wcs_header_str = wcs_header_stream.str(); // Complete header
+    const std::string wcs_header_str = wcs_header_stream.str();
     int wcs_status = wcspih(wcs_header_str.c_str(), wcs_header_str.size(), 0, 0, &nreject, &nwcs, &wcs);
 
     if (wcs_status != 0 || nwcs == 0 || wcs == nullptr) {
-      wcsfree(wcs, &nwcs); //Free, since there is no wcs
-      return nullptr; // No valid WCS
+      wcsfree(wcs, &nwcs);
+      return nullptr;
     }
 
-    return std::unique_ptr<wcsprm>(wcs); // Return ownership via unique_ptr.
+    return std::unique_ptr<wcsprm>(wcs);
 }
-
-// Convert world coordinates to pixel coordinates.
+//Not exposed to Python
 std::pair<torch::Tensor, torch::Tensor> world_to_pixel(const torch::Tensor& world_coords, const std::map<std::string, std::string>& header) {
 
     //Reconstruct the wcs object from the header
