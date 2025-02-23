@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel", "pybind11>=2.6.0", "torch"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "torchfits"  # Correct package name
-version = "0.1.0"  # MATCH THE VERSION IN version.py!
+name = "torchfits"
+version = "0.1.0"  # MATCH THE VERSION IN version.py
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}, # REPLACE
+    {name = "Your Name", email = "sebfabbro@gmail.com"},
 ]
 description = "A fast FITS reader for PyTorch, optimized for cutout extraction."
 readme = "README.md"
-requires-python = ">=3.7"  # Adjust as needed
+requires-python = ">=3.10"  # Adjust as needed
 license = {file = "LICENSE"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,16 +20,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "torch>=1.10",  # Specify minimum PyTorch version
+  "torch>=2",  # Specify minimum PyTorch version
   "numpy",        # NumPy is a dependency
   "astropy",      # Required for test and examples
-  "requests",    # For downloading data in examples
-  "tqdm",          # For progress bars in examples
-  "pandas"       #For galaxy 10 example
+  "requests",     # For downloading data in examples
+  "tqdm",         # For progress bars in examples
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/torchfits"  # REPLACE with your repo
+Homepage = "https://github.com/sfabbro/torchfits"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -49,7 +48,7 @@ include-package-data = false
     "src/torchfits/bindings.cpp"
 ], include_dirs = ["src/torchfits"],
  libraries=["cfitsio", "wcs", "m"],
- extra_compile_args=["-std=c++11", "-DWCSLIB_VERSION=7010000"]}
+ extra_compile_args=["-std=c++11"]}
 
 
 [tool.pytest.ini_options]
