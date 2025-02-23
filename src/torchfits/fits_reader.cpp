@@ -8,7 +8,7 @@
 torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
     int status = 0;
     int bitpix, naxis, anynul;
-    long long naxes[3] = {1, 1, 1}; // CFITSIO supports up to 999 dimensions; we handle up to 3 here
+    long long naxes[3] = {1, 1, 1};  // CFITSIO supports up to 999 dimensions; we handle up to 3 here
     long long nelements;
 
     if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) { //Use a more general function
@@ -87,14 +87,11 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr) {
         if (fits_get_coltype(fptr, col_num, &typecode, &repeat, &width, &status)) {
             throw_fits_error(status, "Error getting column type for column " + std::to_string(col_num));
         }
-
-        // Get column name using CFITSIO.  CASEINSEN = case-insensitive.
         if (fits_get_colname(fptr, CASEINSEN, "*", col_name, &col_num, &status)) {
             throw_fits_error(status, "Error getting column name for column " + std::to_string(col_num));
         }
-        std::string col_name_str(col_name); // Convert to std::string
+        std::string col_name_str(col_name);
 
-        // Handle different data types using a macro for conciseness.
         #define READ_COL_AND_STORE(cfitsio_type, torch_type, data_type) \
             { \
                 auto tensor = torch::empty({num_rows}, torch::TensorOptions().dtype(torch_type)); \
@@ -121,27 +118,29 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr) {
         } else if (typecode == TDOUBLE) {
             READ_COL_AND_STORE(TDOUBLE, torch::kFloat64, double);
         } else if (typecode == TSTRING) {
-            // String columns:  Read as a vector of C-style strings, then convert to a Python list.
+            //For strings, we read an array of chars
             std::vector<char*> string_array(num_rows);
             for (int i = 0; i < num_rows; i++) {
-                string_array[i] = new char[width + 1];  // Allocate memory (+1 for null terminator)
-                string_array[i][width] = '\0';         // Null-terminate
+                string_array[i] = new char[width + 1]; // +1 for null terminator
+                string_array[i][width] = '\0'; // Ensure null termination
             }
-            if (fits_read_col(fptr, TSTRING, col_num, 1, 1, num_rows, nullptr, string_array.data(), nullptr, &status)) {
-                throw_fits_error(status, "Error reading column " + col_name_str + " (data type TSTRING)");
+            if (fits_read_col(fptr, TSTRING, col_num, 1, 1, num_rows, nullptr, string_array.data(), nullptr, &status)){
+                 throw_fits_error(status, "Error reading column " + col_name_str + " (data type " #cfitsio_type ")");
             }
-            // Convert to a Python list of strings (more Pythonic).
+            //Convert to a list of strings to return
             std::vector<std::string> string_list;
             for (int i = 0; i < num_rows; i++) {
                 string_list.emplace_back(string_array[i]);
                 delete[] string_array[i];  // Free the allocated memory.
             }
-            table_data[col_name_str] = pybind11::cast(string_list); // Return Python list.
-        } else {
-            // Close the file before throwing an error.
-            if (fits_close_file(fptr, &status)) {
-                throw_fits_error(status, "Error closing file");
-            }
+
+           table_data[col_name_str] = pybind11::cast(string_list); //Return a python list of strings
+
+        }
+        else {
+             if (fits_close_file(fptr, &status)) {
+                 throw_fits_error(status, "Error closing file");
+             }
             throw_fits_error(0, "Unsupported column data type (" + std::to_string(typecode) + ") in column " + col_name_str);
         }
         #undef READ_COL_AND_STORE
@@ -194,6 +193,7 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
     else{ //If not, append cutout if exists
         filename = filename + cutout_str;
     }
+
 
     // --- Cutout Handling (start and shape) ---
     //If got start and shape arguments, create the cutout string
@@ -264,7 +264,7 @@ pybind11::object read(const std::string& filename_with_cutout, pybind11::object 
           if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
         }
-        return pybind11::make_tuple(data, header);
+        return pybind11::make_tuple(data, header);  // Return tuple for images
 
     } else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
         std::map<std::string, torch::Tensor> table_data = read_table_data(fptr);
