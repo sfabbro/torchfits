@@ -1,0 +1,117 @@
+# .gitignore for torchfits
+
+# General Python ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+*.so
+
+# C++ build artifacts
+*.o
+*.os
+*.obj
+*.dll
+*.lib
+*.a
+*.exe
+
+# Compiled dynamic libraries
+*.so.*
+*.dylib
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# Emacs
+*~
+\#*\#
+.\#*
+.dir-locals.el
+
+# Vim
+*.swp
+*.swo
+*.swn
+*.swx
+*.un~
+[._]*.s[a-v][a-z]
+[._]*.sw[a-z]
+Session.vim
+tags
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# pybind11
+*.o
+*.so
+*.dylib
+*.pyd
+*.exe
+
+# Unit test and coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+tests/__pycache__/
+
+# Examples directory
+examples/*.fits  # Ignore generated FITS files in examples
+
+# Local data directory (created by examples)
+data/
+data_galaxy10/
+data_galaxy10_real
+data_mnist_fits/
+
+# mypy
+.mypy_cache/
