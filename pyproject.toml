@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "torchfits"
 version = "0.1.0"  # MATCH THE VERSION IN version.py!
 authors = [
-    {name = "Sébastien Fabbro", email = "sebfabbro@gmail.com"},
+    {name = "Seb Fabbro", email = "sebfabbro@gmail.com"},
 ]
 description = "A fast FITS reader for PyTorch, optimized for cutout extraction."
 readme = "README.md"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sfabbro/torchfits"
+Homepage = "https://github.com/sfabbro/torchfits"  # REPLACE
 
 [project.optional-dependencies] #Define optional dependencies
 dev = [
@@ -52,26 +52,6 @@ remote = [
     "gcsfs",           # If you want to support Google Cloud Storage
     # Add other fsspec backends as needed
 ]
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.dist]
-include-package-data = false
-
-[tool.setuptools.extension]
-"torchfits.fits_reader" = {sources = [
-    "src/torchfits/fits_reader.cpp",
-    "src/torchfits/fits_utils.cpp",
-    "src/torchfits/wcs_utils.cpp",
-    "src/torchfits/bindings.cpp"
-], include_dirs = ["src/torchfits"],
- libraries=["cfitsio", "wcs", "m"],
- extra_compile_args=["-std=c++11"]}
-
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

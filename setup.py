@@ -1,8 +1,9 @@
-# setup.py
 import os
 import subprocess
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
+from torch.utils.cpp_extension import include_paths
+
 
 def get_wcslib_version():
     """Gets the WCSLIB version using pkg-config, or returns a default."""
@@ -104,7 +105,7 @@ def get_wcslib_include_path():
             return include_path
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    # If not found, return empty
+    # If not found, return empty string
     print("Warning: Could not automatically find WCSLIB include path.")
     return ""
 
@@ -139,6 +140,9 @@ def get_wcslib_library_path():
     print("Warning: Could not automatically find WCSLIB library path.")
     return ""
 
+
+
+
 class CustomBuildExt(build_ext):
     """Custom build_ext command to dynamically set WCSLIB_VERSION and include/lib paths."""
 
@@ -152,6 +156,9 @@ class CustomBuildExt(build_ext):
 
         for ext in self.extensions:
             ext.extra_compile_args.append(f"-DWCSLIB_VERSION={wcslib_version}")
+            # Add C++17 support *here* (most reliable place):
+            ext.extra_compile_args.append("-std=c++17")
+
             if cfitsio_include_dir:
                 ext.include_dirs.append(cfitsio_include_dir)
             if wcslib_include_dir:
@@ -161,9 +168,29 @@ class CustomBuildExt(build_ext):
             if wcslib_library_dir:
                 ext.library_dirs.append(wcslib_library_dir)
 
+            # Add PyTorch include paths:
+            ext.include_dirs += include_paths()  # Use torch.utils.cpp_extension
+
         super().build_extensions()
 
+# --- Extension Definition ---
+ext_modules = [
+    Extension(
+        "torchfits.fits_reader",  # Fully qualified name!
+        sources=[
+            "src/torchfits/fits_reader.cpp",
+            "src/torchfits/fits_utils.cpp",
+            "src/torchfits/wcs_utils.cpp",
+            "src/torchfits/bindings.cpp"
+        ],
+        include_dirs=["src/torchfits"],  # Add include directory
+        libraries=["cfitsio", "wcs", "m"],
+        extra_compile_args=["-std=c++17"],  # Also add it here for redundancy/clarity
+        language="c++",
+    ),
+]
 
 setup(
+    ext_modules=ext_modules,
     cmdclass={'build_ext': CustomBuildExt},
 )

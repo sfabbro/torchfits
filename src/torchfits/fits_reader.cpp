@@ -92,10 +92,12 @@ private:
 };
 
 // --- Core Data Reading Logic  ---
-torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs,  torch::Device device) {
+
+torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs, torch::Device device) {
     int status = 0;
     int bitpix, naxis, anynul;
-    long long naxes[3] = {1, 1, 1};
+    long long naxes[3] = {1, 1, 1};  // CFITSIO supports up to 999 dimensions
+    long long nelements;
 
     if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) {
         throw_fits_error(status, "Error getting image parameters");
@@ -106,21 +108,22 @@ torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs,  torch::De
         throw std::runtime_error("Unsupported number of dimensions: " + std::to_string(naxis) + ". Only 1D, 2D, and 3D images are supported.");
     }
 
-    long long nelements = 1;
+    nelements = 1;
     for (int i = 0; i < naxis; ++i) {
         nelements *= naxes[i];
     }
 
     // --- WCS Handling ---
-    auto updated_wcs = read_wcs_from_header(fptr);
-    if(updated_wcs) {
-        wcs = std::move(updated_wcs);
+    auto updated_wcs = read_wcs_from_header(fptr); // wcs_utils.cpp
+    if (updated_wcs) {
+        wcs = std::move(updated_wcs);  // Take ownership if WCS is valid
     }
 
     torch::TensorOptions options;
     // Use a macro for code reuse.
     #define READ_AND_RETURN(cfitsio_type, torch_type, data_type) \
         options = torch::TensorOptions().dtype(torch_type).device(device); \
+        /* Create tensor with correct dimensions and order (z,y,x) for Pytorch compatibility*/  \
         auto data = torch::empty({(naxis > 2) ? naxes[2] : 1,  \
                                  (naxis > 1) ? naxes[1] : 1,  \
                                  naxes[0]}, options); \
@@ -137,7 +140,7 @@ torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs,  torch::De
         READ_AND_RETURN(TSHORT, torch::kInt16, int16_t);
     } else if (bitpix == LONG_IMG) {
         READ_AND_RETURN(TINT, torch::kInt32, int32_t);
-    } else if (bitpix == LONGLONG_IMG) {
+     } else if (bitpix == LONGLONG_IMG) {
         READ_AND_RETURN(TLONGLONG, torch::kInt64, int64_t);
     } else if (bitpix == FLOAT_IMG) {
         READ_AND_RETURN(TFLOAT, torch::kFloat32, float);
@@ -150,7 +153,7 @@ torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs,  torch::De
 }
 
 // --- Core Data Reading Logic (Binary and ASCII Tables) ---
-std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows_obj, torch::Device device) {
+std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows_obj) {
     int status = 0;
     int num_cols, typecode;
     long long num_rows_total;
@@ -170,7 +173,7 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::o
             int col_num;
             // fits_get_colnum is case-insensitive.
             if (fits_get_colnum(fptr, CASEINSEN, (char*)col_name.c_str(), &col_num, &status)) {
-                if (fits_close_file(fptr, &status)) { // Close file
+                 if (fits_close_file(fptr, &status)) { // Close file
                     throw_fits_error(status, "Error closing file");
                 }
                 throw_fits_error(status, "Error getting column number for: " + col_name);
@@ -306,7 +309,6 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
                 throw std::runtime_error("HDU number must be > 0");
             }
         } else if (pybind11::isinstance<pybind11::str>(hdu)) {
-            // CFITSIO handles named extensions.  Construct full filename.
             filename = filename + "[" + hdu.cast<std::string>() + "]" + cutout_str;
         } else {
             throw std::runtime_error("Invalid 'hdu' argument.  Must be int or str.");
@@ -317,11 +319,10 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
 
     // --- Cutout Handling (start and shape) ---
     if (!start.is_none() || !shape.is_none()) {
-        //If hdu is a number, reconstruct the full filename
+         //If hdu is a number, reconstruct the full filename
         if (pybind11::isinstance<pybind11::int_>(hdu)) {
             filename = filename + "[" + std::to_string(hdu_num) + "]";
         }
-
         if (start.is_none() || shape.is_none()) {
             throw std::runtime_error("If 'start' is provided, 'shape' must also be provided, and vice-versa.");
         }
@@ -341,10 +342,9 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         std::stringstream cutout_builder;
         cutout_builder << "[";
         for (size_t i = 0; i < start_list.size(); ++i) {
-            if (shape_list[i] <= 0 && shape_list[i] != -1) {
+             if(shape_list[i] <= 0 && shape_list[i] != -1 ) // Use -1 as None
                 throw std::runtime_error("Shape values must be > 0, or -1 (None)");
-            }
-            // Special case: -1 in shape means read to the end.
+            // Special case: None in shape means read to the end.
             long long start_val = start_list[i] + 1;  // FITS indexing
             long long end_val;
             if (shape_list[i] == -1) {
@@ -372,7 +372,7 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
             size_t capacity = (cache_capacity > 0) ? cache_capacity : static_cast<size_t>(0.25 * get_available_memory() / (1024 * 1024)); // Use 25% of available RAM (in MB) if 0.
             //Limit to 2GB (avoid excesive memory usage)
             capacity = std::min(capacity, static_cast<size_t>(2048));
-            std::cout<<"Initializing cache with capacity: "<< capacity << " MB" << std::endl;
+            std::cout<<"Initializing cache with capacity: "<< capacity << " MB" << std::endl; //Debug
             cache = std::make_unique<LRUCache>(capacity);
         }
     }
