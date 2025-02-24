@@ -1,4 +1,6 @@
 #include "fits_reader.h"  // Include the header file
+#include "fits_utils.h"
+#include "wcs_utils.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> // For std::vector, std::map, etc.
 #include <pybind11/numpy.h> // Not strictly required, but good practice
@@ -35,7 +37,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
           "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n"
           "    cache_capacity (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB).\n"
-          "    device (str or torch.device, optional): Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.\n\n"
+          "    device (str, optional): Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.\n\n"
           "Returns:\n"
           "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch::Tensor]]:\n"
           "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
@@ -48,28 +50,53 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("start_row") = 0,
           py::arg("num_rows") = py::none(),
           py::arg("cache_capacity") = 0,
-          py::arg("device") = "cpu" // String default
+          py::arg("device") = "cpu" // String default for ease of use
     );
 
 
     m.def("get_header", &get_header,
-          "Get the FITS header as a dictionary.",
+          "Get the FITS header as a dictionary.\n\n"
+          "Args:\n"
+          "    filename (str): Path to the FITS file.\n"
+          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
+          "Returns:\n"
+          "    Dict[str, str]: A dictionary of header keywords and values.",
           py::arg("filename"), py::arg("hdu_num"));
 
     m.def("get_dims", &get_dims,
-          "Get the dimensions of a FITS image/cube.",
+          "Get the dimensions of a FITS image/cube.\n\n"
+          "Args:\n"
+          "    filename (str): Path to the FITS file.\n"
+          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
+          "Returns:\n"
+          "    List[int]: A list of dimensions.",
           py::arg("filename"), py::arg("hdu_num"));
 
     m.def("get_header_value", &get_header_value,
-          "Get a single header keyword value.",
+          "Get a single header keyword value.\n\n"
+          "Args:\n"
+          "    filename (str): Path to the FITS file.\n"
+          "    hdu_num (int or str): HDU number (1-based) or name.\n"
+          "    key (str): The header keyword.\n\n"
+          "Returns:\n"
+          "    str: The value of the keyword (empty string if not found).",
           py::arg("filename"), py::arg("hdu_num"), py::arg("key"));
 
     m.def("get_hdu_type", &get_hdu_type,
-          "Get the HDU type (IMAGE, BINTABLE, TABLE).",
+          "Get the HDU type (IMAGE, BINTABLE, TABLE).\n\n"
+          "Args:\n"
+          "    filename (str): Path to the FITS file.\n"
+          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
+          "Returns:\n"
+          "    str: The HDU type.",
           py::arg("filename"), py::arg("hdu_num"));
 
     m.def("get_num_hdus", &get_num_hdus,
-          "Get the total number of HDUs in the FITS file.",
+          "Get the total number of HDUs in the FITS file.\n\n"
+          "Args:\n"
+          "    filename (str): Path to the FITS file.\n\n"
+          "Returns:\n"
+          "    int: The number of HDUs.",
           py::arg("filename"));
 
     // Expose helper functions for testing (optional, but good practice)
