@@ -117,7 +117,7 @@ The examples that use external datasets will automatically download and cache th
 
 ## API Reference
 
-*   **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0)`:** Reads FITS data.  Handles images, cubes, and tables.  Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
+*   **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0, device='cpu')`:** Reads FITS data.  Handles images, cubes, and tables.  Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
     *   `filename_or_url` (str or dict): Path to the FITS file, or a dictionary with `fsspec` parameters for remote files, or a CFITSIO-compatible URL.
     *   `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies the HDU.
     *   `start` (list[int], optional): Starting pixel coordinates (0-based) for a cutout.
@@ -125,7 +125,8 @@ The examples that use external datasets will automatically download and cache th
     *   `columns` (list[str], optional): List of column names to read from a table. Reads all columns if `None`.
     *   `start_row` (int, optional): Starting row index (0-based) for table reads. Defaults to 0.
     *   `num_rows` (int or None, optional): Number of rows to read from a table. Reads all remaining rows if `None`.
-    *   `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to a maximum of 2GB). Set to 0 to disable caching.
+    *   `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB). Set to 0 to disable caching.
+    *   `device` (str, optional):  Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.
 
 *   **`torchfits.get_header(filename, hdu_num)`:** Returns the FITS header as a dictionary.
     *   `filename` (str): Path to the FITS file.
@@ -146,6 +147,7 @@ The examples that use external datasets will automatically download and cache th
 
 *   **`torchfits.get_num_hdus(filename)`:** Returns the total number of HDUs in the FITS file.
     *   `filename` (str): Path to the FITS file.
+
 
 ## Contributing
 Contributions are welcome! Traditional GitHub contributions style welcome.

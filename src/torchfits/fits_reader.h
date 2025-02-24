@@ -28,9 +28,9 @@ std::pair<torch::Tensor, torch::Tensor> world_to_pixel(const torch::Tensor& worl
 std::pair<torch::Tensor, torch::Tensor> pixel_to_world(const torch::Tensor& pixel_coords, const std::map<std::string, std::string>& header); //Not exposed to Python
 
 // --- Core Data Reading Functions (defined in fits_reader.cpp) ---
-torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs);  // Internal use
+torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs, torch::Device device);  // Internal use
 std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows); // Internal use
-pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu = pybind11::none(), pybind11::object start = pybind11::none(), pybind11::object shape = pybind11::none(), pybind11::object columns = pybind11::none(), int start_row = 0, pybind11::object num_rows = pybind11::none(), size_t cache_capacity = 0); //Added cache_capacity
+pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu = pybind11::none(), pybind11::object start = pybind11::none(), pybind11::object shape = pybind11::none(), pybind11::object columns = pybind11::none(), int start_row = 0, pybind11::object num_rows = pybind11::none(), size_t cache_capacity = 0, torch::Device device = torch::kCPU); //Added cache_capacity and device
 
 
 #endif // FITS_READER_H

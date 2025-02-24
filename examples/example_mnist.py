@@ -33,11 +33,13 @@ def create_mnist_fits(data_dir):
 # --- PyTorch Dataset ---
 
 class MNIST_FITS_Dataset(Dataset):
-    def __init__(self, data_dir, train=True, cache_capacity=0): # Add cache
+     def __init__(self, data_dir, train=True, cache_capacity=0, device='cpu'): # Add cache and device
         self.data_dir = data_dir
         self.file_list = []
         self.labels = []
-        self.cache_capacity = cache_capacity #Add cache capacity
+        self.cache_capacity = cache_capacity
+        self.device = device # Store device
+
 
         prefix = "train" if train else "test"
         for filename in os.listdir(data_dir):
@@ -46,27 +48,29 @@ class MNIST_FITS_Dataset(Dataset):
                 # Extract label from filename (more robust than header for this example)
                 label = int(filename.split("_")[-1].split(".")[0])
                 self.labels.append(label)
+
         #Sort files and labels (for reproducibility)
         self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
         self.file_list = list(self.file_list)
         self.labels = list(self.labels)
 
-    def __len__(self):
+     def __len__(self):
         return len(self.file_list)
 
-    def __getitem__(self, idx):
+     def __getitem__(self, idx):
         filename = self.file_list[idx]
         label = self.labels[idx]
         try:
-            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity)  # Read the image data
+            # Pass cache_capacity and device to read
+            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity, device=self.device)
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:
                 data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
             return data, torch.tensor(label, dtype=torch.long)
+
         except RuntimeError as e:
             print(f"Error reading or processing {filename}: {e}")
-            return None  # Return None if there's an error
-
+            return None, None  # Return None if there's an error
 # --- Model (Simple CNN) ---
 
 class MNIST_Classifier(nn.Module):
@@ -105,16 +109,19 @@ def main():
     if not os.path.exists(os.path.join(data_dir, "train_00000_0.fits")):  # Check for one file
         create_mnist_fits(data_dir)
 
-    # --- Create Datasets and DataLoaders ---
-    #Demonstrate with and without cache
-    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100) #Example with cache
-    test_dataset = MNIST_FITS_Dataset(data_dir, train=False) #Example without cache
+    # --- Device Selection ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn,  pin_memory=True)
+    # --- Create Datasets and DataLoaders ---
+    # Demonstrate with and without cache, and with/without GPU
+    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100, device=device)
+    test_dataset = MNIST_FITS_Dataset(data_dir, train=False, cache_capacity=100, device=device) #Use cache
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
 
     # --- Initialize Model, Loss, and Optimizer ---
-    model = MNIST_Classifier()
+    model = MNIST_Classifier().to(device)  # Move model to device
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -126,6 +133,10 @@ def main():
         for i, (inputs, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")):
             if inputs.numel() == 0:  # Handle empty batch
                 continue
+             # Move data to the device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -145,6 +156,10 @@ def main():
         for inputs, labels in test_loader:
             if inputs.numel() == 0:  # Handle empty batch
                 continue
+
+            # Move data to the device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)

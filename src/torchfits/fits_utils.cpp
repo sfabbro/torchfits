@@ -1,4 +1,4 @@
-#include "fits_reader.h" // Include the header file
+#include "fits_reader.h"
 #include <algorithm>
 #include <sstream>
 

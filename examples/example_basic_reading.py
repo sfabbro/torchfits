@@ -24,25 +24,22 @@ def main():
 
     # Read the entire primary HDU
     try:
-        data, header = torchfits.read(test_file)
+        data, header = torchfits.read(test_file)  # Defaults to HDU=1 (primary)
         print("Full Image (Primary HDU):")
         print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         print(f"  CRVAL1: {header.get('CRVAL1')}")
-        print(f"  OBJECT: {header.get('OBJECT')}") # Access a non-WCS keyword
+        print(f"  OBJECT: {header.get('OBJECT')}")
 
     except RuntimeError as e:
         print(f"  Error: {e}")
 
-    # Read the first extension (using HDU number)
+    # Read using HDU number
     try:
-        data, header = torchfits.read(test_file, hdu=1)  # Primary HDU is 1 (not 0)
+        data, header = torchfits.read(test_file, hdu=1)  # Primary HDU is 1
         print("\nFull Image (HDU=1):")
         print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
-        print(f"  CRVAL1: {header.get('CRVAL1')}")
     except RuntimeError as e:
         print(f"  Error: {e}")
-
-
 
     # Get Header Value
     try:
@@ -58,7 +55,7 @@ def main():
     except RuntimeError as e:
         print(f" Error: {e}")
 
-     # --- Test different cache capacities ---
+    # --- Test different cache capacities ---
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 10, 100]:  # Test no cache, small cache, larger cache
         try:
@@ -67,6 +64,18 @@ def main():
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
+
+    # --- Test GPU read (if available) ---
+    if torch.cuda.is_available():
+        print("\n--- Testing GPU Read ---")
+        try:
+            data, header = torchfits.read(test_file, device="cuda")
+            print(f"  Data device: {data.device}")  # Should print 'cuda:0'
+        except RuntimeError as e:
+            print(f"  Error reading to GPU: {e}")
+    else:
+        print("\n--- CUDA not available, skipping GPU read test ---")
+
 
 if __name__ == "__main__":
     main()

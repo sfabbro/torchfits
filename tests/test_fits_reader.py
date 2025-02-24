@@ -347,9 +347,6 @@ class TestFitsReader(unittest.TestCase):
         # Read a *different* cutout.
         cutout3, _ = torchfits.read(test_file, hdu=1, start=[5, 5], shape=[5, 5], cache_capacity=0)
         self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
-
-        #Clear cache
-        torchfits._clear_cache()
         # Read with cache.
         cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
 
@@ -362,6 +359,7 @@ class TestFitsReader(unittest.TestCase):
         self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
 
         # Read the first cutout *again*. This should *still* be a cache hit
+        # (unless the cache is extremely small).
         cutout4, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
         self.assertTrue(np.allclose(cutout1.numpy(), cutout4.numpy()))
 
@@ -393,6 +391,33 @@ class TestFitsReader(unittest.TestCase):
         first_cutout, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[1, 1], cache_capacity= cache_size)
         self.assertTrue(np.allclose(first_cutout.numpy(), data[0:1,0:1]))
         # Add more checks if you modify the C++ code to expose some cache statistics.
+
+    def test_read_to_device(self):
+        # Test reading data directly to the GPU (if available)
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            data, _ = torchfits.read(self.image_file, device=device)
+            self.assertEqual(data.device.type, 'cuda')
+
+            #Test with start and shape, to ensure that it is correctly passed
+            data, _ = torchfits.read(self.image_file, hdu=1, start=[2, 3], shape=[3, 4], device=device)
+            self.assertEqual(data.device.type, 'cuda')
+            self.assertTrue(np.allclose(data.cpu().numpy(), self.image_data[2:5, 3:7]))
+
+            #Test with string
+            data, _ = torchfits.read(f"{self.image_file}[1][2:5,3:7]", device=device)
+            self.assertEqual(data.device.type, 'cuda')
+            self.assertTrue(np.allclose(data.cpu().numpy(), self.image_data[2:5, 3:7]))
+
+            # Test with table
+            table_data = torchfits.read(self.table_file, hdu=1, device=device)
+            self.assertTrue(isinstance(table_data, dict))
+            for col in table_data:
+                if isinstance(table_data[col], torch.Tensor): #Strings are not tensors
+                    self.assertEqual(table_data[col].device.type, 'cuda')
+
+        else:
+            print("CUDA not available, skipping GPU device test.")
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,7 +10,7 @@ def create_test_file(filename):
         hdu.header['CTYPE1'] = 'RA---TAN'
         hdu.header['CTYPE2'] = 'DEC--TAN'
         hdu.header['CTYPE3'] = 'VELO-LSR'  # Or 'WAVE', 'FREQ', etc.
-        hdu.header['CRVAL1'] = 200.0 # Example values
+        hdu.header['CRVAL1'] = 200.0
         hdu.header['CRVAL2'] = 45.0
         hdu.header['CRVAL3'] = 1000.0
         hdu.header['CRPIX1'] = 1.0
@@ -32,7 +32,7 @@ def main():
         shape = [-1, -1, 1]  # Read the entire RA and DEC dimensions, and a single plane
         slice_2d, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
         print("2D Slice (Start/Shape):")
-        print(f"  Shape: {slice_2d.shape}")  # Expected: (4, 3, 1)
+        print(f"  Shape: {slice_2d.shape}")  # Expected: (2, 3, 1)
         print(f"  CTYPE3: {header.get('CTYPE3')}")
 
     except RuntimeError as e:
@@ -44,7 +44,7 @@ def main():
         print("\n2D Slice (CFITSIO String):")
         print(f"  Shape: {slice_2d_cfitsio.shape}")
         print(f"  CTYPE3: {header.get('CTYPE3')}")
-        # Verify that the results are the same
+         # Verify that the results are the same
         assert np.allclose(slice_2d.squeeze().numpy(), slice_2d_cfitsio.squeeze().numpy())
 
 
@@ -76,17 +76,31 @@ def main():
     except RuntimeError as e:
         print(f" Error: {e}")
 
-     # --- Test different cache capacities ---
+    # --- Test different cache capacities ---
     print("\n--- Testing with different cache capacities ---")
-    for capacity in [0, 10, 100]:  # Test with and without caching
+    for capacity in [0, 10]:
         try:
             start = [0, 1, 0]
             shape = [2, 1, -1]
-            data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape, cache_capacity=capacity)
+            data, _ = torchfits.read(test_file, hdu=1, start=start, shape=shape, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
+
+    # --- Test GPU read (if available) ---
+    if torch.cuda.is_available():
+        print("\n--- Testing GPU Read ---")
+        try:
+            start = [0, 1, 0]
+            shape = [2, 1, -1]
+            data, _ = torchfits.read(test_file, hdu=1, start=start, shape=shape, device="cuda")
+            print(f"  Data device: {data.device}")
+        except RuntimeError as e:
+            print(f"  Error reading to GPU: {e}")
+    else:
+        print("\n--- CUDA not available, skipping GPU read test ---")
+
 
 if __name__ == "__main__":
     main()

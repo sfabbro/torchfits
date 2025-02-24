@@ -20,11 +20,13 @@ def create_dummy_fits(data_dir, num_files=10, size=(64, 64)):
 # --- PyTorch Dataset ---
 
 class SimpleFitsDataset(Dataset):
-    def __init__(self, data_dir, cache_capacity=0):  # Add cache_capacity
+    def __init__(self, data_dir, cache_capacity=0, device='cpu'):  # Add cache_capacity and device
         self.data_dir = data_dir
         self.file_list = []
         self.labels = []
-        self.cache_capacity = cache_capacity  # Store cache capacity
+        self.cache_capacity = cache_capacity
+        self.device = device
+
 
         # Find all FITS files in the directory and extract labels
         for filename in os.listdir(data_dir):
@@ -42,11 +44,10 @@ class SimpleFitsDataset(Dataset):
                     # to handle missing/corrupted files.
                     continue #Skip if error.
 
-        #Sort files and labels
+        #Sort files and labels (for reproducibility)
         self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
         self.file_list = list(self.file_list)
         self.labels = list(self.labels)
-
 
     def __len__(self):
         return len(self.file_list)
@@ -56,8 +57,7 @@ class SimpleFitsDataset(Dataset):
         label = self.labels[idx]
 
         try:
-            # Pass cache_capacity to read
-            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity)
+            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity, device=self.device)  # Pass cache and device
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:
                 data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
@@ -82,23 +82,26 @@ def main():
     data_dir = "data_simple_fits"
     create_dummy_fits(data_dir)  # Generate the synthetic data
 
-    # --- Demonstrate different cache capacities ---
-    for capacity in [0, 10, 100]:  # Test with and without caching
-        print(f"\n--- Using cache capacity: {capacity} ---")
+    # --- Demonstrate different cache capacities and devices ---
+    for capacity in [0, 10]:  # Test with and without caching
+        for device in ['cpu', 'cuda'] if torch.cuda.is_available() else ['cpu']:
+            print(f"\n--- Cache Capacity: {capacity}, Device: {device} ---")
 
-        # Create dataset and dataloader, passing cache_capacity
-        dataset = SimpleFitsDataset(data_dir, cache_capacity=capacity)
-        dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=True)
+            # Create dataset and dataloader
+            dataset = SimpleFitsDataset(data_dir, cache_capacity=capacity, device=device)
+            dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=(device=='cuda'))
 
-        # Iterate through a few batches
-        print("Iterating through DataLoader:")
-        for i, (images, labels) in enumerate(dataloader):
-            if images.numel() == 0:  # Handle potential empty batches
-                continue
-            print(f"  Batch {i}:")
-            print(f"    Image shape: {images.shape}")  # e.g., torch.Size([4, 1, 64, 64])
-            print(f"    Labels: {labels}")
-            if i == 2:
-                break #Just show first batches
+            # Iterate through a few batches
+            print("Iterating through DataLoader:")
+            for i, (images, labels) in enumerate(dataloader):
+                #The tensors are already in the correct device, because of torchfits.
+                if images.numel() == 0:
+                    continue
+                print(f"  Batch {i}:")
+                print(f"    Image shape: {images.shape}, Device: {images.device}")  # Show device
+                print(f"    Labels: {labels}, Device: {labels.device}")
+                if i == 2:
+                    break
+
 if __name__ == "__main__":
     main()

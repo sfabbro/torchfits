@@ -86,44 +86,41 @@ public:
 
 private:
     size_t capacity_;
-    std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>> cache_list_;
-    std::unordered_map<std::string, typename std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>>::iterator> cache_map_;
-    std::mutex mutex_;
+    std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>> cache_list_; //List for recency
+    std::unordered_map<std::string, typename std::list<std::pair<std::string, std::shared_ptr<CacheEntry>>>::iterator> cache_map_; //Map to list elements
+    std::mutex mutex_; // Mutex for thread safety
 };
 
-// --- Core Data Reading Logic (Image HDUs) ---
-
-torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
+// --- Core Data Reading Logic  ---
+torch::Tensor read_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs,  torch::Device device) {
     int status = 0;
     int bitpix, naxis, anynul;
-    long long naxes[3] = {1, 1, 1};  // CFITSIO supports up to 999 dimensions
-    long long nelements;
+    long long naxes[3] = {1, 1, 1};
 
     if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) {
         throw_fits_error(status, "Error getting image parameters");
     }
 
-    // Check for supported dimensions (1D, 2D, or 3D)
+     // Check for supported dimensions (1D, 2D, or 3D)
     if (naxis < 1 || naxis > 3) {
         throw std::runtime_error("Unsupported number of dimensions: " + std::to_string(naxis) + ". Only 1D, 2D, and 3D images are supported.");
     }
 
-    nelements = 1;
+    long long nelements = 1;
     for (int i = 0; i < naxis; ++i) {
         nelements *= naxes[i];
     }
 
     // --- WCS Handling ---
-    auto updated_wcs = read_wcs_from_header(fptr); // wcs_utils.cpp
-    if (updated_wcs) {
-        wcs = std::move(updated_wcs);  // Take ownership if WCS is valid
+    auto updated_wcs = read_wcs_from_header(fptr);
+    if(updated_wcs) {
+        wcs = std::move(updated_wcs);
     }
 
     torch::TensorOptions options;
     // Use a macro for code reuse.
     #define READ_AND_RETURN(cfitsio_type, torch_type, data_type) \
-        options = torch::TensorOptions().dtype(torch_type); \
-        /* Create tensor with correct dimensions and order (z,y,x) for Pytorch compatibility*/  \
+        options = torch::TensorOptions().dtype(torch_type).device(device); \
         auto data = torch::empty({(naxis > 2) ? naxes[2] : 1,  \
                                  (naxis > 1) ? naxes[1] : 1,  \
                                  naxes[0]}, options); \
@@ -140,7 +137,7 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
         READ_AND_RETURN(TSHORT, torch::kInt16, int16_t);
     } else if (bitpix == LONG_IMG) {
         READ_AND_RETURN(TINT, torch::kInt32, int32_t);
-     } else if (bitpix == LONGLONG_IMG) {
+    } else if (bitpix == LONGLONG_IMG) {
         READ_AND_RETURN(TLONGLONG, torch::kInt64, int64_t);
     } else if (bitpix == FLOAT_IMG) {
         READ_AND_RETURN(TFLOAT, torch::kFloat32, float);
@@ -153,7 +150,7 @@ torch::Tensor read_image_data(fitsfile* fptr, std::unique_ptr<wcsprm>& wcs) {
 }
 
 // --- Core Data Reading Logic (Binary and ASCII Tables) ---
-std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows_obj) {
+std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::object columns, int start_row, pybind11::object num_rows_obj, torch::Device device) {
     int status = 0;
     int num_cols, typecode;
     long long num_rows_total;
@@ -173,7 +170,7 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::o
             int col_num;
             // fits_get_colnum is case-insensitive.
             if (fits_get_colnum(fptr, CASEINSEN, (char*)col_name.c_str(), &col_num, &status)) {
-                 if (fits_close_file(fptr, &status)) { // Close file
+                if (fits_close_file(fptr, &status)) { // Close file
                     throw_fits_error(status, "Error closing file");
                 }
                 throw_fits_error(status, "Error getting column number for: " + col_name);
@@ -220,7 +217,7 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::o
 
         #define READ_COL_AND_STORE(cfitsio_type, torch_type, data_type) \
             { \
-                auto tensor = torch::empty({n_rows_to_read}, torch::TensorOptions().dtype(torch_type)); \
+                auto tensor = torch::empty({n_rows_to_read}, torch::TensorOptions().dtype(torch_type).device(device)); \
                 data_type* data_ptr = tensor.data_ptr<data_type>(); \
                 if (fits_read_col(fptr, cfitsio_type, col_num, start_row + 1, 1, n_rows_to_read, nullptr, data_ptr, nullptr, &status)) { \
                     throw_fits_error(status, "Error reading column " + col_name_str + " (data type " #cfitsio_type ")"); \
@@ -277,7 +274,7 @@ std::map<std::string, torch::Tensor> read_table_data(fitsfile* fptr, pybind11::o
 pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
                       pybind11::object start, pybind11::object shape,
                       pybind11::object columns, int start_row, pybind11::object num_rows,
-                      size_t cache_capacity) {
+                      size_t cache_capacity, torch::Device device) {
 
     fitsfile* fptr = nullptr;
     int status = 0;
@@ -309,7 +306,7 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
                 throw std::runtime_error("HDU number must be > 0");
             }
         } else if (pybind11::isinstance<pybind11::str>(hdu)) {
-            //CFITSIO handles name
+            // CFITSIO handles named extensions.  Construct full filename.
             filename = filename + "[" + hdu.cast<std::string>() + "]" + cutout_str;
         } else {
             throw std::runtime_error("Invalid 'hdu' argument.  Must be int or str.");
@@ -344,9 +341,10 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         std::stringstream cutout_builder;
         cutout_builder << "[";
         for (size_t i = 0; i < start_list.size(); ++i) {
-             if(shape_list[i] <= 0 && ! (shape_list[i] == -1) ) // Use -1 as None
+            if (shape_list[i] <= 0 && shape_list[i] != -1) {
                 throw std::runtime_error("Shape values must be > 0, or -1 (None)");
-            // Special case: None in shape means read to the end.
+            }
+            // Special case: -1 in shape means read to the end.
             long long start_val = start_list[i] + 1;  // FITS indexing
             long long end_val;
             if (shape_list[i] == -1) {
@@ -382,7 +380,7 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
     std::string cache_key;
     //Create the cache key
     std::stringstream key_builder;
-    key_builder << filename; //Filename is already cutout and hdu aware.
+    key_builder << filename;  // Filename is already cutout and hdu aware.
      // Add column selection to the cache key, if applicable
     if (!columns.is_none()) {
         auto cols_list = columns.cast<std::vector<std::string>>();
@@ -396,8 +394,8 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
          key_builder << "_" << num_rows.cast<long long>();
     }
     cache_key = key_builder.str();
-    std::shared_ptr<CacheEntry> cached_entry = cache->get(cache_key); // Use ->, cache is a pointer
 
+    std::shared_ptr<CacheEntry> cached_entry = cache->get(cache_key);
     if (cached_entry) {
         // Cache hit! Return the cached data.
         if (hdu_type == IMAGE_HDU){ //Cannot determine hdu_type before opening. So, check it here.
@@ -427,7 +425,7 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
 
     if (hdu_type == IMAGE_HDU) {
         auto wcs = read_wcs_from_header(fptr);  // From wcs_utils.cpp
-        new_entry->data = read_image_data(fptr, wcs); // Store the tensor
+        new_entry->data = read_data(fptr, wcs, device); // Store the tensor, pass device
         new_entry->header = read_fits_header(fptr);  // From fits_utils.cpp. Store the header.
           if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
@@ -441,7 +439,6 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
         }
-
         //Combine the map into a single tensor (required by the cache)
         if (table_data.size() > 0){
             int i = 0;
@@ -450,9 +447,9 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
                     //Check if tensor is string
                     if(pybind11::isinstance<pybind11::list>(val))
                         break; //For strings we do nothing.
-                    new_entry->data = torch::empty({int(table_data.size()), val.size(0)},val.options());
+                    new_entry->data = torch::empty({int(table_data.size()), val.size(0)},val.options().device(device)); // Pass device
                 }
-                new_entry->data[i] = val; //Copy to the tensor
+                new_entry->data[i] = val.to(device); //Copy to the tensor, to device
                 i++;
             }
         }

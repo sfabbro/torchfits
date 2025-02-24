@@ -105,5 +105,16 @@ def main():
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
 
+    # --- Test GPU read (if available) ---
+    if torch.cuda.is_available():
+        print("\n--- Testing GPU Read ---")
+        try:
+            data, _ = torchfits.read(image_file,  device="cuda")
+            print(f"  Data device: {data.device}")
+        except RuntimeError as e:
+            print(f"  Error reading to GPU: {e}")
+    else:
+        print("\n--- CUDA not available, skipping GPU read test ---")
+
 if __name__ == "__main__":
     main()

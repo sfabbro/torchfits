@@ -15,9 +15,10 @@ def create_test_file(filename):
             'id': np.array([1, 2, 3], dtype=np.int32),
             'comments': np.array(["This is star 1", "This is star 2", "This is star 3"], dtype='U20'),
             'flag': np.array([True, False, True], dtype=bool) #Boolean col
+
         }
         table = Table(data)
-        hdu = fits.BinTableHDU(table, name="MY_TABLE") #Added name
+        hdu = fits.BinTableHDU(table, name="MY_TABLE")
         hdu.writeto(filename, overwrite=True)
 
 def main():
@@ -67,9 +68,20 @@ def main():
         try:
             table_data = torchfits.read(test_file, hdu=1, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
-            print(f"  Number of Columns: {len(table_data)}")
+            print(f"  Number of Columns: {len(table_data)}") # Just print the number of columns
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
+
+    # --- Test GPU read (if available) ---
+    if torch.cuda.is_available():
+        print("\n--- Testing GPU Read ---")
+        try:
+            table_data = torchfits.read(test_file, hdu=1, device="cuda")
+            print(f"  Data device, first column: {table_data['ra'].device}")
+        except RuntimeError as e:
+            print(f"  Error reading to GPU: {e}")
+    else:
+        print("\n--- CUDA not available, skipping GPU read test ---")
 
 if __name__ == "__main__":
     main()

@@ -9,34 +9,20 @@ import torch.nn.functional as F
 import torch.optim as optim
 from astropy.io import fits
 from tqdm import tqdm
+import fsspec  # Import fsspec
 
 # --- Data Download and Caching ---
 
-def download_sdss_spectrum(plate, mjd, fiberid, base_url, save_dir):
-    """Downloads an SDSS spectrum FITS file."""
-    filename = f"spec-{plate:04}-{mjd}-{fiberid:04}.fits"
-    filepath = os.path.join(save_dir, filename)
-    url = f"{base_url}/{plate:04}/{filename}"
-
-    if not os.path.exists(filepath):
-        print(f"Downloading {url}...")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()  # Raise an exception for bad status codes
-
-        with open(filepath, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-    else:
-        print(f"File already exists: {filepath}")
-    return filepath
+#No need of download function now
 
 # --- PyTorch Dataset ---
 
 class SDSSDataset(Dataset):
-    def __init__(self, file_list, label_map, cache_capacity=0): # Add cache
+    def __init__(self, file_list, label_map, cache_capacity=0, device='cpu'): # Add cache and device
         self.file_list = file_list
         self.label_map = label_map  # Dictionary mapping class strings to integer labels
         self.cache_capacity = cache_capacity # Add cache capacity
+        self.device = device # Add device
 
     def __len__(self):
         return len(self.file_list)
@@ -46,7 +32,7 @@ class SDSSDataset(Dataset):
         try:
             # Read the spectrum data (flux) and the class (from header or table).
             # Assuming the flux is in HDU 1 and class is in HDU 2, 'CLASS' keyword.
-            data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity) # Pass cache capacity
+            data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity, device=self.device) # Pass cache and device
             flux = data['flux'] # A torch Tensor
 
             # You could get the header using torchfits, and extract the CLASS keyword
@@ -74,7 +60,7 @@ class SDSSDataset(Dataset):
         Get wavelengths, for plotting proposes
         """
         filename = self.file_list[idx]
-        data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity)
+        data = torchfits.read(filename, hdu=2, cache_capacity=self.cache_capacity, device=self.device)
         return data['loglam']
 
 
@@ -109,7 +95,12 @@ def collate_fn(batch):
 # --- Main Script ---
 
 def main():
-    base_url = "https://dr17.sdss.org/sas/dr17/sdss/spectro/redux/v5_13_2/spectra/lite"  # Example URL
+    # Instead of base_url
+    fs_params = {  # Example using HTTPS.  Could also use s3://, gcs://, etc.
+        'protocol': 'https',
+        'host': 'dr17.sdss.org',
+        'path': 'sas/dr17/sdss/spectro/redux/v5_13_2/spectra/lite'
+    }
     data_dir = "data_sdss"
     os.makedirs(data_dir, exist_ok=True)
 
@@ -121,21 +112,42 @@ def main():
         (334, 51689, 5) #STAR
     ]
 
-    # Download files
+   # Download files (using fsspec-constructed URLs) and create file list.
     file_list = []
     for plate, mjd, fiberid in spectra_to_download:
-        file_path = download_sdss_spectrum(plate, mjd, fiberid, base_url, data_dir)
-        file_list.append(file_path)
+        filename = f"spec-{plate:04}-{mjd}-{fiberid:04}.fits"
+        filepath = os.path.join(data_dir, filename)
+        # Construct the URL using fsspec parameters
+        fs_params['path'] = os.path.join(fs_params['path'], f"{plate:04}", filename)
+        # Use fsspec to create url.
+        fs = fsspec.filesystem(fs_params['protocol'], host=fs_params['host'])
+        url = fs.unstrip_protocol(fs._unexpand(fs_params['host'], fs_params['path'], recursive=True))
 
+        if not os.path.exists(filepath):
+            print(f"Downloading {url}...")
+            try:
+              with fsspec.open(url, mode='rb') as f_remote, open(filepath, 'wb') as f_local:
+                f_local.write(f_remote.read()) #Read and store locally
+            except Exception as e:
+                print(f"Error downloading {url}: {e}")
+                continue #If cannot download, continue
+        else:
+            print(f"File already exists: {filepath}")
+
+        file_list.append(filepath) # Append the *local* file path
 
     # Define class labels
     label_map = {"STAR": 0, "GALAXY": 1, "QSO": 2}
     num_classes = len(label_map)
 
+    # --- Device Selection ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     # Create Dataset and DataLoader.  Demonstrate different cache sizes.
     print("--- Training with cache_capacity=10 ---")
-    dataset = SDSSDataset(file_list, label_map, cache_capacity=10)
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=True)
+    dataset = SDSSDataset(file_list, label_map, cache_capacity=10, device=device) # Pass cache and device
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
     #Get wavelengths, assuming they are the same
     wavelengths = np.power(10, dataset.get_wavelength(0).numpy())
 
@@ -149,7 +161,7 @@ def main():
 
 
     # Initialize model, loss, and optimizer
-    model = SimpleCNN(input_size, num_classes)
+    model = SimpleCNN(input_size, num_classes).to(device)  # Move model to device
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -162,6 +174,11 @@ def main():
             # Skip if the batch is empty (due to None values)
             if inputs.numel() == 0:
                 continue
+
+            # Move data to the device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -182,6 +199,11 @@ def main():
             # Skip if the batch is empty (due to None values)
             if inputs.numel() == 0:
                 continue
+
+            # Move data to the device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1) # Get predicted class
             total += labels.size(0)
@@ -213,11 +235,11 @@ def main():
 
     # --- Now, demonstrate training *without* caching ---
     print("\n--- Training with cache_capacity=0 (no caching) ---")
-    dataset_no_cache = SDSSDataset(file_list, label_map, cache_capacity=0)  # No cache
-    dataloader_no_cache = DataLoader(dataset_no_cache, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn)
+    dataset_no_cache = SDSSDataset(file_list, label_map, cache_capacity=0, device=device)  # No cache
+    dataloader_no_cache = DataLoader(dataset_no_cache, batch_size=2, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
 
     # Re-initialize the model (so we start from scratch)
-    model = SimpleCNN(input_size, num_classes)
+    model = SimpleCNN(input_size, num_classes).to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     for epoch in range(num_epochs):
@@ -226,6 +248,11 @@ def main():
         for i, (inputs, labels) in enumerate(tqdm(dataloader_no_cache, desc=f"Epoch {epoch+1}/{num_epochs}")):
             if inputs.numel() == 0:
                 continue
+
+            # Move data to the device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -234,7 +261,6 @@ def main():
             running_loss += loss.item()
         print(f"Epoch {epoch+1}, Loss: {running_loss / len(dataloader_no_cache):.4f}")
     print("Training finished (no cache)!")
-
 
 if __name__ == "__main__":
     main()

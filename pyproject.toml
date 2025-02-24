@@ -4,32 +4,54 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torchfits"
-version = "0.1.0"  # MATCH THE VERSION IN version.py
+version = "0.1.0"  # MATCH THE VERSION IN version.py!
 authors = [
-    {name = "Your Name", email = "sebfabbro@gmail.com"},
+    {name = "Sébastien Fabbro", email = "sebfabbro@gmail.com"},
 ]
 description = "A fast FITS reader for PyTorch, optimized for cutout extraction."
 readme = "README.md"
-requires-python = ">=3.10"  # Adjust as needed
+requires-python = ">=3.10"  # Python 3.10 or greater
 license = {file = "LICENSE"}
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",  # Or your chosen license
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "torch>=2",  # Specify minimum PyTorch version
-  "fsspec",       # for remote files
-  "numpy",        # NumPy is a dependency
-  "astropy",      # Required for test and examples
-  "requests",     # For downloading data in examples
-  "tqdm",         # For progress bars in examples
+  "torch>=1.10",  # Specify minimum PyTorch version
 ]
 
 [project.urls]
 Homepage = "https://github.com/sfabbro/torchfits"
+
+[project.optional-dependencies] #Define optional dependencies
+dev = [
+    "pytest",      # For running tests
+    "pytest-cov",  # For coverage reporting (optional, but recommended)
+    "flake8",      # Linter
+    "pylint",      # Linter
+    "black",      # Code formatter
+    "isort",      # Import sorter
+    "mypy",       # Static type checker (highly recommended!)
+]
+examples = [
+    "numpy",        # NumPy is used in examples and tests
+    "astropy",    # For creating test FITS files and examples
+    "requests",   # For downloading data in examples
+    "tqdm",        # For progress bars in examples
+    "pandas",      # For the Galaxy10 example
+    "matplotlib", # For plotting in examples
+    "torchvision", # For MNIST
+    "fsspec>=2021.06.0" #For url handling
+]
+remote = [
+    "fsspec>=2021.06.0",
+    "s3fs",            # If you want to support S3 directly
+    "gcsfs",           # If you want to support Google Cloud Storage
+    # Add other fsspec backends as needed
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -39,7 +61,6 @@ where = ["src"]
 
 [tool.setuptools.dist]
 include-package-data = false
-
 
 [tool.setuptools.extension]
 "torchfits.fits_reader" = {sources = [
@@ -54,3 +75,4 @@ include-package-data = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=torchfits --cov-report term-missing"  # Enable coverage reporting

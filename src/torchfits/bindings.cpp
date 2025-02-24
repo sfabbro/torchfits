@@ -34,7 +34,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "    columns (list[str], optional): List of column names to read from a table. Reads all if None.\n"
           "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
           "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n"
-          "    cache_capacity (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB).\n\n"
+          "    cache_capacity (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB).\n"
+          "    device (str, optional): Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.\n\n"
           "Returns:\n"
           "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch::Tensor]]:\n"
           "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
@@ -46,7 +47,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("columns") = py::none(),
           py::arg("start_row") = 0,  // Default value
           py::arg("num_rows") = py::none(),
-          py::arg("cache_capacity") = 0  // Default cache capacity.  0 means automatic.
+          py::arg("cache_capacity") = 0,  // Default cache capacity.  0 means automatic.
+          py::arg("device") = "cpu" //Default device
     );
 
 

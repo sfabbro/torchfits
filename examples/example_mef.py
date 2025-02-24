@@ -1,4 +1,3 @@
-# examples/example_mef.py
 import torchfits
 import numpy as np
 import os
@@ -42,7 +41,7 @@ def main():
                     data, _ = torchfits.read(test_file, hdu=i)  # Read by index
                     print(f"  Data shape: {data.shape}")
                 elif hdu_type == "BINTABLE":
-                    table = torchfits.read(test_file, hdu=i) # Read by index
+                    table = torchfits.read(test_file, hdu=i)  # Read by index
                     print(f"  Table columns: {list(table.keys())}")
 
             except RuntimeError as e:
@@ -59,13 +58,24 @@ def main():
 
         # --- Test different cache capacities ---
         print("\n--- Testing with different cache capacities ---")
-        for capacity in [0, 10, 100]:
+        for capacity in [0, 10]:
             try:
                 data, _ = torchfits.read(test_file, hdu="SCI", cache_capacity=capacity)
                 print(f"\nCache Capacity: {capacity}")
                 print(f"  Data shape: {data.shape}")
             except RuntimeError as e:
                 print(f"  Error with cache_capacity={capacity}: {e}")
+
+        # --- Test GPU read (if available) ---
+        if torch.cuda.is_available():
+            print("\n--- Testing GPU Read ---")
+            try:
+                data, _ = torchfits.read(test_file, hdu="SCI", device="cuda")
+                print(f"  Data device: {data.device}")
+            except RuntimeError as e:
+                print(f"  Error reading to GPU: {e}")
+        else:
+            print("\n--- CUDA not available, skipping GPU read test ---")
 
 
     except RuntimeError as e:
