@@ -446,5 +446,91 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(status.shape, (2,))
         self.assertTrue(np.allclose(world_coords.numpy(), [[202.5, 47.5], [202.501, 47.501]], atol=1e-2))
 
+    def test_detailed_error_handling(self):
+        # Test detailed error handling in the read function
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.image_file, hdu=1, start=[0, 0], shape=[-1, -1])  # Invalid shape
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.image_file, hdu=1, start=[0, 0], shape=[10, 10, 10])  # Dimension mismatch
+        with self.assertRaises(RuntimeError):
+            torchfits.read(self.image_file, hdu=1, start=[0, 0, 0], shape=[10, 10])  # Dimension mismatch
+
+    def test_variable_length_arrays(self):
+        # Test support for variable-length arrays in the read_table_data function
+        table_file = os.path.join(self.test_dir, "test_varlen_table.fits")
+        col1 = np.array([1, 2, 3], dtype=np.int32)
+        col2 = np.array([np.array([1.0, 2.0]), np.array([3.0, 4.0, 5.0]), np.array([6.0])], dtype=object)
+        col3 = np.array([np.array(['a', 'b']), np.array(['c', 'd', 'e']), np.array(['f'])], dtype=object)
+        table = Table([col1, col2, col3], names=('col1', 'col2', 'col3'))
+        table.write(table_file, overwrite=True)
+
+        table_data = torchfits.read(table_file, hdu=1)
+        self.assertTrue(isinstance(table_data, dict))
+        self.assertEqual(set(table_data.keys()), {'col1', 'col2', 'col3'})
+        self.assertTrue(np.array_equal(table_data['col1'].numpy(), col1))
+        self.assertTrue(np.array_equal(table_data['col2'], col2))
+        self.assertTrue(np.array_equal(table_data['col3'], col3))
+
+    def test_cache_clearing_mechanism(self):
+        # Test the cache clearing mechanism in the LRUCache class
+        torchfits._clear_cache()
+        test_file = os.path.join(self.test_dir, "cache_clear_test.fits")
+        data = np.arange(100, dtype=np.float32).reshape(10, 10)
+        hdu = fits.PrimaryHDU(data)
+        hdu.writeto(test_file, overwrite=True)
+
+        cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        cutout2, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout2.numpy()))  # Verify data
+
+        torchfits._clear_cache()
+        cutout3, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        self.assertTrue(np.allclose(cutout1.numpy(), cutout3.numpy()))  # Verify data
+
+    def test_handling_all_wcs_keywords(self):
+        # Test handling all possible WCS keywords in the world_to_pixel and pixel_to_world functions
+        wcs_file = os.path.join(self.test_dir, "test_wcs_keywords.fits")
+        data = np.arange(100, dtype=np.float32).reshape(10, 10)
+        hdu = fits.PrimaryHDU(data)
+        hdu.header['CTYPE1'] = 'RA---TAN'
+        hdu.header['CTYPE2'] = 'DEC--TAN'
+        hdu.header['CRVAL1'] = 202.5
+        hdu.header['CRVAL2'] = 47.5
+        hdu.header['CRPIX1'] = 5.0
+        hdu.header['CRPIX2'] = 5.0
+        hdu.header['CDELT1'] = -0.001
+        hdu.header['CDELT2'] = 0.001
+        hdu.header['PC1_1'] = 1.0
+        hdu.header['PC1_2'] = 0.0
+        hdu.header['PC2_1'] = 0.0
+        hdu.header['PC2_2'] = 1.0
+        hdu.writeto(wcs_file, overwrite=True)
+
+        world_coords = torch.tensor([[202.5, 47.5], [202.501, 47.501]], dtype=torch.float64)
+        header = torchfits.get_header(wcs_file, 1)
+        pixel_coords, status = torchfits.world_to_pixel(world_coords, header)
+        self.assertEqual(pixel_coords.shape, (2, 2))
+        self.assertEqual(status.shape, (2,))
+        self.assertTrue(np.allclose(pixel_coords.numpy(), [[5.0, 5.0], [5.1, 5.1]], atol=1e-2))
+
+        pixel_coords = torch.tensor([[5.0, 5.0], [5.1, 5.1]], dtype=torch.float64)
+        world_coords, status = torchfits.pixel_to_world(pixel_coords, header)
+        self.assertEqual(world_coords.shape, (2, 2))
+        self.assertEqual(status.shape, (2,))
+        self.assertTrue(np.allclose(world_coords.numpy(), [[202.5, 47.5], [202.501, 47.501]], atol=1e-2))
+
+    def test_comprehensive_error_messages(self):
+        # Test comprehensive error messages in the get_header, get_dims, get_header_value, get_hdu_type, and get_num_hdus functions
+        with self.assertRaises(RuntimeError):
+            torchfits.get_header("nonexistent.fits", 1)
+        with self.assertRaises(RuntimeError):
+            torchfits.get_dims("nonexistent.fits", 1)
+        with self.assertRaises(RuntimeError):
+            torchfits.get_header_value("nonexistent.fits", 1, "CRVAL1")
+        with self.assertRaises(RuntimeError):
+            torchfits.get_hdu_type("nonexistent.fits", 1)
+        with self.assertRaises(RuntimeError):
+            torchfits.get_num_hdus("nonexistent.fits")
+
 if __name__ == '__main__':
     unittest.main()
