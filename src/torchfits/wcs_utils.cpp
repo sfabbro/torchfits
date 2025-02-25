@@ -95,7 +95,7 @@ std::pair<torch::Tensor, torch::Tensor> world_to_pixel(const torch::Tensor& worl
     if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {
         wcs_ptr = std::unique_ptr<wcsprm>(wcs);
     } else {
-            wcsfree(wcs, &nwcs); //Free memory, since there is an error
+        wcsfree(wcs, &nwcs); //Free memory, since there is an error
         throw std::runtime_error("WCS parsing failed in world_to_pixel.");
     }
     //End reconstruction
