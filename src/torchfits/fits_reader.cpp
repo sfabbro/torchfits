@@ -437,8 +437,12 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         auto wcs = read_wcs_from_header(fptr);  // From wcs_utils.cpp
         new_entry->data = read_data(fptr, wcs, device); // Store the tensor, pass device
         new_entry->header = read_fits_header(fptr);  // From fits_utils.cpp. Store the header.
-          if (fits_close_file(fptr, &status)) { // Close file
+        if (fits_close_file(fptr, &status)) { // Close file
            throw_fits_error(status, "Error closing file");
+        }
+        // Check for empty primary HDU
+        if (new_entry->data.numel() == 0) {
+            new_entry->data = pybind11::none();
         }
         cache->put(cache_key, new_entry); //Cache it. Use ->
         return pybind11::make_tuple(new_entry->data, new_entry->header);  // Return tuple for images
