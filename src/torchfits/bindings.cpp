@@ -108,4 +108,23 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             cache->clear();
         }
     }, "Clears the internal cache (for testing).");
+
+    // Expose the new functions for world-to-pixel and pixel-to-world coordinate transformations
+    m.def("world_to_pixel", &world_to_pixel,
+          "Convert world coordinates to pixel coordinates using WCS information from the header.\n\n"
+          "Args:\n"
+          "    world_coords (torch.Tensor): Tensor of world coordinates.\n"
+          "    header (dict): FITS header dictionary containing WCS information.\n\n"
+          "Returns:\n"
+          "    Tuple[torch.Tensor, torch.Tensor]: A tuple (pixel_coords, status) where pixel_coords is a tensor of pixel coordinates and status is a tensor of status codes.",
+          py::arg("world_coords"), py::arg("header"));
+
+    m.def("pixel_to_world", &pixel_to_world,
+          "Convert pixel coordinates to world coordinates using WCS information from the header.\n\n"
+          "Args:\n"
+          "    pixel_coords (torch.Tensor): Tensor of pixel coordinates.\n"
+          "    header (dict): FITS header dictionary containing WCS information.\n\n"
+          "Returns:\n"
+          "    Tuple[torch.Tensor, torch.Tensor]: A tuple (world_coords, status) where world_coords is a tensor of world coordinates and status is a tensor of status codes.",
+          py::arg("pixel_coords"), py::arg("header"));
 }
