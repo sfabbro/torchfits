@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <pybind11/stl.h> // Make sure this is included!
+#include <fsspec.h> // Include fsspec for remote file support
 
 // --- Cross-Platform Memory Check ---
 #ifdef _WIN32
@@ -300,6 +301,15 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         cutout_str = "";
     }
 
+    // --- Remote File Handling ---
+    if (pybind11::isinstance<pybind11::dict>(filename_or_url)) {
+        auto fsspec_params = filename_or_url.cast<std::map<std::string, std::string>>();
+        std::string protocol = fsspec_params["protocol"];
+        std::string host = fsspec_params["host"];
+        std::string path = fsspec_params["path"];
+        std::string url = protocol + "://" + host + "/" + path;
+        filename = url;
+    }
 
     // --- HDU Handling ---
     if (!hdu.is_none()) {
@@ -311,7 +321,7 @@ pybind11::object read(pybind11::object filename_or_url, pybind11::object hdu,
         } else if (pybind11::isinstance<pybind11::str>(hdu)) {
             filename = filename + "[" + hdu.cast<std::string>() + "]" + cutout_str;
         } else {
-            throw std::runtime_error("Invalid 'hdu' argument.  Must be int or str.");
+            throw std::runtime_runtime_error("Invalid 'hdu' argument.  Must be int or str.");
         }
     }  else { //If not, append cutout if exists
         filename = filename + cutout_str;

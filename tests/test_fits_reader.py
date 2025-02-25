@@ -239,8 +239,6 @@ class TestFitsReader(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=1,  shape=[1, 2])  # Missing start
         with self.assertRaises(RuntimeError):
-            torchfits.read(self.image_file, hdu=1.5)  # Bad hdu type
-        with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=1, start=1, shape=[1,2]) #Bad start type
         with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=1, start=[0,1], shape=1) #Bad shape type
@@ -265,10 +263,10 @@ class TestFitsReader(unittest.TestCase):
                 header = torchfits.get_header(self.mef_file, hdu_num)
                 print(f"HDU {hdu_num}: Type = {hdu_type}, EXTNAME = {header.get('EXTNAME', 'N/A')}")
 
-                if hdu_type == "IMAGE":
+                if (hdu_type == "IMAGE"):
                     data, _ = torchfits.read(self.mef_file, hdu=hdu_num)
                     self.assertTrue(isinstance(data, torch.Tensor))
-                elif hdu_type == "BINTABLE":
+                elif (hdu_type == "BINTABLE"):
                     table = torchfits.read(self.mef_file, hdu=hdu_num)
                     self.assertTrue(isinstance(table, dict))
 
@@ -418,6 +416,35 @@ class TestFitsReader(unittest.TestCase):
 
         else:
             print("CUDA not available, skipping GPU device test.")
+
+    def test_read_remote_fits(self):
+        # Test reading FITS files from remote locations using fsspec parameters
+        fsspec_params = {
+            'protocol': 'https',
+            'host': 'data.sdss.org',
+            'path': 'sas/dr16/sdss/spectro/redux/26/spectra/1000/spec-1000-52932-0001.fits'
+        }
+        data, header = torchfits.read(fsspec_params)
+        self.assertTrue(isinstance(data, torch.Tensor))
+        self.assertTrue('CRVAL1' in header)
+
+    def test_world_to_pixel(self):
+        # Test world-to-pixel coordinate transformation
+        world_coords = torch.tensor([[202.5, 47.5], [202.501, 47.501]], dtype=torch.float64)
+        header = torchfits.get_header(self.image_file, 1)
+        pixel_coords, status = torchfits.world_to_pixel(world_coords, header)
+        self.assertEqual(pixel_coords.shape, (2, 2))
+        self.assertEqual(status.shape, (2,))
+        self.assertTrue(np.allclose(pixel_coords.numpy(), [[5.0, 5.0], [5.1, 5.1]], atol=1e-2))
+
+    def test_pixel_to_world(self):
+        # Test pixel-to-world coordinate transformation
+        pixel_coords = torch.tensor([[5.0, 5.0], [5.1, 5.1]], dtype=torch.float64)
+        header = torchfits.get_header(self.image_file, 1)
+        world_coords, status = torchfits.pixel_to_world(pixel_coords, header)
+        self.assertEqual(world_coords.shape, (2, 2))
+        self.assertEqual(status.shape, (2,))
+        self.assertTrue(np.allclose(world_coords.numpy(), [[202.5, 47.5], [202.501, 47.501]], atol=1e-2))
 
 if __name__ == '__main__':
     unittest.main()

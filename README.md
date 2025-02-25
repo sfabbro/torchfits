@@ -148,6 +148,37 @@ The examples that use external datasets will automatically download and cache th
 *   **`torchfits.get_num_hdus(filename)`:** Returns the total number of HDUs in the FITS file.
     *   `filename` (str): Path to the FITS file.
 
+*   **`torchfits.world_to_pixel(world_coords, header)`:** Converts world coordinates to pixel coordinates using WCS information from the header.
+    *   `world_coords` (torch.Tensor): Tensor of world coordinates.
+    *   `header` (dict): FITS header dictionary containing WCS information.
+    *   Returns: A tuple `(pixel_coords, status)` where `pixel_coords` is a tensor of pixel coordinates and `status` is a tensor of status codes.
+
+*   **`torchfits.pixel_to_world(pixel_coords, header)`:** Converts pixel coordinates to world coordinates using WCS information from the header.
+    *   `pixel_coords` (torch.Tensor): Tensor of pixel coordinates.
+    *   `header` (dict): FITS header dictionary containing WCS information.
+    *   Returns: A tuple `(world_coords, status)` where `world_coords` is a tensor of world coordinates and `status` is a tensor of status codes.
+
+## Reading Remote FITS Files
+
+`torchfits` supports reading FITS files from remote locations using `fsspec` parameters. This allows you to read FITS files directly from cloud storage or other remote sources without downloading them first.
+
+### Example
+
+```python
+import torchfits
+
+# Define fsspec parameters for reading a remote FITS file
+fsspec_params = {
+    'protocol': 'https',
+    'host': 'example.com',
+    'path': 'path/to/remote_file.fits'
+}
+
+# Read the remote FITS file
+data, header = torchfits.read(fsspec_params)
+
+print(f"Data shape: {data.shape}, Header: {header}")
+```
 
 ## Contributing
 Contributions are welcome! Traditional GitHub contributions style welcome.
