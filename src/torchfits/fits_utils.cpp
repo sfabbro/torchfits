@@ -102,16 +102,16 @@ std::vector<long long> _get_hdu_dims(const std::string& filename, int hdu_num) {
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
     if (fits_movabs_hdu(fptr, hdu_num, nullptr, &status)) { //Move to HDU
-        if (fits_close_file(fptr, &status)) { // Close file
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
         }
-        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
     if (fits_get_img_paramll(fptr, 3, &bitpix, &naxis, naxes, &status)) { //Get dimensions
-        if (fits_close_file(fptr, &status)) { // Close file
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error getting image parameters");
         }
-        throw_fits_error(status, "Error getting image parameters");
     }
     if (fits_close_file(fptr, &status)) { //Always close
         throw_fits_error(status, "Error closing FITS file");
@@ -131,21 +131,21 @@ std::string get_header_value(const std::string& filename, int hdu_num, const std
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
     if (fits_movabs_hdu(fptr, hdu_num, nullptr, &status)) { //Move to HDU
-        if (fits_close_file(fptr, &status)) { // Close file
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
         }
-        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
 
     // Use fits_read_key_str for string values. Handles quoting and trimming.
     if (fits_read_key_str(fptr, key.c_str(), value, nullptr, &status)) {
-         if (fits_close_file(fptr, &status)) { // Close file
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            if (status == KEY_NO_EXIST) {
+                return "";  // Key not found, return empty string.
+            }
+            throw_fits_error(status, "Error reading header key: " + key);
         }
-        if (status == KEY_NO_EXIST) {
-            return "";  // Key not found, return empty string.
-        }
-        throw_fits_error(status, "Error reading header key: " + key);
     }
     if (fits_close_file(fptr, &status)) { //Always close
         throw_fits_error(status, "Error closing FITS file");
@@ -164,10 +164,10 @@ std::string get_hdu_type(const std::string& filename, int hdu_num) {
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
     if (fits_movabs_hdu(fptr, hdu_num, &hdu_type, &status)) { //Move to HDU
-        if (fits_close_file(fptr, &status)) { // Close file
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
         }
-        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
     if (fits_close_file(fptr, &status)) { //Always close
         throw_fits_error(status, "Error closing FITS file");
@@ -195,10 +195,10 @@ int get_num_hdus(const std::string& filename) {
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
     if (fits_get_num_hdus(fptr, &num_hdus, &status)) {
-        if (fits_close_file(fptr, &status)) {
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error getting number of HDUs");
         }
-        throw_fits_error(status, "Error getting number of HDUs");
     }
     if (fits_close_file(fptr, &status)) { //Always close
         throw_fits_error(status, "Error closing FITS file");
@@ -216,10 +216,10 @@ std::map<std::string, std::string> get_header(const std::string& filename, int h
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
     if (fits_movabs_hdu(fptr, hdu_num, nullptr, &status)) {
-        if (fits_close_file(fptr, &status)) {
-           throw_fits_error(status, "Error closing file");
+        if (status) {
+            fits_close_file(fptr, &status); // Close file
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
         }
-        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
 
     //Call to the function to read the header
