@@ -1,8 +1,13 @@
 import os
 import subprocess
-from setuptools import setup, Extension
-from setuptools.command.build_ext import build_ext
-from torch.utils.cpp_extension import include_paths
+from setuptools import setup
+from torch.utils.cpp_extension import BuildExtension, CppExtension
+
+debug_mode = os.environ.get('DEBUG', '0') == '1'
+
+extra_compile_args = ['-std=c++17']
+if debug_mode:
+    extra_compile_args.extend(['-DDEBUG', '-g'])
 
 
 def get_wcslib_version():
@@ -143,54 +148,24 @@ def get_wcslib_library_path():
 
 
 
-class CustomBuildExt(build_ext):
-    """Custom build_ext command to dynamically set WCSLIB_VERSION and include/lib paths."""
-
-    def build_extensions(self):
-        wcslib_version = get_wcslib_version()
-        cfitsio_include_dir = get_cfitsio_include_path()
-        cfitsio_library_dir = get_cfitsio_library_path()
-        wcslib_include_dir = get_wcslib_include_path()
-        wcslib_library_dir = get_wcslib_library_path()
-
-
-        for ext in self.extensions:
-            ext.extra_compile_args.append(f"-DWCSLIB_VERSION={wcslib_version}")
-            # Add C++17 support *here* (most reliable place):
-            ext.extra_compile_args.append("-std=c++17")
-
-            if cfitsio_include_dir:
-                ext.include_dirs.append(cfitsio_include_dir)
-            if wcslib_include_dir:
-                ext.include_dirs.append(wcslib_include_dir)
-            if cfitsio_library_dir:
-                ext.library_dirs.append(cfitsio_library_dir)
-            if wcslib_library_dir:
-                ext.library_dirs.append(wcslib_library_dir)
-
-            # Add PyTorch include paths:
-            ext.include_dirs += include_paths()  # Use torch.utils.cpp_extension
-
-        super().build_extensions()
-
 # --- Extension Definition ---
 ext_modules = [
-    Extension(
-        "torchfits.fits_reader",  # Fully qualified name!
+    CppExtension(
+        "torchfits.fits_reader",
         sources=[
             "src/torchfits/fits_reader.cpp",
             "src/torchfits/fits_utils.cpp",
             "src/torchfits/wcs_utils.cpp",
             "src/torchfits/bindings.cpp"
         ],
-        include_dirs=["src/torchfits"],  # Add include directory
+        include_dirs=["src/torchfits"],
         libraries=["cfitsio", "wcs", "m"],
-        extra_compile_args=["-std=c++17"],  # Also add it here for redundancy/clarity
+        extra_compile_args=extra_compile_args,
         language="c++",
     ),
 ]
 
 setup(
     ext_modules=ext_modules,
-    cmdclass={'build_ext': CustomBuildExt},
+    cmdclass={'build_ext': BuildExtension},
 )

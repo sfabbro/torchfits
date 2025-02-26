@@ -4,44 +4,19 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> // For std::vector, std::map, etc.
 #include <pybind11/numpy.h> // Not strictly required, but good practice
+#include <torch/extension.h>
 
 namespace py = pybind11;
 
-// Need to define this here, *before* we use LRUCache,
-// since it's used by the cache.
-struct CacheEntry {
-    torch::Tensor data;
-    std::map<std::string, std::string> header;
-};
-
-// Forward declare the LRUCache (so we can use it in _clear_cache)
-class LRUCache {
-public:
-  LRUCache(size_t capacity) {} // Dummy constructor
-  void clear() {} // Dummy
-};
-//Keep reference to the static cache, for the _clear_cache function
-static std::unique_ptr<LRUCache> cache = nullptr;
-
-
+// Add this type alias to make the function type clear
+using ReadFunc = pybind11::object (*)(
+    pybind11::object, pybind11::object, pybind11::object, 
+    pybind11::object, pybind11::object, int, 
+    pybind11::object, size_t, torch::Device
+);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("read", &read,
-          "Read FITS data (image or table) with optional cutout, HDU selection, column selection and row selection.\n\n"
-          "Args:\n"
-          "    filename_or_url (str or dict): Path to the FITS file, or a dictionary with fsspec parameters, or a CFITSIO-compatible URL.\n"
-          "    hdu (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies it.\n"
-          "    start (list[int], optional): Starting pixel coordinates (0-based) for a cutout.\n"
-          "    shape (list[int], optional): Shape of the cutout. Use -1 for a dimension to read to the end.\n"
-          "    columns (list[str], optional): List of column names to read from a table. Reads all if None.\n"
-          "    start_row (int, optional): Starting row index (0-based) for table reads. Defaults to 0.\n"
-          "    num_rows (int, optional): Number of rows to read from a table. Reads all remaining if None.\n"
-          "    cache_capacity (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB).\n"
-          "    device (str, optional): Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.\n\n"
-          "Returns:\n"
-          "    Union[Tuple[torch.Tensor, Dict[str, str]], Dict[str, torch::Tensor]]:\n"
-          "        A tuple (data, header) for image/cube HDUs, or a dictionary for table HDUs."
-          ,
+    m.def("read", &read_impl,
           py::arg("filename_or_url"),
           py::arg("hdu") = py::none(),
           py::arg("start") = py::none(),
@@ -50,18 +25,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("start_row") = 0,
           py::arg("num_rows") = py::none(),
           py::arg("cache_capacity") = 0,
-          py::arg("device") = "cpu" // String default for ease of use
+          py::arg("device") = torch::Device("cpu")
     );
 
-
-    m.def("get_header", &get_header,
-          "Get the FITS header as a dictionary.\n\n"
-          "Args:\n"
-          "    filename (str): Path to the FITS file.\n"
-          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
-          "Returns:\n"
-          "    Dict[str, str]: A dictionary of header keywords and values.",
-          py::arg("filename"), py::arg("hdu_num"));
+    m.def("get_header", [](const std::string& filename, py::object hdu_spec) {
+        if (py::isinstance<py::str>(hdu_spec)) {
+            // Handle HDU name
+            return get_header_by_name(filename, hdu_spec.cast<std::string>());
+        } else {
+            // Handle HDU number
+            return get_header_by_number(filename, hdu_spec.cast<int>());
+        }
+    }, "Get FITS header as dictionary", py::arg("filename"), py::arg("hdu_num"));
 
     m.def("get_dims", &get_dims,
           "Get the dimensions of a FITS image/cube.\n\n"
@@ -82,14 +57,35 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "    str: The value of the keyword (empty string if not found).",
           py::arg("filename"), py::arg("hdu_num"), py::arg("key"));
 
-    m.def("get_hdu_type", &get_hdu_type,
-          "Get the HDU type (IMAGE, BINTABLE, TABLE).\n\n"
-          "Args:\n"
-          "    filename (str): Path to the FITS file.\n"
-          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
-          "Returns:\n"
-          "    str: The HDU type.",
-          py::arg("filename"), py::arg("hdu_num"));
+    m.def("get_hdu_type", [](const std::string& filename, py::object hdu_spec) {
+        int hdu_num;
+        if (py::isinstance<py::str>(hdu_spec)) {
+            hdu_num = get_hdu_num_by_name(filename, hdu_spec.cast<std::string>());
+        } else {
+            hdu_num = hdu_spec.cast<int>();
+        }
+        
+        fitsfile* fptr;
+        int status = 0;
+        int hdutype;
+        
+        fits_open_file(&fptr, filename.c_str(), READONLY, &status);
+        fits_movabs_hdu(fptr, hdu_num, &hdutype, &status);
+        
+        std::string type;
+        if (hdutype == IMAGE_HDU) {
+            type = "IMAGE";
+        } else if (hdutype == BINARY_TBL) {
+            type = "BINTABLE";
+        } else if (hdutype == ASCII_TBL) {
+            type = "TABLE";
+        } else {
+            type = "UNKNOWN";
+        }
+        
+        fits_close_file(fptr, &status);
+        return type;
+    }, py::arg("filename"), py::arg("hdu_num"));
 
     m.def("get_num_hdus", &get_num_hdus,
           "Get the total number of HDUs in the FITS file.\n\n"
@@ -102,12 +98,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // Expose helper functions for testing (optional, but good practice)
     m.def("_parse_header_card", &parse_header_card, "Parses a FITS header card (internal use).");
     m.def("_fits_status_to_string", &fits_status_to_string, "Converts CFITSIO status code to string.");
-    // Expose cache clearing function (for testing)
+    // Expose cache clearing function
     m.def("_clear_cache", []() {
-        if (cache) {  // Check if cache is initialized
+        DEBUG_LOG("Clearing cache from Python");
+        if (cache) {
             cache->clear();
         }
-    }, "Clears the internal cache (for testing).");
+    }, "Clear the internal LRU cache");
 
     // Expose the new functions for world-to-pixel and pixel-to-world coordinate transformations
     m.def("world_to_pixel", &world_to_pixel,

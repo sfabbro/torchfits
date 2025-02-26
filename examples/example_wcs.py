@@ -1,4 +1,3 @@
-# examples/example_wcs.py
 import torch
 import torchfits
 import numpy as np

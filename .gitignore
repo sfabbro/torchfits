@@ -103,6 +103,8 @@ venv.bak/
 htmlcov/
 .tox/
 tests/__pycache__/
+test_data/  # Test data directory created by unit tests
+test_data/*
 
 # Examples directory
 examples/*.fits  # Ignore generated FITS files in examples

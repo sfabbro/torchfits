@@ -12,7 +12,7 @@ std::string fits_status_to_string(int status) {
 }
 
 // Throw a PyTorch RuntimeError with a formatted message, including CFITSIO error details.
-void throw_fits_error(int status, const std::string& message = "") {
+void throw_fits_error(int status, const std::string& message) {
     std::stringstream ss;
     ss << message << " CFITSIO error: " << fits_status_to_string(status);
     throw std::runtime_error(ss.str());

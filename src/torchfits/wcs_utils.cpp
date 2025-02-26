@@ -1,6 +1,7 @@
 #include "fits_reader.h"  // For helper functions (like error handling)
 #include "wcs_utils.h"
 #include <sstream>
+#include <wcslib/wcshdr.h>  // For wcspih
 
 // Reads the minimal set of WCS keywords, constructs a wcsprm object.
 std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
@@ -53,10 +54,12 @@ std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
     int nreject, nwcs;
     struct wcsprm* wcs = nullptr;
     const std::string wcs_header_str = wcs_header_stream.str();
-    int wcs_status = wcspih(wcs_header_str.c_str(), wcs_header_str.size(), 0, 0, &nreject, &nwcs, &wcs);
+    std::vector<char> header_copy(wcs_header_str.begin(), wcs_header_str.end());
+    header_copy.push_back('\0'); // Ensure null termination
+    int wcs_status = wcspih(header_copy.data(), header_copy.size() - 1, 0, 0, &nreject, &nwcs, &wcs);
 
     if (wcs_status != 0 || nwcs == 0) {
-        wcsfree(wcs, &nwcs); // Always free allocated memory
+        if (wcs) wcsfree(wcs); // Change to single argument
         return nullptr; // Return nullptr if no valid WCS
     }
 
@@ -89,13 +92,15 @@ std::pair<torch::Tensor, torch::Tensor> world_to_pixel(const torch::Tensor& worl
     }
 
     const std::string header_str = header_stream.str();
-    int wcs_status = wcspih(header_str.c_str(), header_str.size(), 0, 0, &nreject, &nwcs, &wcs);
+    std::vector<char> header_copy(header_str.begin(), header_str.end());
+    header_copy.push_back('\0'); // Ensure null termination
+    int wcs_status = wcspih(header_copy.data(), header_copy.size() - 1, 0, 0, &nreject, &nwcs, &wcs);
 
     std::unique_ptr<wcsprm> wcs_ptr; //Use a unique_ptr for memory management
     if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {
         wcs_ptr = std::unique_ptr<wcsprm>(wcs);
     } else {
-        wcsfree(wcs, &nwcs); //Free memory, since there is an error
+        if (wcs) wcsfree(wcs); // Change to single argument
         throw std::runtime_error("WCS parsing failed in world_to_pixel.");
     }
     //End reconstruction
@@ -171,13 +176,15 @@ std::pair<torch::Tensor, torch::Tensor> pixel_to_world(const torch::Tensor& pixe
     }
 
     const std::string header_str = header_stream.str();
-    int wcs_status = wcspih(header_str.c_str(), header_str.size(), 0, 0, &nreject, &nwcs, &wcs);
+    std::vector<char> header_copy(header_str.begin(), header_str.end());
+    header_copy.push_back('\0'); // Ensure null termination
+    int wcs_status = wcspih(header_copy.data(), header_copy.size() - 1, 0, 0, &nreject, &nwcs, &wcs);
 
      std::unique_ptr<wcsprm> wcs_ptr; //Use a unique_ptr for memory management
     if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {
         wcs_ptr = std::unique_ptr<wcsprm>(wcs);
     } else {
-        wcsfree(wcs, &nwcs); //Free memory, since there is an error
+        if (wcs) wcsfree(wcs); // Change to single argument
         throw std::runtime_error("WCS parsing failed in pixel_to_world.");
     }
     //End reconstruction
