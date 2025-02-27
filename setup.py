@@ -151,14 +151,20 @@ def get_wcslib_library_path():
 # --- Extension Definition ---
 ext_modules = [
     CppExtension(
-        "torchfits.fits_reader",
+        "torchfits.fits_reader_cpp",
         sources=[
             "src/torchfits/fits_reader.cpp",
             "src/torchfits/fits_utils.cpp",
             "src/torchfits/wcs_utils.cpp",
-            "src/torchfits/bindings.cpp"
+            "src/torchfits/bindings.cpp",
+            "src/torchfits/cache.cpp"
         ],
-        include_dirs=["src/torchfits"],
+        include_dirs=["src/torchfits",
+                      get_cfitsio_include_path(),
+                      get_wcslib_include_path()
+                    ],
+        library_dirs=[get_cfitsio_library_path(),
+                      get_wcslib_library_path()],
         libraries=["cfitsio", "wcs", "m"],
         extra_compile_args=extra_compile_args,
         language="c++",

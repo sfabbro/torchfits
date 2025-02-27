@@ -1,127 +1,102 @@
-#include "fits_reader.h"  // Include the header file
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <torch/extension.h>
+#include <fitsio.h>
+#include "fits_reader.h"
 #include "fits_utils.h"
 #include "wcs_utils.h"
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h> // For std::vector, std::map, etc.
-#include <pybind11/numpy.h> // Not strictly required, but good practice
-#include <torch/extension.h>
+#include "cache.h"
 
 namespace py = pybind11;
 
-// Add this type alias to make the function type clear
-using ReadFunc = pybind11::object (*)(
-    pybind11::object, pybind11::object, pybind11::object, 
-    pybind11::object, pybind11::object, int, 
-    pybind11::object, size_t, torch::Device
-);
+// Helper function to resolve HDU (name or number)
+int resolve_hdu(const std::string& filename, const pybind11::object& hdu) {
+    if (hdu.is_none()) {
+        return 1; // Default to primary HDU (HDU 1)
+    } else if (py::isinstance<py::str>(hdu)) {
+        return get_hdu_num_by_name(filename, hdu.cast<std::string>());
+    } else if (py::isinstance<py::int_>(hdu)) {
+        int hdu_num = hdu.cast<int>();
+        if (hdu_num < 0) {
+            throw py::value_error("HDU number must be >= 0");
+        }
+        return hdu_num;
+    } else {
+        throw py::type_error("HDU must be None, an integer, or a string.");
+    }
+}
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+PYBIND11_MODULE(fits_reader_cpp, m) {
+    m.doc() = "Fast FITS reader for PyTorch";
+
+   //Expose FITSFile
+    py::class_<FITSFile, std::shared_ptr<FITSFile>>(m, "FITSFile")
+        .def(py::init<const std::string&>(),py::arg("filename"))
+        .def("move_to_hdu", &FITSFile::move_to_hdu, py::arg("hdu_num"), py::arg("hdu_type") = py::none())
+        .def("get", &FITSFile::get)
+        .def("close", &FITSFile::close);
+
     m.def("read", &read_impl,
-          py::arg("filename_or_url"),
-          py::arg("hdu") = py::none(),
-          py::arg("start") = py::none(),
-          py::arg("shape") = py::none(),
-          py::arg("columns") = py::none(),
-          py::arg("start_row") = 0,
-          py::arg("num_rows") = py::none(),
-          py::arg("cache_capacity") = 0,
-          py::arg("device") = torch::Device("cpu")
+        py::arg("filename_or_url"),
+        py::arg("hdu") = py::none(),
+        py::arg("start") = py::none(),
+        py::arg("shape") = py::none(),
+        py::arg("columns") = py::none(),
+        py::arg("start_row") = 0,
+        py::arg("num_rows") = py::none(),
+        py::arg("cache_capacity") = 0,
+        py::arg("device") = torch::kCPU, //Default argument
+        "Reads data from a FITS file (image or table) into a PyTorch tensor."
     );
 
-    m.def("get_header", [](const std::string& filename, py::object hdu_spec) {
-        if (py::isinstance<py::str>(hdu_spec)) {
-            // Handle HDU name
-            return get_header_by_name(filename, hdu_spec.cast<std::string>());
-        } else {
-            // Handle HDU number
-            return get_header_by_number(filename, hdu_spec.cast<int>());
-        }
-    }, "Get FITS header as dictionary", py::arg("filename"), py::arg("hdu_num"));
+    m.def("get_header", [](const std::string& filename, pybind11::object hdu) {
+        return get_header(filename, resolve_hdu(filename, hdu));
+    }, py::arg("filename"), py::arg("hdu") = py::int_(1), "Get FITS header.");
 
-    m.def("get_dims", &get_dims,
-          "Get the dimensions of a FITS image/cube.\n\n"
-          "Args:\n"
-          "    filename (str): Path to the FITS file.\n"
-          "    hdu_num (int or str): HDU number (1-based) or name.\n\n"
-          "Returns:\n"
-          "    List[int]: A list of dimensions.",
-          py::arg("filename"), py::arg("hdu_num"));
+    m.def("get_header_by_name", &get_header_by_name, py::arg("filename"), py::arg("hdu_name"), "Get FITS header.");
+    m.def("get_header_by_number", &get_header_by_number, py::arg("filename"), py::arg("hdu_num"), "Get FITS header.");
 
-    m.def("get_header_value", &get_header_value,
-          "Get a single header keyword value.\n\n"
-          "Args:\n"
-          "    filename (str): Path to the FITS file.\n"
-          "    hdu_num (int or str): HDU number (1-based) or name.\n"
-          "    key (str): The header keyword.\n\n"
-          "Returns:\n"
-          "    str: The value of the keyword (empty string if not found).",
-          py::arg("filename"), py::arg("hdu_num"), py::arg("key"));
+    m.def("get_dims", [](const std::string& filename, pybind11::object hdu) {
+        return get_dims(filename, resolve_hdu(filename, hdu));
+    }, py::arg("filename"), py::arg("hdu") = py::int_(1), "Get the dimensions of a FITS HDU.");
 
-    m.def("get_hdu_type", [](const std::string& filename, py::object hdu_spec) {
-        int hdu_num;
-        if (py::isinstance<py::str>(hdu_spec)) {
-            hdu_num = get_hdu_num_by_name(filename, hdu_spec.cast<std::string>());
-        } else {
-            hdu_num = hdu_spec.cast<int>();
-        }
+    m.def("get_header_value", [](const std::string& filename, pybind11::object hdu, const std::string& key) {
+        return get_header_value(filename, resolve_hdu(filename, hdu), key);
+    }, py::arg("filename"), py::arg("hdu") = py::int_(1), py::arg("key"), "Get the value of a specific FITS header keyword.");
         
-        fitsfile* fptr;
-        int status = 0;
-        int hdutype;
-        
-        fits_open_file(&fptr, filename.c_str(), READONLY, &status);
-        fits_movabs_hdu(fptr, hdu_num, &hdutype, &status);
-        
-        std::string type;
-        if (hdutype == IMAGE_HDU) {
-            type = "IMAGE";
-        } else if (hdutype == BINARY_TBL) {
-            type = "BINTABLE";
-        } else if (hdutype == ASCII_TBL) {
-            type = "TABLE";
-        } else {
-            type = "UNKNOWN";
-        }
-        
-        fits_close_file(fptr, &status);
-        return type;
-    }, py::arg("filename"), py::arg("hdu_num"));
+    m.def("get_hdu_type", [](const std::string& filename, pybind11::object hdu) {
+        return get_hdu_type(filename, resolve_hdu(filename, hdu));
+    }, py::arg("filename"), py::arg("hdu") = py::int_(1), "Get the type of a specific HDU.");
 
-    m.def("get_num_hdus", &get_num_hdus,
-          "Get the total number of HDUs in the FITS file.\n\n"
-          "Args:\n"
-          "    filename (str): Path to the FITS file.\n\n"
-          "Returns:\n"
-          "    int: The number of HDUs.",
-          py::arg("filename"));
+    m.def("get_num_hdus", &get_num_hdus, py::arg("filename"), "Get the number of HDUs in the FITS file.");
 
-    // Expose helper functions for testing (optional, but good practice)
-    m.def("_parse_header_card", &parse_header_card, "Parses a FITS header card (internal use).");
-    m.def("_fits_status_to_string", &fits_status_to_string, "Converts CFITSIO status code to string.");
-    // Expose cache clearing function
-    m.def("_clear_cache", []() {
-        DEBUG_LOG("Clearing cache from Python");
+    // Expose cache management - keep only ONE definition
+    m.def("clear_cache", []() {
         if (cache) {
             cache->clear();
         }
-    }, "Clear the internal LRU cache");
+    }, "Clears the LRU cache");
 
-    // Expose the new functions for world-to-pixel and pixel-to-world coordinate transformations
+    // Expose WCS functions
     m.def("world_to_pixel", &world_to_pixel,
-          "Convert world coordinates to pixel coordinates using WCS information from the header.\n\n"
-          "Args:\n"
-          "    world_coords (torch.Tensor): Tensor of world coordinates.\n"
-          "    header (dict): FITS header dictionary containing WCS information.\n\n"
-          "Returns:\n"
-          "    Tuple[torch.Tensor, torch.Tensor]: A tuple (pixel_coords, status) where pixel_coords is a tensor of pixel coordinates and status is a tensor of status codes.",
-          py::arg("world_coords"), py::arg("header"));
+        py::arg("world_coords"),
+        py::arg("header"),
+        "Converts world coordinates to pixel coordinates using WCS information");
 
     m.def("pixel_to_world", &pixel_to_world,
-          "Convert pixel coordinates to world coordinates using WCS information from the header.\n\n"
-          "Args:\n"
-          "    pixel_coords (torch.Tensor): Tensor of pixel coordinates.\n"
-          "    header (dict): FITS header dictionary containing WCS information.\n\n"
-          "Returns:\n"
-          "    Tuple[torch.Tensor, torch.Tensor]: A tuple (world_coords, status) where world_coords is a tensor of world coordinates and status is a tensor of status codes.",
-          py::arg("pixel_coords"), py::arg("header"));
+        py::arg("pixel_coords"),
+        py::arg("header"),
+        "Converts pixel coordinates to world coordinates using WCS information");
+
+    // Expose cache functionality through a class, but don't use the same name twice
+    py::class_<LRUCache>(m, "LRUCache")
+        .def("clear", &LRUCache::clear, "Clear the cache")
+        .def("size", &LRUCache::size, "Get current cache size in MB")
+        .def("capacity", &LRUCache::capacity, "Get maximum cache capacity in MB");
+
+    // Expose the global cache instance with a different name
+    if (cache) {
+        m.attr("global_cache") = cache.get();
+    }
+
 }

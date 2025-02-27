@@ -8,10 +8,9 @@ version = "0.1.0"  # MATCH THE VERSION IN version.py!
 authors = [
     {name = "Seb Fabbro", email = "sebfabbro@gmail.com"},
 ]
-description = "A fast FITS reader for PyTorch, optimized for cutout extraction."
+description = "A fast FITS reader for PyTorch"
 readme = "README.md"
-requires-python = ">=3.10"  # Python 3.10 or greater
-license = {file = "LICENSE"}
+requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
@@ -20,39 +19,33 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "torch>=1.10",  # Specify minimum PyTorch version
+    "torch",
+    "pybind11",
+    "numpy",
+    "astropy"
 ]
 
 [project.urls]
-Homepage = "https://github.com/sfabbro/torchfits"  # REPLACE
+Homepage = "https://github.com/fabbro/torchfits"
+Issues = "https://github.com/fabbro/torchfits/issues"
+Documentation = "https://github.com/fabbro/torchfits/blob/main/README.md"
 
-[project.optional-dependencies] #Define optional dependencies
+[project.optional-dependencies]
 dev = [
-    "pytest",      # For running tests
-    "pytest-cov",  # For coverage reporting (optional, but recommended)
-    "flake8",      # Linter
-    "pylint",      # Linter
-    "black",      # Code formatter
-    "isort",      # Import sorter
-    "mypy",       # Static type checker (highly recommended!)
+    "pytest",
+    "pre-commit"
 ]
+
 examples = [
-    "numpy",        # NumPy is used in examples and tests
-    "astropy",    # For creating test FITS files and examples
-    "requests",   # For downloading data in examples
-    "tqdm",        # For progress bars in examples
-    "pandas",      # For the Galaxy10 example
-    "matplotlib", # For plotting in examples
-    "torchvision", # For MNIST
-    "fsspec>=2021.06.0" #For url handling
+    "matplotlib",
+    "fsspec"
 ]
+
 remote = [
-    "fsspec>=2021.06.0",
-    "s3fs",            # If you want to support S3 directly
-    "gcsfs",           # If you want to support Google Cloud Storage
-    # Add other fsspec backends as needed
+    "fsspec"
 ]
 
 [tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra"
 testpaths = ["tests"]
-addopts = "--cov=torchfits --cov-report term-missing"  # Enable coverage reporting
