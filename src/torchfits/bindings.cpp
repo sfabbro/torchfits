@@ -45,7 +45,7 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         py::arg("start_row") = 0,
         py::arg("num_rows") = py::none(),
         py::arg("cache_capacity") = 0,
-        py::arg("device") = torch::kCPU, //Default argument
+        py::arg("device") = "cpu",
         "Reads data from a FITS file (image or table) into a PyTorch tensor."
     );
 
