@@ -81,44 +81,55 @@ void LRUCache::clear() {
     current_size_ = 0;
 }
 
+// Improved LRU cache implementation
 void LRUCache::put(const std::string& key, const std::shared_ptr<CacheEntry>& entry) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Calculate entry size in MB
-    size_t entry_size = entry->size();
-    if (entry_size > capacity_mb_) {
-        std::stringstream ss;
-        ss << "Cannot insert element, the element size (" << entry_size << "MB) is greater than the cache capacity (" << capacity_mb_ << "MB)";
-        throw std::runtime_error(ss.str());
-    }
-
-    // Check if entry already exists
-    auto it = cache_map_.find(key);
-    if (it != cache_map_.end()) {
-        // Move to front (most recently used)
-        cache_list_.splice(cache_list_.begin(), cache_list_, it->second);
-        //Update the size
-        current_size_ -= it->second->second->size();
-        // Update entry
-        it->second->second = entry;
-        current_size_ += entry_size;
+    
+    if (!entry || !entry->data.defined()) {
+        WARNING_LOG("Attempted to cache null or undefined entry");
         return;
     }
-
-    // Add new entry to front
-    cache_list_.push_front({ key, entry });
+    
+    // Calculate entry size safely
+    size_t entry_size;
+    try {
+        entry_size = entry->size();
+    } catch (const std::exception& e) {
+        ERROR_LOG("Error calculating cache entry size: " + std::string(e.what()));
+        return;
+    }
+    
+    // Check if entry is too large for cache
+    if (entry_size > capacity_mb_) {
+        WARNING_LOG("Cache entry too large: " + std::to_string(entry_size) + 
+                   "MB exceeds cache capacity of " + std::to_string(capacity_mb_) + "MB");
+        return; // Skip caching instead of throwing
+    }
+    
+    // If entry already exists, update it
+    auto it = cache_map_.find(key);
+    if (it != cache_map_.end()) {
+        current_size_ -= std::distance(cache_list_.begin(), it->second)->second->size();
+        cache_list_.erase(it->second);
+        cache_map_.erase(it);
+    }
+    
+    // Make space for new entry
+    while (!cache_list_.empty() && (current_size_ + entry_size > capacity_mb_)) {
+        auto last = cache_list_.back();
+        current_size_ -= last.second->size();
+        cache_map_.erase(last.first);
+        cache_list_.pop_back();
+        INFO_LOG("Evicted cache entry: " + last.first);
+    }
+    
+    // Add new entry to cache
+    cache_list_.push_front(std::make_pair(key, entry));
     cache_map_[key] = cache_list_.begin();
     current_size_ += entry_size;
-
-    // Evict least recently used entries if needed
-    while (current_size_ > capacity_mb_ && !cache_list_.empty()) {
-        auto last = std::prev(cache_list_.end());
-        // Remove entry
-        current_size_ = (current_size_ > last->second->size()) ?
-            (current_size_ - last->second->size()) : 0;
-        cache_map_.erase(last->first);
-        cache_list_.pop_back();
-    }
+    
+    INFO_LOG("Added to cache: " + key + " (" + std::to_string(entry_size) + 
+             "MB, current total: " + std::to_string(current_size_) + "MB)");
 }
 
 std::shared_ptr<CacheEntry> LRUCache::get(const std::string& key) {

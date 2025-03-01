@@ -104,30 +104,36 @@ std::pair<std::string, std::string> parse_header_card(const char* card) {
 // Read the entire FITS header of the current HDU and return it as a map.
 std::map<std::string, std::string> read_fits_header(fitsfile* fptr) {
     int status = 0;
-    int num_keys;
+    int nkeys, keypos;
+    char card[FLEN_CARD], value[FLEN_VALUE], comment[FLEN_COMMENT];
+    std::map<std::string, std::string> header;
 
-    // Get the number of keywords in the current HDU.
-    if (fits_get_hdrspace(fptr, &num_keys, nullptr, &status)) {
+    if (fits_get_hdrspace(fptr, &nkeys, NULL, &status)) {
         throw_fits_error(status, "Error getting header size");
     }
 
-    std::map<std::string, std::string> header;
-    char card[FLEN_CARD]; // CFITSIO constant for card length
-
-    // Iterate through header records (cards).
-    for (int i = 1; i <= num_keys; ++i) {  // FITS indexing starts at 1
+    for (int i = 1; i <= nkeys; i++) {
+        status = 0;
         if (fits_read_record(fptr, i, card, &status)) {
-            if (status != END_OF_FILE) { // END_OF_FILE is expected at the end
-                throw_fits_error(status, "Error reading header record " + std::to_string(i));
-            }
-            break;  // Exit loop when we reach END
+            throw_fits_error(status, "Error reading header record");
         }
-        auto [key, value] = parse_header_card(card); // Use structured bindings
-        if (!key.empty()) {  // Ignore empty keys (e.g., blank cards)
-            header[key] = value;
+
+        char keyname[FLEN_KEYWORD];
+        status = 0;
+        if (fits_get_keyname(card, keyname, &keypos, &status) > 0) {
+            // Valid keyword found, get its value
+            status = 0;
+            if (fits_parse_value(card, value, comment, &status) >= 0) {
+                // Successfully parsed value
+                header[keyname] = value;
+            } else if (status == VALUE_UNDEFINED) {
+                // NULL value
+                header[keyname] = "UNDEFINED";
+                status = 0; // Reset status
+            }
         }
     }
-    status = 0; //reset status
+
     return header;
 }
 
@@ -223,27 +229,66 @@ std::vector<long long> get_dims(const std::string& filename, int hdu_num) {
 }
 
 // Implementation of the FITSFile class
-FITSFile::FITSFile(const std::string& filename) {
+FITSFile::FITSFile(const std::string& filename) : fptr_(nullptr), owned_(true) {
     int status = 0;
+    
+    INFO_LOG("Opening FITS file: " + filename);
     if (fits_open_file(&fptr_, filename.c_str(), READONLY, &status)) {
+        ERROR_LOG("Failed to open FITS file: " + fits_status_to_string(status));
         throw_fits_error(status, "Error opening FITS file: " + filename);
     }
 }
 
+// Implementation of move semantics for FITSFile
+FITSFile::FITSFile(FITSFile&& other) noexcept 
+    : fptr_(other.fptr_), owned_(other.owned_) {
+    other.fptr_ = nullptr;
+    other.owned_ = false;
+}
+
+FITSFile& FITSFile::operator=(FITSFile&& other) noexcept {
+    if (this != &other) {
+        if (owned_ && fptr_) {
+            int status = 0;
+            fits_close_file(fptr_, &status);
+            if (status) {
+                WARNING_LOG("Error closing FITS file in move assignment operator: " + 
+                           fits_status_to_string(status));
+            }
+        }
+        
+        fptr_ = other.fptr_;
+        owned_ = other.owned_;
+        other.fptr_ = nullptr;
+        other.owned_ = false;
+    }
+    return *this;
+}
+
+// Improved destructor with error logging
 FITSFile::~FITSFile() {
-    if (fptr_) {
+    if (owned_ && fptr_) {
         int status = 0;
+        INFO_LOG("FITS file being closed by destructor");
         fits_close_file(fptr_, &status);
-        // We intentionally don't throw from the destructor
+        if (status) {
+            WARNING_LOG("Error closing FITS file in destructor: " + 
+                       fits_status_to_string(status));
+        }
     }
 }
 
-void FITSFile::close(){
-     if (fptr_) {
+// Enhanced close method with safety checks
+void FITSFile::close() {
+    if (owned_ && fptr_) {
         int status = 0;
+        INFO_LOG("Closing FITS file");
         fits_close_file(fptr_, &status);
+        if (status) {
+            WARNING_LOG("Error closing FITS file: " + fits_status_to_string(status));
+        }
         fptr_ = nullptr;
-        // We intentionally don't throw from the destructor
+        owned_ = false;
     }
 }
 

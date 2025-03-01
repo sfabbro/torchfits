@@ -1,0 +1,53 @@
+name: Memory Leak Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  memory-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest valgrind
+        pip install -e .
+    
+    - name: Install valgrind
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+    
+    - name: Run memory tests
+      run: |
+        # Create memory test script
+        cat > memory_test.py << 'EOF'
+        import torchfits
+        import torch
+        
+        # Test file opening and data reading
+        data = torchfits.read("sample.fits")
+        
+        # Test WCS conversions
+        header = torchfits.get_header("sample.fits")
+        coords = torch.tensor([[10.0, 10.0]], dtype=torch.float64)
+        world_coords = torchfits.pixel_to_world(coords, header)[0]
+        pixel_coords = torchfits.world_to_pixel(world_coords, header)[0]
+        
+        # Force cache cleanup
+        torchfits.clear_cache()
+        EOF
+        
+        # Run with valgrind
+        valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose python memory_test.py

@@ -19,6 +19,22 @@ struct CacheEntry {
     CacheEntry(torch::Tensor d, std::map<std::string, std::string> h)
         : data(std::move(d)), header(std::move(h)) {}
 
+    // Add explicit copy constructor
+    CacheEntry(const CacheEntry& other)
+        : data(other.data.defined() ? other.data.clone() : torch::Tensor()),
+          header(other.header),
+          string_data(other.string_data) {}
+
+    // Add assignment operator
+    CacheEntry& operator=(const CacheEntry& other) {
+        if (this != &other) {
+            data = other.data.defined() ? other.data.clone() : torch::Tensor();
+            header = other.header;
+            string_data = other.string_data;
+        }
+        return *this;
+    }
+
     size_t size() const {
         size_t total_size = 0;
 

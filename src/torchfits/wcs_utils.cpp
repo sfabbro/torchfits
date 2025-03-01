@@ -39,102 +39,117 @@ std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
                throw_fits_error(status, std::string("Error reading WCS key: ") + key);
             }
         }
-
-        // Add the card to the header string
-        wcs_header_stream << card << std::string(80 - strlen(card), ' ');
+        
+        // Add header card and move to next key
+        wcs_header_stream << card << "\n";
         key_index++;
     }
 
-    // Add END card (required by wcspih).
-    wcs_header_stream << "END" << std::string(77, ' ');
+    // Create the WCS structure from the header
+    int nkeyrec = 0, nreject = 0, nwcs = 0;
+    wcsprm* wcs = nullptr;
+    std::string header_str = wcs_header_stream.str();
+    std::vector<char> header_cards(header_str.begin(), header_str.end());
+    header_cards.push_back('\0');
+    nkeyrec = header_cards.size() / 80;
+    
+    int wcs_status = wcspih(header_cards.data(), nkeyrec, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
 
-    // Parse the header string with wcslib to create the WCS object.
-    int nreject, nwcs;
-    struct wcsprm* wcs = nullptr;
-    const std::string wcs_header_str = wcs_header_stream.str();
-    std::vector<char> header_copy(wcs_header_str.begin(), wcs_header_str.end());
-    header_copy.push_back('\0'); // Ensure null termination
-    int wcs_status = wcspih(header_copy.data(), header_copy.size() / 80, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
+    // Define a consistent deleter for wcsprm
+    auto wcs_deleter = [](wcsprm* p) {
+        if (p) {
+            wcsfree(p);
+            free(p);
+        }
+    };
 
+    // Improved error handling with consistent approach
     if (wcs_status != 0 || nwcs == 0) {
-        if (wcs) wcsfree(wcs);
-        return nullptr; // Return nullptr if no valid WCS
+        if (wcs) wcs_deleter(wcs);
+        throw std::runtime_error("Failed to create WCS from header: status=" + 
+                                  std::to_string(wcs_status) + ", nwcs=" + std::to_string(nwcs));
     }
-
-    // Prepare and initialize the WCS structure
+    
     if (wcsset(wcs) != 0) {
-        wcsfree(wcs);
-        return nullptr;
+        wcs_deleter(wcs);
+        throw std::runtime_error("Failed to initialize WCS structure");
     }
 
-    return std::unique_ptr<wcsprm>(wcs); // Return ownership via unique_ptr.
+    return std::unique_ptr<wcsprm, std::function<void(wcsprm*)>>(wcs, wcs_deleter);
 }
 
+// Standardized WCS deleter function that can be reused
+auto wcs_deleter = [](wcsprm* p) {
+    if (p) {
+        wcsfree(p);
+        free(p);
+    }
+};
+
+// Improved create_wcs_from_header with consistent error handling
 std::unique_ptr<wcsprm> create_wcs_from_header(
     const std::map<std::string, std::string>& header, 
     bool throw_on_error) {
     
-    int nreject, nwcs;
-    struct wcsprm* wcs = nullptr;
+    // Build header string from map
     std::stringstream header_stream;
-    
-    // Format the header as 80-character FITS cards
     for (const auto& [key, value] : header) {
-        std::string padded_key = key;
-        if (padded_key.length() < 8) {
-            padded_key.append(8 - padded_key.length(), ' ');
-        }
-        
-        header_stream << padded_key << "= " << value;
-        
-        // Calculate total length so far
-        int current_length = padded_key.length() + 2 + value.length(); // +2 for "= "
-        int spaces_needed = 80 - current_length;
-        
-        if (spaces_needed <= 0) {
-            header_stream << " "; // At least one space
-        } else {
-            header_stream << std::string(spaces_needed, ' ');
-        }
+        std::string card = key;
+        // Pad key to 8 characters
+        card.resize(8, ' ');
+        card += "= " + value;
+        // Pad card to 80 characters
+        card.resize(80, ' ');
+        header_stream << card;
     }
     
-    // Add END card
-    header_stream << "END";
-    for (int i = 0; i < 77; ++i) {
-        header_stream << " ";
-    }
-
-    const std::string header_str = header_stream.str();
-    
-    // Ensure the header string length is a multiple of 80
-    int nkeyrec = header_str.length() / 80;
+    std::string header_str = header_stream.str();
     if (header_str.length() % 80 != 0) {
-        nkeyrec++;
-    }
-    
-    std::vector<char> header_copy(header_str.begin(), header_str.end());
-    header_copy.push_back('\0'); // Ensure null termination
-    
-    int wcs_status = wcspih(header_copy.data(), nkeyrec, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
-
-    if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {
-        // Initialize the WCS structure
-        if (wcsset(wcs) != 0) {
-            wcsfree(wcs);
-            if (throw_on_error) {
-                throw std::runtime_error("Failed to initialize WCS structure");
-            }
+        std::string error_msg = "Invalid header length: " + std::to_string(header_str.length()) + 
+                               " (must be multiple of 80)";
+        if (throw_on_error) {
+            throw std::runtime_error(error_msg);
+        } else {
+            WARNING_LOG(error_msg);
             return nullptr;
         }
-        return std::unique_ptr<wcsprm>(wcs);
-    } else {
-        if (wcs) wcsfree(wcs);
-        if (throw_on_error) {
-            std::stringstream ss;
-            ss << "WCS parsing failed with status: " << wcs_status;
-            throw std::runtime_error(ss.str());
+    }
+    
+    int nkeyrec = header_str.length() / 80;
+    int nreject = 0, nwcs = 0;
+    wcsprm* wcs = nullptr;
+    
+    // Parse header
+    int wcs_status = wcspih(header_str.c_str(), nkeyrec, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
+    
+    // Handle errors consistently
+    if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {
+        if (wcsset(wcs) != 0) {
+            if (throw_on_error) {
+                wcs_deleter(wcs);
+                throw std::runtime_error("Failed to initialize WCS structure");
+            } else {
+                WARNING_LOG("Failed to initialize WCS structure");
+                wcs_deleter(wcs);
+                return nullptr;
+            }
         }
-        return nullptr;
+        
+        return std::unique_ptr<wcsprm, std::function<void(wcsprm*)>>(wcs, wcs_deleter);
+    } else {
+        if (wcs) {
+            wcs_deleter(wcs);
+        }
+        
+        if (throw_on_error) {
+            std::string error_msg = "Failed to create WCS from header: status=" + 
+                                   std::to_string(wcs_status) + ", nwcs=" + std::to_string(nwcs);
+            throw std::runtime_error(error_msg);
+        } else {
+            WARNING_LOG("Failed to create WCS from header: status=" + 
+                       std::to_string(wcs_status) + ", nwcs=" + std::to_string(nwcs));
+            return nullptr;
+        }
     }
 }
 

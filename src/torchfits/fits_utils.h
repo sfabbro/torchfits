@@ -15,14 +15,19 @@ public:
     
     fitsfile* get() const { return fptr_; }
     void move_to_hdu(int hdu_num, int* hdu_type = nullptr);
-     void close();
+    void close();
     
     // No copying
     FITSFile(const FITSFile&) = delete;
     FITSFile& operator=(const FITSFile&) = delete;
     
+    // Allow moving
+    FITSFile(FITSFile&& other) noexcept;
+    FITSFile& operator=(FITSFile&& other) noexcept;
+    
 private:
     fitsfile* fptr_ = nullptr;
+    bool owned_; // Tracks whether this instance owns the fitsfile pointer
 };
 
 // Utility functions
@@ -37,5 +42,7 @@ int get_num_hdus(const std::string& filename);
 std::map<std::string, std::string> get_header(const std::string& filename, int hdu_num);
 std::vector<long long> get_dims(const std::string& filename, int hdu_num);
 int get_hdu_num_by_name(const std::string& filename, const std::string& hdu_name);
+std::map<std::string, std::string> get_header_by_name(const std::string& filename, const std::string& hdu_name);
+std::map<std::string, std::string> get_header_by_number(const std::string& filename, int hdu_num);
 
 #endif // TORCHFITS_FITS_UTILS_H
