@@ -23,7 +23,7 @@
  * @return A unique_ptr to a wcsprm structure containing the WCS information
  * @throws std::runtime_error if WCS parsing or initialization fails
  */
-std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr);
+std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> read_wcs_from_header(fitsfile* fptr);
 
 /**
  * @brief Create a WCS structure from a map of header key-value pairs
@@ -55,7 +55,7 @@ std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> read_wcs_from_header_map(
  * @return A unique_ptr to a wcsprm structure, or nullptr on error if throw_on_error is false
  * @throws std::runtime_error if throw_on_error is true and parsing or initialization fails
  */
-std::unique_ptr<wcsprm> create_wcs_from_header(
+std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> create_wcs_from_header(
     const std::map<std::string, std::string>& header, 
     bool throw_on_error = false);
 

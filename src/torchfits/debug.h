@@ -4,6 +4,7 @@
 #include <iostream>
 #include <chrono>
 #include <string>
+#include <sstream>
 
 // Enhanced logging system that works in both debug and release builds
 // with different verbosity levels
@@ -43,16 +44,29 @@ inline void log_message(LogLevel level, const std::string& func, int line, const
             log_message(LogLevel::DEBUG, __func__, __LINE__, tensor_info); \
         } while (0)
     
-    #define DEBUG_SCOPE \
-        const auto debug_start = std::chrono::high_resolution_clock::now(); \
-        const std::string _debug_func_name = __func__; \
-        auto debug_end_func = [&]() { \
-            auto end = std::chrono::high_resolution_clock::now(); \
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - debug_start).count(); \
-            log_message(LogLevel::DEBUG, _debug_func_name, __LINE__, \
-                       "Function execution time: " + std::to_string(duration) + " μs"); \
-        }; \
-        std::unique_ptr<void, decltype(debug_end_func)*> debug_scope_guard(nullptr, debug_end_func);
+    // Helper class for RAII-based scope timing
+    class DebugTimer {
+    public:
+        inline DebugTimer(const char* func_name, int line_num) : 
+            start_time_(std::chrono::high_resolution_clock::now()), 
+            func_name_(func_name), 
+            line_num_(line_num) {}
+
+        inline ~DebugTimer() {
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
+            std::stringstream ss;
+            ss << "Function execution time: " << duration << " μs";
+            log_message(LogLevel::DEBUG, func_name_, line_num_, ss.str());
+        }
+
+    private:
+        std::chrono::high_resolution_clock::time_point start_time_;
+        const char* func_name_;
+        int line_num_;
+    };
+
+    #define DEBUG_SCOPE DebugTimer debug_timer_instance(__func__, __LINE__)
 #else
     #define DEBUG_LOG(x)
     #define DEBUG_TENSOR(name, tensor)

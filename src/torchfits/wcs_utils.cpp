@@ -2,6 +2,8 @@
 #include "wcs_utils.h"
 #include <sstream>
 #include <wcslib/wcshdr.h>  // For wcspih
+#include <cstring> // For strcmp
+#include "debug.h" // Add this include
 
 // Helper function for WCS struct cleanup
 struct WCSDeleter {
@@ -14,7 +16,7 @@ struct WCSDeleter {
 };
 
 // Reads the WCS keywords from FITS header, constructs a wcsprm object.
-std::unique_ptr<wcsprm> read_wcs_from_header(fitsfile* fptr) {
+std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> read_wcs_from_header(fitsfile* fptr) {
     int status = 0;
     char card[FLEN_CARD];
     std::stringstream wcs_header_stream;
@@ -87,7 +89,7 @@ auto wcs_deleter = [](wcsprm* p) {
 };
 
 // Improved create_wcs_from_header with consistent error handling
-std::unique_ptr<wcsprm> create_wcs_from_header(
+std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> create_wcs_from_header(
     const std::map<std::string, std::string>& header, 
     bool throw_on_error) {
     
@@ -120,7 +122,7 @@ std::unique_ptr<wcsprm> create_wcs_from_header(
     wcsprm* wcs = nullptr;
     
     // Parse header
-    int wcs_status = wcspih(header_str.c_str(), nkeyrec, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
+    int wcs_status = wcspih(const_cast<char*>(header_str.c_str()), nkeyrec, WCSHDR_all, 0, &nreject, &nwcs, &wcs);
     
     // Handle errors consistently
     if (wcs_status == 0 && nwcs > 0 && wcs != nullptr) {

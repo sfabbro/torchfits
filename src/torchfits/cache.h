@@ -54,7 +54,7 @@ struct CacheEntry {
             }
         }
 
-        return total_size / (1024 * 1024); // convert to MB
+        return total_size; // Return size in bytes
     }
 };
 
@@ -64,8 +64,8 @@ public:
     explicit LRUCache(size_t capacity_mb = 256);
 
     // Accessors
-    size_t capacity() const;
-    size_t size() const;
+    size_t capacity_bytes() const;
+    size_t size_bytes() const;
 
     // Operations
     void clear();
@@ -73,8 +73,8 @@ public:
     std::shared_ptr<CacheEntry> get(const std::string& key);
 
 private:
-    size_t capacity_mb_;       // Max size in MB
-    size_t current_size_;      // Current size in MB
+    size_t capacity_bytes_;       // Max size in bytes
+    size_t current_size_bytes_;   // Current size in bytes
     std::mutex mutex_;         // Thread safety
 
     // Cache storage structure

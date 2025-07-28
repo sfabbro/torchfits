@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <cstdint>
 
 namespace py = pybind11;
 
@@ -120,41 +121,54 @@ torch::Tensor read_data(fitsfile* fptr, torch::Device device,
     if (bitpix == BYTE_IMG) {
         torch::TensorOptions options = torch::TensorOptions().dtype(torch::kUInt8).device(device);
         torch::Tensor data;
-        
         try {
-            // Create tensor with appropriate dimensions
+            std::vector<int64_t> dims; // Torch dims
+            // CFITSIO pixel indices must be long
+            std::vector<long> fpixel, lpixel, inc;
+
             if (!start.empty() && !shape.empty()) {
-                std::vector<int64_t> dims(shape.begin(), shape.end());
-                data = torch::empty(dims, options);
-            } else {
-                std::vector<int64_t> dims;
-                for (int i = 0; i < naxis; i++) {
-                    dims.push_back(static_cast<int64_t>(naxes[i]));
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
                 }
-                data = torch::empty(dims, options);
+            } else {
+                // Full image dimensions - need to be reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) {
+                    dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); // Reverse order
+                }
             }
             
-            // Read data into tensor
+            // Create tensor AFTER calculating correct dims
+            data = torch::empty(dims, options);
             uint8_t* data_ptr = data.data_ptr<uint8_t>();
             
-            if (!start.empty() && !shape.empty()) {
-                // Read subset with error handling
-                std::vector<long> fpixel(start.begin(), start.end());
-                std::vector<long> lpixel;
-                std::vector<long> inc(start.size(), 1);
-                
-                for (size_t i = 0; i < start.size(); i++) {
-                    lpixel.push_back(start[i] + shape[i] - 1);
-                    // Convert from 0-indexed to 1-indexed for CFITSIO
-                    fpixel[i] += 1;
-                }
-                
+            if (!fpixel.empty()) { // Read subset using calculated ranges
+                // Use the standard fits_read_subset which expects long*
                 if (fits_read_subset(fptr, TBYTE, fpixel.data(), lpixel.data(), inc.data(),
                                    nullptr, data_ptr, nullptr, &status)) {
                     throw_fits_error(status, "Error reading TBYTE data subset");
                 }
-            } else {
-                // Read entire image with error handling
+            } else { // Read full image
                 long nelements = data.numel();
                 if (fits_read_img(fptr, TBYTE, 1, nelements, nullptr,
                                 data_ptr, nullptr, &status)) {
@@ -162,7 +176,7 @@ torch::Tensor read_data(fitsfile* fptr, torch::Device device,
                 }
             }
             
-            DEBUG_TENSOR("Read tensor", data);
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
             return data;
         }
         catch (const std::exception& e) {
@@ -172,7 +186,289 @@ torch::Tensor read_data(fitsfile* fptr, torch::Device device,
     }
     
     // Similar pattern for other data types...
-    throw std::runtime_error("Unsupported FITS data type: " + std::to_string(bitpix));
+    else if (bitpix == SHORT_IMG) {
+        torch::TensorOptions options = torch::TensorOptions().dtype(torch::kInt16).device(device);
+        torch::Tensor data;
+        try {
+            std::vector<int64_t> dims;
+            std::vector<long> fpixel, lpixel, inc; // Use long
+
+            if (!start.empty() && !shape.empty()) {
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
+                }
+            } else {
+                // Full image dimensions - reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) { dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); }
+            }
+            data = torch::empty(dims, options);
+            int16_t* data_ptr = data.data_ptr<int16_t>();
+
+            if (!fpixel.empty()) { // Read subset
+                if (fits_read_subset(fptr, TSHORT, fpixel.data(), lpixel.data(), inc.data(), nullptr, data_ptr, nullptr, &status)) { // Use standard version
+                    throw_fits_error(status, "Error reading TSHORT data subset");
+                }
+            } else { // Read full image
+                long nelements = data.numel();
+                if (fits_read_img(fptr, TSHORT, 1, nelements, nullptr, data_ptr, nullptr, &status)) {
+                    throw_fits_error(status, "Error reading TSHORT data");
+                }
+            }
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
+            return data;
+        } catch (const std::exception& e) {
+            ERROR_LOG("Error reading SHORT_IMG data: " + std::string(e.what()));
+            throw;
+        }
+    }
+    else if (bitpix == LONG_IMG) {
+        torch::TensorOptions options = torch::TensorOptions().dtype(torch::kInt32).device(device);
+        torch::Tensor data;
+        try {
+            std::vector<int64_t> dims;
+            std::vector<long> fpixel, lpixel, inc; // Use long
+
+            if (!start.empty() && !shape.empty()) {
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
+                }
+            } else {
+                // Full image dimensions - reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) { dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); }
+            }
+            data = torch::empty(dims, options);
+            int32_t* data_ptr = data.data_ptr<int32_t>();
+
+            if (!fpixel.empty()) { // Read subset
+                if (fits_read_subset(fptr, TINT, fpixel.data(), lpixel.data(), inc.data(), nullptr, data_ptr, nullptr, &status)) { // Use standard version
+                    throw_fits_error(status, "Error reading TINT data subset");
+                }
+            } else { // Read full image
+                long nelements = data.numel();
+                if (fits_read_img(fptr, TINT, 1, nelements, nullptr, data_ptr, nullptr, &status)) {
+                    throw_fits_error(status, "Error reading TINT data");
+                }
+            }
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
+            return data;
+        } catch (const std::exception& e) {
+            ERROR_LOG("Error reading LONG_IMG data: " + std::string(e.what()));
+            throw;
+        }
+    }
+    else if (bitpix == LONGLONG_IMG) {
+        torch::TensorOptions options = torch::TensorOptions().dtype(torch::kInt64).device(device);
+        torch::Tensor data;
+        try {
+            std::vector<int64_t> dims;
+            std::vector<long> fpixel, lpixel, inc; // Use long
+
+            if (!start.empty() && !shape.empty()) {
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
+                }
+            } else {
+                // Full image dimensions - reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) { dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); }
+            }
+            data = torch::empty(dims, options);
+            int64_t* data_ptr = data.data_ptr<int64_t>();
+
+            if (!fpixel.empty()) { // Read subset
+                if (fits_read_subset(fptr, TLONGLONG, fpixel.data(), lpixel.data(), inc.data(), nullptr, data_ptr, nullptr, &status)) { // Use standard version
+                    throw_fits_error(status, "Error reading TLONGLONG data subset");
+                }
+            } else { // Read full image
+                long nelements = data.numel();
+                if (fits_read_img(fptr, TLONGLONG, 1, nelements, nullptr, data_ptr, nullptr, &status)) {
+                    throw_fits_error(status, "Error reading TLONGLONG data");
+                }
+            }
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
+            return data;
+        } catch (const std::exception& e) {
+            ERROR_LOG("Error reading LONGLONG_IMG data: " + std::string(e.what()));
+            throw;
+        }
+    }
+    else if (bitpix == FLOAT_IMG) {
+        torch::TensorOptions options = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+        torch::Tensor data;
+        try {
+            std::vector<int64_t> dims;
+            std::vector<long> fpixel, lpixel, inc; // Use long
+
+            if (!start.empty() && !shape.empty()) {
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
+                }
+            } else {
+                // Full image dimensions - reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) { dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); }
+            }
+            data = torch::empty(dims, options);
+            float* data_ptr = data.data_ptr<float>();
+
+            if (!fpixel.empty()) { // Read subset
+                if (fits_read_subset(fptr, TFLOAT, fpixel.data(), lpixel.data(), inc.data(), nullptr, data_ptr, nullptr, &status)) { // Use standard version
+                    throw_fits_error(status, "Error reading TFLOAT data subset");
+                }
+            } else { // Read full image
+                long nelements = data.numel();
+                if (fits_read_img(fptr, TFLOAT, 1, nelements, nullptr, data_ptr, nullptr, &status)) {
+                    throw_fits_error(status, "Error reading TFLOAT data");
+                }
+            }
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
+            return data;
+        } catch (const std::exception& e) {
+            ERROR_LOG("Error reading FLOAT_IMG data: " + std::string(e.what()));
+            throw;
+        }
+    }
+    else if (bitpix == DOUBLE_IMG) {
+        torch::TensorOptions options = torch::TensorOptions().dtype(torch::kFloat64).device(device);
+        torch::Tensor data;
+        try {
+            std::vector<int64_t> dims;
+            std::vector<long> fpixel, lpixel, inc; // Use long
+
+            if (!start.empty() && !shape.empty()) {
+                fpixel.resize(naxis);
+                lpixel.resize(naxis);
+                inc.assign(naxis, 1); // All increments are 1
+                dims.resize(naxis);
+
+                for (int i = 0; i < naxis; ++i) {
+                    // i iterates through Python/Torch dimensions (e.g., 0=plane, 1=row, 2=col for naxis=3)
+                    // Python/Torch order: (NAXIS3, NAXIS2, NAXIS1)
+                    int fits_dim_idx = naxis - 1 - i; // Corresponding FITS index (e.g., 2=NAXIS3, 1=NAXIS2, 0=NAXIS1)
+
+                    // Use start[i] and shape[i] (Python order) with naxes[fits_dim_idx] (FITS order)
+                    long long current_shape_py = (shape[i] == -1) ? (naxes[fits_dim_idx] - start[i]) : shape[i];
+                    if (current_shape_py <= 0) {
+                        throw std::runtime_error("Calculated shape for Python dimension " + std::to_string(i) + " is <= 0");
+                    }
+
+                    // Store dimension in Python order
+                    dims[i] = current_shape_py;
+
+                    // Store CFITSIO coordinates in FITS order
+                    fpixel[fits_dim_idx] = static_cast<long>(start[i] + 1);              // 1-based start
+                    lpixel[fits_dim_idx] = static_cast<long>(start[i] + current_shape_py); // 1-based inclusive end
+                }
+            } else {
+                // Full image dimensions - reversed for Python/Torch
+                dims.resize(naxis);
+                for (int i = 0; i < naxis; ++i) { dims[i] = static_cast<int64_t>(naxes[naxis - 1 - i]); }
+            }
+            data = torch::empty(dims, options);
+            double* data_ptr = data.data_ptr<double>();
+
+            if (!fpixel.empty()) { // Read subset
+                if (fits_read_subset(fptr, TDOUBLE, fpixel.data(), lpixel.data(), inc.data(), nullptr, data_ptr, nullptr, &status)) { // Use standard version
+                    throw_fits_error(status, "Error reading TDOUBLE data subset");
+                }
+            } else { // Read full image
+                long nelements = data.numel();
+                if (fits_read_img(fptr, TDOUBLE, 1, nelements, nullptr, data_ptr, nullptr, &status)) {
+                    throw_fits_error(status, "Error reading TDOUBLE data");
+                }
+            }
+            // DEBUG_TENSOR("Read tensor", data); // Temporarily disable
+            return data;
+        } catch (const std::exception& e) {
+            ERROR_LOG("Error reading DOUBLE_IMG data: " + std::string(e.what()));
+            throw;
+        }
+    }
+    else {
+        throw std::runtime_error("Unsupported FITS data type: " + std::to_string(bitpix));
+    }
 }
 
 // Read table data from FITS file
@@ -330,6 +626,7 @@ pybind11::object read_impl(
     DEBUG_SCOPE;
     
     try {
+        // Initialize cache if needed (will be disabled if cache_capacity=0)
         ensure_cache_initialized(cache_capacity);
         
         // Convert filename_or_url to string
@@ -400,16 +697,19 @@ pybind11::object read_impl(
             }
         }
         
-        // Generate cache key
-        std::string cache_key = generate_cache_key(filename, hdu, start, shape, columns, start_row, num_rows);
-        
-        // Check cache
-        if (auto cached_entry = cache->get(cache_key)) {
-            DEBUG_LOG("Cache hit for key: " << cache_key);
-            return pybind11::cast(*cached_entry);
+        // Generate cache key only if cache is enabled
+        std::string cache_key;
+        if (cache_capacity > 0) {
+            cache_key = generate_cache_key(filename, hdu, start, shape, columns, start_row, num_rows);
+            
+            // Check cache only if it's enabled
+            if (auto cached_entry = cache->get(cache_key)) {
+                DEBUG_LOG("Cache hit for key: " << cache_key);
+                return pybind11::cast(*cached_entry);
+            }
+            
+            DEBUG_LOG("Cache miss for key: " << cache_key);
         }
-        
-        DEBUG_LOG("Cache miss for key: " << cache_key);
         
         // Open the file and move to the correct HDU
         int status = 0;
@@ -448,8 +748,11 @@ pybind11::object read_impl(
             throw_fits_error(status, "Error getting HDU type");
         }
         
-        // Create cache entry
-        auto new_entry = std::make_shared<CacheEntry>(torch::Tensor(), header);
+        // Create cache entry only if cache is enabled
+        std::shared_ptr<CacheEntry> new_entry;
+        if (cache_capacity > 0) {
+            new_entry = std::make_shared<CacheEntry>(torch::Tensor(), header);
+        }
         
         // Process based on HDU type
         if (hdu_type == IMAGE_HDU) {
@@ -460,14 +763,22 @@ pybind11::object read_impl(
             
             if (naxis == 0) {
                 // Return None for data with header for empty HDU
-                cache->put(cache_key, new_entry);
+                if (cache_capacity > 0) {
+                    cache->put(cache_key, new_entry);
+                }
                 return pybind11::make_tuple(pybind11::none(), pybind11::cast(header));
             }
             
             // Read image data
-            new_entry->data = read_data(fptr, device, start_list, shape_list);
-            cache->put(cache_key, new_entry);
-            return pybind11::cast(*new_entry);
+            torch::Tensor data = read_data(fptr, device, start_list, shape_list);
+            
+            if (cache_capacity > 0) {
+                new_entry->data = data;
+                cache->put(cache_key, new_entry);
+                return pybind11::cast(*new_entry);
+            } else {
+                return pybind11::make_tuple(data, pybind11::cast(header));
+            }
         }
         else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
             // Read table data
@@ -476,14 +787,16 @@ pybind11::object read_impl(
             // Create Python dictionary with results
             pybind11::dict result_dict;
             for (const auto& [key, tensor] : table_data) {
-                if (tensor.numel() == 0 && new_entry->string_data.count(key) > 0) {
+                if (tensor.numel() == 0 && new_entry && new_entry->string_data.count(key) > 0) {
                     result_dict[key.c_str()] = pybind11::cast(new_entry->string_data[key]);
                 } else {
                     result_dict[key.c_str()] = tensor;
                 }
             }
             
-            cache->put(cache_key, new_entry);
+            if (cache_capacity > 0) {
+                cache->put(cache_key, new_entry);
+            }
             return result_dict;
         }
         else {

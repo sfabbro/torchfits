@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <sstream>
 #include "fits_utils.h"
+#include "debug.h"
 
 // --- Utility Functions ---
 

@@ -348,30 +348,27 @@ class TestFitsReader(unittest.TestCase):
         # Use different but valid indices
         cutout3, _ = torchfits.read(test_file, hdu=1, start=[2, 2], shape=[2, 2], cache_capacity=0)
         self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
-        # Rest remains the same with adjusted indices
 
         # Read with cache.
-        cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        cutout1, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[3, 3], cache_capacity=10)
 
         # Read the *same* cutout again.  This should be a cache hit.
-        cutout2, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        cutout2, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[3, 3], cache_capacity=10)
         self.assertTrue(np.allclose(cutout1.numpy(), cutout2.numpy()))  # Verify data
 
         # Read a *different* cutout.
-        cutout3, _ = torchfits.read(test_file, hdu=1, start=[5, 5], shape=[5, 5], cache_capacity=10)
+        cutout3, _ = torchfits.read(test_file, hdu=1, start=[1, 1], shape=[3, 3], cache_capacity=10)
         self.assertFalse(np.allclose(cutout1.numpy(), cutout3.numpy()))
 
         # Read the first cutout *again*. This should *still* be a cache hit
         # (unless the cache is extremely small).
-        cutout4, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        cutout4, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[3, 3], cache_capacity=10)
         self.assertTrue(np.allclose(cutout1.numpy(), cutout4.numpy()))
-
 
         #Clear cache, and check data are still correctly read.
         torchfits._clear_cache()
-        cutout5, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[5, 5], cache_capacity=10)
+        cutout5, _ = torchfits.read(test_file, hdu=1, start=[0, 0], shape=[3, 3], cache_capacity=10)
         self.assertTrue(np.allclose(cutout1.numpy(), cutout5.numpy()))
-
 
     def test_cache_eviction(self):
 

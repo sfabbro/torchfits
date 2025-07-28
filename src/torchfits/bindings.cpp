@@ -91,8 +91,8 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
     // Expose cache functionality through a class, but don't use the same name twice
     py::class_<LRUCache>(m, "LRUCache")
         .def("clear", &LRUCache::clear, "Clear the cache")
-        .def("size", &LRUCache::size, "Get current cache size in MB")
-        .def("capacity", &LRUCache::capacity, "Get maximum cache capacity in MB");
+        .def("size_bytes", &LRUCache::size_bytes, "Get current cache size in bytes")
+        .def("capacity_bytes", &LRUCache::capacity_bytes, "Get maximum cache capacity in bytes");
 
     // Expose the global cache instance with a different name
     if (cache) {
