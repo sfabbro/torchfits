@@ -1,0 +1,137 @@
+# .gitignore for torchfits
+
+# General Python ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+
+# C++ build artifacts
+*.o
+*.os
+*.obj
+*.dll
+*.lib
+*.a
+*.exe
+
+# Compiled dynamic libraries
+*.so
+*.so.*
+*.dylib
+*.pyd
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# IDE and Editor files
+.vscode/
+*~
+\#*\#
+.\#*
+.dir-locals.el
+*.swp
+*.swo
+*.swn
+*.swx
+*.un~
+[._]*.s[a-v][a-z]
+[._]*.sw[a-z]
+Session.vim
+tags
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Distribution / packaging
+.Python
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing and coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Test data and debugging files
+test_data/
+debug_*
+check_*
+test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
+!/tests/test_*.py  # But keep official test files
+
+# Generated FITS files in root directory (created during debugging)
+/basic_example.fits
+/cube_example.fits
+/cutout_example.fits
+/mef_example.fits
+/table_example.fits
+
+# Data directories created by examples and tests
+data/
+data_*/
+data_galaxy10/
+data_galaxy10_real/
+data_mnist_fits/
+data_simple_fits/
+data_sdss/
+
+# Examples directory - exclude generated data directories only
+examples/data_simple_fits/
+examples/data_sdss/
+examples/data_mnist_fits/
+
+# pixi environments
+.pixi/
+
+# Temporary and cache files
+.cache/
+*.tmp
+*.temp
+
+# Build artifacts and compiled extensions
+*.cpython-*.so
+*.cpython-*.pyd
+
+# Log files
+*.log
+
+# Backup files
+*~
+*.bak
+*.orig
+
+# CMake build files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Additional Python artifacts
+*.pyi
+.mypy_cache/
