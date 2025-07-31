@@ -20,110 +20,118 @@
 
 ## Installation
 
-**Prerequisites:**
+### Prerequisites
 
-Before installing `torchfits`, you need to install `cfitsio` and `wcslib` on your system.
+Before installing `torchfits`, you need to install the required system libraries:
 
-*   **Linux (Debian/Ubuntu):**
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get install libcfitsio-dev libwcs-dev
+```
 
-    ```bash
-    sudo apt-get install libcfitsio-dev libwcs-dev
-    ```
+**Linux (Fedora/CentOS/RHEL):**
+```bash
+sudo yum install cfitsio-devel wcslib-devel
+```
 
-*   **Linux (Fedora/CentOS/RHEL):**
+**macOS (Homebrew):**
+```bash
+brew install cfitsio wcslib
+```
 
-    ```bash
-    sudo yum install cfitsio-devel wcslib-devel
-    ```
+**macOS (MacPorts):**
+```bash
+sudo port install cfitsio wcslib
+```
 
-*   **macOS (Homebrew):**
+### Install torchfits
 
-    ```bash
-    brew install cfitsio wcslib
-    ```
-
-*   **macOS (MacPorts):**
-
-    ```bash
-    sudo port install cfitsio wcslib
-    ```
-
-*   **Windows:**
-    Download and install the pre-built binaries from the CFITSIO ([https://heasarc.gsfc.nasa.gov/fitsio/](https://heasarc.gsfc.nasa.gov/fitsio/)) and WCSLIB ([http://www.atnf.csiro.au/people/mcalabre/WCS/](http://www.atnf.csiro.au/people/mcalabre/WCS/)) websites.  You may need to manually add the installation directories to your system's `PATH` environment variable.  You will likely also need to specify the include and library directories during the build process (see "Building from Source" below).
-
-**Installation via pip (Recommended):**
-
-Once the prerequisites are installed, you can install `torchfits` using `pip`:
+Once prerequisites are installed:
 
 ```bash
 pip install torchfits
 ```
 
-This will automatically build the C++ extension.
+### Development Installation
 
-1. Building from Source:
+For development or the latest features:
 
-Clone the Repository:
 ```bash
-git clone [https://github.com/sfabbro/torchfits.git](https://github.com/sfabbro/torchfits.git)
+git clone https://github.com/sfabbro/torchfits.git
 cd torchfits
-```
-
-2. Build and install
-For an editable install (useful for development):
-```bash
 pip install -e .
 ```
 
 ## Quickstart
 
-There are two ways to interact with `torchfits`: a functional approach and an object-oriented approach.
+Get started with `torchfits` in just a few lines of code! Here are the most common use cases:
 
-### Functional Approach
-
-This approach is simple and direct, suitable for quick, one-off operations.
+### Basic Usage
 
 ```python
 import torchfits
 
-# Read the entire primary HDU of a FITS file.
+# Read an entire FITS image
 data, header = torchfits.read("my_image.fits")
+print(f"Image shape: {data.shape}, Data type: {data.dtype}")
+print(f"NAXIS1: {header['NAXIS1']}, NAXIS2: {header['NAXIS2']}")
 
-# Read a 10x20 cutout from the first extension, starting at (50, 75).
-cutout_data, cutout_header = torchfits.read("my_image.fits", hdu=1, start=[50, 75], shape=[10, 20])
+# Read a specific extension
+sci_data, sci_header = torchfits.read("my_image.fits", hdu="SCI")
 
-# Get the number of HDUs
-num_hdus = torchfits.get_num_hdus("my_image.fits")
-
-# Get the value of a header keyword
-naxis = torchfits.get_header_value("my_image.fits", 1, "NAXIS")
-
-print(f"NAXIS = {naxis}, Number of HDUs = {num_hdus}, Cutout Shape = {cutout_data.shape}")
+# Read a cutout (faster for large images)
+cutout, cutout_header = torchfits.read("my_image.fits", start=[100, 200], shape=[50, 50])
 ```
 
-### Object-Oriented Approach
+### Working with Tables
 
-This approach is recommended for more complex interactions, such as working with multiple HDUs in a file. It uses a context manager for safe and efficient file handling.
+```python
+# Read all columns from a table
+table_data = torchfits.read("catalog.fits", hdu="CATALOG")
+print(f"Available columns: {list(table_data.keys())}")
+
+# Read specific columns only
+ra_dec = torchfits.read("catalog.fits", hdu="CATALOG", columns=["RA", "DEC"])
+print(f"RA shape: {ra_dec['RA'].shape}")
+
+# Read a subset of rows
+first_1000 = torchfits.read("catalog.fits", hdu="CATALOG", num_rows=1000)
+```
+
+### File Information
+
+```python
+# Get basic file information
+num_hdus = torchfits.get_num_hdus("my_image.fits")
+dims = torchfits.get_dims("my_image.fits", hdu=1)
+hdu_type = torchfits.get_hdu_type("my_image.fits", hdu=1)
+
+print(f"File has {num_hdus} HDUs")
+print(f"Primary HDU dimensions: {dims}")
+print(f"Primary HDU type: {hdu_type}")
+```
+
+### Object-Oriented Approach (Recommended for Multiple Operations)
+
+When you need to perform multiple operations on the same file, use the object-oriented interface for better performance:
 
 ```python
 import torchfits
 
-with torchfits.FITS("my_image.fits") as f:
-    # Get the number of HDUs
-    num_hdus = len(f)
-
-    # Access the primary HDU
-    primary_hdu = f[0]
-
-    # Read the data and header
-    data = primary_hdu.read()
-    header = primary_hdu.header
-
-    # Access another HDU by name
-    if 'SCI' in [h.name for h in f]:
-        sci_hdu = f['SCI']
-        sci_data = sci_hdu.read()
-        print(f"Science data shape: {sci_data.shape}")
+with torchfits.FITS("my_multiextension_file.fits") as f:
+    print(f"File has {len(f)} HDUs")
+    
+    # Access HDUs by index or name
+    primary = f[0]
+    sci_hdu = f["SCI"]
+    
+    # Read data and access headers
+    primary_data = primary.read()
+    sci_data = sci_hdu.read(start=[0, 0], shape=[100, 100])  # Cutout
+    
+    print(f"Primary HDU shape: {primary_data.shape}")
+    print(f"Science HDU cutout shape: {sci_data.shape}")
+    print(f"EXPTIME: {sci_hdu.header['EXPTIME']}")
 ```
 
 ## Examples
@@ -149,24 +157,62 @@ The examples that use external datasets will automatically download and cache th
 
 ## API Reference
 
-### Main Functions
+### Core Reading Function
 
-* **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0, device='cpu')`**: Reads FITS data. Handles images, cubes, and tables. Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
-  * `filename_or_url` (str or dict): Path to the FITS file, or a dictionary with `fsspec` parameters for remote files, or a CFITSIO-compatible URL.
-  * `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies the HDU.
-  * `start` (list[int], optional): Starting pixel coordinates (0-based) for a cutout.
-  * `shape` (list[int], optional): Shape of the cutout. Use `-1` for a dimension to read to the end. If `start` is given, `shape` *must* also be given.
-  * `columns` (list[str], optional): List of column names to read from a table. Reads all columns if `None`.
-  * `start_row` (int, optional): Starting row index (0-based) for table reads. Defaults to 0.
-  * `num_rows` (int or None, optional): Number of rows to read from a table. Reads all remaining rows if `None`.
-  * `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB). Set to 0 to disable caching.
-  * `device` (str, optional):  Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.
+#### `torchfits.read(filename_or_url, hdu=1, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0, device='cpu')`
 
-* **`torchfits.get_header(filename, hdu_num)`**: Returns the FITS header as a dictionary.
-* **`torchfits.get_dims(filename, hdu_num)`**: Returns the dimensions of a FITS image/cube HDU.
-* **`torchfits.get_header_value(filename, hdu_num, key)`**: Returns the value of a single header keyword.
-* **`torchfits.get_hdu_type(filename, hdu_num)`**: Returns the HDU type as a string ("IMAGE", "BINTABLE", "TABLE", or "UNKNOWN").
-* **`torchfits.get_num_hdus(filename)`**: Returns the total number of HDUs in the FITS file.
+The main function for reading FITS data into PyTorch tensors. Handles images, data cubes, and tables seamlessly.
+
+**Parameters:**
+
+* `filename_or_url` (str or dict): Path to FITS file, CFITSIO-compatible URL, or fsspec parameters dict for remote files
+* `hdu` (int or str, optional): HDU number (1-based) or name. Defaults to 1 (primary HDU)
+* `start` (list[int], optional): Starting pixel coordinates (0-based) for cutouts. For 2D: `[row, col]`
+* `shape` (list[int], optional): Cutout shape. Required if `start` given. Use `-1` to read to end of dimension
+* `columns` (list[str], optional): Column names for table HDUs. Reads all columns if `None`
+* `start_row` (int, optional): Starting row (0-based) for table reads. Default: 0
+* `num_rows` (int, optional): Number of rows to read from table. Reads all if `None`
+* `cache_capacity` (int, optional): Cache size in MB. Default: auto-sized. Set 0 to disable
+* `device` (str, optional): Target device ('cpu' or 'cuda'). Default: 'cpu'
+
+**Returns:**
+
+* For images/cubes: tuple `(data, header)` where `data` is PyTorch tensor, `header` is dict
+* For tables: dict with column names as keys, PyTorch tensors as values
+
+### File Information Functions
+
+* **`torchfits.get_header(filename, hdu=1)`**: Get complete FITS header as dictionary
+* **`torchfits.get_num_hdus(filename)`**: Get total number of HDUs in file  
+* **`torchfits.get_dims(filename, hdu=1)`**: Get dimensions of image/cube HDU
+* **`torchfits.get_header_value(filename, hdu, key)`**: Get value of specific header keyword
+* **`torchfits.get_hdu_type(filename, hdu=1)`**: Get HDU type ("IMAGE", "BINTABLE", "TABLE", "UNKNOWN")
+
+### World Coordinate System (WCS) Functions
+
+* **`torchfits.world_to_pixel(world_coords, header)`**: Convert world coordinates to pixel coordinates using WCS information from header
+* **`torchfits.pixel_to_world(pixel_coords, header)`**: Convert pixel coordinates to world coordinates using WCS information from header
+
+### Object-Oriented Interface
+
+For more complex file operations, use the object-oriented interface:
+
+#### `torchfits.FITS(filename)`
+
+Context manager for accessing FITS files. Provides access to individual HDUs.
+
+```python
+with torchfits.FITS("file.fits") as f:
+    num_hdus = len(f)              # Number of HDUs
+    primary = f[0]                 # Access by index
+    sci_hdu = f['SCI']             # Access by name
+    data = primary.read()          # Read HDU data
+    header = primary.header        # Get HDU header
+```
+
+#### `torchfits.HDU(filename, hdu_spec)`
+
+Represents a single HDU. Has `read()` method and `header` property.
 
 ### WCS Functions
 
@@ -201,8 +247,10 @@ print(f"Data shape: {data.shape}, Header: {header}")
 ```
 
 ## Contributing
+
 Contributions are welcome! Traditional GitHub contributions style welcome.
 
 ## License
+
 This project is licensed under the GPL-2 License - see the LICENSE file for details.
 
