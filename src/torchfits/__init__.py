@@ -12,6 +12,11 @@ from .fits_reader import (
 from .wcs_utils import (
     world_to_pixel,
     pixel_to_world,
+    get_wcs_info,
+    is_celestial,
+    is_spectral,
+    get_coordinate_names,
+    transform_cutout_wcs,
 )
 from .version import __version__
 
@@ -27,5 +32,10 @@ __all__ = [
     "HDU",
     "world_to_pixel",
     "pixel_to_world",
+    "get_wcs_info",
+    "is_celestial", 
+    "is_spectral",
+    "get_coordinate_names",
+    "transform_cutout_wcs",
     "__version__",
 ]

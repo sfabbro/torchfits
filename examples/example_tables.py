@@ -32,7 +32,10 @@ def main():
         print("Table Data:")
         for col_name in table_data:
             print(f"  Column '{col_name}': {table_data[col_name]}")
-            print(f"    Data Type: {table_data[col_name].dtype}")
+            if hasattr(table_data[col_name], 'dtype'):
+                print(f"    Data Type: {table_data[col_name].dtype}")
+            else:
+                print(f"    Data Type: string list")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
