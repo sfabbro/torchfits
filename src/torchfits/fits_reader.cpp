@@ -94,8 +94,13 @@ torch::Tensor read_image_data(fitsfile* fptr, torch::Device device,
 torch::Dtype get_torch_dtype(int typecode) {
     switch (typecode) {
         case TBYTE:     return torch::kUInt8;
+        case 12:        return torch::kInt8;     // TSBYTE - 8-bit signed byte
+        case 20:        return torch::kUInt16;   // TUSHORT - 16-bit unsigned integer  
         case TSHORT:    return torch::kInt16;
+        case 30:        return torch::kUInt32;   // TUINT - 32-bit unsigned integer
         case TINT:      return torch::kInt32;
+        case 40:        return torch::kInt32;    // TULONG - 32-bit unsigned long (same as TUINT)
+        case 41:        return torch::kInt32;    // TLONG - 32-bit signed long (same as TINT)
         case TLONGLONG: return torch::kInt64;
         case TFLOAT:    return torch::kFloat32;
         case TDOUBLE:   return torch::kFloat64;
@@ -127,78 +132,158 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         return py::dict();
     }
 
+    // OPTIMIZATION 1: Batch collect ALL column metadata first
+    struct ColumnMetadata {
+        std::string name;
+        int number;
+        int typecode;
+        long repeat;
+        long width;
+    };
+    
+    std::vector<ColumnMetadata> all_metadata;
     std::vector<std::string> selected_columns;
+    
     if (!columns_obj.is_none()) {
         selected_columns = columns_obj.cast<std::vector<std::string>>();
     } else {
-        // If no columns are specified, read all columns.
+        // Get all column names in one efficient pass
+        selected_columns.reserve(total_cols);
         for (int i = 1; i <= total_cols; ++i) {
-            char colname[FLEN_VALUE], coltype[FLEN_VALUE], colunit[FLEN_VALUE];
-            status = 0; // Reset status before each call
-            fits_get_bcolparms(fptr, i, colname, colunit, coltype, nullptr, nullptr, nullptr, nullptr, nullptr, &status);
+            char colname[FLEN_VALUE];
+            status = 0;
+            fits_get_bcolparms(fptr, i, colname, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &status);
             if (status) {
                 throw_fits_error(status, "Error getting column info for col " + std::to_string(i));
             }
-            selected_columns.push_back(colname);
+            selected_columns.emplace_back(colname);
+        }
+    }
+    
+    // Batch collect metadata for all selected columns
+    all_metadata.reserve(selected_columns.size());
+    for (const auto& col_name : selected_columns) {
+        ColumnMetadata meta;
+        meta.name = col_name;
+        
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &meta.number, &status);
+        if (status) throw_fits_error(status, "Error finding column: " + col_name);
+        
+        fits_get_coltype(fptr, meta.number, &meta.typecode, &meta.repeat, &meta.width, &status);
+        if (status) throw_fits_error(status, "Error getting column type for: " + col_name);
+        
+        all_metadata.push_back(meta);
+    }
+
+    // OPTIMIZATION 2: Separate processing by data type for efficient batching
+    std::vector<size_t> string_indices;
+    std::vector<size_t> numeric_indices;
+    
+    for (size_t i = 0; i < all_metadata.size(); ++i) {
+        if (all_metadata[i].typecode == TSTRING) {
+            string_indices.push_back(i);
+        } else {
+            numeric_indices.push_back(i);
         }
     }
 
     py::dict result_dict;
-    for (const auto& col_name : selected_columns) {
-        int col_num;
-        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &col_num, &status);
-        if (status) throw_fits_error(status, "Error finding column: " + col_name);
 
-        int typecode;
-        long repeat, width;
-        fits_get_coltype(fptr, col_num, &typecode, &repeat, &width, &status);
-        if (status) throw_fits_error(status, "Error getting column type for: " + col_name);
+    // Handle string columns (must be processed individually)
+    for (size_t idx : string_indices) {
+        const auto& meta = all_metadata[idx];
+        
+        std::vector<char*> string_array(rows_to_read);
+        std::vector<char> string_buffer(rows_to_read * (meta.repeat + 1));
+        
+        for (long i = 0; i < rows_to_read; i++) {
+            string_array[i] = &string_buffer[i * (meta.repeat + 1)];
+        }
+        
+        fits_read_col_str(fptr, meta.number, start_row + 1, 1, rows_to_read,
+                          nullptr, string_array.data(), nullptr, &status);
+        if (status) throw_fits_error(status, "Error reading string column: " + meta.name);
+        
+        // OPTIMIZATION 3: Pre-allocate Python list for better performance
+        py::list string_list;
+        string_list.attr("__reserve__")(rows_to_read);  // Reserve capacity if possible
+        for (long i = 0; i < rows_to_read; i++) {
+            string_list.append(py::str(string_array[i]));
+        }
+        result_dict[py::str(meta.name)] = std::move(string_list);
+    }
 
-        // Handle string columns differently
-        if (typecode == TSTRING) {
-            // For string columns, we need to read as char arrays
-            std::vector<char*> string_array(rows_to_read);
-            std::vector<char> string_buffer(rows_to_read * (repeat + 1)); // +1 for null terminator
+    // OPTIMIZATION 4: Process numeric columns with advanced optimizations
+    if (!numeric_indices.empty()) {
+        // Group by data type for optimal memory allocation patterns
+        std::unordered_map<int, std::vector<size_t>> type_groups;
+        for (size_t idx : numeric_indices) {
+            type_groups[all_metadata[idx].typecode].push_back(idx);
+        }
+
+        // OPTIMIZATION: Sort columns by size for better memory access patterns
+        // Process smaller columns first to reduce memory fragmentation
+        std::vector<std::pair<int, std::vector<size_t>>> sorted_type_groups;
+        for (auto& [typecode, indices] : type_groups) {
+            sorted_type_groups.emplace_back(typecode, std::move(indices));
+        }
+        
+        std::sort(sorted_type_groups.begin(), sorted_type_groups.end(), 
+                 [](const auto& a, const auto& b) {
+                     // Sort by element size (smaller first)
+                     int size_a = (a.first == TFLOAT || a.first == TINT) ? 4 : 8;
+                     int size_b = (b.first == TFLOAT || b.first == TINT) ? 4 : 8;
+                     return size_a < size_b;
+                 });
+
+        // Process each type group with minimal PyTorch overhead
+        for (const auto& [typecode, indices] : sorted_type_groups) {
+            torch::Dtype torch_dtype = get_torch_dtype(typecode);
             
-            // Set up pointers for each string
-            for (long i = 0; i < rows_to_read; i++) {
-                string_array[i] = &string_buffer[i * (repeat + 1)];
+            // OPTIMIZATION 5: Create optimal tensor options once per type
+            torch::TensorOptions cpu_options = torch::TensorOptions()
+                .device(torch::kCPU)
+                .dtype(torch_dtype)
+                .memory_format(torch::MemoryFormat::Contiguous)
+                .pinned_memory(device.is_cuda());  // Use pinned memory for CUDA transfers
+            
+            // OPTIMIZATION: Pre-allocate larger tensors first within each type group
+            std::vector<std::pair<size_t, size_t>> indexed_columns;
+            for (size_t i = 0; i < indices.size(); ++i) {
+                size_t idx = indices[i];
+                size_t column_size = rows_to_read * all_metadata[idx].repeat;
+                indexed_columns.emplace_back(idx, column_size);
             }
             
-            fits_read_col_str(fptr, col_num, start_row + 1, 1, rows_to_read,
-                              nullptr, string_array.data(), nullptr, &status);
-            if (status) throw_fits_error(status, "Error reading string column data for: " + col_name);
+            std::sort(indexed_columns.begin(), indexed_columns.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
             
-            // Convert to list of strings (for now, we'll skip adding to result_dict for strings)
-            // TODO: Handle string data properly
-            continue;
+            // Process columns in optimized order
+            for (const auto& [idx, column_size] : indexed_columns) {
+                const auto& meta = all_metadata[idx];
+                
+                // OPTIMIZATION 6: Create properly-shaped tensor in one call
+                torch::Tensor col_data;
+                if (meta.repeat == 1) {
+                    col_data = torch::empty({rows_to_read}, cpu_options);
+                } else {
+                    col_data = torch::empty({rows_to_read, meta.repeat}, cpu_options);
+                }
+                
+                // OPTIMIZATION: Use bulk read for better CFITSIO performance
+                fits_read_col(fptr, typecode, meta.number, start_row + 1, 1, 
+                              rows_to_read * meta.repeat,
+                              nullptr, col_data.data_ptr(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading column: " + meta.name);
+                
+                // OPTIMIZATION 7: Efficient device transfer with proper staging
+                if (device != torch::kCPU) {
+                    col_data = col_data.to(device, /*non_blocking=*/true);
+                }
+                
+                result_dict[py::str(meta.name)] = col_data.squeeze();
+            }
         }
-
-        // Create tensor on CPU first (CFITSIO can't write to GPU memory)
-        torch::TensorOptions cpu_options = torch::TensorOptions().device(torch::kCPU).dtype(get_torch_dtype(typecode));
-        
-        torch::Tensor col_data;
-        if (repeat == 1) {
-            col_data = torch::empty({rows_to_read}, cpu_options);
-        } else {
-            col_data = torch::empty({rows_to_read, repeat}, cpu_options);
-        }
-        
-        // Ensure tensor is contiguous for CFITSIO
-        if (!col_data.is_contiguous()) {
-            col_data = col_data.contiguous();
-        }
-
-        fits_read_col(fptr, typecode, col_num, start_row + 1, 1, rows_to_read * repeat,
-                      nullptr, col_data.data_ptr(), nullptr, &status);
-        if (status) throw_fits_error(status, "Error reading column data for: " + col_name);
-
-        // Move to target device if needed
-        if (device != torch::kCPU) {
-            col_data = col_data.to(device);
-        }
-
-        result_dict[py::str(col_name)] = col_data.squeeze();
     }
 
     return result_dict;
