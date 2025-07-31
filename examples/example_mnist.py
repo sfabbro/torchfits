@@ -61,8 +61,9 @@ class MNIST_FITS_Dataset(Dataset):
         filename = self.file_list[idx]
         label = self.labels[idx]
         try:
-            # Pass cache_capacity and device to read
-            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity, device=self.device)
+            # Pass cache_capacity and device to read (convert device to string)
+            device_str = str(self.device) if hasattr(self.device, '__str__') else self.device
+            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity, device=device_str)
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:
                 data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
@@ -97,7 +98,7 @@ def collate_fn(batch):
     batch = [item for item in batch if item is not None]
     if not batch:  # Handle the case where *all* items in a batch are None
         return torch.Tensor(), torch.Tensor()
-    return torch.utils.data.dataloader.default_collate(batch)
+    return torch.utils.data.default_collate(batch)
 
 
 # --- Main Script ---
@@ -115,8 +116,8 @@ def main():
 
     # --- Create Datasets and DataLoaders ---
     # Demonstrate with and without cache, and with/without GPU
-    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100, device=device)
-    test_dataset = MNIST_FITS_Dataset(data_dir, train=False, cache_capacity=100, device=device) #Use cache
+    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100, device=str(device))
+    test_dataset = MNIST_FITS_Dataset(data_dir, train=False, cache_capacity=100, device=str(device)) #Use cache
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
 

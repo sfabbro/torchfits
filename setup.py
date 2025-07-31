@@ -28,6 +28,12 @@ def get_wcslib_version():
 
 def get_cfitsio_include_path():
     """Finds the CFITSIO include path, checking common locations."""
+    # Check for conda environment
+    if 'CONDA_PREFIX' in os.environ:
+        conda_path = os.path.join(os.environ['CONDA_PREFIX'], 'include')
+        if os.path.exists(os.path.join(conda_path, 'fitsio.h')):
+            return conda_path
+            
     # Check common installation paths
     possible_paths = [
         "/usr/include/cfitsio",
@@ -58,6 +64,14 @@ def get_cfitsio_include_path():
 
 def get_cfitsio_library_path():
     """Find cfitsio library using pkg-config"""
+    # Check for conda environment
+    if 'CONDA_PREFIX' in os.environ:
+        conda_path = os.path.join(os.environ['CONDA_PREFIX'], 'lib')
+        if (os.path.exists(os.path.join(conda_path, "libcfitsio.so")) or
+           os.path.exists(os.path.join(conda_path, "libcfitsio.dylib")) or #macOS
+           os.path.exists(os.path.join(conda_path, "cfitsio.lib"))):  #Windows
+            return conda_path
+
     try:
         library_path = subprocess.check_output(
             ["pkg-config", "--libs-only-L", "cfitsio"],
@@ -89,6 +103,12 @@ def get_cfitsio_library_path():
 
 def get_wcslib_include_path():
     """Finds the wcslib include path, checking common locations."""
+    # Check for conda environment
+    if 'CONDA_PREFIX' in os.environ:
+        conda_path = os.path.join(os.environ['CONDA_PREFIX'], 'include')
+        if os.path.exists(os.path.join(conda_path, 'wcslib', 'wcs.h')):
+            return os.path.join(conda_path, 'wcslib')
+
     possible_paths = [
         "/usr/include",
         "/usr/local/include",
@@ -116,6 +136,13 @@ def get_wcslib_include_path():
 
 def get_wcslib_library_path():
     """Find wcslib library using pkg-config."""
+    # Check for conda environment
+    if 'CONDA_PREFIX' in os.environ:
+        conda_path = os.path.join(os.environ['CONDA_PREFIX'], 'lib')
+        if (os.path.exists(os.path.join(conda_path, "libwcs.so")) or  # Linux
+           os.path.exists(os.path.join(conda_path, "libwcs.dylib")) or #macOS
+           os.path.exists(os.path.join(conda_path, "wcs.lib"))):  #Windows
+            return conda_path
 
     try:
         library_path = subprocess.check_output(

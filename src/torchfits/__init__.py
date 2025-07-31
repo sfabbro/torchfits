@@ -6,8 +6,12 @@ from .fits_reader import (
     get_hdu_type,
     get_num_hdus,
     _clear_cache,
-    world_to_pixel,  # Import these from fits_reader.py
-    pixel_to_world,  # Import these from fits_reader.py
+    FITS,
+    HDU,
+)
+from .wcs_utils import (
+    world_to_pixel,
+    pixel_to_world,
 )
 from .version import __version__
 
@@ -19,6 +23,8 @@ __all__ = [
     "get_hdu_type",
     "get_num_hdus",
     "_clear_cache",
+    "FITS",
+    "HDU",
     "world_to_pixel",
     "pixel_to_world",
     "__version__",

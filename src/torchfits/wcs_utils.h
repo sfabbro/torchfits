@@ -8,89 +8,54 @@
 #include <map>
 #include <string>
 #include <memory>
-#include <functional>
+
+// Forward declaration of the wcsprm struct.
+struct wcsprm;
+
+// Type alias for a unique_ptr to a wcsprm struct with a custom deleter.
+// This ensures that the memory allocated by wcslib is properly freed.
+using WcsUniquePtr = std::unique_ptr<wcsprm, std::function<void(wcsprm*)>>;
 
 /**
- * @brief Read WCS information from a FITS file header
- * 
- * This function extracts WCS keywords from the current HDU of the FITS file,
- * constructs a wcsprm structure, and returns it wrapped in a unique_ptr.
- * 
- * Memory ownership: The returned unique_ptr owns the wcsprm structure and
- * will free it when the unique_ptr is destroyed.
- * 
- * @param fptr Pointer to an open FITS file
- * @return A unique_ptr to a wcsprm structure containing the WCS information
- * @throws std::runtime_error if WCS parsing or initialization fails
+ * @brief Read WCS information from an open FITS file's header.
+ *
+ * @param fptr A pointer to an open fitsfile.
+ * @return A WcsUniquePtr managing the wcsprm struct.
+ * @throws std::runtime_error on failure to read or parse the WCS info.
  */
-std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> read_wcs_from_header(fitsfile* fptr);
+WcsUniquePtr read_wcs_from_header(fitsfile* fptr);
 
 /**
- * @brief Create a WCS structure from a map of header key-value pairs
- * 
- * This function builds a FITS header from the provided map and creates
- * a wcsprm structure from it.
- * 
- * Memory ownership: The returned unique_ptr owns the wcsprm structure and
- * will free it using the provided custom deleter when destroyed.
- * 
- * @param header Map of header keywords to values
- * @return A unique_ptr with custom deleter containing the WCS structure
- * @throws std::runtime_error if header parsing or WCS initialization fails
+ * @brief Create a WCS structure from a map of header key-value pairs.
+ *
+ * @param header A map representing the FITS header.
+ * @param throw_on_error If true, throw an exception on failure. If false, return nullptr.
+ * @return A WcsUniquePtr managing the wcsprm struct, or nullptr on failure if throw_on_error is false.
  */
-std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> read_wcs_from_header_map(
-    const std::map<std::string, std::string>& header);
+WcsUniquePtr create_wcs_from_header(const std::map<std::string, std::string>& header, bool throw_on_error = true);
 
 /**
- * @brief Create a WCS structure from a map of header key-value pairs
- * 
- * Alternative interface to read_wcs_from_header_map that allows controlling
- * whether errors are thrown or returned as nullptr.
- * 
- * Memory ownership: The returned unique_ptr owns the wcsprm structure and
- * will free it when the unique_ptr is destroyed.
- * 
- * @param header Map of header keywords to values
- * @param throw_on_error If true, throw exceptions on error; if false, return nullptr
- * @return A unique_ptr to a wcsprm structure, or nullptr on error if throw_on_error is false
- * @throws std::runtime_error if throw_on_error is true and parsing or initialization fails
- */
-std::unique_ptr<wcsprm, std::function<void(wcsprm*)>> create_wcs_from_header(
-    const std::map<std::string, std::string>& header, 
-    bool throw_on_error = false);
-
-/**
- * @brief Convert world coordinates to pixel coordinates
- * 
- * Takes world coordinates (RA/Dec or other coordinate system) and converts
- * them to pixel coordinates using the WCS information in the header.
- * 
- * @param world_coords Tensor of shape [N, 2+] with world coordinates
- * @param header Map of FITS header key-value pairs containing WCS information
- * @return Tuple of (pixel_coords, status_tensor) where pixel_coords is a tensor
- *         of shape [N, naxis] and status_tensor indicates success/failure per point
- * @throws std::runtime_error if the header does not contain valid WCS information
+ * @brief Convert world coordinates to pixel coordinates.
+ *
+ * @param world_coords A 2D tensor of world coordinates [N, Dims].
+ * @param header A map representing the FITS header with WCS info.
+ * @return A tuple containing a tensor of pixel coordinates and a tensor of status flags.
  */
 std::tuple<torch::Tensor, torch::Tensor> world_to_pixel(
     torch::Tensor world_coords,
-    std::map<std::string, std::string> header
+    const std::map<std::string, std::string>& header
 );
 
 /**
- * @brief Convert pixel coordinates to world coordinates
- * 
- * Takes pixel coordinates and converts them to world coordinates (RA/Dec or
- * other coordinate system) using the WCS information in the header.
- * 
- * @param pixel_coords Tensor of shape [N, naxis] with pixel coordinates
- * @param header Map of FITS header key-value pairs containing WCS information
- * @return Tuple of (world_coords, status_tensor) where world_coords is a tensor
- *         of shape [N, 2+] and status_tensor indicates success/failure per point
- * @throws std::runtime_error if the header does not contain valid WCS information
+ * @brief Convert pixel coordinates to world coordinates.
+ *
+ * @param pixel_coords A 2D tensor of pixel coordinates [N, Dims].
+ * @param header A map representing the FITS header with WCS info.
+ * @return A tuple containing a tensor of world coordinates and a tensor of status flags.
  */
 std::tuple<torch::Tensor, torch::Tensor> pixel_to_world(
     torch::Tensor pixel_coords,
-    std::map<std::string, std::string> header
+    const std::map<std::string, std::string>& header
 );
 
 #endif // TORCHFITS_WCS_UTILS_H

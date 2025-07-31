@@ -1,4 +1,5 @@
 import torchfits
+import torch
 import numpy as np
 import os
 from astropy.io import fits
@@ -27,7 +28,7 @@ def main():
 
     # Read the entire table
     try:
-        table_data = torchfits.read(test_file, hdu="MY_TABLE")  # Read by name
+        table_data, header = torchfits.read(test_file, hdu="MY_TABLE")  # Read by name
         print("Table Data:")
         for col_name in table_data:
             print(f"  Column '{col_name}': {table_data[col_name]}")
@@ -37,28 +38,37 @@ def main():
 
     # Read specific columns
     try:
-        table_subset = torchfits.read(test_file, hdu=1, columns=['ra', 'id'])
+        table_subset, _ = torchfits.read(test_file, hdu=2, columns=['ra', 'id'])
         print("\nSubset of Columns (ra, id):")
-        for col_name in table_subset:
-            print(f"  Column '{col_name}': {table_subset[col_name]}")
+        if table_subset is not None:
+            for col_name in table_subset:
+                print(f"  Column '{col_name}': {table_subset[col_name]}")
+        else:
+            print("  No data returned")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
     # Read a subset of rows
     try:
-        table_rows = torchfits.read(test_file, hdu=1, start_row=1, num_rows=2)
+        table_rows, _ = torchfits.read(test_file, hdu=2, start_row=1, num_rows=2)
         print("\nSubset of Rows (start_row=1, num_rows=2):")
-        for col_name in table_rows:
-            print(f"  Column '{col_name}': {table_rows[col_name]}")
+        if table_rows is not None:
+            for col_name in table_rows:
+                print(f"  Column '{col_name}': {table_rows[col_name]}")
+        else:
+            print("  No data returned")
     except RuntimeError as e:
         print(f" Error: {e}")
 
     # Read specific columns and rows
     try:
-        table_subset = torchfits.read(test_file, hdu=1, columns=['id', 'comments'], start_row=0, num_rows=2)
+        table_subset, _ = torchfits.read(test_file, hdu=2, columns=['id', 'flag'], start_row=0, num_rows=2)
         print("\nSubset of Columns and Rows:")
-        for col_name in table_subset:
-            print(f"  Column '{col_name}': {table_subset[col_name]}")
+        if table_subset is not None:
+            for col_name in table_subset:
+                print(f"  Column '{col_name}': {table_subset[col_name]}")
+        else:
+            print("  No data returned")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
@@ -66,9 +76,12 @@ def main():
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 2, 10]:
         try:
-            table_data = torchfits.read(test_file, hdu=1, cache_capacity=capacity)
+            table_data, _ = torchfits.read(test_file, hdu=2, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
-            print(f"  Number of Columns: {len(table_data)}") # Just print the number of columns
+            if table_data is not None:
+                print(f"  Number of Columns: {len(table_data)}") # Just print the number of columns
+            else:
+                print("  No data returned")
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
 
@@ -76,8 +89,11 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            table_data = torchfits.read(test_file, hdu=1, device="cuda")
-            print(f"  Data device, first column: {table_data['ra'].device}")
+            table_data, _ = torchfits.read(test_file, hdu=2, device="cuda")
+            if table_data is not None:
+                print(f"  Data device, first column: {table_data['ra'].device}")
+            else:
+                print("  No data returned")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")
     else:

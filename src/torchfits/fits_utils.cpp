@@ -1,320 +1,202 @@
-#include "fits_reader.h"
-#include <algorithm>
-#include <sstream>
 #include "fits_utils.h"
 #include "debug.h"
+#include <map>
+#include <string>
+#include <vector>
+#include <algorithm> // For std::transform
+#include <cctype>    // For std::tolower
 
-// --- Utility Functions ---
-
-// Convert a CFITSIO status code into a human-readable error message.
-std::string fits_status_to_string(int status) {
-    char err_msg[31]; // CFITSIO's error message buffer is 30 chars + null terminator
-    fits_get_errstatus(status, err_msg);
-    return std::string(err_msg);
+void throw_fits_error(int status, const std::string& msg) {
+    char err_text[FLEN_ERRMSG];
+    fits_get_errstatus(status, err_text);
+    throw std::runtime_error(msg + ": " + err_text);
 }
 
-// Throw a PyTorch RuntimeError with a formatted message, including CFITSIO error details.
-void throw_fits_error(int status, const std::string& message) {
-    std::stringstream ss;
-    ss << message << " CFITSIO error: " << fits_status_to_string(status);
-    throw std::runtime_error(ss.str());
-}
-
-// Parse a single 80-character FITS header card into key and value.
-std::pair<std::string, std::string> parse_header_card(const char* card) {
-    std::string card_str(card);
-    std::string key, value;
-    
-    // Trim the entire card
-    auto trim_start = card_str.find_first_not_of(" ");
-    if (trim_start == std::string::npos) {
-        return {"", ""}; // Empty or whitespace-only card
-    }
-    card_str = card_str.substr(trim_start);
-    
-    // Find the equals sign (if present)
-    size_t eq_pos = card_str.find('=');
-    if (eq_pos == std::string::npos) {
-        // No equals sign - this is a COMMENT, HISTORY, or similar
-        key = card_str;
-        auto key_end = key.find_first_of(" \t");
-        if (key_end != std::string::npos) {
-            key = key.substr(0, key_end);
-        }
-        return {key, ""};
-    }
-    
-    // Process key (left of equals)
-    key = card_str.substr(0, eq_pos);
-    auto key_end = key.find_last_not_of(" \t");
-    key = key.substr(0, key_end + 1);
-    
-    // Process value (right of equals)
-    value = card_str.substr(eq_pos + 1);
-    auto value_start = value.find_first_not_of(" \t");
-    if (value_start == std::string::npos) {
-        return {key, ""}; // Empty value
-    }
-    value = value.substr(value_start);
-    
-    // Handle quoted string values
-    if (!value.empty() && value[0] == '\'') {
-        // Find the closing quote, considering FITS' escaped quote rules ('')
-        size_t pos = 1;
-        std::string unquoted;
-        bool escaped = false;
-        
-        while (pos < value.size()) {
-            char c = value[pos++];
-            if (c == '\'') {
-                if (pos < value.size() && value[pos] == '\'') {
-                    // Double single quote is an escaped quote in FITS
-                    unquoted += '\'';
-                    pos++;
-                    escaped = false;
-                } else {
-                    // End of quoted string
-                    escaped = true;
-                    break;
-                }
-            } else {
-                unquoted += c;
-            }
-        }
-        
-        if (escaped) {
-            value = unquoted;
-        }
-    } else {
-        // Non-quoted value - find comment delimiter
-        auto comment_pos = value.find('/');
-        if (comment_pos != std::string::npos) {
-            value = value.substr(0, comment_pos);
-        }
-        
-        // Trim trailing whitespace
-        auto val_end = value.find_last_not_of(" \t");
-        if (val_end != std::string::npos) {
-            value = value.substr(0, val_end + 1);
-        }
-    }
-    
-    return {key, value};
-}
-
-// Read the entire FITS header of the current HDU and return it as a map.
 std::map<std::string, std::string> read_fits_header(fitsfile* fptr) {
     int status = 0;
-    int nkeys, keypos;
-    char card[FLEN_CARD], value[FLEN_VALUE], comment[FLEN_COMMENT];
+    int nkeys;
     std::map<std::string, std::string> header;
 
     if (fits_get_hdrspace(fptr, &nkeys, NULL, &status)) {
-        throw_fits_error(status, "Error getting header size");
+        throw_fits_error(status, "Error getting header space");
     }
 
     for (int i = 1; i <= nkeys; i++) {
+        char card[FLEN_CARD];
         status = 0;
         if (fits_read_record(fptr, i, card, &status)) {
+            if (status == KEY_NO_EXIST) continue;
             throw_fits_error(status, "Error reading header record");
         }
 
-        char keyname[FLEN_KEYWORD];
+        // Skip comment and history records, but include user-defined keywords
+        int keyclass = fits_get_keyclass(card);
+        if (keyclass == TYP_COMM_KEY) {
+            continue;
+        }
+        
+        char key[FLEN_KEYWORD], value[FLEN_VALUE];
+        int keylen;
         status = 0;
-        if (fits_get_keyname(card, keyname, &keypos, &status) > 0) {
-            // Valid keyword found, get its value
-            status = 0;
-            if (fits_parse_value(card, value, comment, &status) >= 0) {
-                // Successfully parsed value
-                header[keyname] = value;
-            } else if (status == VALUE_UNDEFINED) {
-                // NULL value
-                header[keyname] = "UNDEFINED";
-                status = 0; // Reset status
+        if (fits_get_keyname(card, key, &keylen, &status)) {
+            continue;
+        }
+
+        status = 0;
+        if (fits_parse_value(card, value, NULL, &status)) {
+            continue;
+        }
+        
+        std::string val_str(value);
+
+        // For string values, cfitsio returns them with quotes, e.g., "'a string   '".
+        // The test expects the quotes to be removed from the final value.
+        if (val_str.length() > 1 && val_str.front() == '\'') {
+            size_t end_quote_pos = val_str.find_last_of('\'');
+            if (end_quote_pos > 0) {
+                std::string content = val_str.substr(1, end_quote_pos - 1);
+                
+                // Trim trailing spaces from the content
+                size_t last_char = content.find_last_not_of(' ');
+                if (std::string::npos != last_char) {
+                    content.erase(last_char + 1);
+                } else {
+                    content.clear(); // all spaces
+                }
+                header[key] = content;
+            } else {
+                // Malformed, no closing quote.
+                header[key] = val_str;
+            }
+        } else {
+            // Not a quoted string. Trim leading/trailing whitespace.
+            size_t first = val_str.find_first_not_of(" ");
+            if (std::string::npos == first) {
+                header[key] = "";
+            } else {
+                size_t last = val_str.find_last_not_of(" ");
+                header[key] = val_str.substr(first, (last - first + 1));
             }
         }
     }
-
     return header;
 }
 
-// Internal function to get the dimensions of an HDU.
-std::vector<long long> _get_hdu_dims(const std::string& filename, int hdu_num) {
-    FITSFile fits_file(filename);
-    fits_file.move_to_hdu(hdu_num);
-    
+int get_hdu_num_by_name(fitsfile* fptr, const std::string& hdu_name) {
     int status = 0;
-    int bitpix, naxis;
-    
-    // First get the number of axes
-    if (fits_get_img_paramll(fits_file.get(), 0, &bitpix, &naxis, nullptr, &status)) {
-        throw_fits_error(status, "Error getting image dimensions");
+    int num_hdus, initial_hdu, hdu_type;
+    char extname[FLEN_VALUE];
+
+    if (fits_get_num_hdus(fptr, &num_hdus, &status)) {
+        throw_fits_error(status, "Error getting number of HDUs");
     }
-    
-    // Now allocate and get the actual dimensions
-    std::vector<long long> naxes(naxis);
-    if (naxis > 0) {
-        if (fits_get_img_paramll(fits_file.get(), naxis, &bitpix, &naxis, naxes.data(), &status)) {
-            throw_fits_error(status, "Error getting image dimensions");
+
+    // Get current HDU position
+    initial_hdu = 1; // Default fallback
+    fits_get_hdu_num(fptr, &initial_hdu);
+
+    for (int i = 1; i <= num_hdus; i++) {
+        status = 0; // Reset status before each operation
+        if (fits_movabs_hdu(fptr, i, &hdu_type, &status)) {
+            // Attempt to move back before throwing
+            status = 0;
+            fits_movabs_hdu(fptr, initial_hdu, &hdu_type, &status);
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(i));
+        }
+        
+        status = 0; // Reset status for key reading
+        if (fits_read_key_str(fptr, "EXTNAME", extname, NULL, &status) == 0) {
+            // Case-insensitive comparison
+            std::string extname_str(extname);
+            std::transform(extname_str.begin(), extname_str.end(), extname_str.begin(), ::toupper);
+            std::string hdu_name_upper = hdu_name;
+            std::transform(hdu_name_upper.begin(), hdu_name_upper.end(), hdu_name_upper.begin(), ::toupper);
+
+            if (hdu_name_upper == extname_str) {
+                // Found it. Restore original HDU and return.
+                status = 0;
+                fits_movabs_hdu(fptr, initial_hdu, &hdu_type, &status);
+                return i;
+            }
+        } else if (status != KEY_NO_EXIST) {
+            // Some other error occurred reading the key
+            status = 0;
+            fits_movabs_hdu(fptr, initial_hdu, &hdu_type, &status);
+            throw_fits_error(status, "Error reading EXTNAME from HDU " + std::to_string(i));
         }
     }
-    
+
+    // If we get here, the HDU was not found. Restore original HDU and throw.
+    status = 0;
+    fits_movabs_hdu(fptr, initial_hdu, &hdu_type, &status);
+    throw std::runtime_error("HDU with name '" + hdu_name + "' not found.");
+}
+
+std::vector<long> get_image_dims(fitsfile* fptr) {
+    int status = 0;
+    int naxis;
+    if (fits_get_img_dim(fptr, &naxis, &status)) {
+        throw_fits_error(status, "Error getting image dimensions");
+    }
+
+    if (naxis == 0) {
+        return {};
+    }
+
+    std::vector<long> naxes(naxis);
+    if (fits_get_img_size(fptr, naxis, naxes.data(), &status)) {
+        throw_fits_error(status, "Error getting image size");
+    }
+    // FITS is column-major, C++ is row-major, reverse the dimensions
+    std::reverse(naxes.begin(), naxes.end());
     return naxes;
 }
 
-// Get the value of a *single* FITS header keyword as a string.
-std::string get_header_value(const std::string& filename, int hdu_num, const std::string& key) {
-    try {
-        FITSFile fits_file(filename);
-        fits_file.move_to_hdu(hdu_num);
-        
-        char value[FLEN_VALUE];
-        int status = 0;
-        if (fits_read_key_str(fits_file.get(), key.c_str(), value, nullptr, &status)) {
-            if (status == KEY_NO_EXIST) {
-                return ""; // Key not found, return empty string
-            }
-            throw_fits_error(status, "Error reading header key: " + key);
-        }
-        
-        return std::string(value);
-    } catch (const std::exception& e) {
-        // Optionally log or wrap the exception
-        throw;
-    }
-}
-
-// Get the type of a given HDU (IMAGE, TABLE, BINTABLE).
-std::string get_hdu_type(const std::string& filename, int hdu_num) {
-    FITSFile fits_file(filename);
+std::map<std::string, std::string> get_header(const std::string& filename, int hdu_num) {
+    FITSFileWrapper f(filename);
     int status = 0;
-    int hdu_type;
-
-    fits_file.move_to_hdu(hdu_num, &hdu_type);
-
-    // Convert the CFITSIO integer code to a string representation.
-    if (hdu_type == IMAGE_HDU) {
-        return "IMAGE";
-    } else if (hdu_type == ASCII_TBL) {
-        return "TABLE";  // ASCII table
-    } else if (hdu_type == BINARY_TBL) {
-        return "BINTABLE"; // Binary table
-    } else {
-        return "UNKNOWN";
+    if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
+    return read_fits_header(f.get());
 }
 
-// Get the total number of HDUs in a FITS file.
 int get_num_hdus(const std::string& filename) {
-    FITSFile fits_file(filename);
-    fitsfile* fptr = fits_file.get();
+    FITSFileWrapper f(filename);
     int status = 0;
-    int num_hdus = 0;
-
-    if (fits_get_num_hdus(fptr, &num_hdus, &status)) {
+    int num_hdus;
+    if (fits_get_num_hdus(f.get(), &num_hdus, &status)) {
         throw_fits_error(status, "Error getting number of HDUs");
     }
     return num_hdus;
 }
 
-// Wrapper around read_fits_header, to open/close files.
-std::map<std::string, std::string> get_header(const std::string& filename, int hdu_num) {
-    FITSFile fits_file(filename);
-    fits_file.move_to_hdu(hdu_num);
-    return read_fits_header(fits_file.get());
+int get_hdu_num_by_name(const std::string& filename, const std::string& hdu_name) {
+    FITSFileWrapper f(filename);
+    return get_hdu_num_by_name(f.get(), hdu_name);
 }
 
-// Wrapper around _get_hdu_dims
-std::vector<long long> get_dims(const std::string& filename, int hdu_num) {
-    return _get_hdu_dims(filename, hdu_num);
-}
-
-// Implementation of the FITSFile class
-FITSFile::FITSFile(const std::string& filename) : fptr_(nullptr), owned_(true) {
+std::string get_hdu_type(const std::string& filename, int hdu_num) {
+    FITSFileWrapper f(filename);
     int status = 0;
-    
-    INFO_LOG("Opening FITS file: " + filename);
-    if (fits_open_file(&fptr_, filename.c_str(), READONLY, &status)) {
-        ERROR_LOG("Failed to open FITS file: " + fits_status_to_string(status));
-        throw_fits_error(status, "Error opening FITS file: " + filename);
-    }
-}
-
-// Implementation of move semantics for FITSFile
-FITSFile::FITSFile(FITSFile&& other) noexcept 
-    : fptr_(other.fptr_), owned_(other.owned_) {
-    other.fptr_ = nullptr;
-    other.owned_ = false;
-}
-
-FITSFile& FITSFile::operator=(FITSFile&& other) noexcept {
-    if (this != &other) {
-        if (owned_ && fptr_) {
-            int status = 0;
-            fits_close_file(fptr_, &status);
-            if (status) {
-                WARNING_LOG("Error closing FITS file in move assignment operator: " + 
-                           fits_status_to_string(status));
-            }
-        }
-        
-        fptr_ = other.fptr_;
-        owned_ = other.owned_;
-        other.fptr_ = nullptr;
-        other.owned_ = false;
-    }
-    return *this;
-}
-
-// Improved destructor with error logging
-FITSFile::~FITSFile() {
-    if (owned_ && fptr_) {
-        int status = 0;
-        INFO_LOG("FITS file being closed by destructor");
-        fits_close_file(fptr_, &status);
-        if (status) {
-            WARNING_LOG("Error closing FITS file in destructor: " + 
-                       fits_status_to_string(status));
-        }
-    }
-}
-
-// Enhanced close method with safety checks
-void FITSFile::close() {
-    if (owned_ && fptr_) {
-        int status = 0;
-        INFO_LOG("Closing FITS file");
-        fits_close_file(fptr_, &status);
-        if (status) {
-            WARNING_LOG("Error closing FITS file: " + fits_status_to_string(status));
-        }
-        fptr_ = nullptr;
-        owned_ = false;
-    }
-}
-
-void FITSFile::move_to_hdu(int hdu_num, int* hdu_type) {
-    int status = 0;
-    if (fits_movabs_hdu(fptr_, hdu_num, hdu_type, &status)) {
+    int hdu_type;
+    if (fits_movabs_hdu(f.get(), hdu_num, &hdu_type, &status)) {
         throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
+    
+    switch (hdu_type) {
+        case IMAGE_HDU: return "IMAGE";
+        case ASCII_TBL: return "ASCII_TBL";
+        case BINARY_TBL: return "BINARY_TBL";
+        default: return "UNKNOWN";
+    }
 }
 
-int get_hdu_num_by_name(const std::string& filename, const std::string& hdu_name) {
-    FITSFile fits_file(filename);
-    fitsfile* fptr = fits_file.get();
+std::vector<long> get_dims(const std::string& filename, int hdu_num) {
+    FITSFileWrapper f(filename);
     int status = 0;
-    int hdu_num;
-
-    // Try to move to the HDU by name
-    if (fits_movnam_hdu(fptr, ANY_HDU, const_cast<char*>(hdu_name.c_str()), 0, &status)) {
-        throw_fits_error(status, "Error moving to HDU: " + hdu_name);
+    if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+        throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
-
-    // Get the current HDU number
-    if (fits_get_hdu_num(fptr, &hdu_num)) {
-        throw std::runtime_error("Error getting HDU number for: " + hdu_name);
-    }
-
-    return hdu_num;
+    return get_image_dims(f.get());
 }

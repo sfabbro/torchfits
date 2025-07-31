@@ -1,4 +1,5 @@
 import torchfits
+import torch
 import numpy as np
 import os
 from astropy.io import fits
@@ -39,10 +40,16 @@ def main():
 
                 if hdu_type == "IMAGE":
                     data, _ = torchfits.read(test_file, hdu=i)  # Read by index
-                    print(f"  Data shape: {data.shape}")
-                elif hdu_type == "BINTABLE":
-                    table = torchfits.read(test_file, hdu=i)  # Read by index
-                    print(f"  Table columns: {list(table.keys())}")
+                    if data is not None:
+                        print(f"  Data shape: {data.shape}")
+                    else:
+                        print("  No image data")
+                elif hdu_type in ["BINARY_TBL", "ASCII_TBL"]:
+                    table, _ = torchfits.read(test_file, hdu=i)  # Read by index
+                    if table is not None:
+                        print(f"  Table columns: {list(table.keys())}")
+                    else:
+                        print("  No table data")
 
             except RuntimeError as e:
                 print(f"  Error reading HDU {i}: {e}")
@@ -53,7 +60,7 @@ def main():
         data, _ = torchfits.read(test_file, hdu="SCI") # String name
         print(f"  SCI data shape: {data.shape}")
 
-        table_data = torchfits.read(test_file, hdu='CATALOG') #String name
+        table_data, _ = torchfits.read(test_file, hdu='CATALOG') #String name
         print(f"  CATALOG columns: {list(table_data.keys())}")
 
         # --- Test different cache capacities ---

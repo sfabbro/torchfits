@@ -9,7 +9,6 @@ __pycache__/
 *.egg
 build/
 dist/
-*.so
 
 # C++ build artifacts
 *.o
@@ -21,22 +20,20 @@ dist/
 *.exe
 
 # Compiled dynamic libraries
+*.so
 *.so.*
 *.dylib
+*.pyd
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
 
-# VS Code
+# IDE and Editor files
 .vscode/
-
-# Emacs
 *~
 \#*\#
 .\#*
 .dir-locals.el
-
-# Vim
 *.swp
 *.swo
 *.swn
@@ -47,27 +44,14 @@ dist/
 Session.vim
 tags
 
-# macOS
+# OS files
 .DS_Store
-
-# Windows
 Thumbs.db
 Desktop.ini
 
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# C extensions
-*.so
-
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 lib/
@@ -76,12 +60,10 @@ parts/
 sdist/
 var/
 wheels/
-*.egg-info/
 .installed.cfg
-*.egg
 MANIFEST
 
-# Environments
+# Virtual environments
 .env
 .venv
 env/
@@ -90,31 +72,66 @@ ENV/
 env.bak/
 venv.bak/
 
-# pybind11
-*.o
-*.so
-*.dylib
-*.pyd
-*.exe
-
-# Unit test and coverage
+# Testing and coverage
 .coverage
 .pytest_cache/
 htmlcov/
 .tox/
-tests/__pycache__/
-test_data/  # Test data directory created by unit tests
-test_data/*
 
-# FITS files!
-*.fits
+# Test data and debugging files
+test_data/
+debug_*
+check_*
+test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
+!/tests/test_*.py  # But keep official test files
 
-# Examples directory (specific .fits files)
-examples/*.fits
-examples/*/*.fits
+# Generated FITS files in root directory (created during debugging)
+/basic_example.fits
+/cube_example.fits
+/cutout_example.fits
+/mef_example.fits
+/table_example.fits
 
-# Local data directory (created by examples)
+# Data directories created by examples and tests
 data/
+data_*/
 data_galaxy10/
-data_galaxy10_real
+data_galaxy10_real/
 data_mnist_fits/
+data_simple_fits/
+data_sdss/
+
+# Examples directory - exclude generated data directories only
+examples/data_simple_fits/
+examples/data_sdss/
+examples/data_mnist_fits/
+
+# pixi environments
+.pixi/
+
+# Temporary and cache files
+.cache/
+*.tmp
+*.temp
+
+# Build artifacts and compiled extensions
+*.cpython-*.so
+*.cpython-*.pyd
+
+# Log files
+*.log
+
+# Backup files
+*~
+*.bak
+*.orig
+
+# CMake build files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Additional Python artifacts
+*.pyi
+.mypy_cache/

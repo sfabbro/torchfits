@@ -89,4 +89,7 @@ extern std::unique_ptr<LRUCache> cache;
 // Initialize cache with appropriate capacity (simplified)
 void ensure_cache_initialized(size_t capacity_mb);
 
+// Function to clear the global cache
+void clear_cache();
+
 #endif // TORCHFITS_CACHE_H

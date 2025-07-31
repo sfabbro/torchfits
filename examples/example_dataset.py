@@ -74,7 +74,7 @@ def collate_fn(batch):
     batch = [item for item in batch if item is not None]
     if not batch:  # Handle the case where *all* items in a batch are None
         return torch.Tensor(), torch.Tensor()
-    return torch.utils.data.dataloader.default_collate(batch)
+    return torch.utils.data.default_collate(batch)
 
 # --- Main Script ---
 
@@ -89,7 +89,7 @@ def main():
 
             # Create dataset and dataloader
             dataset = SimpleFitsDataset(data_dir, cache_capacity=capacity, device=device)
-            dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, collate_fn=collate_fn, pin_memory=(device=='cuda'))
+            dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0, collate_fn=collate_fn, pin_memory=(device=='cuda'))
 
             # Iterate through a few batches
             print("Iterating through DataLoader:")

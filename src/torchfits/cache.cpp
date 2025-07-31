@@ -173,3 +173,10 @@ std::shared_ptr<CacheEntry> LRUCache::get(const std::string& key) {
     cache_list_.splice(cache_list_.begin(), cache_list_, it->second);
     return (*it->second).second;
 }
+
+// Function to clear the global cache
+void clear_cache() {
+    if (cache) {
+        cache->clear();
+    }
+}

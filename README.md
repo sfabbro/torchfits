@@ -76,6 +76,13 @@ pip install -e .
 ```
 
 ## Quickstart
+
+There are two ways to interact with `torchfits`: a functional approach and an object-oriented approach.
+
+### Functional Approach
+
+This approach is simple and direct, suitable for quick, one-off operations.
+
 ```python
 import torchfits
 
@@ -85,27 +92,52 @@ data, header = torchfits.read("my_image.fits")
 # Read a 10x20 cutout from the first extension, starting at (50, 75).
 cutout_data, cutout_header = torchfits.read("my_image.fits", hdu=1, start=[50, 75], shape=[10, 20])
 
-#Get the number of HDU
-num_hdu = torchfits.get_num_hdus("my_image.fits")
+# Get the number of HDUs
+num_hdus = torchfits.get_num_hdus("my_image.fits")
 
-#Get value of header keyword
+# Get the value of a header keyword
 naxis = torchfits.get_header_value("my_image.fits", 1, "NAXIS")
 
 print(f"NAXIS = {naxis}, Number of HDUs = {num_hdus}, Cutout Shape = {cutout_data.shape}")
+```
+
+### Object-Oriented Approach
+
+This approach is recommended for more complex interactions, such as working with multiple HDUs in a file. It uses a context manager for safe and efficient file handling.
+
+```python
+import torchfits
+
+with torchfits.FITS("my_image.fits") as f:
+    # Get the number of HDUs
+    num_hdus = len(f)
+
+    # Access the primary HDU
+    primary_hdu = f[0]
+
+    # Read the data and header
+    data = primary_hdu.read()
+    header = primary_hdu.header
+
+    # Access another HDU by name
+    if 'SCI' in [h.name for h in f]:
+        sci_hdu = f['SCI']
+        sci_data = sci_hdu.read()
+        print(f"Science data shape: {sci_data.shape}")
 ```
 
 ## Examples
 
 The `examples/` directory contains several example scripts demonstrating various use cases:
 
-*   **`example_basic_reading.py`:** Basic reading of full HDUs and headers.  Demonstrates using `torchfits.read` with simple filenames and accessing header information.
-*   **`example_cutouts.py`:**  Shows how to read cutouts using both CFITSIO-style strings (passed directly to `torchfits.read`) and the `start`/`shape` parameters of the `torchfits.read` function.
-*   **`example_mef.py`:**  Illustrates working with Multi-Extension FITS (MEF) files, including iterating through HDUs and accessing HDUs by number and name.
-*   **`example_tables.py`:** Focuses on reading data from FITS binary tables, showing how to access individual columns.
-*   **`example_datacube.py`:**  Demonstrates reading slices and 1D spectra from a 3D data cube, using both CFITSIO strings and `start`/`shape` parameters.
-*   **`example_dataset.py`:**  A basic example of integrating `torchfits` with PyTorch's `Dataset` and `DataLoader` for efficient data loading.
-*   **`example_mnist.py`:** A complete, self-contained example that downloads the MNIST dataset, converts it to FITS, and trains a simple CNN classifier using `torchfits` for FITS I/O.
-*   **`example_sdss_classification.py`:**  A complete example that downloads a small subset of SDSS spectroscopic data, loads the spectra using `torchfits`, and trains a simple CNN classifier to distinguish between stars, galaxies, and quasars.
+* **`example_basic_reading.py`:** Basic reading of full HDUs and headers.  Demonstrates using `torchfits.read` with simple filenames and accessing header information.
+* **`example_cutouts.py`:**  Shows how to read cutouts using both CFITSIO-style strings (passed directly to `torchfits.read`) and the `start`/`shape` parameters of the `torchfits.read` function.
+* **`example_mef.py`:**  Illustrates working with Multi-Extension FITS (MEF) files, including iterating through HDUs and accessing HDUs by number and name.
+* **`example_tables.py`:** Focuses on reading data from FITS binary tables, showing how to access individual columns.
+* **`example_datacube.py`:**  Demonstrates reading slices and 1D spectra from a 3D data cube, using both CFITSIO strings and `start`/`shape` parameters.
+* **`example_dataset.py`:**  A basic example of integrating `torchfits` with PyTorch's `Dataset` and `DataLoader` for efficient data loading.
+* **`example_mnist.py`:** A complete, self-contained example that downloads the MNIST dataset, converts it to FITS, and trains a simple CNN classifier using `torchfits` for FITS I/O.
+* **`example_sdss_classification.py`:**  A complete example that downloads a small subset of SDSS spectroscopic data, loads the spectra using `torchfits`, and trains a simple CNN classifier to distinguish between stars, galaxies, and quasars.
 
 To run the examples, navigate to the `examples/` directory and run, for instance:
 
@@ -117,46 +149,34 @@ The examples that use external datasets will automatically download and cache th
 
 ## API Reference
 
-*   **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0, device='cpu')`:** Reads FITS data.  Handles images, cubes, and tables.  Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
-    *   `filename_or_url` (str or dict): Path to the FITS file, or a dictionary with `fsspec` parameters for remote files, or a CFITSIO-compatible URL.
-    *   `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies the HDU.
-    *   `start` (list[int], optional): Starting pixel coordinates (0-based) for a cutout.
-    *   `shape` (list[int], optional): Shape of the cutout. Use `-1` for a dimension to read to the end. If `start` is given, `shape` *must* also be given.
-    *   `columns` (list[str], optional): List of column names to read from a table. Reads all columns if `None`.
-    *   `start_row` (int, optional): Starting row index (0-based) for table reads. Defaults to 0.
-    *   `num_rows` (int or None, optional): Number of rows to read from a table. Reads all remaining rows if `None`.
-    *   `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB). Set to 0 to disable caching.
-    *   `device` (str, optional):  Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.
+### Main Functions
 
-*   **`torchfits.get_header(filename, hdu_num)`:** Returns the FITS header as a dictionary.
-    *   `filename` (str): Path to the FITS file.
-    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
+* **`torchfits.read(filename_or_url, hdu=None, start=None, shape=None, columns=None, start_row=0, num_rows=None, cache_capacity=0, device='cpu')`**: Reads FITS data. Handles images, cubes, and tables. Returns either a tuple `(tensor, header)` for images/cubes, or a dictionary for tables.
+  * `filename_or_url` (str or dict): Path to the FITS file, or a dictionary with `fsspec` parameters for remote files, or a CFITSIO-compatible URL.
+  * `hdu` (int or str, optional): HDU number (1-based) or name (string). Defaults to the primary HDU if no cutout string specifies the HDU.
+  * `start` (list[int], optional): Starting pixel coordinates (0-based) for a cutout.
+  * `shape` (list[int], optional): Shape of the cutout. Use `-1` for a dimension to read to the end. If `start` is given, `shape` *must* also be given.
+  * `columns` (list[str], optional): List of column names to read from a table. Reads all columns if `None`.
+  * `start_row` (int, optional): Starting row index (0-based) for table reads. Defaults to 0.
+  * `num_rows` (int or None, optional): Number of rows to read from a table. Reads all remaining rows if `None`.
+  * `cache_capacity` (int, optional): Capacity of the in-memory cache (in MB). Defaults to automatic sizing (25% of available RAM, up to 2GB). Set to 0 to disable caching.
+  * `device` (str, optional):  Device to place the tensor on ('cpu' or 'cuda'). Defaults to 'cpu'.
 
-*   **`torchfits.get_dims(filename, hdu_num)`:** Returns the dimensions of a FITS image/cube HDU.
-    *   `filename` (str): Path to the FITS file.
-    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
+* **`torchfits.get_header(filename, hdu_num)`**: Returns the FITS header as a dictionary.
+* **`torchfits.get_dims(filename, hdu_num)`**: Returns the dimensions of a FITS image/cube HDU.
+* **`torchfits.get_header_value(filename, hdu_num, key)`**: Returns the value of a single header keyword.
+* **`torchfits.get_hdu_type(filename, hdu_num)`**: Returns the HDU type as a string ("IMAGE", "BINTABLE", "TABLE", or "UNKNOWN").
+* **`torchfits.get_num_hdus(filename)`**: Returns the total number of HDUs in the FITS file.
 
-*   **`torchfits.get_header_value(filename, hdu_num, key)`:** Returns the value of a single header keyword.
-    *   `filename` (str): Path to the FITS file.
-    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
-    *   `key` (str): The header keyword.
+### WCS Functions
 
-*   **`torchfits.get_hdu_type(filename, hdu_num)`:** Returns the HDU type as a string ("IMAGE", "BINTABLE", "TABLE", or "UNKNOWN").
-    *   `filename` (str): Path to the FITS file.
-    *   `hdu_num` (int or str): HDU number (1-based) or name (string).
+* **`torchfits.world_to_pixel(world_coords, header)`**: Converts world coordinates to pixel coordinates.
+* **`torchfits.pixel_to_world(pixel_coords, header)`**: Converts pixel coordinates to world coordinates.
 
-*   **`torchfits.get_num_hdus(filename)`:** Returns the total number of HDUs in the FITS file.
-    *   `filename` (str): Path to the FITS file.
+### Classes
 
-*   **`torchfits.world_to_pixel(world_coords, header)`:** Converts world coordinates to pixel coordinates using WCS information from the header.
-    *   `world_coords` (torch.Tensor): Tensor of world coordinates.
-    *   `header` (dict): FITS header dictionary containing WCS information.
-    *   Returns: A tuple `(pixel_coords, status)` where `pixel_coords` is a tensor of pixel coordinates and `status` is a tensor of status codes.
-
-*   **`torchfits.pixel_to_world(pixel_coords, header)`:** Converts pixel coordinates to world coordinates using WCS information from the header.
-    *   `pixel_coords` (torch.Tensor): Tensor of pixel coordinates.
-    *   `header` (dict): FITS header dictionary containing WCS information.
-    *   Returns: A tuple `(world_coords, status)` where `world_coords` is a tensor of world coordinates and `status` is a tensor of status codes.
+* **`torchfits.FITS(filename)`**: A context manager for accessing FITS files.
+* **`torchfits.HDU(filename, hdu_spec)`**: Represents a single HDU in a FITS file.
 
 ## Reading Remote FITS Files
 
