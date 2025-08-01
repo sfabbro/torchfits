@@ -85,53 +85,6 @@ check_*
 test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
 !/tests/test_*.py  # But keep official test files
 
-# Development and temporary files
-basic_test.py
-benchmark_*.py
-comprehensive_*.py
-demo_*.py
-final_*.py
-ml_caching.py
-performance_*.py
-progress_summary.py
-run_benchmarks.py
-simple_*.py
-step_by_step_test.py
-table_test.py
-tensor_test.py
-torchfits_v2_progress.py
-validate_*.py
-
-# Benchmark and validation results
-benchmark_results/
-performance_validation_report.txt
-performance_validation_results.json
-
-# Duplicate/backup source files
-*_original.*
-*_fixed.*
-*_backup.*
-
-# Generated FITS files in root directory (created during debugging)
-/basic_example.fits
-/cube_example.fits
-/cutout_example.fits
-/mef_example.fits
-/table_example.fits
-
-# Data directories created by examples and tests
-data/
-data_*/
-data_galaxy10/
-data_galaxy10_real/
-data_mnist_fits/
-data_simple_fits/
-data_sdss/
-
-# Examples directory - exclude generated data directories only
-examples/data_simple_fits/
-examples/data_sdss/
-examples/data_mnist_fits/
 
 # pixi environments
 .pixi/
