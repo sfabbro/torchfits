@@ -18,7 +18,15 @@ from .wcs_utils import (
     get_coordinate_names,
     transform_cutout_wcs,
 )
+from .table import FitsTable, GroupedFitsTable, ColumnInfo
 from .version import __version__
+
+# Check for optional dependencies
+try:
+    import torch_frame
+    _TORCH_FRAME_AVAILABLE = True
+except ImportError:
+    _TORCH_FRAME_AVAILABLE = False
 
 __all__ = [
     "read",
@@ -30,6 +38,9 @@ __all__ = [
     "_clear_cache",
     "FITS",
     "HDU",
+    "FitsTable",
+    "GroupedFitsTable",
+    "ColumnInfo",
     "world_to_pixel",
     "pixel_to_world",
     "get_wcs_info",

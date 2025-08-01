@@ -34,8 +34,8 @@ class TestFitsReader(unittest.TestCase):
         # --- Table File ---
         cls.table_file = os.path.join(cls.test_dir, "test_table.fits")
         col1 = fits.Column(name='TARGET', format='10A', array=np.array(['NGC1001', 'NGC1002', 'NGC1003']))
-        col2 = fits.Column(name='RA', format='E', array=np.array([120.1, 120.2, 120.3]), unit='deg')
-        col3 = fits.Column(name='DEC', format='D', array=np.array([-30.1, -30.2, -30.3]), unit='deg')
+        col2 = fits.Column(name='RA', format='D', array=np.array([120.1, 120.2, 120.3]), unit='deg')  # Double precision
+        col3 = fits.Column(name='DEC', format='D', array=np.array([-30.1, -30.2, -30.3]), unit='deg') # Double precision
         cols = fits.ColDefs([col1, col2, col3])
         table_hdu = fits.BinTableHDU.from_columns(cols)
         table_hdu.writeto(cls.table_file, overwrite=True)

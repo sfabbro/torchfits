@@ -5,8 +5,7 @@
 #include "fits_utils.h"
 #include "cache.h"
 #include "wcs_utils.h"
-#include "cache.h"
-#include "wcs_utils.h"
+#include "performance.h"
 
 namespace py = pybind11;
 
@@ -29,6 +28,9 @@ py::object get_header_value(const std::string& filename, int hdu_num, const std:
 
 PYBIND11_MODULE(fits_reader_cpp, m) {
     m.doc() = "Fast FITS reader for PyTorch C++ backend";
+
+    // Initialize performance optimizations
+    torchfits_perf::initialize_performance_optimizations();
 
     m.def("read", [](py::object filename_or_url, py::object hdu, py::object start, py::object shape, py::object columns, long start_row, py::object num_rows, size_t cache_capacity, py::str device_str) {
         return read_impl(filename_or_url, hdu, start, shape, columns, start_row, num_rows, cache_capacity, device_str);

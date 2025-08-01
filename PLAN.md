@@ -1,5 +1,27 @@
 # TorchFits v0.2 Implementation Plan
 
+## 📊 **CURRENT STATUS** (Updated July 2025)
+
+### ✅ **COMPLETED**
+- **Enhanced Table Operations**: FitsTable class with full PyTorch operations (90% complete)
+- **Core Performance**: C++ optimizations with SIMD, memory pooling (80% complete)
+- **Table API**: Rich metadata, filtering, sorting, groupby, device transfer
+- **Enhanced read()**: Supports format='table' parameter
+
+### 🔄 **IN PROGRESS**
+- **Remote Integration**: Infrastructure exists but not connected to main read path (40% complete)
+- **Cache System**: Basic caching present, needs smart features
+
+### ❌ **TODO**
+- **Parallel table reading**: Multi-threaded column operations
+- **GPU-direct transfers**: Direct CUDA memory allocation  
+- **PyTorch-Frame integration**: Conditional import and conversion
+- **Advanced remote features**: fsspec dict parsing, range requests
+
+**Overall Progress: ~65% complete**
+
+---
+
 ## Core Objectives
 1. **Performance**: Match or exceed fitsio speed (building on v0.1's 2.3x gains)
 2. **DataFrame-friendly**: Native PyTorch table operations with optional PyTorch-Frame integration

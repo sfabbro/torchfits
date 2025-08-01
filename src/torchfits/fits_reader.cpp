@@ -2,6 +2,8 @@
 #include "fits_utils.h"
 #include "wcs_utils.h"
 #include "cache.h"
+#include "remote.h"
+#include "performance.h"
 #include "debug.h"
 #include <sstream>
 #include <algorithm>
@@ -132,22 +134,12 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         return py::dict();
     }
 
-    // OPTIMIZATION 1: Batch collect ALL column metadata first
-    struct ColumnMetadata {
-        std::string name;
-        int number;
-        int typecode;
-        long repeat;
-        long width;
-    };
-    
-    std::vector<ColumnMetadata> all_metadata;
+    // Determine columns to read
     std::vector<std::string> selected_columns;
-    
     if (!columns_obj.is_none()) {
         selected_columns = columns_obj.cast<std::vector<std::string>>();
     } else {
-        // Get all column names in one efficient pass
+        // Get all column names
         selected_columns.reserve(total_cols);
         for (int i = 1; i <= total_cols; ++i) {
             char colname[FLEN_VALUE];
@@ -159,131 +151,106 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
             selected_columns.emplace_back(colname);
         }
     }
-    
-    // Batch collect metadata for all selected columns
-    all_metadata.reserve(selected_columns.size());
-    for (const auto& col_name : selected_columns) {
-        ColumnMetadata meta;
-        meta.name = col_name;
+
+    // PERFORMANCE OPTIMIZATION: Use parallel reading for multiple columns
+    if (selected_columns.size() >= 3 && rows_to_read >= 1000) {
+        // Use parallel table reader for large tables with multiple columns
+        DEBUG_LOG("Using parallel table reader for " + std::to_string(selected_columns.size()) + 
+                  " columns and " + std::to_string(rows_to_read) + " rows");
         
-        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &meta.number, &status);
-        if (status) throw_fits_error(status, "Error finding column: " + col_name);
-        
-        fits_get_coltype(fptr, meta.number, &meta.typecode, &meta.repeat, &meta.width, &status);
-        if (status) throw_fits_error(status, "Error getting column type for: " + col_name);
-        
-        all_metadata.push_back(meta);
+        torchfits_perf::ParallelTableReader parallel_reader;
+        return parallel_reader.read_columns_parallel(fptr, selected_columns, start_row, rows_to_read, device);
     }
 
-    // OPTIMIZATION 2: Separate processing by data type for efficient batching
-    std::vector<size_t> string_indices;
-    std::vector<size_t> numeric_indices;
+    // FALLBACK: Use optimized sequential reading for smaller datasets
+    DEBUG_LOG("Using sequential optimized reader");
     
-    for (size_t i = 0; i < all_metadata.size(); ++i) {
-        if (all_metadata[i].typecode == TSTRING) {
-            string_indices.push_back(i);
-        } else {
-            numeric_indices.push_back(i);
-        }
+    // Separate string and numeric columns for optimized processing
+    struct ColumnInfo {
+        std::string name;
+        int number;
+        int typecode;
+        long repeat;
+        long width;
+        bool is_string;
+    };
+    
+    std::vector<ColumnInfo> column_info;
+    column_info.reserve(selected_columns.size());
+    
+    for (const auto& col_name : selected_columns) {
+        ColumnInfo info;
+        info.name = col_name;
+        
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &info.number, &status);
+        if (status) throw_fits_error(status, "Error finding column: " + col_name);
+        
+        fits_get_coltype(fptr, info.number, &info.typecode, &info.repeat, &info.width, &status);
+        if (status) throw_fits_error(status, "Error getting column type for: " + col_name);
+        
+        info.is_string = (info.typecode == TSTRING);
+        column_info.push_back(info);
     }
 
     py::dict result_dict;
 
-    // Handle string columns (must be processed individually)
-    for (size_t idx : string_indices) {
-        const auto& meta = all_metadata[idx];
+    // Process string columns sequentially (required due to CFITSIO limitations)
+    for (const auto& info : column_info) {
+        if (!info.is_string) continue;
         
         std::vector<char*> string_array(rows_to_read);
-        std::vector<char> string_buffer(rows_to_read * (meta.repeat + 1));
+        std::vector<char> string_buffer(rows_to_read * (info.repeat + 1));
         
         for (long i = 0; i < rows_to_read; i++) {
-            string_array[i] = &string_buffer[i * (meta.repeat + 1)];
+            string_array[i] = &string_buffer[i * (info.repeat + 1)];
         }
         
-        fits_read_col_str(fptr, meta.number, start_row + 1, 1, rows_to_read,
+        fits_read_col_str(fptr, info.number, start_row + 1, 1, rows_to_read,
                           nullptr, string_array.data(), nullptr, &status);
-        if (status) throw_fits_error(status, "Error reading string column: " + meta.name);
+        if (status) throw_fits_error(status, "Error reading string column: " + info.name);
         
-        // OPTIMIZATION 3: Pre-allocate Python list for better performance
         py::list string_list;
-        string_list.attr("__reserve__")(rows_to_read);  // Reserve capacity if possible
         for (long i = 0; i < rows_to_read; i++) {
             string_list.append(py::str(string_array[i]));
         }
-        result_dict[py::str(meta.name)] = std::move(string_list);
+        result_dict[py::str(info.name)] = std::move(string_list);
     }
 
-    // OPTIMIZATION 4: Process numeric columns with advanced optimizations
-    if (!numeric_indices.empty()) {
-        // Group by data type for optimal memory allocation patterns
-        std::unordered_map<int, std::vector<size_t>> type_groups;
-        for (size_t idx : numeric_indices) {
-            type_groups[all_metadata[idx].typecode].push_back(idx);
-        }
-
-        // OPTIMIZATION: Sort columns by size for better memory access patterns
-        // Process smaller columns first to reduce memory fragmentation
-        std::vector<std::pair<int, std::vector<size_t>>> sorted_type_groups;
-        for (auto& [typecode, indices] : type_groups) {
-            sorted_type_groups.emplace_back(typecode, std::move(indices));
+    // Process numeric columns with memory pool optimization
+    for (const auto& info : column_info) {
+        if (info.is_string) continue;
+        
+        torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
+        
+        // Use memory pool for tensor allocation
+        torch::Tensor col_data;
+        if (torchfits_perf::global_memory_pool) {
+            std::vector<int64_t> shape = (info.repeat == 1) ? 
+                std::vector<int64_t>{rows_to_read} : 
+                std::vector<int64_t>{rows_to_read, info.repeat};
+            
+            col_data = torchfits_perf::global_memory_pool->get_tensor(shape, torch_dtype, torch::kCPU);
+        } else {
+            // Fallback to direct allocation
+            if (info.repeat == 1) {
+                col_data = torch::empty({rows_to_read}, torch::TensorOptions().dtype(torch_dtype));
+            } else {
+                col_data = torch::empty({rows_to_read, info.repeat}, torch::TensorOptions().dtype(torch_dtype));
+            }
         }
         
-        std::sort(sorted_type_groups.begin(), sorted_type_groups.end(), 
-                 [](const auto& a, const auto& b) {
-                     // Sort by element size (smaller first)
-                     int size_a = (a.first == TFLOAT || a.first == TINT) ? 4 : 8;
-                     int size_b = (b.first == TFLOAT || b.first == TINT) ? 4 : 8;
-                     return size_a < size_b;
-                 });
-
-        // Process each type group with minimal PyTorch overhead
-        for (const auto& [typecode, indices] : sorted_type_groups) {
-            torch::Dtype torch_dtype = get_torch_dtype(typecode);
-            
-            // OPTIMIZATION 5: Create optimal tensor options once per type
-            torch::TensorOptions cpu_options = torch::TensorOptions()
-                .device(torch::kCPU)
-                .dtype(torch_dtype)
-                .memory_format(torch::MemoryFormat::Contiguous)
-                .pinned_memory(device.is_cuda());  // Use pinned memory for CUDA transfers
-            
-            // OPTIMIZATION: Pre-allocate larger tensors first within each type group
-            std::vector<std::pair<size_t, size_t>> indexed_columns;
-            for (size_t i = 0; i < indices.size(); ++i) {
-                size_t idx = indices[i];
-                size_t column_size = rows_to_read * all_metadata[idx].repeat;
-                indexed_columns.emplace_back(idx, column_size);
-            }
-            
-            std::sort(indexed_columns.begin(), indexed_columns.end(),
-                     [](const auto& a, const auto& b) { return a.second > b.second; });
-            
-            // Process columns in optimized order
-            for (const auto& [idx, column_size] : indexed_columns) {
-                const auto& meta = all_metadata[idx];
-                
-                // OPTIMIZATION 6: Create properly-shaped tensor in one call
-                torch::Tensor col_data;
-                if (meta.repeat == 1) {
-                    col_data = torch::empty({rows_to_read}, cpu_options);
-                } else {
-                    col_data = torch::empty({rows_to_read, meta.repeat}, cpu_options);
-                }
-                
-                // OPTIMIZATION: Use bulk read for better CFITSIO performance
-                fits_read_col(fptr, typecode, meta.number, start_row + 1, 1, 
-                              rows_to_read * meta.repeat,
-                              nullptr, col_data.data_ptr(), nullptr, &status);
-                if (status) throw_fits_error(status, "Error reading column: " + meta.name);
-                
-                // OPTIMIZATION 7: Efficient device transfer with proper staging
-                if (device != torch::kCPU) {
-                    col_data = col_data.to(device, /*non_blocking=*/true);
-                }
-                
-                result_dict[py::str(meta.name)] = col_data.squeeze();
-            }
+        // Read data
+        fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1, 
+                      rows_to_read * info.repeat,
+                      nullptr, col_data.data_ptr(), nullptr, &status);
+        if (status) throw_fits_error(status, "Error reading column: " + info.name);
+        
+        // Transfer to target device
+        if (device != torch::kCPU) {
+            col_data = col_data.to(device);
         }
+        
+        result_dict[py::str(info.name)] = col_data.squeeze();
     }
 
     return result_dict;
@@ -306,7 +273,10 @@ pybind11::object read_impl(
     DEBUG_SCOPE;
 
     try {
-        std::string filename = py::str(filename_or_url).cast<std::string>();
+        std::string filename_or_url_str = py::str(filename_or_url).cast<std::string>();
+        
+        // Handle remote URLs - download to cache if necessary
+        std::string filename = RemoteFetcher::ensure_local(filename_or_url_str);
 
         int hdu_num = 1;
         if (!hdu.is_none()) {
