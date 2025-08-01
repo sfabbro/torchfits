@@ -10772,7 +10772,7 @@ packages:
 - pypi: ./
   name: torchfits
   version: 0.1.0
-  sha256: 2999b2fa7295e40f7b0bbd7193cb6c63d9b3dc855383d4984fd0c14a5c19623e
+  sha256: 551684088b7293cdc47b75bc64d7ab6505708c64952eff9426c0b49acb51c72b
   requires_dist:
   - torch
   - pybind11
