@@ -151,6 +151,54 @@ torch::Tensor ParallelTableReader::read_column_optimized(fitsfile* fptr, const C
             break;
         }
         
+        case TLONGLONG: {
+            std::vector<LONGLONG> buffer(task.num_rows);
+            fits_read_col(fptr, TLONGLONG, task.number, task.start_row + 1, 1, task.num_rows,
+                         nullptr, buffer.data(), nullptr, &status);
+            if (status) throw_fits_error(status, "Error reading long long column: " + task.name);
+            
+            auto tensor_ptr = tensor.data_ptr<double>();
+            std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                          [](LONGLONG val) { return static_cast<double>(val); });
+            break;
+        }
+        
+        case TINT: {
+            std::vector<int> buffer(task.num_rows);
+            fits_read_col(fptr, TINT, task.number, task.start_row + 1, 1, task.num_rows,
+                         nullptr, buffer.data(), nullptr, &status);
+            if (status) throw_fits_error(status, "Error reading int column: " + task.name);
+            
+            auto tensor_ptr = tensor.data_ptr<double>();
+            std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                          [](int val) { return static_cast<double>(val); });
+            break;
+        }
+        
+        case TSHORT: {
+            std::vector<short> buffer(task.num_rows);
+            fits_read_col(fptr, TSHORT, task.number, task.start_row + 1, 1, task.num_rows,
+                         nullptr, buffer.data(), nullptr, &status);
+            if (status) throw_fits_error(status, "Error reading short column: " + task.name);
+            
+            auto tensor_ptr = tensor.data_ptr<double>();
+            std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                          [](short val) { return static_cast<double>(val); });
+            break;
+        }
+        
+        case TBYTE: {
+            std::vector<unsigned char> buffer(task.num_rows);
+            fits_read_col(fptr, TBYTE, task.number, task.start_row + 1, 1, task.num_rows,
+                         nullptr, buffer.data(), nullptr, &status);
+            if (status) throw_fits_error(status, "Error reading byte column: " + task.name);
+            
+            auto tensor_ptr = tensor.data_ptr<double>();
+            std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                          [](unsigned char val) { return static_cast<double>(val); });
+            break;
+        }
+        
         default:
             throw std::runtime_error("Unsupported column type: " + std::to_string(task.typecode));
     }
@@ -228,6 +276,54 @@ py::dict ParallelTableReader::read_columns_parallel(fitsfile* fptr,
                 auto tensor_ptr = col_data.data_ptr<double>();
                 std::transform(buffer.begin(), buffer.end(), tensor_ptr,
                               [](long val) { return static_cast<double>(val); });
+                break;
+            }
+            
+            case TLONGLONG: {
+                std::vector<LONGLONG> buffer(num_rows);
+                fits_read_col(fptr, TLONGLONG, col_number, start_row + 1, 1, num_rows,
+                             nullptr, buffer.data(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading long long column: " + col_name);
+                
+                auto tensor_ptr = col_data.data_ptr<double>();
+                std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                              [](LONGLONG val) { return static_cast<double>(val); });
+                break;
+            }
+            
+            case TINT: {
+                std::vector<int> buffer(num_rows);
+                fits_read_col(fptr, TINT, col_number, start_row + 1, 1, num_rows,
+                             nullptr, buffer.data(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading int column: " + col_name);
+                
+                auto tensor_ptr = col_data.data_ptr<double>();
+                std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                              [](int val) { return static_cast<double>(val); });
+                break;
+            }
+            
+            case TSHORT: {
+                std::vector<short> buffer(num_rows);
+                fits_read_col(fptr, TSHORT, col_number, start_row + 1, 1, num_rows,
+                             nullptr, buffer.data(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading short column: " + col_name);
+                
+                auto tensor_ptr = col_data.data_ptr<double>();
+                std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                              [](short val) { return static_cast<double>(val); });
+                break;
+            }
+            
+            case TBYTE: {
+                std::vector<unsigned char> buffer(num_rows);
+                fits_read_col(fptr, TBYTE, col_number, start_row + 1, 1, num_rows,
+                             nullptr, buffer.data(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading byte column: " + col_name);
+                
+                auto tensor_ptr = col_data.data_ptr<double>();
+                std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                              [](unsigned char val) { return static_cast<double>(val); });
                 break;
             }
             

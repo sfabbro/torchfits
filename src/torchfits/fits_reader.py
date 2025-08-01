@@ -84,7 +84,7 @@ class HDU:
 
 def read(
     filename_or_url,
-    hdu=1,
+    hdu=0,  # Changed to 0-based indexing for astropy/fitsio compatibility
     start=None,
     shape=None,
     columns=None,
@@ -105,7 +105,9 @@ def read(
     Args:
         filename_or_url (str or dict): Path to the FITS file, a CFITSIO-compatible
             URL, or a dictionary with fsspec parameters for remote files.
-        hdu (int or str, optional): HDU number (1-based) or name. Defaults to 1 (the primary HDU).
+        hdu (int or str, optional): HDU number (0-based like astropy/fitsio) or name. 
+                                   Defaults to 0 (the primary HDU).
+                                   Note: Internally converted to 1-based for CFITSIO compatibility.
         start (list[int], optional): The starting pixel coordinates (0-based) for a cutout.
             For a 2D image, this would be `[row, column]`.
         shape (list[int], optional): The shape of the cutout to read. If `start` is
@@ -135,21 +137,24 @@ def read(
     """
     from .table import FitsTable
     
+    # Convert 0-based HDU indexing (astropy/fitsio style) to 1-based (CFITSIO style)
+    cfitsio_hdu = hdu + 1 if isinstance(hdu, int) else hdu
+    
     # Auto-detect format based on HDU type
     if format == "auto":
         try:
-            hdu_type = get_hdu_type(filename_or_url, hdu)
+            hdu_type = get_hdu_type(filename_or_url, hdu)  # Use original 0-based hdu
             if hdu_type in ["BINTABLE", "TABLE", "BINARY_TBL"]:
                 format = "table"  # Use enhanced table format for tables
             else:
                 format = "tensor"  # Use tensor format for images/cubes
         except Exception:
             format = "tensor"  # Fallback to tensor format
-    
-    # Call the C++ backend
+
+    # Call the C++ backend with converted HDU number
     result = fits_reader_cpp.read(
         filename_or_url,
-        hdu=hdu,
+        hdu=cfitsio_hdu,  # Use 1-based HDU for CFITSIO
         start=start,
         shape=shape,
         columns=columns,
@@ -160,48 +165,59 @@ def read(
     )
     
     # Handle different formats for table data
-    if isinstance(result, dict) and format != "tensor":
-        # This is table data, convert to requested format
-        if format == "table":
-            # Create FitsTable from tensor dict
-            metadata = {}
-            if return_metadata:
-                # Extract metadata from FITS headers
-                metadata = _extract_table_metadata(filename_or_url, hdu, columns)
-                metadata = _update_metadata_dtypes(metadata, result)
-            return FitsTable(result, metadata)
-            
-        elif format == "dataframe":
-            # Convert to PyTorch-Frame DataFrame
-            from . import _TORCH_FRAME_AVAILABLE
-            if not _TORCH_FRAME_AVAILABLE:
-                raise ImportError("PyTorch-Frame is required for dataframe format. "
-                                "Install with: pip install pytorch-frame")
-            
-            # Extract metadata for enhanced DataFrame
-            metadata = {}
-            if return_metadata:
-                metadata = _extract_table_metadata(filename_or_url, hdu, columns)
-                metadata = _update_metadata_dtypes(metadata, result)
-            
-            fits_table = FitsTable(result, metadata)
-            return _fits_table_to_torch_frame(fits_table)
+    # For table HDUs, result is tuple (table_dict, header)
+    # For image HDUs, result is tuple (tensor, header)
+    if isinstance(result, tuple) and len(result) == 2:
+        data, header = result
+        
+        # Check if this is table data (data is a dict) and we want enhanced format
+        if isinstance(data, dict) and format != "tensor":
+            if format == "table":
+                # Create FitsTable from tensor dict
+                metadata = {}
+                if return_metadata:
+                    # Extract metadata from FITS headers
+                    metadata = _extract_table_metadata(filename_or_url, hdu, columns)
+                    metadata = _update_metadata_dtypes(metadata, data)
+                return FitsTable(data, metadata)
+                
+            elif format == "dataframe":
+                # Convert to PyTorch-Frame DataFrame
+                from . import _TORCH_FRAME_AVAILABLE
+                if not _TORCH_FRAME_AVAILABLE:
+                    raise ImportError("PyTorch-Frame is required for dataframe format. "
+                                    "Install with: pip install pytorch-frame")
+                
+                # Extract metadata for enhanced DataFrame
+                metadata = {}
+                if return_metadata:
+                    metadata = _extract_table_metadata(filename_or_url, hdu, columns)
+                    metadata = _update_metadata_dtypes(metadata, data)
+                
+                fits_table = FitsTable(data, metadata)
+                return _fits_table_to_torch_frame(fits_table)
+        
+        # For tensor format or image data, return the original tuple
+        if format == "tensor" and isinstance(data, dict):
+            # Return just the dict for table tensor format
+            return data
     
-    # Return original result for images/cubes or when format='tensor'
+    # Return original result for other cases
     return result
 
-def get_header(filename, hdu=1):
+def get_header(filename, hdu=0):
     """
     Returns the FITS header as a dictionary.
 
     Args:
         filename (str): Path to the FITS file.
-        hdu (int or str, optional): HDU number (1-based) or name. Defaults to 1.
+        hdu (int or str, optional): HDU number (0-based like astropy/fitsio) or name. Defaults to 0.
 
     Returns:
         dict: The FITS header as a dictionary.
     """
-    return fits_reader_cpp.get_header(filename, hdu)
+    cfitsio_hdu = hdu + 1 if isinstance(hdu, int) else hdu
+    return fits_reader_cpp.get_header(filename, cfitsio_hdu)
 
 
 def get_num_hdus(filename):
@@ -216,23 +232,26 @@ def get_num_hdus(filename):
     """
     return fits_reader_cpp.get_num_hdus(filename)
 
-def get_dims(filename, hdu_spec=1):
+def get_dims(filename, hdu_spec=0):
     """
     Returns the dimensions of a FITS image/cube HDU.
     """
-    return fits_reader_cpp.get_dims(filename, hdu_spec)
+    cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
+    return fits_reader_cpp.get_dims(filename, cfitsio_hdu)
 
 def get_header_value(filename, hdu_spec, key):
     """
     Returns the value of a single header keyword.
     """
-    return fits_reader_cpp.get_header_value(filename, hdu_spec, key)
+    cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
+    return fits_reader_cpp.get_header_value(filename, cfitsio_hdu, key)
 
-def get_hdu_type(filename, hdu_spec=1):
+def get_hdu_type(filename, hdu_spec=0):
     """
     Returns the type of a specific HDU.
     """
-    return fits_reader_cpp.get_hdu_type(filename, hdu_spec)
+    cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
+    return fits_reader_cpp.get_hdu_type(filename, cfitsio_hdu)
 
 def _clear_cache():
     """

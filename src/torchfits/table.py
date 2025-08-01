@@ -21,7 +21,7 @@ class ColumnInfo:
     
     def __init__(self, 
                  name: str,
-                 dtype: torch.dtype,
+                 dtype: Optional[torch.dtype] = None,
                  unit: Optional[str] = None,
                  description: Optional[str] = None,
                  null_value: Optional[Any] = None,
@@ -142,13 +142,32 @@ class FitsTable:
             raise ValueError("FitsTable requires non-empty data dictionary")
             
         # Validate all tensors have same length
-        lengths = {name: tensor.shape[0] for name, tensor in data_dict.items()}
+        lengths = {}
+        for name, value in data_dict.items():
+            if hasattr(value, 'shape'):
+                # This is a tensor
+                lengths[name] = value.shape[0]
+            elif isinstance(value, (list, tuple)):
+                # This is a list/tuple (e.g., string columns)
+                lengths[name] = len(value)
+            else:
+                # Single value or other type - assume length 1
+                lengths[name] = 1
+                
         if len(set(lengths.values())) > 1:
             raise ValueError(f"All columns must have same length. Got: {lengths}")
             
         self.data = data_dict
         self.columns = list(data_dict.keys())
-        self._length = next(iter(data_dict.values())).shape[0]
+        
+        # Get the length from any tensor or list
+        first_value = next(iter(data_dict.values()))
+        if hasattr(first_value, 'shape'):
+            self._length = first_value.shape[0]
+        elif isinstance(first_value, (list, tuple)):
+            self._length = len(first_value)
+        else:
+            self._length = 1
         
         # Process metadata
         self.column_info = {}
@@ -158,7 +177,14 @@ class FitsTable:
                     self.column_info[col_name] = col_meta
                 elif isinstance(col_meta, dict):
                     # Convert dict to ColumnInfo
-                    dtype = data_dict[col_name].dtype if col_name in data_dict else torch.float32
+                    if col_name in data_dict:
+                        value = data_dict[col_name] 
+                        if hasattr(value, 'dtype'):
+                            dtype = value.dtype
+                        else:
+                            dtype = None  # For non-tensor data like string lists
+                    else:
+                        dtype = torch.float32
                     self.column_info[col_name] = ColumnInfo(
                         name=col_name,
                         dtype=dtype,
@@ -170,9 +196,14 @@ class FitsTable:
         # Create ColumnInfo for columns without metadata
         for col_name in self.columns:
             if col_name not in self.column_info:
+                value = data_dict[col_name]
+                if hasattr(value, 'dtype'):
+                    dtype = value.dtype
+                else:
+                    dtype = None  # For non-tensor data like string lists
                 self.column_info[col_name] = ColumnInfo(
                     name=col_name,
-                    dtype=data_dict[col_name].dtype
+                    dtype=dtype
                 )
                 
     @property

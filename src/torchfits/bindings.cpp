@@ -93,4 +93,6 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
 
     m.def("world_to_pixel", &world_to_pixel, py::arg("world_coords"), py::arg("header"), "Convert world coordinates to pixel coordinates.");
     m.def("pixel_to_world", &pixel_to_world, py::arg("pixel_coords"), py::arg("header"), "Convert pixel coordinates to world coordinates.");
+    
+    // Advanced CFITSIO features will be added in future versions
 }

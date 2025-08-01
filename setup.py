@@ -61,9 +61,11 @@ def get_wcslib_library_path():
 
 # Build configuration
 debug_mode = os.environ.get('DEBUG', '0') == '1'
-extra_compile_args = ['-std=c++17']
+extra_compile_args = ['-std=c++17', '-O2']  # Use O2 optimization
 if debug_mode:
     extra_compile_args.extend(['-DDEBUG', '-g'])
+else:
+    extra_compile_args.extend(['-DNDEBUG'])  # Enable NDEBUG for release builds
 
 # C++ Extension definition
 ext_modules = [
@@ -76,7 +78,7 @@ ext_modules = [
             "src/torchfits/bindings.cpp",
             "src/torchfits/cache.cpp",
             "src/torchfits/remote.cpp",
-            "src/torchfits/performance.cpp"
+            "src/torchfits/performance.cpp",
         ],
         include_dirs=[
             "src/torchfits",
