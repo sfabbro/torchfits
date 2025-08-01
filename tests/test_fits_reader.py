@@ -37,8 +37,15 @@ class TestFitsReader(unittest.TestCase):
         col2 = fits.Column(name='RA', format='D', array=np.array([120.1, 120.2, 120.3]), unit='deg')  # Double precision
         col3 = fits.Column(name='DEC', format='D', array=np.array([-30.1, -30.2, -30.3]), unit='deg') # Double precision
         cols = fits.ColDefs([col1, col2, col3])
-        table_hdu = fits.BinTableHDU.from_columns(cols)
-        table_hdu.writeto(cls.table_file, overwrite=True)
+        
+        # Create MEF file with table at HDU 2 (0-based indexing)
+        primary_hdu = fits.PrimaryHDU()
+        # Add an empty image HDU at HDU 1
+        dummy_hdu = fits.ImageHDU(np.zeros((2, 2)), name='DUMMY')
+        # Table at HDU 2
+        table_hdu = fits.BinTableHDU.from_columns(cols, name='CATALOG')
+        hdul = fits.HDUList([primary_hdu, dummy_hdu, table_hdu])
+        hdul.writeto(cls.table_file, overwrite=True)
 
 
     @classmethod
@@ -74,20 +81,20 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(data.shape, (10, 10))
 
     def test_read_full_table(self):
-        data, _ = torchfits.read(self.table_file, hdu=2)
+        data, _ = torchfits.read(self.table_file, hdu=2, format='tensor')
         self.assertIn('RA', data)
         self.assertIn('DEC', data)
         self.assertTrue(np.allclose(data['RA'].numpy(), [120.1, 120.2, 120.3]))
         self.assertTrue(np.allclose(data['DEC'].numpy(), [-30.1, -30.2, -30.3]))
 
     def test_read_table_columns(self):
-        data, _ = torchfits.read(self.table_file, hdu=2, columns=['RA', 'DEC'])
+        data, _ = torchfits.read(self.table_file, hdu=2, columns=['RA', 'DEC'], format='tensor')
         self.assertIn('RA', data)
         self.assertIn('DEC', data)
         self.assertNotIn('TARGET', data)
 
     def test_read_table_rows(self):
-        data, _ = torchfits.read(self.table_file, hdu=2, start_row=1, num_rows=2)
+        data, _ = torchfits.read(self.table_file, hdu=2, start_row=1, num_rows=2, format='tensor')
         self.assertEqual(len(data['RA']), 2)
         self.assertTrue(np.allclose(data['RA'].numpy(), [120.2, 120.3]))
 

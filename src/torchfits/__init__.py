@@ -23,6 +23,24 @@ from .smart_cache import SmartCache, get_cache, configure_cache, get_cache_manag
 from .table import FitsTable, GroupedFitsTable, ColumnInfo
 from .version import __version__
 
+# Backwards compatibility functions
+def read_image(filename_or_url, hdu=0, start=None, shape=None, **kwargs):
+    """
+    Backwards compatibility function for reading images.
+    This is equivalent to read() but ensures tensor format return.
+    """
+    result = read(filename_or_url, hdu=hdu, start=start, shape=shape, format="tensor", **kwargs)
+    return result
+
+def read_table(filename_or_url, hdu=1, columns=None, start_row=0, num_rows=None, **kwargs):
+    """
+    Backwards compatibility function for reading tables.
+    This is equivalent to read() but ensures tensor format return.
+    """
+    result = read(filename_or_url, hdu=hdu, columns=columns, start_row=start_row, 
+                  num_rows=num_rows, format="tensor", **kwargs)
+    return result
+
 # Advanced CFITSIO features (to be implemented in future versions)
 _has_advanced_features = False
 
@@ -48,6 +66,9 @@ __all__ = [
     # Core reading functions
     "read", "get_header", "get_dims", "get_header_value", 
     "get_hdu_type", "get_num_hdus", "_clear_cache",
+    
+    # Backwards compatibility functions
+    "read_image", "read_table",
     
     # Enhanced table classes
     "FitsTable", "GroupedFitsTable", "ColumnInfo",

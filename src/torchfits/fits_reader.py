@@ -199,8 +199,8 @@ def read(
         
         # For tensor format or image data, return the original tuple
         if format == "tensor" and isinstance(data, dict):
-            # Return just the dict for table tensor format
-            return data
+            # Return tuple (dict, header) for table tensor format to maintain consistency
+            return data, header
     
     # Return original result for other cases
     return result

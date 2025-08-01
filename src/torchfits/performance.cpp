@@ -199,6 +199,24 @@ torch::Tensor ParallelTableReader::read_column_optimized(fitsfile* fptr, const C
             break;
         }
         
+        case TLOGICAL: {
+            std::vector<char> buffer(task.num_rows);
+            fits_read_col(fptr, TLOGICAL, task.number, task.start_row + 1, 1, task.num_rows,
+                         nullptr, buffer.data(), nullptr, &status);
+            if (status) throw_fits_error(status, "Error reading logical column: " + task.name);
+            
+            auto tensor_ptr = tensor.data_ptr<double>();
+            std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                          [](char val) { return static_cast<double>(val == 'T' ? 1 : 0); });
+            break;
+        }
+        
+        case TSTRING: {
+            // String columns cannot be converted to numeric tensors
+            // They are handled by the main reader function
+            throw std::runtime_error("String columns not supported in optimized numeric processing");
+        }
+        
         default:
             throw std::runtime_error("Unsupported column type: " + std::to_string(task.typecode));
     }
@@ -327,6 +345,24 @@ py::dict ParallelTableReader::read_columns_parallel(fitsfile* fptr,
                 break;
             }
             
+            case TLOGICAL: {
+                std::vector<char> buffer(num_rows);
+                fits_read_col(fptr, TLOGICAL, col_number, start_row + 1, 1, num_rows,
+                             nullptr, buffer.data(), nullptr, &status);
+                if (status) throw_fits_error(status, "Error reading logical column: " + col_name);
+                
+                auto tensor_ptr = col_data.data_ptr<double>();
+                std::transform(buffer.begin(), buffer.end(), tensor_ptr,
+                              [](char val) { return static_cast<double>(val == 'T' ? 1 : 0); });
+                break;
+            }
+            
+            case TSTRING: {
+                // String columns cannot be converted to numeric tensors
+                // Skip them - they will be handled by the main reader function
+                continue;
+            }
+            
             default:
                 throw std::runtime_error("Unsupported column type: " + std::to_string(typecode));
         }
@@ -338,6 +374,9 @@ py::dict ParallelTableReader::read_columns_parallel(fitsfile* fptr,
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     DEBUG_LOG("Optimized read of " + std::to_string(columns.size()) + " columns completed in " + 
               std::to_string(duration.count()) + "ms");
+    
+    // Use duration to avoid unused variable warning
+    (void)duration;
     
     return result_dict;
 }
