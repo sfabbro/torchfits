@@ -2,7 +2,7 @@
 
 ## 🎯 Core Mission
 
-To provide the fastest, most intuitive, and PyTorch-native library for accessing FITS data, empowering the next generation of machine learning in astronomy.
+To provide the fast, intuitive, and PyTorch-native library for accessing FITS data, empowering machine learning applications in astronomy.
 
 ---
 
@@ -30,11 +30,11 @@ To provide the fastest, most intuitive, and PyTorch-native library for accessing
 
 ---
 
-## 🚀 Roadmap to v1.0: From Foundation to Dominance
+## 🚀 Roadmap to v1.0
 
-The path to v1.0 is focused on three pillars: **Performance Supremacy**, **Complete Feature Set**, and **Intelligent Data Handling**.
+The path to v1.0 is focused on three pillars: **Performance**, **Complete Feature Set**, and **Intelligent Data Handling**.
 
-### Pillar 1: Performance Supremacy
+### Pillar 1: Performance 
 
 **Goal**: Make `torchfits` the undisputed performance leader for FITS I/O in Python.
 
@@ -100,8 +100,7 @@ The path to v1.0 is focused on three pillars: **Performance Supremacy**, **Compl
 ## ✅ v1.0 Success Checklist
 
 ### Performance
-- [ ] **Tables**: Outperforms `fitsio` by >2.5x on large tables (10M+ rows).
-- [ ] **Images**: Outperforms `astropy` by >3x on large images (16Kx16K).
+- [ ] **Tables**: Outperforms `fitsio` and `astropy` by >1.1x on any type of table, image, datacube
 - [ ] **Remote (Cached)**: Achieves <10% overhead compared to local file access.
 - [ ] **GPU Workflows**: `TorchFitsDataset` shows >2x faster end-to-end training throughput than a naive `astropy`-based dataset.
 

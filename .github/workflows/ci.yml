@@ -67,7 +67,7 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libcfitsio-dev libwcs-dev build-essential
+        sudo apt-get install -y libcfitsio-dev wcslib-dev build-essential
     
     - name: Install system dependencies (macOS)
       if: matrix.os == 'macos-latest'
