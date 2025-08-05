@@ -1,9 +1,12 @@
-import unittest
-import torch
-import torchfits
-import numpy as np
 import os
+import unittest
+
+import numpy as np
+import torch
 from astropy.io import fits
+
+import torchfits
+
 
 class TestFitsReader(unittest.TestCase):
 
@@ -16,7 +19,7 @@ class TestFitsReader(unittest.TestCase):
         cls.image_file = os.path.join(cls.test_dir, "test_image.fits")
         cls.image_data = np.arange(100, dtype=np.float32).reshape(10, 10)
         hdu = fits.PrimaryHDU(cls.image_data)
-        hdu.header['TESTKEY'] = 'TESTVAL'
+        hdu.header["TESTKEY"] = "TESTVAL"
         hdu.writeto(cls.image_file, overwrite=True)
 
         # --- 3D Cube ---
@@ -27,26 +30,35 @@ class TestFitsReader(unittest.TestCase):
         # --- MEF File ---
         cls.mef_file = os.path.join(cls.test_dir, "test_mef.fits")
         primary_hdu = fits.PrimaryHDU()
-        ext1 = fits.ImageHDU(np.arange(100, dtype=np.float32).reshape(10, 10), name='EXT1')
+        ext1 = fits.ImageHDU(
+            np.arange(100, dtype=np.float32).reshape(10, 10), name="EXT1"
+        )
         hdul = fits.HDUList([primary_hdu, ext1])
         hdul.writeto(cls.mef_file, overwrite=True)
 
         # --- Table File ---
         cls.table_file = os.path.join(cls.test_dir, "test_table.fits")
-        col1 = fits.Column(name='TARGET', format='10A', array=np.array(['NGC1001', 'NGC1002', 'NGC1003']))
-        col2 = fits.Column(name='RA', format='D', array=np.array([120.1, 120.2, 120.3]), unit='deg')  # Double precision
-        col3 = fits.Column(name='DEC', format='D', array=np.array([-30.1, -30.2, -30.3]), unit='deg') # Double precision
+        col1 = fits.Column(
+            name="TARGET",
+            format="10A",
+            array=np.array(["NGC1001", "NGC1002", "NGC1003"]),
+        )
+        col2 = fits.Column(
+            name="RA", format="D", array=np.array([120.1, 120.2, 120.3]), unit="deg"
+        )  # Double precision
+        col3 = fits.Column(
+            name="DEC", format="D", array=np.array([-30.1, -30.2, -30.3]), unit="deg"
+        )  # Double precision
         cols = fits.ColDefs([col1, col2, col3])
-        
+
         # Create MEF file with table at HDU 2 (0-based indexing)
         primary_hdu = fits.PrimaryHDU()
         # Add an empty image HDU at HDU 1
-        dummy_hdu = fits.ImageHDU(np.zeros((2, 2)), name='DUMMY')
+        dummy_hdu = fits.ImageHDU(np.zeros((2, 2)), name="DUMMY")
         # Table at HDU 2
-        table_hdu = fits.BinTableHDU.from_columns(cols, name='CATALOG')
+        table_hdu = fits.BinTableHDU.from_columns(cols, name="CATALOG")
         hdul = fits.HDUList([primary_hdu, dummy_hdu, table_hdu])
         hdul.writeto(cls.table_file, overwrite=True)
-
 
     @classmethod
     def tearDownClass(cls):
@@ -64,7 +76,7 @@ class TestFitsReader(unittest.TestCase):
         self.assertEqual(data.dtype, torch.float32)
         self.assertEqual(data.shape, (10, 10))
         self.assertTrue(np.allclose(data.numpy(), self.image_data))
-        self.assertEqual(header['TESTKEY'], 'TESTVAL')
+        self.assertEqual(header["TESTKEY"], "TESTVAL")
 
     def test_read_image_cutout(self):
         data, _ = torchfits.read(self.image_file, start=[2, 3], shape=[4, 5])
@@ -77,26 +89,30 @@ class TestFitsReader(unittest.TestCase):
         self.assertTrue(np.allclose(data.numpy(), self.cube_data[0:2, 1:3, 1:3]))
 
     def test_read_mef(self):
-        data, _ = torchfits.read(self.mef_file, hdu='EXT1')
+        data, _ = torchfits.read(self.mef_file, hdu="EXT1")
         self.assertEqual(data.shape, (10, 10))
 
     def test_read_full_table(self):
-        data, _ = torchfits.read(self.table_file, hdu=2, format='tensor')
-        self.assertIn('RA', data)
-        self.assertIn('DEC', data)
-        self.assertTrue(np.allclose(data['RA'].numpy(), [120.1, 120.2, 120.3]))
-        self.assertTrue(np.allclose(data['DEC'].numpy(), [-30.1, -30.2, -30.3]))
+        data, _ = torchfits.read(self.table_file, hdu=2, format="tensor")
+        self.assertIn("RA", data)
+        self.assertIn("DEC", data)
+        self.assertTrue(np.allclose(data["RA"].numpy(), [120.1, 120.2, 120.3]))
+        self.assertTrue(np.allclose(data["DEC"].numpy(), [-30.1, -30.2, -30.3]))
 
     def test_read_table_columns(self):
-        data, _ = torchfits.read(self.table_file, hdu=2, columns=['RA', 'DEC'], format='tensor')
-        self.assertIn('RA', data)
-        self.assertIn('DEC', data)
-        self.assertNotIn('TARGET', data)
+        data, _ = torchfits.read(
+            self.table_file, hdu=2, columns=["RA", "DEC"], format="tensor"
+        )
+        self.assertIn("RA", data)
+        self.assertIn("DEC", data)
+        self.assertNotIn("TARGET", data)
 
     def test_read_table_rows(self):
-        data, _ = torchfits.read(self.table_file, hdu=2, start_row=1, num_rows=2, format='tensor')
-        self.assertEqual(len(data['RA']), 2)
-        self.assertTrue(np.allclose(data['RA'].numpy(), [120.2, 120.3]))
+        data, _ = torchfits.read(
+            self.table_file, hdu=2, start_row=1, num_rows=2, format="tensor"
+        )
+        self.assertEqual(len(data["RA"]), 2)
+        self.assertTrue(np.allclose(data["RA"].numpy(), [120.2, 120.3]))
 
     def test_error_handling(self):
         with self.assertRaises(RuntimeError):
@@ -105,5 +121,6 @@ class TestFitsReader(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             torchfits.read(self.image_file, hdu=99)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

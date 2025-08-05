@@ -1,6 +1,9 @@
-import torch
 import warnings
+
+import torch
+
 from . import fits_reader_cpp
+
 
 class FITS:
     """
@@ -15,6 +18,7 @@ class FITS:
         ...     data = hdu.read()
         ...     header = hdu.header
     """
+
     def __init__(self, filename):
         self.filename = filename
         self._hdu_cache = {}
@@ -50,6 +54,7 @@ class HDU:
         ...     primary_hdu = f[0]
         ...     image_data = primary_hdu.read()
     """
+
     def __init__(self, filename, hdu_spec):
         self.filename = filename
         self.hdu_spec = hdu_spec
@@ -79,8 +84,11 @@ class HDU:
             torch.Tensor or dict: A PyTorch tensor for image/cube data, or a dictionary
             of tensors for table data.
         """
-        data, _ = read(self.filename, hdu=self.hdu_spec, start=start, shape=shape, device=device)
+        data, _ = read(
+            self.filename, hdu=self.hdu_spec, start=start, shape=shape, device=device
+        )
         return data
+
 
 def read(
     filename_or_url,
@@ -105,7 +113,7 @@ def read(
     Args:
         filename_or_url (str or dict): Path to the FITS file, a CFITSIO-compatible
             URL, or a dictionary with fsspec parameters for remote files.
-        hdu (int or str, optional): HDU number (0-based like astropy/fitsio) or name. 
+        hdu (int or str, optional): HDU number (0-based like astropy/fitsio) or name.
                                    Defaults to 0 (the primary HDU).
                                    Note: Internally converted to 1-based for CFITSIO compatibility.
         start (list[int], optional): The starting pixel coordinates (0-based) for a cutout.
@@ -129,17 +137,17 @@ def read(
         return_metadata (bool, optional): Include column metadata for tables. Defaults to False.
 
     Returns:
-        tuple, dict, or FitsTable: 
+        tuple, dict, or FitsTable:
         - For image/cube HDUs: tuple `(data, header)` where `data` is PyTorch tensor
         - For table HDUs with format='tensor': dict of column_name -> tensor
         - For table HDUs with format='table': FitsTable object
         - For table HDUs with format='dataframe': torch_frame.DataFrame (if available)
     """
     from .table import FitsTable
-    
+
     # Convert 0-based HDU indexing (astropy/fitsio style) to 1-based (CFITSIO style)
     cfitsio_hdu = hdu + 1 if isinstance(hdu, int) else hdu
-    
+
     # Auto-detect format based on HDU type
     if format == "auto":
         try:
@@ -163,13 +171,13 @@ def read(
         cache_capacity=cache_capacity,
         device=device,
     )
-    
+
     # Handle different formats for table data
     # For table HDUs, result is tuple (table_dict, header)
     # For image HDUs, result is tuple (tensor, header)
     if isinstance(result, tuple) and len(result) == 2:
         data, header = result
-        
+
         # Check if this is table data (data is a dict) and we want enhanced format
         if isinstance(data, dict) and format != "tensor":
             if format == "table":
@@ -180,30 +188,34 @@ def read(
                     metadata = _extract_table_metadata(filename_or_url, hdu, columns)
                     metadata = _update_metadata_dtypes(metadata, data)
                 return FitsTable(data, metadata)
-                
+
             elif format == "dataframe":
                 # Convert to PyTorch-Frame DataFrame
                 from . import _TORCH_FRAME_AVAILABLE
+
                 if not _TORCH_FRAME_AVAILABLE:
-                    raise ImportError("PyTorch-Frame is required for dataframe format. "
-                                    "Install with: pip install pytorch-frame")
-                
+                    raise ImportError(
+                        "PyTorch-Frame is required for dataframe format. "
+                        "Install with: pip install pytorch-frame"
+                    )
+
                 # Extract metadata for enhanced DataFrame
                 metadata = {}
                 if return_metadata:
                     metadata = _extract_table_metadata(filename_or_url, hdu, columns)
                     metadata = _update_metadata_dtypes(metadata, data)
-                
+
                 fits_table = FitsTable(data, metadata)
                 return _fits_table_to_torch_frame(fits_table)
-        
+
         # For tensor format or image data, return the original tuple
         if format == "tensor" and isinstance(data, dict):
             # Return tuple (dict, header) for table tensor format to maintain consistency
             return data, header
-    
+
     # Return original result for other cases
     return result
+
 
 def get_header(filename, hdu=0):
     """
@@ -232,12 +244,14 @@ def get_num_hdus(filename):
     """
     return fits_reader_cpp.get_num_hdus(filename)
 
+
 def get_dims(filename, hdu_spec=0):
     """
     Returns the dimensions of a FITS image/cube HDU.
     """
     cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
     return fits_reader_cpp.get_dims(filename, cfitsio_hdu)
+
 
 def get_header_value(filename, hdu_spec, key):
     """
@@ -246,12 +260,14 @@ def get_header_value(filename, hdu_spec, key):
     cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
     return fits_reader_cpp.get_header_value(filename, cfitsio_hdu, key)
 
+
 def get_hdu_type(filename, hdu_spec=0):
     """
     Returns the type of a specific HDU.
     """
     cfitsio_hdu = hdu_spec + 1 if isinstance(hdu_spec, int) else hdu_spec
     return fits_reader_cpp.get_hdu_type(filename, cfitsio_hdu)
+
 
 def _clear_cache():
     """
@@ -263,7 +279,7 @@ def _clear_cache():
 def _extract_table_metadata(filename_or_url, hdu, columns=None):
     """
     Extract table metadata from FITS headers.
-    
+
     Parameters:
     -----------
     filename_or_url : str
@@ -272,7 +288,7 @@ def _extract_table_metadata(filename_or_url, hdu, columns=None):
         HDU specification
     columns : list, optional
         Column names to extract metadata for
-        
+
     Returns:
     --------
     Dict[str, ColumnInfo]
@@ -281,38 +297,48 @@ def _extract_table_metadata(filename_or_url, hdu, columns=None):
     try:
         # Get full header for the table HDU
         header = get_header(filename_or_url, hdu)
-        
+
         # Extract table structure information
         column_metadata = {}
-        
+
         # Find number of columns
-        tfields = header.get('TFIELDS', 0)
-        
+        tfields = header.get("TFIELDS", 0)
+
         for i in range(1, tfields + 1):
             # Get column name
-            col_name = header.get(f'TTYPE{i}', f'COL{i}')
-            
+            col_name = header.get(f"TTYPE{i}", f"COL{i}")
+
             # Skip if specific columns requested and this isn't one
             if columns and col_name not in columns:
                 continue
-                
+
             # Collect all header info for this column
             col_header = {}
             for key, value in header.items():
                 if key.endswith(str(i)) and len(key) > 1:
-                    base_key = key[:-len(str(i))]
-                    if base_key in ['TTYPE', 'TFORM', 'TUNIT', 'TNULL', 'TSCAL', 
-                                   'TZERO', 'TDISP', 'TCOMM', 'TDIM']:
+                    base_key = key[: -len(str(i))]
+                    if base_key in [
+                        "TTYPE",
+                        "TFORM",
+                        "TUNIT",
+                        "TNULL",
+                        "TSCAL",
+                        "TZERO",
+                        "TDISP",
+                        "TCOMM",
+                        "TDIM",
+                    ]:
                         col_header[base_key] = value
-            
+
             # Create ColumnInfo (dtype will be set later when we have the tensor)
             from .table import ColumnInfo
+
             column_metadata[col_name] = ColumnInfo.from_fits_header(
                 col_name, col_header, torch.float32  # Placeholder dtype
             )
-            
+
         return column_metadata
-        
+
     except Exception as e:
         # If metadata extraction fails, return empty dict
         warnings.warn(f"Could not extract table metadata: {e}")
@@ -325,6 +351,7 @@ def _update_metadata_dtypes(metadata, tensor_dict):
         if col_name in tensor_dict:
             # Create new ColumnInfo with correct dtype
             from .table import ColumnInfo
+
             metadata[col_name] = ColumnInfo(
                 name=col_info.name,
                 dtype=tensor_dict[col_name].dtype,
@@ -333,7 +360,7 @@ def _update_metadata_dtypes(metadata, tensor_dict):
                 null_value=col_info.null_value,
                 display_format=col_info.display_format,
                 coordinate_type=col_info.coordinate_type,
-                **col_info.fits_metadata
+                **col_info.fits_metadata,
             )
     return metadata
 
@@ -343,7 +370,7 @@ def _fits_table_to_torch_frame(fits_table):
     try:
         import torch_frame
         from torch_frame import DataFrame
-        
+
         # Convert tensors to appropriate format for torch_frame
         col_dict = {}
         for name, tensor in fits_table.data.items():
@@ -355,8 +382,10 @@ def _fits_table_to_torch_frame(fits_table):
             else:
                 # Convert other types to float
                 col_dict[name] = tensor.float()
-        
+
         return DataFrame(col_dict)
     except ImportError:
-        raise ImportError("PyTorch-Frame is required for dataframe format. "
-                         "Install with: pip install pytorch-frame")
+        raise ImportError(
+            "PyTorch-Frame is required for dataframe format. "
+            "Install with: pip install pytorch-frame"
+        )

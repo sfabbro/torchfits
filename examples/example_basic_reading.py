@@ -1,23 +1,27 @@
-import torchfits
-import torch
-import numpy as np
 import os
+
+import numpy as np
+import torch
 from astropy.io import fits
+
+import torchfits
+
 
 def create_test_file(filename):
     if not os.path.exists(filename):
         data = np.arange(100, dtype=np.float32).reshape(10, 10)
         hdu = fits.PrimaryHDU(data)
-        hdu.header['CTYPE1'] = 'RA---TAN'
-        hdu.header['CTYPE2'] = 'DEC--TAN'
-        hdu.header['CRVAL1'] = 202.5
-        hdu.header['CRVAL2'] = 47.5
-        hdu.header['CRPIX1'] = 5.0
-        hdu.header['CRPIX2'] = 5.0
-        hdu.header['CDELT1'] = -0.001
-        hdu.header['CDELT2'] = 0.001
-        hdu.header['OBJECT'] = 'Test Object'  # Add a non-WCS keyword
+        hdu.header["CTYPE1"] = "RA---TAN"
+        hdu.header["CTYPE2"] = "DEC--TAN"
+        hdu.header["CRVAL1"] = 202.5
+        hdu.header["CRVAL2"] = 47.5
+        hdu.header["CRPIX1"] = 5.0
+        hdu.header["CRPIX2"] = 5.0
+        hdu.header["CDELT1"] = -0.001
+        hdu.header["CDELT2"] = 0.001
+        hdu.header["OBJECT"] = "Test Object"  # Add a non-WCS keyword
         hdu.writeto(filename, overwrite=True)
+
 
 def main():
     test_file = "basic_example.fits"
@@ -44,7 +48,7 @@ def main():
 
     # Get Header Value
     try:
-        object_name = torchfits.get_header_value(test_file, 1, 'OBJECT')
+        object_name = torchfits.get_header_value(test_file, 1, "OBJECT")
         print(f"\nObject Name: {object_name}")
     except RuntimeError as e:
         print(f" Error: {e}")

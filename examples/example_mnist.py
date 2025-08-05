@@ -1,45 +1,61 @@
-import torch
-import torchfits
-import numpy as np
 import os
-from torch.utils.data import Dataset, DataLoader
+
+import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from astropy.io import fits
-from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms  # Use torchvision for MNIST
+from tqdm import tqdm
+
+import torchfits
 
 # --- FITS File Generation (Run Once) ---
+
 
 def create_mnist_fits(data_dir):
     """Converts the MNIST dataset to FITS images."""
     os.makedirs(data_dir, exist_ok=True)
-    train_dataset = datasets.MNIST(root=data_dir, train=True, download=True, transform=transforms.ToTensor())
-    test_dataset = datasets.MNIST(root=data_dir, train=False, download=True, transform=transforms.ToTensor())
+    train_dataset = datasets.MNIST(
+        root=data_dir, train=True, download=True, transform=transforms.ToTensor()
+    )
+    test_dataset = datasets.MNIST(
+        root=data_dir, train=False, download=True, transform=transforms.ToTensor()
+    )
 
-    for i, (image, label) in enumerate(tqdm(train_dataset, desc="Generating Training FITS")):
+    for i, (image, label) in enumerate(
+        tqdm(train_dataset, desc="Generating Training FITS")
+    ):
         filename = os.path.join(data_dir, f"train_{i:05d}_{label}.fits")
-        hdu = fits.PrimaryHDU(image.squeeze().numpy())  # Remove channel dim, convert to NumPy
-        hdu.header['LABEL'] = int(label)  # Store label in header
+        hdu = fits.PrimaryHDU(
+            image.squeeze().numpy()
+        )  # Remove channel dim, convert to NumPy
+        hdu.header["LABEL"] = int(label)  # Store label in header
         hdu.writeto(filename, overwrite=True)
 
-    for i, (image, label) in enumerate(tqdm(test_dataset, desc="Generating Testing FITS")):
+    for i, (image, label) in enumerate(
+        tqdm(test_dataset, desc="Generating Testing FITS")
+    ):
         filename = os.path.join(data_dir, f"test_{i:05d}_{label}.fits")
         hdu = fits.PrimaryHDU(image.squeeze().numpy())
-        hdu.header['LABEL'] = int(label)
+        hdu.header["LABEL"] = int(label)
         hdu.writeto(filename, overwrite=True)
+
 
 # --- PyTorch Dataset ---
 
+
 class MNIST_FITS_Dataset(Dataset):
-     def __init__(self, data_dir, train=True, cache_capacity=0, device='cpu'): # Add cache and device
+    def __init__(
+        self, data_dir, train=True, cache_capacity=0, device="cpu"
+    ):  # Add cache and device
         self.data_dir = data_dir
         self.file_list = []
         self.labels = []
         self.cache_capacity = cache_capacity
-        self.device = device # Store device
-
+        self.device = device  # Store device
 
         prefix = "train" if train else "test"
         for filename in os.listdir(data_dir):
@@ -49,21 +65,25 @@ class MNIST_FITS_Dataset(Dataset):
                 label = int(filename.split("_")[-1].split(".")[0])
                 self.labels.append(label)
 
-        #Sort files and labels (for reproducibility)
+        # Sort files and labels (for reproducibility)
         self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
         self.file_list = list(self.file_list)
         self.labels = list(self.labels)
 
-     def __len__(self):
+    def __len__(self):
         return len(self.file_list)
 
-     def __getitem__(self, idx):
+    def __getitem__(self, idx):
         filename = self.file_list[idx]
         label = self.labels[idx]
         try:
             # Pass cache_capacity and device to read (convert device to string)
-            device_str = str(self.device) if hasattr(self.device, '__str__') else self.device
-            data, _ = torchfits.read(filename, cache_capacity=self.cache_capacity, device=device_str)
+            device_str = (
+                str(self.device) if hasattr(self.device, "__str__") else self.device
+            )
+            data, _ = torchfits.read(
+                filename, cache_capacity=self.cache_capacity, device=device_str
+            )
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:
                 data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
@@ -72,7 +92,10 @@ class MNIST_FITS_Dataset(Dataset):
         except RuntimeError as e:
             print(f"Error reading or processing {filename}: {e}")
             return None, None  # Return None if there's an error
+
+
 # --- Model (Simple CNN) ---
+
 
 class MNIST_Classifier(nn.Module):
     def __init__(self):
@@ -92,6 +115,7 @@ class MNIST_Classifier(nn.Module):
         x = self.fc2(x)
         return x
 
+
 # --- Collate Function (to handle potential None values) ---
 def collate_fn(batch):
     # Remove any None values from the batch (caused by read errors)
@@ -103,11 +127,14 @@ def collate_fn(batch):
 
 # --- Main Script ---
 
+
 def main():
     data_dir = "data_mnist_fits"
 
     # --- Create FITS files (if they don't exist) ---
-    if not os.path.exists(os.path.join(data_dir, "train_00000_0.fits")):  # Check for one file
+    if not os.path.exists(
+        os.path.join(data_dir, "train_00000_0.fits")
+    ):  # Check for one file
         create_mnist_fits(data_dir)
 
     # --- Device Selection ---
@@ -116,10 +143,28 @@ def main():
 
     # --- Create Datasets and DataLoaders ---
     # Demonstrate with and without cache, and with/without GPU
-    train_dataset = MNIST_FITS_Dataset(data_dir, train=True, cache_capacity=100, device=str(device))
-    test_dataset = MNIST_FITS_Dataset(data_dir, train=False, cache_capacity=100, device=str(device)) #Use cache
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, collate_fn=collate_fn, pin_memory=(device.type=='cuda'))
+    train_dataset = MNIST_FITS_Dataset(
+        data_dir, train=True, cache_capacity=100, device=str(device)
+    )
+    test_dataset = MNIST_FITS_Dataset(
+        data_dir, train=False, cache_capacity=100, device=str(device)
+    )  # Use cache
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=64,
+        shuffle=True,
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=(device.type == "cuda"),
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=64,
+        shuffle=False,
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=(device.type == "cuda"),
+    )
 
     # --- Initialize Model, Loss, and Optimizer ---
     model = MNIST_Classifier().to(device)  # Move model to device
@@ -131,10 +176,12 @@ def main():
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for i, (inputs, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")):
+        for i, (inputs, labels) in enumerate(
+            tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        ):
             if inputs.numel() == 0:  # Handle empty batch
                 continue
-             # Move data to the device
+            # Move data to the device
             inputs = inputs.to(device)
             labels = labels.to(device)
 
