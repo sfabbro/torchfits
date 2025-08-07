@@ -117,6 +117,7 @@ pytorch-frame = ">=0.2.5,<0.3"
 black = ">=25.1.0,<26"
 isort = ">=6.0.1,<7"
 mypy = ">=1.17.1,<2"
+pyarrow = ">=21.0.0,<22"
 
 [tool.setuptools.packages.find]
 where = ["src"]

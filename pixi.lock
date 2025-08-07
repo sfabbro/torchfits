@@ -11007,7 +11007,7 @@ packages:
 - pypi: ./
   name: torchfits
   version: 0.2.0
-  sha256: f267ed6700b6e3fcc659f1766689501976b37e49944a4d0eb06b4de19aa2e57c
+  sha256: 8eb95669a9533e289fac1ad81f69e521ad8a77f4c7930bbc4e720fc1a74e6fd6
   requires_dist:
   - torch>=2.0.0,<3
   - pytest>=6.0.0 ; extra == 'dev'

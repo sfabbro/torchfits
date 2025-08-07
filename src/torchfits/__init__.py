@@ -9,6 +9,16 @@ from .fits_reader import (
     get_num_hdus,
     read,
 )
+from .fits_writer import (
+    write,
+    write_mef,
+    append_hdu,
+    update_header,
+    update_data,
+    write_image,
+    write_table,
+    write_cube,
+)
 from .remote import RemoteFetcher
 from .smart_cache import SmartCache, configure_cache, get_cache, get_cache_manager
 from .table import ColumnInfo, FitsTable, GroupedFitsTable
@@ -157,6 +167,15 @@ __all__ = [
     "get_hdu_type",
     "get_num_hdus",
     "_clear_cache",
+    # Writing functions (v1.0)
+    "write",
+    "write_mef", 
+    "append_hdu",
+    "update_header",
+    "update_data",
+    "write_image",
+    "write_table", 
+    "write_cube",
     # Backwards compatibility functions
     "read_image",
     "read_table",

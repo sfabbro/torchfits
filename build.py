@@ -161,12 +161,17 @@ def create_extension():
         "torchfits.fits_reader_cpp",
         sources=[
             "src/torchfits/fits_reader.cpp",
+            "src/torchfits/fits_writer.cpp",  # New v1.0 writing functionality
             "src/torchfits/fits_utils.cpp", 
             "src/torchfits/wcs_utils.cpp",
             "src/torchfits/bindings.cpp",
             "src/torchfits/cache.cpp",
+            "src/torchfits/real_cache.cpp",  # Real cache implementation
+            "src/torchfits/cfitsio_enhanced.cpp",  # CFITSIO optimizations
+            "src/torchfits/memory_optimizer.cpp",  # Memory-aligned tensor optimization
+            "src/torchfits/fast_reader.cpp",  # FITSIO-inspired optimizations
             "src/torchfits/remote.cpp",
-            "src/torchfits/performance.cpp",
+            # "src/torchfits/performance.cpp",  # Temporarily disabled for initial build
         ],
         include_dirs=[
             "src/torchfits",

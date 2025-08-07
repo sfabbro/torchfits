@@ -7,12 +7,23 @@
 #include <memory>
 #include <fitsio.h>
 
+// Forward declaration to avoid circular dependency
+class MemoryMapper;
+
 // --- RAII Wrapper for fitsfile pointer ---
 // Ensures that fits_close_file is called automatically
 class FITSFileWrapper {
 public:
-    FITSFileWrapper(const std::string& filename, int mode = READONLY) {
+    FITSFileWrapper(const std::string& filename, int mode = READONLY) : filename_(filename) {
         int status = 0;
+        
+        // Try to use memory mapping for read-only access to large files
+        if (mode == READONLY && try_memory_mapped_open(filename)) {
+            // Memory mapping successful, fptr_ is set
+            return;
+        }
+        
+        // Fall back to regular file opening
         fits_open_file(&fptr_, filename.c_str(), mode, &status);
         if (status) {
             char err_text[FLEN_ERRMSG];
@@ -35,9 +46,12 @@ public:
     FITSFileWrapper& operator=(const FITSFileWrapper&) = delete;
 
     // Allow move construction and assignment
-    FITSFileWrapper(FITSFileWrapper&& other) noexcept : fptr_(other.fptr_) {
+    FITSFileWrapper(FITSFileWrapper&& other) noexcept 
+        : fptr_(other.fptr_), filename_(std::move(other.filename_)), is_memory_mapped_(other.is_memory_mapped_) {
         other.fptr_ = nullptr;
+        other.is_memory_mapped_ = false;
     }
+    
     FITSFileWrapper& operator=(FITSFileWrapper&& other) noexcept {
         if (this != &other) {
             if (fptr_) {
@@ -45,15 +59,25 @@ public:
                 fits_close_file(fptr_, &status);
             }
             fptr_ = other.fptr_;
+            filename_ = std::move(other.filename_);
+            is_memory_mapped_ = other.is_memory_mapped_;
             other.fptr_ = nullptr;
+            other.is_memory_mapped_ = false;
         }
         return *this;
     }
 
     fitsfile* get() const { return fptr_; }
+    bool is_memory_mapped() const { return is_memory_mapped_; }
+    const std::string& filename() const { return filename_; }
 
 private:
     fitsfile* fptr_ = nullptr;
+    std::string filename_;
+    bool is_memory_mapped_ = false;
+    
+    /// Try to open file with memory mapping - returns true if successful
+    bool try_memory_mapped_open(const std::string& filename);
 };
 
 

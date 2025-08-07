@@ -1,4 +1,5 @@
 #include "fits_utils.h"
+#include "performance.h"
 #include "debug.h"
 #include <map>
 #include <string>
@@ -199,4 +200,50 @@ std::vector<long> get_dims(const std::string& filename, int hdu_num) {
         throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
     }
     return get_image_dims(f.get());
+}
+
+// Implementation of memory-mapped file opening
+bool FITSFileWrapper::try_memory_mapped_open(const std::string& filename) {
+    // Memory mapping currently disabled - fallback to standard CFITSIO
+    return false;
+    
+    /*
+    // Get global memory mapper instance
+    auto& mapper = MemoryMapper::get_instance();
+    
+    // Check if we should use memory mapping for this file
+    if (!mapper.should_use_memory_mapping(filename)) {
+        return false;
+    }
+    
+    try {
+        // Try to map the file
+        auto mapped_file = mapper.map_file(filename);
+        if (!mapped_file) {
+            return false;
+        }
+        
+        // CFITSIO can work with memory-mapped files in several ways:
+        // 1. Using fits_open_memfile for in-memory files
+        // 2. Using regular fits_open_file (CFITSIO handles the underlying I/O)
+        
+        // For now, let's use the regular approach and let CFITSIO handle the I/O
+        // The memory mapping primarily helps with OS-level caching
+        int status = 0;
+        fits_open_file(&fptr_, filename.c_str(), READONLY, &status);
+        if (status) {
+            // If CFITSIO fails, unmap the file and return false
+            mapper.unmap_file(filename);
+            return false;
+        }
+        
+        is_memory_mapped_ = true;
+        return true;
+        
+    } catch (const std::exception& e) {
+        // Memory mapping failed, fall back to regular opening
+        DEBUG_LOG("Memory mapping failed for " + filename + ": " + e.what());
+        return false;
+    }
+    */
 }

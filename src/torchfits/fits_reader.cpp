@@ -4,8 +4,11 @@
 #include "cache.h"
 #include "remote.h"
 #include "performance.h"
+#include "cfitsio_enhanced.h"
+#include "real_cache.h"
 #include "debug.h"
 #include <sstream>
+#include <fstream>
 #include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -23,6 +26,20 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
     int naxis;
     fits_get_img_dim(fptr, &naxis, &status);
     if (status) throw_fits_error(status, "Error getting image dimension");
+
+    // Handle empty HDU (NAXIS=0) case - no image data
+    if (naxis == 0) {
+        DEBUG_LOG("Empty HDU detected (NAXIS=0), returning empty tensor");
+        torch::TensorOptions options = torch::TensorOptions().device(device);
+        if      (std::is_same<T, uint8_t>::value) options = options.dtype(torch::kUInt8);
+        else if (std::is_same<T, int16_t>::value) options = options.dtype(torch::kInt16);
+        else if (std::is_same<T, int32_t>::value) options = options.dtype(torch::kInt32);
+        else if (std::is_same<T, int64_t>::value) options = options.dtype(torch::kInt64);
+        else if (std::is_same<T, float>::value)   options = options.dtype(torch::kFloat32);
+        else if (std::is_same<T, double>::value)  options = options.dtype(torch::kFloat64);
+        
+        return torch::empty({0}, options);  // Return empty 1D tensor with 0 elements
+    }
 
     std::vector<long> naxes(naxis);
     fits_get_img_size(fptr, naxis, naxes.data(), &status);
@@ -55,7 +72,7 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
         if (status) throw_fits_error(status, "Error reading data subset");
         return data;
     } else {
-        // Reading the full image
+        // Reading the full image - CFITSIO API OPTIMIZATION
         std::vector<int64_t> torch_dims;
         for(long val : naxes) {
             torch_dims.push_back(val);
@@ -64,9 +81,15 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
 
         torch::Tensor data = torch::empty(torch_dims, options);
         long n_elements = data.numel();
-        fits_read_img(fptr, CfitsioType, 1, n_elements, nullptr,
+        
+        // OPTIMIZATION: Use fits_read_pix for better performance on full images
+        // fits_read_pix is often faster than fits_read_img for full image reads
+        long fpixel[MAX_COMPRESS_DIM] = {1,1,1,1,1,1};  // Start at pixel 1,1,1... in FITS convention
+        
+        fits_read_pix(fptr, CfitsioType, fpixel, n_elements, nullptr,
                       data.data_ptr<T>(), nullptr, &status);
-        if (status) throw_fits_error(status, "Error reading full image");
+        if (status) throw_fits_error(status, "Error reading full image with fits_read_pix");
+        
         return data;
     }
 }
@@ -158,8 +181,9 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         DEBUG_LOG("Using parallel table reader for " + std::to_string(selected_columns.size()) + 
                   " columns and " + std::to_string(rows_to_read) + " rows");
         
-        torchfits_perf::ParallelTableReader parallel_reader;
-        return parallel_reader.read_columns_parallel(fptr, selected_columns, start_row, rows_to_read, device);
+        // torchfits_perf::ParallelTableReader parallel_reader;  // Temporarily disabled
+        // return parallel_reader.read_columns_parallel(fptr, selected_columns, start_row, rows_to_read, device);
+        DEBUG_LOG("Parallel reader temporarily disabled, using sequential reader");
     }
 
     // FALLBACK: Use optimized sequential reading for smaller datasets
@@ -224,25 +248,39 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         
         // Use memory pool for tensor allocation
         torch::Tensor col_data;
-        if (torchfits_perf::global_memory_pool) {
-            std::vector<int64_t> shape = (info.repeat == 1) ? 
-                std::vector<int64_t>{rows_to_read} : 
-                std::vector<int64_t>{rows_to_read, info.repeat};
-            
-            col_data = torchfits_perf::global_memory_pool->get_tensor(shape, torch_dtype, torch::kCPU);
-        } else {
+        // Temporarily disabled memory pool optimization
+        // if (torchfits_perf::global_memory_pool) {
+        //     std::vector<int64_t> shape = (info.repeat == 1) ? 
+        //         std::vector<int64_t>{rows_to_read} : 
+        //         std::vector<int64_t>{rows_to_read, info.repeat};
+        //     
+        //     col_data = torchfits_perf::global_memory_pool->get_tensor(shape, torch_dtype, torch::kCPU);
+        // } else {
             // Fallback to direct allocation
             if (info.repeat == 1) {
                 col_data = torch::empty({rows_to_read}, torch::TensorOptions().dtype(torch_dtype));
             } else {
                 col_data = torch::empty({rows_to_read, info.repeat}, torch::TensorOptions().dtype(torch_dtype));
             }
+        // }  // End of commented memory pool section
+        
+        // CFITSIO API OPTIMIZATION: Use most efficient column reading method
+        // For large datasets, bulk read operations are more efficient
+        status = 0;
+        
+        if (rows_to_read * info.repeat > 1000) {
+            // Large dataset: Use fits_read_colnull for better null value handling and performance
+            char null_flag = 0;  // We'll ignore null flags for now for performance
+            fits_read_colnull(fptr, info.typecode, info.number, start_row + 1, 1,
+                             rows_to_read * info.repeat,
+                             nullptr, col_data.data_ptr(), &null_flag, &status);
+        } else {
+            // Small dataset: Use standard fits_read_col
+            fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1,
+                         rows_to_read * info.repeat,
+                         nullptr, col_data.data_ptr(), nullptr, &status);
         }
         
-        // Read data
-        fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1, 
-                      rows_to_read * info.repeat,
-                      nullptr, col_data.data_ptr(), nullptr, &status);
         if (status) throw_fits_error(status, "Error reading column: " + info.name);
         
         // Transfer to target device
@@ -257,7 +295,7 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
 }
 
 
-// --- Main read implementation ---
+// --- Main read implementation with CFITSIO enhancements ---
 pybind11::object read_impl(
     pybind11::object filename_or_url,
     pybind11::object hdu,
@@ -271,9 +309,13 @@ pybind11::object read_impl(
 ) {
     torch::Device device(device_str);
     DEBUG_SCOPE;
+    DEBUG_LOG("=== Starting read_impl ===");
+    std::cerr << "[TORCHFITS:FORCE] Starting read_impl function" << std::endl;
 
     try {
         std::string filename_or_url_str = py::str(filename_or_url).cast<std::string>();
+        DEBUG_LOG("Filename: " + filename_or_url_str);
+        std::cerr << "[TORCHFITS:FORCE] Filename: " << filename_or_url_str << std::endl;
         
         // Handle remote URLs - download to cache if necessary
         std::string filename = RemoteFetcher::ensure_local(filename_or_url_str);
@@ -287,11 +329,128 @@ pybind11::object read_impl(
             }
         }
 
+        // === REAL CACHE CHECK: Try to get from cache first ===
+        auto& real_cache = torchfits_real_cache::RealSmartCache::get_instance();
+        std::ostringstream cache_key_stream;
+        cache_key_stream << filename << "_hdu" << hdu_num;
+        
+        if (!start.is_none()) {
+            auto start_vec = start.cast<std::vector<long>>();
+            cache_key_stream << "_start";
+            for (size_t i = 0; i < start_vec.size(); ++i) {
+                cache_key_stream << "_" << start_vec[i];
+            }
+        }
+        if (!shape.is_none()) {
+            auto shape_vec = shape.cast<std::vector<long>>();
+            cache_key_stream << "_shape";
+            for (size_t i = 0; i < shape_vec.size(); ++i) {
+                cache_key_stream << "_" << shape_vec[i];
+            }
+        }
+        cache_key_stream << "_device_" << device_str.cast<std::string>();
+        
+        std::string cache_key = cache_key_stream.str();
+        auto cached_result = real_cache.try_get(cache_key);
+        if (cached_result.has_value()) {
+            DEBUG_LOG("Cache hit for key: " + cache_key);
+            // For cache hits, we need to read the header separately
+            FITSFileWrapper f(filename);
+            int status = 0;
+            if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+                throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
+            }
+            auto header = read_fits_header(f.get());
+            return py::make_tuple(py::cast(cached_result.value()), py::cast(header));
+        }
+
+        // === PERFORMANCE OPTIMIZATION: Try CFITSIO enhanced reading ===
+        // Temporarily disabled to fix segfault - will re-enable after debugging
+        /*
+        // Check if we should use memory mapping
+        try {
+            torchfits_cfitsio_enhanced::CFITSIOMemoryMapper mapper(filename);
+            DEBUG_LOG("CFITSIOMemoryMapper created successfully");
+            bool use_mapping = mapper.should_use_memory_mapping();
+            DEBUG_LOG("should_use_memory_mapping returned: " + std::to_string(use_mapping));
+            if (use_mapping && start.is_none() && shape.is_none()) {
+                DEBUG_LOG("Using CFITSIO memory mapping for large file");
+                std::vector<long> start_vec, shape_vec;
+                torch::Tensor result = mapper.read_with_memory_mapping(hdu_num, start_vec, shape_vec);
+                torch::Tensor device_result = result.to(device);
+                
+                // Cache the result
+                real_cache.put(cache_key, device_result);
+                
+                // Read header for complete return
+                FITSFileWrapper f(filename);
+                int status = 0;
+                if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+                    throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
+                }
+                auto header = read_fits_header(f.get());
+                
+                return py::make_tuple(py::cast(device_result), py::cast(header));
+            }
+        } catch (const std::exception& e) {
+            DEBUG_LOG("Memory mapping failed, falling back: " + std::string(e.what()));
+        }
+        */
+        
+        // Try buffered reading with CFITSIO optimizations
+        // Temporarily disabled to fix segfault - will re-enable after debugging  
+        /*
+        try {
+            torchfits_cfitsio_enhanced::CFITSIOBufferedReader buffered_reader(filename);
+            
+            // For image data, use optimized scaling read
+            FITSFileWrapper f(filename);
+            int status = 0;
+            if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+                throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
+            }
+            
+            int hdu_type;
+            fits_get_hdu_type(f.get(), &hdu_type, &status);
+            if (status) throw_fits_error(status, "Error getting HDU type");
+            
+            if (hdu_type == IMAGE_HDU && start.is_none() && shape.is_none()) {
+                DEBUG_LOG("Using CFITSIO buffered reader with scaling");
+                torch::Tensor result = buffered_reader.read_with_scaling(hdu_num);
+                torch::Tensor device_result = result.to(device);
+                
+                // Cache the result
+                real_cache.put(cache_key, device_result);
+                
+                // Read header for complete return
+                auto header = read_fits_header(f.get());
+                
+                return py::make_tuple(py::cast(device_result), py::cast(header));
+            }
+            
+        } catch (const std::exception& e) {
+            DEBUG_LOG("Buffered reading failed, falling back: " + std::string(e.what()));
+        }
+        */
+
+        // === FALLBACK: Standard reading with performance optimization ===
         FITSFileWrapper f(filename);
         int status = 0;
         if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
             throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
         }
+
+        // Apply CFITSIO performance optimizations to standard reading
+        // OPTIMIZATION: Get actual file size for better buffer sizing
+        std::ifstream file(filename, std::ifstream::ate | std::ifstream::binary);
+        size_t file_size = 1000000; // Default fallback
+        if (file.is_open()) {
+            file_size = static_cast<size_t>(file.tellg());
+            file.close();
+            DEBUG_LOG("Detected file size: " + std::to_string(file_size) + " bytes");
+        }
+        
+        torchfits_cfitsio_enhanced::CFITSIOPerformanceOptimizer::optimize_file_access(f.get(), file_size);
 
         auto header = read_fits_header(f.get());
 
@@ -300,11 +459,15 @@ pybind11::object read_impl(
         if (status) throw_fits_error(status, "Error getting HDU type");
 
         if (hdu_type == IMAGE_HDU) {
+            DEBUG_LOG("Processing IMAGE_HDU");
             int naxis = 0;
             fits_get_img_dim(f.get(), &naxis, &status);
+            DEBUG_LOG("Got naxis = " + std::to_string(naxis));
             if (naxis == 0) {
+                DEBUG_LOG("Empty HDU detected, returning py::none()");
                 return py::make_tuple(py::none(), py::cast(header));
             }
+            DEBUG_LOG("Non-empty HDU, calling read_image_data()");
 
             std::vector<long> start_vec, shape_vec;
             if (!start.is_none()) {
@@ -313,6 +476,12 @@ pybind11::object read_impl(
             }
 
             torch::Tensor data = read_image_data(f.get(), device, start_vec, shape_vec);
+            
+            // Cache the result if it's a tensor
+            if (data.defined()) {
+                real_cache.put(cache_key, data);
+            }
+            
             return py::make_tuple(data, py::cast(header));
         } else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
             py::dict table_data = read_table_data(f.get(), device, columns, start_row, num_rows);

@@ -11,20 +11,20 @@
 
 // Severity levels
 enum class LogLevel {
-    DEBUG,   // Detailed information (debug builds only)
-    INFO,    // General information (both debug and release)
-    WARNING, // Potential issues (both debug and release)
-    ERROR    // Critical problems (both debug and release)
+    DEBUG_LEVEL,   // Detailed information (debug builds only)
+    INFO,          // General information (both debug and release)
+    WARNING,       // Potential issues (both debug and release)
+    ERROR          // Critical problems (both debug and release)
 };
 
 // Base logging function that works in all builds
 inline void log_message(LogLevel level, const std::string& func, int line, const std::string& message) {
     const char* level_str = "";
     switch (level) {
-        case LogLevel::DEBUG:   level_str = "DEBUG"; break;
-        case LogLevel::INFO:    level_str = "INFO"; break;
-        case LogLevel::WARNING: level_str = "WARNING"; break;
-        case LogLevel::ERROR:   level_str = "ERROR"; break;
+        case LogLevel::DEBUG_LEVEL: level_str = "DEBUG"; break;
+        case LogLevel::INFO:        level_str = "INFO"; break;
+        case LogLevel::WARNING:     level_str = "WARNING"; break;
+        case LogLevel::ERROR:       level_str = "ERROR"; break;
     }
     
     std::cerr << "[TORCHFITS:" << level_str << ":" << func << ":" << line << "] " 
@@ -34,14 +34,14 @@ inline void log_message(LogLevel level, const std::string& func, int line, const
 
 // Debug-only macros (detailed info)
 #ifdef DEBUG
-    #define DEBUG_LOG(x) log_message(LogLevel::DEBUG, __func__, __LINE__, x)
+    #define DEBUG_LOG(x) log_message(LogLevel::DEBUG_LEVEL, __func__, __LINE__, x)
     
     #define DEBUG_TENSOR(name, tensor) \
         do { \
             std::string tensor_info = std::string(name) + ": size=" + std::to_string(tensor.numel()) + \
                       ", dtype=" + std::to_string(static_cast<int>(tensor.dtype().toScalarType())) + \
                       ", device=" + tensor.device().str(); \
-            log_message(LogLevel::DEBUG, __func__, __LINE__, tensor_info); \
+            log_message(LogLevel::DEBUG_LEVEL, __func__, __LINE__, tensor_info); \
         } while (0)
     
     // Helper class for RAII-based scope timing
@@ -57,7 +57,7 @@ inline void log_message(LogLevel level, const std::string& func, int line, const
             auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
             std::stringstream ss;
             ss << "Function execution time: " << duration << " μs";
-            log_message(LogLevel::DEBUG, func_name_, line_num_, ss.str());
+            log_message(LogLevel::DEBUG_LEVEL, func_name_, line_num_, ss.str());
         }
 
     private:

@@ -115,3 +115,6 @@ Makefile
 # Additional Python artifacts
 *.pyi
 .mypy_cache/
+
+# Temporary dependencies and external repos
+fitsio/
