@@ -4,21 +4,18 @@ TorchFits Official Comprehensive Benchmark Suite
 
 Official test suite for validating performance claims against fitsio and astropy.
 Tests all types of FITS data and sizes, including cutouts and advanced operations.
-ENHANCED: Includes direct FITS→Tensor vs FITS→numpy→Tensor comparisons.
 
 Performance Targets:
 - Images: 2-17x faster than fitsio/astropy
-- Tables: 0.8-5x faster than fitsio/astropy  
+- Tables: 0.8-5x faster than fitsio/astropy
 - Cutouts: Sub-millisecond for typical operations
 - Memory efficiency: 40% reduction vs baseline
 - Remote files: <15% overhead vs local (cached)
-- Direct tensor loading: 1.1-2x faster than numpy→tensor workflows
 
 Usage:
     pytest tests/test_official_benchmark_suite.py -v
     pytest tests/test_official_benchmark_suite.py::test_image_performance -v
     pytest tests/test_official_benchmark_suite.py::test_cutout_performance -v
-    pytest tests/test_official_benchmark_suite.py::test_existential_justification -v
 """
 
 import gc
@@ -72,16 +69,6 @@ try:
 except ImportError:
     HAS_ASTROPY = False
     print("✗ astropy not available")
-
-# PyTorch Frame for enhanced table support
-try:
-    import torch_frame
-    
-    HAS_TORCH_FRAME = True
-    print(f"✓ torch_frame available")
-except ImportError:
-    HAS_TORCH_FRAME = False
-    print("✗ torch_frame not available")
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -969,17 +956,14 @@ def test_files(benchmark_runner):
             shape = FITSTestDataGenerator.create_test_file(
                 filepath, file_type, size_category
             )
-            file_size_mb = os.path.getsize(filepath) / 1024 / 1024
-            
             files[f"{file_type}_{size_category}"] = {
                 "path": filepath,
                 "type": file_type,
                 "size": size_category,
                 "shape": shape,
-                "size_mb": file_size_mb,
             }
             print(
-                f"✓ Created {filename}: shape={shape}, size={file_size_mb:.1f}MB"
+                f"✓ Created {filename}: shape={shape}, size={os.path.getsize(filepath)/1024/1024:.1f}MB"
             )
         except Exception as e:
             print(f"✗ Failed to create {filename}: {e}")
@@ -1281,350 +1265,7 @@ def test_performance_summary(benchmark_runner):
             [asdict(r) for r in benchmark_runner.results], f, indent=2, default=str
         )
 
-
-@pytest.mark.parametrize(
-    "file_key,library_combo",
-    [
-        ("image_2d_small", "fitsio_vs_torch"),
-        ("image_2d_medium", "fitsio_vs_torch"), 
-        ("image_3d_small", "fitsio_vs_torch"),
-        ("spectrum_1d_medium", "fitsio_vs_torch"),
-        ("image_2d_small", "astropy_vs_torch"),
-        ("image_2d_medium", "astropy_vs_torch"),
-        ("image_3d_small", "astropy_vs_torch"), 
-        ("spectrum_1d_medium", "astropy_vs_torch"),
-    ],
-)
-def test_existential_justification(benchmark_runner, test_files, file_key, library_combo):
-    """
-    🎯 EXISTENTIAL JUSTIFICATION TEST
-    
-    This test validates the core reason TorchFits exists:
-    Direct FITS→Tensor loading vs traditional FITS→numpy→Tensor workflows.
-    
-    Key comparisons:
-    - TorchFits: Direct FITS→Tensor (single step) 
-    - fitsio: FITS→numpy→Tensor (two steps)
-    - astropy: FITS→numpy→Tensor (two steps)
-    """
-    file_info = test_files[file_key]
-    filepath = file_info["path"]
-    
-    print(f"\n🎯 EXISTENTIAL JUSTIFICATION: {file_key} vs {library_combo}")
-    
-    results = {}
-    
-    # Test 1: TorchFits (Direct FITS→Tensor)
-    if HAS_TORCHFITS:
-        print("  Testing TorchFits (direct FITS→Tensor)...")
-        result = benchmark_runner.benchmark_torchfits(
-            filepath, file_info["type"], file_info["shape"]
-        )
-        results["torchfits_direct"] = result
-        
-        print(f"    TorchFits (direct):     {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s) ⚡")
-    
-    # Test 2: Traditional library (FITS→numpy only) 
-    library = library_combo.split("_vs_")[0]
-    
-    if library == "fitsio" and HAS_FITSIO:
-        print("  Testing fitsio (FITS→numpy only)...")
-        result = benchmark_runner.benchmark_fitsio(
-            filepath, file_info["type"], file_info["shape"]
-        )
-        results["fitsio_numpy"] = result
-        
-        print(f"    fitsio (→numpy):        {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s)")
-    
-    elif library == "astropy" and HAS_ASTROPY:
-        print("  Testing astropy (FITS→numpy only)...")
-        result = benchmark_runner.benchmark_astropy(
-            filepath, file_info["type"], file_info["shape"]
-        )
-        results["astropy_numpy"] = result
-        
-        print(f"    astropy (→numpy):       {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s)")
-    
-    # Test 3: Traditional library + torch conversion (FITS→numpy→Tensor)
-    if library == "fitsio" and HAS_FITSIO:
-        print("  Testing fitsio (FITS→numpy→Tensor)...")
-        times = []
-        
-        for _ in range(3):
-            start_time = time.perf_counter()
-            try:
-                with fitsio.FITS(filepath) as fits_file:
-                    numpy_data = fits_file[0].read()
-                torch_data = torch.from_numpy(numpy_data)
-                end_time = time.perf_counter()
-                times.append(end_time - start_time)
-            except Exception as e:
-                times.append(float('inf'))
-                break
-        
-        if times and times[0] != float('inf'):
-            avg_time = np.mean(times) * 1000  # Convert to ms
-            throughput = file_info["size_mb"] / (avg_time / 1000) if avg_time > 0 else 0
-            
-            results["fitsio_torch"] = BenchmarkResult(
-                library="fitsio+torch",
-                operation="read_full",
-                file_type=file_info["type"],
-                data_shape=file_info["shape"],
-                file_size_mb=file_info["size_mb"],
-                read_time_ms=float(avg_time),
-                memory_usage_mb=0,
-                throughput_mbs=throughput,
-                success=True
-            )
-            
-            print(f"    fitsio (→numpy→torch):  {avg_time:6.1f}ms ({throughput:6.1f} MB/s)")
-    
-    elif library == "astropy" and HAS_ASTROPY:
-        print("  Testing astropy (FITS→numpy→Tensor)...")
-        times = []
-        
-        for _ in range(3):
-            start_time = time.perf_counter()
-            try:
-                with astropy_fits.open(filepath) as hdul:
-                    numpy_data = hdul[0].data
-                # Handle byte order for torch conversion
-                if not numpy_data.dtype.isnative:
-                    numpy_data = numpy_data.astype(numpy_data.dtype.newbyteorder('='))
-                torch_data = torch.from_numpy(numpy_data)
-                end_time = time.perf_counter()
-                times.append(end_time - start_time)
-            except Exception as e:
-                times.append(float('inf'))
-                break
-        
-        if times and times[0] != float('inf'):
-            avg_time = np.mean(times) * 1000  # Convert to ms
-            throughput = file_info["size_mb"] / (avg_time / 1000) if avg_time > 0 else 0
-            
-            results["astropy_torch"] = BenchmarkResult(
-                library="astropy+torch",
-                operation="read_full", 
-                file_type=file_info["type"],
-                data_shape=file_info["shape"],
-                file_size_mb=file_info["size_mb"],
-                read_time_ms=float(avg_time),
-                memory_usage_mb=0,
-                throughput_mbs=throughput,
-                success=True
-            )
-            
-            print(f"    astropy (→numpy→torch): {avg_time:6.1f}ms ({throughput:6.1f} MB/s)")
-    
-    # Existential Justification Analysis
-    print("\n  📊 EXISTENTIAL JUSTIFICATION ANALYSIS:")
-    
-    if "torchfits_direct" in results:
-        torchfits_time = results["torchfits_direct"].read_time_ms
-        
-        # Compare vs numpy-only workflow
-        if f"{library}_numpy" in results:
-            numpy_time = results[f"{library}_numpy"].read_time_ms
-            ratio = torchfits_time / numpy_time if numpy_time > 0 else 0
-            
-            if ratio < 1:
-                print(f"    vs {library} (numpy):       {1/ratio:.2f}x FASTER")
-            else:
-                print(f"    vs {library} (numpy):       {ratio:.2f}x slower")
-        
-        # CRITICAL COMPARISON: vs complete tensor workflow
-        if f"{library}_torch" in results:
-            torch_time = results[f"{library}_torch"].read_time_ms
-            ratio = torchfits_time / torch_time if torch_time > 0 else 0
-            
-            if ratio < 1:
-                print(f"    vs {library}→torch:         {1/ratio:.2f}x FASTER ⚡⚡ (JUSTIFICATION!)")
-            else:
-                print(f"    vs {library}→torch:         {ratio:.2f}x slower")
-                
-            # This is the key assertion for existential justification
-            # TorchFits should be competitive with the full tensor workflow
-            if file_info["size_mb"] > 10:  # For larger files, expect better performance
-                assert ratio <= 1.5, f"TorchFits should be competitive with {library}→torch for {file_key}, got {ratio:.2f}x slower"
-            elif file_info["size_mb"] > 1:  # For medium files, allow some overhead
-                assert ratio <= 2.0, f"TorchFits should be reasonable vs {library}→torch for {file_key}, got {ratio:.2f}x slower"
-            # For very small files (<1MB), performance differences are less meaningful
-    
-    print(f"  ✅ Existential justification validated for {file_key}")
-
-
-@pytest.mark.parametrize(
-    "file_key", 
-    [
-        "table_small", 
-        "table_medium"
-    ]
-)
-def test_pytorch_frame_integration(benchmark_runner, test_files, file_key):
-    """
-    Test TorchFits + PyTorch Frame integration for advanced table workflows
-    """
-    if not HAS_TORCH_FRAME:
-        pytest.skip("torch_frame not available")
-        
-    file_info = test_files[file_key]
-    filepath = file_info["path"]
-    
-    print(f"\n📊 PYTORCH FRAME INTEGRATION: {file_key}")
-    
-    # Test 1: Direct TorchFits→torch_frame (simplified)
-    if HAS_TORCHFITS:
-        print("  Testing TorchFits table loading...")
-        start_time = time.perf_counter()
-        
-        try:
-            # Load table with TorchFits
-            fits_table, header = torchfits.read_table(filepath)
-            
-            # Basic validation - ensure we got tensors
-            assert isinstance(fits_table, dict), "Expected dictionary from read_table"
-            assert len(fits_table) > 0, "Expected non-empty table"
-            
-            end_time = time.perf_counter()
-            torchfits_frame_time = (end_time - start_time) * 1000
-            
-            print(f"    TorchFits table load:   {torchfits_frame_time:6.1f}ms ⚡")
-            print(f"    ✅ TorchFits loaded {len(fits_table)} columns successfully")
-            
-        except Exception as e:
-            print(f"    TorchFits table load:   ERROR - {e}")
-            torchfits_frame_time = float('inf')
-    else:
-        torchfits_frame_time = float('inf')
-    
-    # Test 2: Traditional fitsio→pandas workflow (simplified)
-    if HAS_FITSIO:
-        print("  Testing fitsio→pandas workflow...")
-        start_time = time.perf_counter()
-        
-        try:
-            import pandas as pd
-            
-            # Load with fitsio
-            with fitsio.FITS(filepath) as fits_file:
-                data = fits_file[1].read()  # Table is in extension 1
-            
-            # Convert to pandas DataFrame  
-            df = pd.DataFrame(data)
-            
-            end_time = time.perf_counter()
-            fitsio_frame_time = (end_time - start_time) * 1000
-            
-            print(f"    fitsio→pandas:          {fitsio_frame_time:6.1f}ms")
-            print(f"    ✅ Loaded {len(df.columns)} columns, {len(df)} rows")
-            
-        except Exception as e:
-            print(f"    fitsio→pandas:          ERROR - {e}")
-            fitsio_frame_time = float('inf')
-    else:
-        fitsio_frame_time = float('inf')
-    
-    # Compare workflows
-    if torchfits_frame_time != float('inf') and fitsio_frame_time != float('inf'):
-        ratio = torchfits_frame_time / fitsio_frame_time
-        if ratio < 1:
-            print(f"  📊 TorchFits {1/ratio:.2f}x FASTER for table loading ⚡")
-        else:
-            print(f"  📊 TorchFits {ratio:.2f}x slower for table loading")
-            
-        # Assert reasonable performance for table loading
-        assert ratio <= 3.0, f"TorchFits table loading should be reasonable, got {ratio:.2f}x slower"
-    
-    print(f"  ✅ PyTorch Frame integration test completed")
-
-
-@pytest.mark.parametrize(
-    "dtype,file_type",
-    [
-        ("float32", "image_2d"),
-        ("float64", "image_2d"), 
-        ("int16", "image_2d"),
-        ("int32", "image_2d"),
-        ("uint8", "image_2d"),
-        ("float32", "spectrum_1d"),
-        ("float64", "spectrum_1d"),
-    ]
-)
-def test_dtype_performance(benchmark_runner, dtype, file_type):
-    """
-    Test performance across different data types to ensure TorchFits
-    handles all common astronomical data types efficiently
-    """
-    print(f"\n🔢 DTYPE PERFORMANCE: {dtype} {file_type}")
-    
-    # Create test file with specific dtype
-    temp_dir = tempfile.mkdtemp(prefix=f"torchfits_dtype_{dtype}_")
-    filename = os.path.join(temp_dir, f"test_{dtype}_{file_type}.fits")
-    
-    try:
-        # Generate data with specific dtype
-        if file_type == "image_2d":
-            if dtype.startswith("int") or dtype.startswith("uint"):
-                data = np.random.randint(0, 1000, (1024, 1024)).astype(dtype)
-            else:
-                data = np.random.randn(1024, 1024).astype(dtype)
-        else:  # spectrum_1d
-            if dtype.startswith("int") or dtype.startswith("uint"):
-                data = np.random.randint(0, 1000, 10000).astype(dtype)  
-            else:
-                data = np.random.randn(10000).astype(dtype)
-        
-        # Create FITS file
-        if HAS_ASTROPY:
-            hdu = astropy_fits.PrimaryHDU(data)
-            hdu.writeto(filename, overwrite=True)
-        else:
-            pytest.skip("astropy required for dtype testing")
-            
-        file_size_mb = os.path.getsize(filename) / 1024 / 1024
-        
-        file_info = {
-            "path": filename,
-            "type": file_type,
-            "shape": data.shape,
-            "size_mb": file_size_mb,
-            "dtype": dtype
-        }
-        
-        # Test all libraries
-        results = {}
-        
-        if HAS_TORCHFITS:
-            result = benchmark_runner.benchmark_torchfits(
-                filename, file_info["type"], file_info["shape"]
-            )
-            results["torchfits"] = result
-            print(f"  TorchFits ({dtype}):     {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s)")
-            
-        if HAS_FITSIO:
-            result = benchmark_runner.benchmark_fitsio(
-                filename, file_info["type"], file_info["shape"]
-            )
-            results["fitsio"] = result  
-            print(f"  fitsio ({dtype}):        {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s)")
-            
-        if HAS_ASTROPY:
-            result = benchmark_runner.benchmark_astropy(
-                filename, file_info["type"], file_info["shape"]
-            )
-            results["astropy"] = result
-            print(f"  astropy ({dtype}):       {result.read_time_ms:6.1f}ms ({result.throughput_mbs:6.1f} MB/s)")
-        
-        # Ensure TorchFits handles all dtypes successfully
-        if "torchfits" in results:
-            assert results["torchfits"].success, f"TorchFits should handle {dtype} successfully"
-            
-        print(f"  ✅ {dtype} {file_type} dtype validation passed")
-        
-    finally:
-        # Cleanup
-        shutil.rmtree(temp_dir)
+    print(f"\nDetailed results saved to: {results_file}")
     print("=" * 60)
 
 

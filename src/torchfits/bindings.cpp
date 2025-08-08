@@ -7,7 +7,6 @@
 #include "cache.h"
 #include "wcs_utils.h"
 #include "performance.h"
-#include "memory_optimizer.h"
 
 namespace py = pybind11;
 
@@ -262,35 +261,5 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
                    "Parallel statistics computation");
     */
     
-    // Memory optimization bindings
-    py::class_<torchfits_mem::AlignedMemoryPool::MemoryStats>(m, "MemoryStats")
-        .def_readonly("total_allocated_bytes", &torchfits_mem::AlignedMemoryPool::MemoryStats::total_allocated_bytes)
-        .def_readonly("pooled_tensors_count", &torchfits_mem::AlignedMemoryPool::MemoryStats::pooled_tensors_count)
-        .def_readonly("cache_hit_rate_percent", &torchfits_mem::AlignedMemoryPool::MemoryStats::cache_hit_rate_percent);
-
-    m.def("get_memory_pool", []() -> torchfits_mem::AlignedMemoryPool& {
-        return torchfits_mem::AlignedMemoryPool::instance();
-    }, py::return_value_policy::reference, "Get the global memory pool instance");
-
-    py::class_<torchfits_mem::AlignedMemoryPool>(m, "AlignedMemoryPool")
-        .def("get_tensor", &torchfits_mem::AlignedMemoryPool::get_tensor,
-             py::arg("shape"), py::arg("dtype"), py::arg("device") = torch::kCPU,
-             "Get or create an aligned tensor from the pool")
-        .def("return_tensor", &torchfits_mem::AlignedMemoryPool::return_tensor,
-             py::arg("tensor"),
-             "Return tensor to pool for reuse")
-        .def("clear", &torchfits_mem::AlignedMemoryPool::clear,
-             "Clear all cached tensors")
-        .def("get_stats", &torchfits_mem::AlignedMemoryPool::get_stats,
-             "Get memory usage statistics");
-
-    m.def("create_aligned_tensor", &torchfits_mem::AlignedTensorFactory::create_aligned_tensor,
-          py::arg("shape"), py::arg("dtype"), py::arg("device") = torch::kCPU, py::arg("fits_compatible") = true,
-          "Create a memory-aligned tensor optimized for FITS data");
-
-    m.def("is_optimally_aligned", &torchfits_mem::AlignedTensorFactory::is_optimally_aligned,
-          py::arg("tensor"),
-          "Check if tensor is optimally aligned for FITS operations");
-
     // Advanced CFITSIO features will be added in future versions
 }

@@ -248,6 +248,14 @@ class FitsTable:
                 raise KeyError(f"Column '{key}' not found. Available: {self.columns}")
             return self.data[key]
 
+        elif isinstance(key, int):
+            # Single row access - return dict of column values at that row
+            if key < 0:
+                key = len(self) + key
+            if key < 0 or key >= len(self):
+                raise IndexError(f"Row index {key} out of range for table with {len(self)} rows")
+            return {col: self.data[col][key] for col in self.data}
+
         elif isinstance(key, slice):
             # Row slicing
             return self._slice_rows(key)

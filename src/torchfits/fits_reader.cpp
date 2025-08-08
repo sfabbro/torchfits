@@ -270,10 +270,11 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         
         if (rows_to_read * info.repeat > 1000) {
             // Large dataset: Use fits_read_colnull for better null value handling and performance
-            char null_flag = 0;  // We'll ignore null flags for now for performance
+            std::vector<char> null_array(rows_to_read * info.repeat, 0);  // Proper null array
+            int anynul = 0;  // Flag for any null values found
             fits_read_colnull(fptr, info.typecode, info.number, start_row + 1, 1,
                              rows_to_read * info.repeat,
-                             nullptr, col_data.data_ptr(), &null_flag, &status);
+                             col_data.data_ptr(), null_array.data(), &anynul, &status);
         } else {
             // Small dataset: Use standard fits_read_col
             fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1,

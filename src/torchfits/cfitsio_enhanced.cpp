@@ -468,11 +468,11 @@ void CFITSIOPerformanceOptimizer::set_checksum_optimization(fitsfile* fptr) {
     int status = 0;
     
     // 1. Check current checksum setting
-    int checksum = 0;
-    fits_get_chksum(fptr, &checksum, &status);
+    unsigned long datasum = 0, hdusum = 0;
+    fits_get_chksum(fptr, &datasum, &hdusum, &status);
     
     if (!status) {
-        if (checksum) {
+        if (datasum || hdusum) {
             DEBUG_LOG("Checksum verification enabled, may impact performance");
             // 2. For read-only operations, we can skip verification for better performance
             // but we'll keep it enabled for data integrity
@@ -481,14 +481,8 @@ void CFITSIOPerformanceOptimizer::set_checksum_optimization(fitsfile* fptr) {
         }
     }
     
-    // 3. Set verification preferences for optimal performance
-    status = 0;
-    fits_set_checksum(fptr, DATASUM_OPTION, COMPLEMENT_OPTION, &status);
-    if (status == 0) {
-        DEBUG_LOG("Checksum optimization applied");
-    } else {
-        DEBUG_LOG("Could not apply checksum optimization, status: " + std::to_string(status));
-    }
+    // 3. Checksum optimization skipped - function not available in this CFITSIO version
+    DEBUG_LOG("Checksum optimization not applied - function unavailable");
 }
 
 } // namespace torchfits_cfitsio_enhanced

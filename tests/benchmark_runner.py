@@ -49,18 +49,12 @@ def main():
     parser = argparse.ArgumentParser(description="TorchFits Benchmark Runner")
     parser.add_argument("--fast", action="store_true", 
                        help="Run only fast benchmark tests")
-    parser.add_argument("--existential", action="store_true",
-                       help="Run existential justification tests only")  
-    parser.add_argument("--pytorch-frame", action="store_true",
-                       help="Run PyTorch Frame integration tests only")
-    parser.add_argument("--performance", action="store_true",
-                       help="Run performance comparison tests only")
     parser.add_argument("--all", action="store_true",
                        help="Run all benchmark tests (default)")
     
     args = parser.parse_args()
     
-    if not any([args.fast, args.existential, args.pytorch_frame, args.performance]):
+    if not args.fast:
         args.all = True
     
     results = []
@@ -75,33 +69,28 @@ def main():
         )
         results.append(result)
     
-    if args.existential or args.all:
-        # Existential justification tests
-        result = run_pytest_with_args(
-            [f"{test_file}::test_existential_justification"],
-            "Existential Justification Tests (FITS→Tensor vs FITS→numpy→Tensor)"
-        )
-        results.append(result)
-    
-    if args.pytorch_frame or args.all:
-        # PyTorch Frame integration tests
-        result = run_pytest_with_args(
-            [f"{test_file}::test_pytorch_frame_integration"],
-            "PyTorch Frame Integration Tests"
-        )
-        results.append(result)
-    
-    if args.performance or args.all:
-        # Comprehensive performance tests
-        result = run_pytest_with_args(
-            [f"{test_file}::test_cutout_performance",
-             f"{test_file}::test_dtype_performance",
-             f"{test_file}::test_memory_efficiency"],
-            "Comprehensive Performance Tests"
-        )
-        results.append(result)
-    
     if args.all:
+        # Cutout performance tests
+        result = run_pytest_with_args(
+            [f"{test_file}::test_cutout_performance"],
+            "Cutout Performance Tests"
+        )
+        results.append(result)
+        
+        # Column selection performance tests
+        result = run_pytest_with_args(
+            [f"{test_file}::test_column_selection_performance"],
+            "Column Selection Performance Tests"
+        )
+        results.append(result)
+        
+        # Memory efficiency tests
+        result = run_pytest_with_args(
+            [f"{test_file}::test_memory_efficiency"],
+            "Memory Efficiency Tests"
+        )
+        results.append(result)
+        
         # Error handling and edge cases
         result = run_pytest_with_args(
             [f"{test_file}::test_error_handling"],

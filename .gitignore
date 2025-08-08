@@ -49,6 +49,9 @@ tags
 Thumbs.db
 Desktop.ini
 
+# External dependencies (built locally)
+fitsio/
+
 # Distribution / packaging
 .Python
 develop-eggs/
@@ -118,3 +121,6 @@ Makefile
 
 # Temporary dependencies and external repos
 fitsio/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

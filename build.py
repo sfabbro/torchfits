@@ -168,8 +168,6 @@ def create_extension():
             "src/torchfits/cache.cpp",
             "src/torchfits/real_cache.cpp",  # Real cache implementation
             "src/torchfits/cfitsio_enhanced.cpp",  # CFITSIO optimizations
-            "src/torchfits/memory_optimizer.cpp",  # Memory-aligned tensor optimization
-            "src/torchfits/fast_reader.cpp",  # FITSIO-inspired optimizations
             "src/torchfits/remote.cpp",
             # "src/torchfits/performance.cpp",  # Temporarily disabled for initial build
         ],

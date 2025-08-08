@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=64.0", "wheel", "torch>=2.0.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "torchfits"
@@ -26,7 +26,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "torch>=2.0.0,<3"
+    "torch>=2.0.0,<3",
+    "numpy>=1.20.0"
 ]
 
 [project.urls]
@@ -38,8 +39,6 @@ Documentation = "https://github.com/sfabbro/torchfits/blob/main/README.md"
 dev = [
     "pytest>=6.0.0",
     "pre-commit>=2.0.0",
-    "pip>=21.0.0",
-    "numpy>=1.20.0",
     "astropy>=5.0.0",
     "fitsio>=1.1.0",
     "black>=23.0.0",
@@ -47,24 +46,26 @@ dev = [
     "mypy>=1.0.0",
     "build>=0.10.0"
 ]
-
 examples = [
-    "matplotlib",
-    "fsspec"
+    "matplotlib>=3.0.0",
+    "fsspec>=2023.1.0"
 ]
-
 remote = [
-    "fsspec"
+    "fsspec>=2023.1.0"
 ]
-
 dataframe = [
-    "pytorch-frame"
+    "pytorch-frame>=0.2.0"
+]
+all = [
+    "torchfits[dev,examples,remote,dataframe]"
 ]
 
+# Tool configurations
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra"
+addopts = "-ra --tb=short"
 testpaths = ["tests"]
+norecursedirs = ["build", "dist", ".git", ".tox", "*.egg"]
 
 [tool.black]
 line-length = 88
@@ -81,46 +82,108 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/torchfits"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/examples", 
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml"
+]
+
+# Pixi workspace configuration
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.pypi-dependencies]
 torchfits = { path = ".", editable = true }
 
+# Core dependencies (system libraries only via conda)
+[tool.pixi.dependencies]
+python = ">=3.10,<3.14"
+cfitsio = ">=4.0.0"
+wcslib = ">=8.2.2,<9"
+pytest = ">=8.4.1,<9"
+astropy = ">=7.1.0,<8"
+psutil = ">=7.0.0,<8"
+editables = "*"
+hatchling = "*"
+pip = "*"
+cxx-compiler = "*"
+cmake = ">=3.15"
+ninja = "*"
+pkg-config = "*"
+mypy = ">=1.17.1,<2"
+
+# Development feature - Additional conda dependencies
+[tool.pixi.feature.dev.dependencies]
+pip = "*"
+
+# Build feature for C++ compilation
+[tool.pixi.feature.build.dependencies]
+cxx-compiler = "*"
+cmake = ">=3.15"
+ninja = "*"
+pkg-config = "*"
+
+# Examples feature - Additional conda dependencies only
+[tool.pixi.feature.examples.dependencies]
+
+# Remote access feature - Additional conda dependencies only  
+[tool.pixi.feature.remote.dependencies]
+
+# DataFrame integration feature - Additional conda dependencies only
+[tool.pixi.feature.dataframe.dependencies]
+
+# Benchmarking feature - Additional conda dependencies only
+[tool.pixi.feature.bench.dependencies]
+
+# Environment definitions
 [tool.pixi.environments]
 default = { solve-group = "default" }
-dev = { features = ["dev"], solve-group = "default" }
+dev = { features = ["dev", "build"], solve-group = "default" }
 examples = { features = ["examples"], solve-group = "default" }
 remote = { features = ["remote"], solve-group = "default" }
+dataframe = { features = ["dataframe"], solve-group = "default" }
+bench = { features = ["bench", "dev"], solve-group = "default" }
+full = { features = ["dev", "build", "examples", "remote", "dataframe", "bench"], solve-group = "default" }
 
+# Task definitions
 [tool.pixi.tasks]
-test = { cmd = "pytest" }
-build = { cmd = "pip install -e ." }
-lint = { cmd = "pre-commit run --all-files" }
-format = { cmd = "black src tests examples && isort src tests examples" }
-dev-setup = { cmd = "pip install -e '.[dev]' && pre-commit install" }
+# Build tasks
+build = "python -m pip install -e . --no-build-isolation"
+build-dev = "python -m pip install -e .[dev] --no-build-isolation"
+clean = "rm -rf build/ dist/ src/torchfits.egg-info/ src/torchfits/__pycache__/"
 
-[tool.pixi.dependencies]
-pytorch = ">=2.7.1,<3"
-cfitsio = ">=4.6.2,<5"
-wcslib = ">=8.2.2,<9"
-fitsio = ">=1.2.6,<2"
-numpy = ">=2.3.2,<3"
-astropy = ">=7.1.0,<8"
-clang = ">=20.1.8,<21"
-pytest = ">=8.4.1,<9"
-pip = ">=25.1.1,<26"
-tqdm = ">=4.67.1,<5"
-requests = ">=2.32.4,<3"
-pytorch-frame = ">=0.2.5,<0.3"
-black = ">=25.1.0,<26"
-isort = ">=6.0.1,<7"
-mypy = ">=1.17.1,<2"
-pyarrow = ">=21.0.0,<22"
+# Testing tasks  
+test = "pytest tests/"
+test-verbose = "pytest -v tests/"
+test-coverage = "pytest --cov=torchfits tests/"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# Code quality tasks
+format = "black src tests examples && isort src tests examples"
+lint = "black --check src tests examples && isort --check src tests examples"
+type-check = "mypy src/torchfits"
+pre-commit-install = "pre-commit install"
+pre-commit-run = "pre-commit run --all-files"
 
-[tool.setuptools.package-data]
-torchfits = ["*.so", "*.pyd"]
+# Development tasks
+dev-setup = { cmd = "pixi run pre-commit-install && pixi run build-dev", depends-on = ["build-dev", "pre-commit-install"] }
+check-all = { cmd = "pixi run lint && pixi run type-check && pixi run test", depends-on = ["lint", "type-check", "test"] }
+
+# Benchmark tasks
+[tool.pixi.feature.bench.tasks]
+benchmark = "python -m pytest tests/test_official_benchmark_suite.py -v"
+benchmark-quick = "python tests/benchmark_runner.py"
+
+# Add benchmark tasks to default environment too
+[tool.pixi.tasks.benchmark-default]
+cmd = "python -m pytest tests/test_official_benchmark_suite.py -v"
+
+[tool.pixi.tasks.benchmark-quick-default]  
+cmd = "python tests/benchmark_runner.py"
