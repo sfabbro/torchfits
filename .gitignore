@@ -88,6 +88,9 @@ check_*
 test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
 !/tests/test_*.py  # But keep official test files
 
+# Allow scripts/ utilities (ensure not excluded by broad patterns)
+!/scripts/
+
 
 # pixi environments
 .pixi/

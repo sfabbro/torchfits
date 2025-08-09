@@ -82,6 +82,38 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
+# Ruff configuration (style, imports, docstring enforcement, complexity)
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = [
+    "E", "F",          # pycodestyle & pyflakes
+    "I",                # isort
+    "N",                # pep8-naming
+    "D",                # pydocstyle (docstrings)
+    "B",                # flake8-bugbear
+    "C90",              # mccabe complexity
+    "UP",               # pyupgrade
+    "SLOT",             # flake8-slots
+]
+ignore = ["D104", "D105", "D107"]  # reduce noise for magic methods / __init__ docstrings initially
+exclude = ["build", "dist", "cfitsio-4.4.1-20240617", "fitsio"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+
+[tool.ruff.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.mccabe]
+max-complexity = 12
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/torchfits"]
 
