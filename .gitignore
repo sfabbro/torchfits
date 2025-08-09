@@ -90,6 +90,8 @@ test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
 
 # Allow scripts/ utilities (ensure not excluded by broad patterns)
 !/scripts/
+!/scripts/*.py
+!/scripts/bench/*.py
 
 
 # pixi environments
