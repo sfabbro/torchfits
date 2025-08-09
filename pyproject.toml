@@ -152,7 +152,7 @@ cmake = ">=3.15"
 ninja = "*"
 pkg-config = "*"
 mypy = ">=1.17.1,<2"
-ruff = "*"
+ruff = ">=0.12.8,<0.13"
 
 # Development feature - Additional conda dependencies
 [tool.pixi.feature.dev.dependencies]
@@ -214,6 +214,8 @@ benchmark-json = "python scripts/bench/run_basic.py --output artifacts/validatio
 
 # Development tasks
 dev-setup = { cmd = "pixi run pre-commit-install && pixi run build-dev", depends-on = ["build-dev", "pre-commit-install"] }
+build-cpp = "python -c 'import build, setuptools; from build import build as b; b({})'"  # lightweight trigger to compile ext
+test-fast = { cmd = "pixi run build-dev && pixi run test -k write_roundtrip", depends-on=["build-dev"] }
 check-all = { cmd = "pixi run lint && pixi run type-check && pixi run ruff && pixi run test && pixi run naming-check", depends-on = ["lint", "type-check", "ruff", "test", "naming-check"] }
 
 # Benchmark tasks
