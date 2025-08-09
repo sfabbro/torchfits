@@ -43,6 +43,7 @@ dev = [
     "fitsio>=1.1.0",
     "black>=23.0.0",
     "isort>=5.0.0",
+    "ruff>=0.4.0",
     "mypy>=1.0.0",
     "build>=0.10.0"
 ]
@@ -151,6 +152,7 @@ cmake = ">=3.15"
 ninja = "*"
 pkg-config = "*"
 mypy = ">=1.17.1,<2"
+ruff = "*"
 
 # Development feature - Additional conda dependencies
 [tool.pixi.feature.dev.dependencies]
@@ -203,10 +205,16 @@ lint = "black --check src tests examples && isort --check src tests examples"
 type-check = "mypy src/torchfits"
 pre-commit-install = "pre-commit install"
 pre-commit-run = "pre-commit run --all-files"
+ruff = "ruff check src tests"
+format-ruff = "ruff format src tests"
+naming-check = "python scripts/check_naming.py"
+ai-appendix-check = "python scripts/check_ai_appendix.py"
+parity-matrix = "python scripts/gen_parity_matrix.py --output artifacts/validation/parity_matrix.md"
+benchmark-json = "python scripts/bench/run_basic.py --output artifacts/validation/bench_basic.jsonl"
 
 # Development tasks
 dev-setup = { cmd = "pixi run pre-commit-install && pixi run build-dev", depends-on = ["build-dev", "pre-commit-install"] }
-check-all = { cmd = "pixi run lint && pixi run type-check && pixi run test", depends-on = ["lint", "type-check", "test"] }
+check-all = { cmd = "pixi run lint && pixi run type-check && pixi run ruff && pixi run test && pixi run naming-check", depends-on = ["lint", "type-check", "ruff", "test", "naming-check"] }
 
 # Benchmark tasks
 [tool.pixi.feature.bench.tasks]
