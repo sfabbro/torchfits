@@ -65,6 +65,10 @@ var/
 wheels/
 .installed.cfg
 MANIFEST
+coverage.xml
+
+# Ruff cache
+.ruff_cache/
 
 # Virtual environments
 .env
@@ -80,6 +84,10 @@ venv.bak/
 .pytest_cache/
 htmlcov/
 .tox/
+
+# Docs build outputs
+docs/_build/
+docs/site/
 
 # Test data and debugging files
 test_data/
@@ -129,3 +137,7 @@ fitsio/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Benchmark and validation artifacts (kept locally, not committed)
+artifacts/**
+!artifacts/.gitkeep
