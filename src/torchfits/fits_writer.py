@@ -85,6 +85,51 @@ def _to_compression_config(cfg_like):
     return None, False
 
 
+def _write_vla_table_astropy(filename: str, columns: dict[str, list[torch.Tensor]], header: dict[str, str] | None, overwrite: bool) -> None:
+    """Fallback multi-VLA writer using astropy if C++ path is unavailable.
+
+    Writes a BINTABLE with one variable-length double column per key.
+    """
+    try:
+        import numpy as np  # type: ignore
+        from astropy.io import fits  # type: ignore
+    except Exception as e:  # pragma: no cover - optional path
+        raise NotImplementedError("Multi-column VLA writing requires either C++ support or astropy.") from e
+
+    # Normalize header
+    hdr = dict(header or {})
+    if "EXTNAME" not in hdr:
+        hdr["EXTNAME"] = "VLA"
+
+    # Build column arrays as object arrays of np.ndarray
+    names = list(columns.keys())
+    nrows = None
+    coldefs = []
+    for name in names:
+        arrs = columns[name]
+        if nrows is None:
+            nrows = len(arrs)
+        elif len(arrs) != nrows:
+            raise ValueError("All VLA columns must have the same number of rows")
+        seq = [a.detach().cpu().to(torch.float64).numpy() for a in arrs]
+        obj = np.array(seq, dtype=object)
+        col = fits.Column(name=name, array=obj, format="PD()")
+        coldefs.append(col)
+    hdu = fits.BinTableHDU.from_columns(fits.ColDefs(coldefs))
+    for k, v in hdr.items():
+        try:
+            hdu.header[k] = v
+        except Exception:
+            # Silently ignore non-string values; astropy can handle many types but keep robust
+            hdu.header[k] = str(v)
+
+    hdul = fits.HDUList([fits.PrimaryHDU(), hdu])
+    if overwrite:
+        hdul.writeto(filename, overwrite=True)
+    else:
+        hdul.writeto(filename)
+
+
 def write(
     filename: str,
     data: torch.Tensor | dict | Any,
@@ -278,6 +323,24 @@ def write(
             raise RuntimeError("C++ writing functionality not available")
 
         if isinstance(data, dict):
+            # Detect multi-VLA columns: value is list/tuple of 1D tensors per row
+            is_multi_vla = False
+            for v in data.values():
+                if isinstance(v, (list, tuple)) and v and hasattr(v[0], "dtype"):
+                    is_multi_vla = True
+                    break
+            if is_multi_vla:
+                # Normalize to map[str, list[Tensor]]
+                norm: dict[str, list[torch.Tensor]] = {}
+                for k, v in data.items():
+                    if isinstance(v, (list, tuple)) and v and hasattr(v[0], "dtype"):
+                        norm[k] = list(v)  # type: ignore[arg-type]
+                # Prefer C++ fast path when available, else astropy fallback
+                if hasattr(fits_reader_cpp, "write_variable_length_table"):
+                    fits_reader_cpp.write_variable_length_table(filename, norm, header or {}, overwrite)  # type: ignore[attr-defined]
+                else:
+                    _write_vla_table_astropy(filename, norm, header, overwrite)
+                return
             column_units = kwargs.get("column_units", [])
             column_descriptions = kwargs.get("column_descriptions", [])
             null_sentinels = kwargs.get("null_sentinels", {})

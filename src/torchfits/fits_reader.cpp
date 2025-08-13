@@ -353,14 +353,16 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
     }
     bool enable_parallel = false;
     const char* par_env = std::getenv("TORCHFITS_PAR_READ");
-    // Heuristic: auto-enable when reading all columns, enough scalar numeric columns, and many rows
+    // Heuristic: auto-enable when many rows and at least a handful of scalar numeric columns
     bool reading_all_columns = columns_obj.is_none();
     if (par_env) {
         // Explicit override
         if (std::string(par_env) == "1" && scalar_numeric.size() >= 2) enable_parallel = true;
         if (std::string(par_env) == "0") enable_parallel = false;
     } else {
-        if (reading_all_columns && scalar_numeric.size() >= 6 && rows_to_read >= 20000) {
+        bool enough_cols_all = reading_all_columns && scalar_numeric.size() >= 4;
+        bool enough_cols_subset = (!reading_all_columns) && scalar_numeric.size() >= 4;
+        if ((enough_cols_all || enough_cols_subset) && rows_to_read >= 100000) {
             enable_parallel = true;
         }
     }
@@ -399,12 +401,13 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
 
     if (enable_parallel) {
         // Limit concurrency to avoid oversubscription
-        size_t hw = std::max<size_t>(1, std::thread::hardware_concurrency());
-        size_t cap = std::min<size_t>(hw, 4);
+    size_t hw = std::max<size_t>(1, std::thread::hardware_concurrency());
+    // Allow up to 8 worker threads by default (avoid oversubscription)
+    size_t cap = std::min<size_t>(hw, 8);
         if (const char* env = std::getenv("TORCHFITS_PAR_MAX_THREADS")) {
             try { cap = std::max<size_t>(1, std::stoul(env)); } catch (...) {}
         }
-        cap = std::min(cap, scalar_numeric.size());
+    cap = std::min(cap, scalar_numeric.size());
 
         // Partition columns into cap chunks; each worker opens a single handle and processes its chunk
         std::vector<std::vector<ColumnInfo>> chunks(cap);

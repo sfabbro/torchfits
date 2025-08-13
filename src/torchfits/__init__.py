@@ -34,7 +34,7 @@ from .fits_reader import (  # Torch-frame / DataFrame helpers
 )
 
 # Public re-exports
-from .dataset import FITSDataset, FITSItemSpec, FITSIterableDataset
+from .dataset import FITSDataset, FITSItemSpec, FITSIterableDataset, read_multi_sky_cutouts
 from .fits_writer import (
     append_hdu,
     update_data,
@@ -255,7 +255,7 @@ __all__ = [
     "__version__",
 ]
 
-__all__ += ["FITSItemSpec", "FITSDataset", "FITSIterableDataset"]
+__all__ += ["FITSItemSpec", "FITSDataset", "FITSIterableDataset", "read_multi_sky_cutouts"]
 
 # Add advanced features to __all__ if available
 # (Currently no advanced features implemented)

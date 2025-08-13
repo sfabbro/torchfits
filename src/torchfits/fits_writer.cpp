@@ -866,4 +866,99 @@ void StreamingWriter::write_sequential(const torch::Tensor&) {
 
 void StreamingWriter::finalize(const std::map<std::string, std::string>&) {}
 
+void write_variable_length_table(
+    const std::string& filename,
+    const std::map<std::string, std::vector<torch::Tensor>>& columns,
+    const std::map<std::string, std::string>& header,
+    bool overwrite) {
+    if (columns.empty()) {
+        throw std::invalid_argument("write_variable_length_table: columns must not be empty");
+    }
+    // Validate consistent row count
+    long nrows = -1;
+    long max_len_hint = 0;
+    for (const auto& kv : columns) {
+        const auto& name = kv.first;
+        const auto& col = kv.second;
+        if (nrows < 0) nrows = static_cast<long>(col.size());
+        if (static_cast<long>(col.size()) != nrows) {
+            throw std::invalid_argument("All VLA columns must have the same number of rows");
+        }
+        for (const auto& t : col) {
+            if (!(t.dtype() == torch::kFloat64 || t.dtype() == torch::kFloat32)) {
+                throw std::runtime_error("Only float32/float64 tensors supported for VLA columns");
+            }
+            max_len_hint = std::max<long>(max_len_hint, static_cast<long>(t.numel()));
+        }
+    }
+
+    int status = 0;
+    fitsfile* fptr = nullptr;
+    std::string fname = filename;
+    if (overwrite) std::remove(fname.c_str());
+    std::string create_name = (fname.size() && fname[0] == '!') ? fname : ("!" + fname);
+    if (fits_create_file(&fptr, create_name.c_str(), &status)) {
+        throw_fits_error(status, "Error creating FITS file for VLA table");
+    }
+    if (fits_create_img(fptr, BYTE_IMG, 0, nullptr, &status)) {
+        fits_close_file(fptr, &status);
+        throw_fits_error(status, "Error creating primary HDU for VLA table");
+    }
+    // Prepare TTYPE/TFORM arrays
+    const int ncols = static_cast<int>(columns.size());
+    std::vector<char*> ttype(ncols);
+    std::vector<char*> tform(ncols);
+    std::vector<std::string> ttype_buf; ttype_buf.reserve(ncols);
+    std::vector<std::string> tform_buf; tform_buf.reserve(ncols);
+    std::vector<std::string> names; names.reserve(ncols);
+    for (const auto& kv : columns) {
+        std::string cname = kv.first;
+        if (cname.empty()) cname = "COL";
+        names.push_back(cname);
+    }
+    for (int i = 0; i < ncols; ++i) {
+        ttype_buf.push_back(names[i]);
+        ttype[i] = const_cast<char*>(ttype_buf.back().c_str());
+        // Use double base type, with max length hint
+        std::string tform_str = "1PD(" + std::to_string(std::max<long>(1, max_len_hint)) + ")";
+        tform_buf.push_back(tform_str);
+        tform[i] = const_cast<char*>(tform_buf.back().c_str());
+    }
+    if (fits_create_tbl(fptr, BINARY_TBL, nrows, ncols, ttype.data(), tform.data(), nullptr, nullptr, &status)) {
+        fits_close_file(fptr, &status);
+        throw_fits_error(status, "Error creating VLA table");
+    }
+    // Write header keywords
+    for (auto &kv : header) {
+        fits_write_key(fptr, TSTRING, kv.first.c_str(), const_cast<char*>(kv.second.c_str()), nullptr, &status);
+        if (status) { fits_close_file(fptr, &status); throw_fits_error(status, "Error writing header keyword"); }
+    }
+    // Iterate rows and write each column's data for that row
+    int col_index = 1;
+    for (const auto& kv : columns) {
+        const auto& col = kv.second;
+        for (long row = 0; row < nrows; ++row) {
+            const auto& tensor = col[row];
+            torch::Tensor dbl = tensor.dtype() == torch::kFloat64 ? tensor : tensor.to(torch::kFloat64);
+            long nelem = static_cast<long>(dbl.numel());
+            if (nelem > 0) {
+                if (fits_write_col(fptr, TDOUBLE, col_index, row + 1, 1, nelem, (void*)dbl.data_ptr<double>(), &status)) {
+                    fits_close_file(fptr, &status);
+                    throw_fits_error(status, "Error writing VLA column data");
+                }
+            } else {
+                // Write zero-length descriptor by writing 0 elements (CFITSIO sets descriptor appropriately)
+                double dummy = 0.0;
+                if (fits_write_colnull(fptr, TDOUBLE, col_index, row + 1, 1, 0, &dummy, nullptr, &status)) {
+                    // Some CFITSIO builds may not like this; ignore if it fails and continue
+                    status = 0;
+                }
+            }
+        }
+        ++col_index;
+    }
+    fits_close_file(fptr, &status);
+    if (status) throw_fits_error(status, "Error closing VLA table file");
+}
+
 } // namespace torchfits_writer

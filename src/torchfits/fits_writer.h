@@ -91,6 +91,15 @@ void write_variable_length_array(const std::string& filename,
                                 const std::map<std::string, std::string>& header = {},
                                 bool overwrite = false);
 
+/// Write a table with multiple variable-length array columns (float32/float64 only for v1.0).
+/// The input is a map from column name to a vector of 1D tensors (one tensor per row).
+/// All columns must have the same number of rows; each tensor can have different length per row.
+void write_variable_length_table(
+    const std::string& filename,
+    const std::map<std::string, std::vector<torch::Tensor>>& columns,
+    const std::map<std::string, std::string>& header = {},
+    bool overwrite = false);
+
 /// Advanced table writing with compression and optimizations
 void write_table_to_fits_advanced(const std::string& filename,
                                  const py::dict& table_data,

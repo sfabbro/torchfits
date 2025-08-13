@@ -377,6 +377,47 @@ def bench_cutouts(tmp: str, size: int, cutouts: int, cut_hw: int, reps: int, col
         m, s, _ = time_repeat(_tf_cut_with(mm_flag, None), reps=reps, warmup=1, use_median=True)
         rows.append(["torchfits", f"read(start,shape) (mmap={'auto' if mm_flag is None else 'on' if mm_flag else 'off'})", f"{m:.2f}", f"{s:.2f}", f"{cutouts}x{cut_hw}^2"])
 
+    # torchfits variant: read full image once, then slice in-memory (matches astropy/fitsio behavior)
+    def _tf_full_then_slice(mmap_flag: Optional[bool], buffered_flag: Optional[bool]):
+        def _run():
+            img = tf.read(path, **_tf_opts(mmap_flag, cache_capacity, buffered_flag))[0]
+            for (y, x) in coords:
+                sl = img[y : y + cut_hw, x : x + cut_hw]
+                force_consume(sl)
+        return _run
+
+    if tf_mmap_mode == "auto":
+        best_full = None
+        for mm, buf, label in _tf_auto_candidates_size_aware(op="image_full", allow_buffered_default=True, size=size):
+            try:
+                m, s, _ = time_repeat(_tf_full_then_slice(mm, buf), reps=reps, warmup=1, use_median=True)
+            except Exception:
+                continue
+            if best_full is None or m < best_full[0]:
+                best_full = (m, s, label)
+        if best_full is not None:
+            rows.append(["torchfits", f"full->slice ({best_full[2]})", f"{best_full[0]:.2f}", f"{best_full[1]:.2f}", f"{cutouts}x{cut_hw}^2"])
+    else:
+        mm_flag = True if tf_mmap_mode == "true" else False if tf_mmap_mode == "false" else None
+        m, s, _ = time_repeat(_tf_full_then_slice(mm_flag, None), reps=reps, warmup=1, use_median=True)
+        rows.append(["torchfits", f"full->slice (mmap={'auto' if mm_flag is None else 'on' if mm_flag else 'off'})", f"{m:.2f}", f"{s:.2f}", f"{cutouts}x{cut_hw}^2"])
+
+    # torchfits variant: batched multi-cutout path via dataset helper (sequential), triggers P1 small-cutout fast path
+    try:
+        from torchfits.dataset import FITSCutoutSpec, FITSMultiCutoutSpec, read_multi_cutouts  # type: ignore
+
+        def _tf_batched():
+            specs = [FITSCutoutSpec(hdu=0, start=(y, x), shape=(cut_hw, cut_hw), device="cpu") for (y, x) in coords]
+            out = read_multi_cutouts(FITSMultiCutoutSpec(path=path, cutouts=specs, parallel=False, return_dict=False))
+            # consume
+            for t in out:
+                force_consume(t[0] if isinstance(t, tuple) else t)
+
+        m, s, _ = time_repeat(_tf_batched, reps=reps, warmup=1, use_median=True)
+        rows.append(["torchfits", "multi-cutout (batched)", f"{m:.2f}", f"{s:.2f}", f"{cutouts}x{cut_hw}^2"])
+    except Exception:
+        pass
+
     # astropy cutouts + WCS transform (basic usage)
     if astropy is not None and wcsmod is not None:
         def _ap_cut():
@@ -800,6 +841,16 @@ def bench_sky_cutouts(tmp: str, size: int, cutouts: int, radius_arcsec: float, r
             m, s, _ = time_repeat(_tf_with(False, None), reps=reps, warmup=1, use_median=True)
             best = (m, s, "mmap=off")
         rows.append(["torchfits", f"WCS->read(start,shape) ({best[2]})", f"{best[0]:.2f}", f"{best[1]:.2f}", f"{cutouts}x({2*half_hw})^2 ~{radius_arcsec}" ])
+
+    # Optimized torchfits variant: batched sky cutouts via single full read + slicing
+    try:
+        from torchfits import read_multi_sky_cutouts  # type: ignore
+        def _tf_opt():
+            _ = read_multi_sky_cutouts(path, [(float(p[0]), float(p[1])) for p in [[ra, dec] for (ra, dec) in sky_points]], radius_arcsec, hdu=0, device="cpu", prefer_full_read=True)
+        mopt, sopt, _ = time_repeat(_tf_opt, reps=reps, warmup=1, use_median=True)
+        rows.append(["torchfits", "WCS->multi (optimized)", f"{mopt:.2f}", f"{sopt:.2f}", "batched sky"]) 
+    except Exception:
+        pass
     else:
         mm_flag = True if tf_mmap_mode == "true" else False if tf_mmap_mode == "false" else None
         m, s, _ = time_repeat(_tf_with(mm_flag, None), reps=reps, warmup=1, use_median=True)

@@ -6,6 +6,17 @@
 
 `torchfits` is a high-performance Python package for reading FITS files directly into PyTorch tensors. It leverages `cfitsio` and `wcslib` for speed and accuracy, making it ideal for astronomy and machine learning applications that require efficient access to large FITS datasets. It is designed to be easy to use, with a simple and consistent API.
 
+<!-- perf:begin -->
+
+Performance highlights (auto-updated):
+
+- Image full read (torchfits): 256: 0.10 ms, 512: 0.10 ms, 1024: 0.22 ms
+
+See artifacts/benchmarks/plots for charts.
+
+<!-- perf:end -->
+
+
 ## Features
 
 * **Fast FITS I/O:** Uses a highly optimized C++ backend (powered by `cfitsio`) for rapid data access.

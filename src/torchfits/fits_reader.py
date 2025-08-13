@@ -244,6 +244,21 @@ def read(
         # Non-fatal: fall back to original source on any cache error
         src_obj = filename_or_url
 
+    # Heuristic: if caller didn’t force flags and we’re doing a full-image read (no start/shape)
+    # on a local path, decide mmap/buffered automatically. The backend is still authoritative
+    # and will fall back safely.
+    try:
+        auto_flags = (enable_mmap is None and enable_buffered is None and isinstance(src_obj, str)
+                      and start is None and shape is None and not str(src_obj).startswith(("http://", "https://")))
+        if auto_flags:
+            from .heuristics import choose_read_mode_for_image
+            choice = choose_read_mode_for_image(src_obj, hdu)
+            # Only set if not already specified
+            enable_mmap = choice.get("enable_mmap", enable_mmap)
+            enable_buffered = choice.get("enable_buffered", enable_buffered)
+    except Exception:
+        pass
+
     # Call the C++ backend with converted HDU number
     # Debug markers for segfault localization
     # (debug removed for stability)
@@ -290,12 +305,14 @@ def read(
                         "Install with: pip install pytorch-frame"
                     )
 
-                # Extract metadata for enhanced DataFrame
-                metadata = {}
-                if return_metadata:
-                    metadata = _extract_table_metadata(filename_or_url, hdu, columns)
-                    metadata = _update_metadata_dtypes(metadata, data)
+                # Fast path: when metadata isn't requested, build DataFrame directly
+                # from the tensor dict, avoiding constructing a FitsTable wrapper.
+                if not return_metadata:
+                    return _tensor_dict_to_torch_frame(data)
 
+                # Metadata-aware path: build FitsTable to preserve schema info
+                metadata = _extract_table_metadata(filename_or_url, hdu, columns)
+                metadata = _update_metadata_dtypes(metadata, data)
                 fits_table = FitsTable(data, metadata)
                 return _fits_table_to_torch_frame(fits_table)
 
@@ -589,13 +606,22 @@ def _fits_table_to_torch_frame(fits_table):
             if not isinstance(tensor, torch.Tensor):
                 # Skip non-tensor columns for now (e.g., string lists)
                 continue
-            if tensor.dtype in (torch.int8, torch.int16, torch.int32, torch.int64):
+            # Avoid unnecessary clones/casts; only cast when required.
+            dt = tensor.dtype
+            if dt in (torch.int8, torch.int16, torch.int32):
                 col_dict[name] = tensor.to(torch.int64)
-            elif tensor.dtype in (torch.float16, torch.float32, torch.float64):
+            elif dt == torch.int64:
+                col_dict[name] = tensor
+            elif dt in (torch.float16, torch.float64):
                 col_dict[name] = tensor.to(torch.float32)
-            else:  # leave bool / others as-is where supported
+            elif dt == torch.float32:
+                col_dict[name] = tensor
+            elif dt == torch.bool:
+                col_dict[name] = tensor
+            else:
+                # Unsupported/rare dtype: attempt a safe float32 cast
                 try:
-                    col_dict[name] = tensor.clone()
+                    col_dict[name] = tensor.to(torch.float32)
                 except Exception:
                     continue
 
@@ -605,6 +631,41 @@ def _fits_table_to_torch_frame(fits_table):
             "PyTorch-Frame is required for dataframe format. "
             "Install with: pip install pytorch-frame"
         ) from None
+
+
+def _tensor_dict_to_torch_frame(tensor_dict: dict[str, torch.Tensor]):
+    """Convert a plain dict of tensors to torch_frame.DataFrame efficiently.
+
+    This mirrors _fits_table_to_torch_frame without the FitsTable construction.
+    Only numeric/bool tensors are included; string/VLA columns are skipped.
+    """
+    try:
+        from torch_frame import DataFrame
+    except ImportError:  # pragma: no cover
+        raise ImportError(
+            "PyTorch-Frame is required for dataframe format. "
+            "Install with: pip install pytorch-frame"
+        ) from None
+
+    col_dict: dict[str, torch.Tensor] = {}
+    for name, tensor in tensor_dict.items():
+        if not isinstance(tensor, torch.Tensor):
+            continue
+        dt = tensor.dtype
+        if dt in (torch.int8, torch.int16, torch.int32):
+            col_dict[name] = tensor.to(torch.int64)
+        elif dt == torch.int64:
+            col_dict[name] = tensor
+        elif dt in (torch.float16, torch.float64):
+            col_dict[name] = tensor.to(torch.float32)
+        elif dt == torch.float32:
+            col_dict[name] = tensor
+        elif dt == torch.bool:
+            col_dict[name] = tensor
+        else:
+            # Skip unsupported dtypes to avoid surprising casts
+            continue
+    return DataFrame(col_dict)
 
 
 def _torch_frame_to_fits_table(df):

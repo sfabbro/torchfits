@@ -218,6 +218,14 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         py::arg("overwrite") = false,
         "Write tensor with variable-length array support."
     );
+
+    m.def("write_variable_length_table", &torchfits_writer::write_variable_length_table,
+        py::arg("filename"),
+        py::arg("columns"),
+        py::arg("header") = std::map<std::string, std::string>(),
+        py::arg("overwrite") = false,
+        "Write a table with multiple variable-length array columns (float32/float64)."
+    );
     
     // Temporarily disabled - function not implemented yet
     /*

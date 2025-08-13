@@ -4,10 +4,37 @@ A concise, actionable checklist of remaining work for v1.0. Finished items have 
 
 ## Performance
 
-- [ ] [P1] Small cutouts (≤32×32): reduce Python-call overhead and slice setup costs; confirm optimal mmap/buffered choice for tiny windows.
-- [ ] [P2] Sky cutouts (small radii, e.g., 15"): profile remaining overhead after WCS batching; consider lightweight header/WCS reuse where safe.
-- [ ] [P3] Heuristics: finalize auto selection (mmap vs buffered) by workload size/compression; add unit tests around the chooser.
+- [x] [P1] Small cutouts (≤32×32): reduce Python-call overhead and slice setup costs; confirm optimal mmap/buffered choice for tiny windows.
+	- Implemented: auto small-cutout optimization in `read_multi_cutouts` that reads full image once and slices for tiny uniform windows; fallback to C++ batched path.
+		- Bench (256, 10×32²): torchfits full→slice 0.15–0.17 ms; multi-cutout (batched) ~0.27 ms; astropy ~0.64–0.69 ms; fitsio ~0.34–0.36 ms.
+		- Micro-bench (CPU, size=512–1024):
+			- 500×16²: loop 43.8 ms vs batched 41.5 ms (~1.06×)
+			- 1000×16²: loop 85.7 ms vs batched 84.4 ms (~1.02×)
+			- 500×8²: loop 41.7 ms vs batched 41.5 ms (~1.01×)
+			- 500×32² @1024: ~parity
+	- Notes: path currently enabled for sequential, uniform 2D small windows; further parallel reuse is optional follow-up.
+- [x] [P2] Sky cutouts (small radii, e.g., 15"): batched WCS + prefer single full read then slice; benchmarked wins at small radii.
+	- Implemented: `read_multi_sky_cutouts(path, world_points, radius_arcsec, ...)` batches WCS (wcslib) and for small radii reads once then slices; falls back to per-cutout reads with precomputed WCS.
+	- Bench (size=256, radius=15"): torchfits WCS→multi 0.43–0.47 ms; astropy 0.37–0.38 ms; fitsio ~0.38–0.39 ms; torchfits per-cutout ~0.97–1.00 ms.
+	- Bench (size=512, radius=30"): torchfits WCS→multi 0.36–0.45 ms; astropy ~0.41–0.42 ms; fitsio ~1.15 ms; torchfits per-cutout ~1.00 ms.
+	- Bench (size=1024, radius=60"): torchfits WCS→multi 0.55–0.57 ms; astropy ~0.46 ms; still faster than torchfits per-cutout (~0.92–1.00 ms) and far ahead of fitsio (~4.6 ms). Consider auto threshold tuning later.
+	- Added unit test `tests/test_sky_cutouts.py` to validate correctness vs direct slicing using the same WCS transform.
+- [x] [P3] Heuristics: auto select mmap/buffered for full-image reads based on size/compression; unit-tested.
+	- Implemented: `heuristics.choose_read_mode_for_image` and integration in `read()` when flags are not set and `start/shape` are None.
+	- Behavior: compressed → buffered; large uncompressed (≥ TORCHFITS_MMAP_MIN_MB, default 50MB) → mmap; else default path. Backend safely falls back.
+	- Tests: `tests/test_heuristics.py` validates chooser flags and smoke for full-image reads.
+	- Bench: image full read remains fastest-in-class; 256 ~0.11–0.13 ms, 512 ~0.13 ms, 1024 ~0.25–0.29 ms. Auto flags do not affect cutouts.
 - [ ] [P4] Table frameworks gap: profile torchfits table/dataframe vs fitsio/astropy; optimize hot paths (conversion/boxing) to close ~10% gap.
+	- In progress:
+		- Implemented: DataFrame fast path when `return_metadata=False` via direct tensor-dict→torch-frame; reduced unnecessary casts/copies.
+		- Implemented: relax numeric column read parallelism (≥4 scalar numeric cols and ≥100k rows) and raise cap to 8 threads.
+	- Current results (rows=200k):
+		- Column subset (4 cols): torchfits tensor 14.6–16.1 ms; dataframe 15.6–16.0 ms; fitsio 43–46 ms; astropy 66–71 ms.
+		- Frameworks (full table): torchfits table 18.5–21.0 ms; dataframe 19.0–21.5 ms; fitsio 18.0–19.9 ms; astropy.Table 4.3–5.2 ms.
+	- Next steps:
+		- Profile numeric-only full-table path vs fitsio; experiment with adaptive chunking/threading by row/col shape.
+		- Measure metadata extraction cost for DataFrame mode; consider caching header parsing where safe.
+		- Maintain parity of DataFrame vs tensor-dict path; add micro-bench in `benchmarks/`.
 - [ ] [P5] CI gate for perf targets: wire analyzer to assert median ≥1.2× vs baselines and no case worse by >10% (configurable exceptions).
 
 ## Features & Parity
@@ -17,6 +44,8 @@ A concise, actionable checklist of remaining work for v1.0. Finished items have 
 - [ ] [F3] Parity matrix: complete idioms set, reach ≥95% green; publish artifact in CI and link from docs.
 - [ ] [F4] Schema round-trip: include units/meta in FITS ↔ torch-frame ↔ FITS tests; document any intentional lossy fields.
 - [ ] [F5] Advanced joins: decide on native vs torch-frame delegated joins; implement or explicitly defer with rationale in docs.
+- [ ] [F6] BITPIX-16 floats: add smart conversion from a FITS file with BITPIX=16 to a float arrray, beyond a native pytorch 16bits type, that takes into consideration
+	- scaling (BSCALE/BZERO), quantization, and appropriate dtype selection (output float32 by default), with tests documenting precision trade-offs.
 
 ## Remote & ML (Smart Cache and Datasets)
 
@@ -28,6 +57,13 @@ A concise, actionable checklist of remaining work for v1.0. Finished items have 
 
 - [ ] [B1] CI job: run benchmark smoke, append JSONL, generate plots via `benchmarks/plot_full_sweep.py`, upload artifacts.
 - [ ] [B2] Docs integration: add a short “Performance” page referencing the latest plots in `artifacts/benchmarks/plots/`.
+
+Notes (2025-08-13 sweep)
+
+- Full sweep re-run and plots regenerated.
+	- Results JSONL: `artifacts/benchmarks/full_sweep.jsonl` (appended)
+	- Plots: `artifacts/benchmarks/plots/` (4 figures)
+	- Highlights: torchfits leads on full image reads and small/medium cutouts; sky-cutout WCS batched path competitive (wins at moderate radii), and table column subset significantly faster than numpy-based stacks; full-table frameworks near fitsio with a ~5–10% gap pending P4.
 
 ## Developer Experience & Tooling
 
