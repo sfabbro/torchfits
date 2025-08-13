@@ -6,22 +6,48 @@
 #include "performance.h"
 #include "cfitsio_enhanced.h"
 #include "real_cache.h"
-#include "debug.h"
+#include "debug.h" // retained for other translation units; unused here after cleanup
 #include <sstream>
 #include <fstream>
 #include <algorithm>
+#include <thread>
+#include <future>
+#include <unordered_set>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <cstdint>
 
 namespace py = pybind11;
 
+// Track last read info for diagnostics/benchmarks (thread-local)
+static thread_local struct {
+    std::string filename;
+    int hdu = 0;
+    bool used_cache = false;
+    bool used_mmap = false;
+    bool used_buffered = false;
+    bool used_parallel_columns = false;
+    std::string path_used; // "cache" | "mmap" | "buffered" | "standard"
+} g_last_read_info;
+
+py::dict get_last_read_info() {
+    py::dict d;
+    d["filename"] = g_last_read_info.filename;
+    d["hdu"] = g_last_read_info.hdu;
+    d["used_cache"] = g_last_read_info.used_cache;
+    d["used_mmap"] = g_last_read_info.used_mmap;
+    d["used_buffered"] = g_last_read_info.used_buffered;
+    d["used_parallel_columns"] = g_last_read_info.used_parallel_columns;
+    d["path_used"] = g_last_read_info.path_used;
+    return d;
+}
+
 // --- Templated Image Data Reading ---
 
 template <typename T, int CfitsioType>
 torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
                                   const std::vector<long>& start, const std::vector<long>& shape) {
-    DEBUG_SCOPE;
+    // (debug scope removed)
     int status = 0;
     int naxis;
     fits_get_img_dim(fptr, &naxis, &status);
@@ -29,7 +55,7 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
 
     // Handle empty HDU (NAXIS=0) case - no image data
     if (naxis == 0) {
-        DEBUG_LOG("Empty HDU detected (NAXIS=0), returning empty tensor");
+    // Empty HDU (NAXIS=0) -> return empty tensor
         torch::TensorOptions options = torch::TensorOptions().device(device);
         if      (std::is_same<T, uint8_t>::value) options = options.dtype(torch::kUInt8);
         else if (std::is_same<T, int16_t>::value) options = options.dtype(torch::kInt16);
@@ -125,7 +151,12 @@ torch::Dtype get_torch_dtype(int typecode) {
         case 30:        return torch::kUInt32;   // TUINT - 32-bit unsigned integer
         case TINT:      return torch::kInt32;
         case 40:        return torch::kInt32;    // TULONG - 32-bit unsigned long (same as TUINT)
-        case 41:        return torch::kInt32;    // TLONG - 32-bit signed long (same as TINT)
+    case 41:
+#ifdef __APPLE__
+        return torch::kInt64;    // TLONG - 64-bit signed long on macOS
+#else
+        return torch::kInt32;    // TLONG - 32-bit signed long elsewhere
+#endif
         case TLONGLONG: return torch::kInt64;
         case TFLOAT:    return torch::kFloat32;
         case TDOUBLE:   return torch::kFloat64;
@@ -137,7 +168,7 @@ torch::Dtype get_torch_dtype(int typecode) {
 py::dict read_table_data(fitsfile* fptr, torch::Device device,
                          const py::object& columns_obj,
                          long start_row, const py::object& num_rows_obj) {
-    DEBUG_SCOPE;
+    // Simplified, production table reader (row-wise safe path retained)
     int status = 0;
     long total_rows;
     int total_cols;
@@ -162,32 +193,30 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
     if (!columns_obj.is_none()) {
         selected_columns = columns_obj.cast<std::vector<std::string>>();
     } else {
-        // Get all column names
+        // Get all column names by reading TTYPEi keywords (safer than deprecated helpers)
         selected_columns.reserve(total_cols);
         for (int i = 1; i <= total_cols; ++i) {
-            char colname[FLEN_VALUE];
+            char keyname[FLEN_KEYWORD];
             status = 0;
-            fits_get_bcolparms(fptr, i, colname, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &status);
-            if (status) {
-                throw_fits_error(status, "Error getting column info for col " + std::to_string(i));
+            if (fits_make_keyn("TTYPE", i, keyname, &status)) {
+                throw_fits_error(status, "Error forming TTYPE keyword for column " + std::to_string(i));
             }
-            selected_columns.emplace_back(colname);
+            char colname[FLEN_VALUE];
+            char comment[FLEN_COMMENT];
+            status = 0;
+            if (fits_read_key(fptr, TSTRING, keyname, colname, comment, &status)) {
+                throw_fits_error(status, "Error reading " + std::string(keyname) + " for column " + std::to_string(i));
+            }
+            // colname may be quoted; strip surrounding quotes if present
+            std::string colname_str(colname);
+            if (!colname_str.empty() && colname_str.front() == '\'' && colname_str.back() == '\'' && colname_str.size() >= 2) {
+                colname_str = colname_str.substr(1, colname_str.size() - 2);
+            }
+            selected_columns.emplace_back(std::move(colname_str));
         }
     }
 
-    // PERFORMANCE OPTIMIZATION: Use parallel reading for multiple columns
-    if (selected_columns.size() >= 3 && rows_to_read >= 1000) {
-        // Use parallel table reader for large tables with multiple columns
-        DEBUG_LOG("Using parallel table reader for " + std::to_string(selected_columns.size()) + 
-                  " columns and " + std::to_string(rows_to_read) + " rows");
-        
-        // torchfits_perf::ParallelTableReader parallel_reader;  // Temporarily disabled
-        // return parallel_reader.read_columns_parallel(fptr, selected_columns, start_row, rows_to_read, device);
-        DEBUG_LOG("Parallel reader temporarily disabled, using sequential reader");
-    }
-
-    // FALLBACK: Use optimized sequential reading for smaller datasets
-    DEBUG_LOG("Using sequential optimized reader");
+    // NOTE: Potential future parallel/optimized bulk paths removed pending safe re-introduction.
     
     // Separate string and numeric columns for optimized processing
     struct ColumnInfo {
@@ -197,6 +226,9 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         long repeat;
         long width;
         bool is_string;
+        bool is_varlen;
+        std::string tform;
+        int base_typecode; // For VLA, decoded from TFORM (e.g., 'D' -> TDOUBLE)
     };
     
     std::vector<ColumnInfo> column_info;
@@ -213,83 +245,375 @@ py::dict read_table_data(fitsfile* fptr, torch::Device device,
         if (status) throw_fits_error(status, "Error getting column type for: " + col_name);
         
         info.is_string = (info.typecode == TSTRING);
+        // Initialize variable-length detection: negative typecode indicates VLA
+        info.is_varlen = (info.typecode < 0);
+        info.tform.clear();
+        info.base_typecode = info.is_varlen ? -info.typecode : info.typecode;
+        if (info.typecode < 0) {
+            info.is_varlen = true;
+            info.base_typecode = -info.typecode; // CFITSIO encodes VLA base type as negative
+        }
+        {
+            char keyname[FLEN_KEYWORD];
+            int st2 = 0;
+            if (fits_make_keyn("TFORM", info.number, keyname, &st2) == 0) {
+                char val[FLEN_VALUE];
+                char com[FLEN_COMMENT];
+                st2 = 0;
+                if (fits_read_key(fptr, TSTRING, keyname, val, com, &st2) == 0) {
+                    info.tform = std::string(val);
+                    // strip quotes if present
+                    if (!info.tform.empty() && info.tform.front()=='\'' && info.tform.back()=='\'' && info.tform.size()>=2) {
+                        info.tform = info.tform.substr(1, info.tform.size()-2);
+                    }
+                    // variable-length if contains 'P' or 'Q' before base type letter
+                    for (char &c : info.tform) c = (char)toupper(c);
+                    if (info.tform.find('P') != std::string::npos || info.tform.find('Q') != std::string::npos) {
+                        info.is_varlen = true;
+                        // Derive base type code from first letter after P/Q markers
+                        // Examples: "1PD(5)", "1PE(10)", "PJ(100)"
+                        size_t ppos = info.tform.find('P');
+                        if (ppos == std::string::npos) ppos = info.tform.find('Q');
+                        if (ppos != std::string::npos) {
+                            // find next alpha letter after ppos
+                            int base = 0;
+                            for (size_t i = ppos + 1; i < info.tform.size(); ++i) {
+                                char ch = info.tform[i];
+                                if (ch >= 'A' && ch <= 'Z') {
+                                    switch (ch) {
+                                        case 'L': base = TLOGICAL; break;
+                                        case 'B': base = TBYTE; break;
+                                        case 'I': base = TSHORT; break;
+                                        case 'J': base = TINT; break; // 32-bit
+                                        case 'K': base = TLONGLONG; break;
+                                        case 'E': base = TFLOAT; break;
+                                        case 'D': base = TDOUBLE; break;
+                                        default: base = TDOUBLE; break; // fallback
+                                    }
+                                    break;
+                                }
+                            }
+                            if (base != 0) info.base_typecode = base;
+                        }
+                    }
+                }
+            }
+        }
         column_info.push_back(info);
     }
 
     py::dict result_dict;
 
     // Process string columns sequentially (required due to CFITSIO limitations)
+    bool skip_string = false; // always process string columns
     for (const auto& info : column_info) {
         if (!info.is_string) continue;
-        
+        if (skip_string) { continue; }
+        // Determine max element width (repeat often encodes width for TSTRING); use width if provided
+        long elem_width = info.width > 0 ? info.width : info.repeat;
+        if (elem_width <= 0) elem_width = 1;
+
         std::vector<char*> string_array(rows_to_read);
-        std::vector<char> string_buffer(rows_to_read * (info.repeat + 1));
-        
+        std::vector<char> string_buffer(rows_to_read * (elem_width + 1), '\0');
+
         for (long i = 0; i < rows_to_read; i++) {
-            string_array[i] = &string_buffer[i * (info.repeat + 1)];
+            string_array[i] = &string_buffer[i * (elem_width + 1)];
         }
-        
-        fits_read_col_str(fptr, info.number, start_row + 1, 1, rows_to_read,
-                          nullptr, string_array.data(), nullptr, &status);
+
+        int anynul = 0;
+        fits_read_col(fptr, TSTRING, info.number, start_row + 1, 1, rows_to_read,
+                      nullptr, string_array.data(), &anynul, &status);
         if (status) throw_fits_error(status, "Error reading string column: " + info.name);
-        
+
         py::list string_list;
         for (long i = 0; i < rows_to_read; i++) {
-            string_list.append(py::str(string_array[i]));
+            // Ensure we strip trailing spaces similar to writer's padding behavior
+            std::string raw(string_array[i]);
+            size_t endpos = raw.find_last_not_of(' ');
+            if (endpos != std::string::npos) raw.erase(endpos + 1); else raw.clear();
+            string_list.append(py::str(raw));
         }
         result_dict[py::str(info.name)] = std::move(string_list);
     }
 
-    // Process numeric columns with memory pool optimization
+    // Process numeric columns with optimizations:
+    // 1. Bulk per-column fits_read_col for scalar repeats (already implemented)
+    // 2. Optional parallel column reads (env TORCHFITS_PAR_READ=1) for 4+ scalar numeric columns
+    //    using separate FITS handles per thread (CFITSIO thread-safe with independent fitsfile*).
+    // 3. Optional pinned host memory allocation (env TORCHFITS_PIN_MEMORY=1) to accelerate downstream GPU transfers.
+    int numeric_processed = 0; // legacy diagnostic counter retained (unused threshold)
+    auto elem_size_for = [](int typecode)->size_t {
+        switch(typecode){
+            case TBYTE: return 1; case 12: return 1; case 20: return 2; case TSHORT: return 2; case 30: return 4; case TINT: return 4; case 40: return 4; case 41: return 4; case TLONGLONG: return 8; case TFLOAT: return 4; case TDOUBLE: return 8; case TLOGICAL: return 1; default: return 8; }
+    };
+    // Identify scalar numeric columns eligible for parallelization
+    std::vector<ColumnInfo> scalar_numeric;
+    for (auto &ci : column_info) {
+        if (!ci.is_string && !ci.is_varlen && ci.repeat == 1) scalar_numeric.push_back(ci);
+    }
+    bool enable_parallel = false;
+    const char* par_env = std::getenv("TORCHFITS_PAR_READ");
+    // Heuristic: auto-enable when reading all columns, enough scalar numeric columns, and many rows
+    bool reading_all_columns = columns_obj.is_none();
+    if (par_env) {
+        // Explicit override
+        if (std::string(par_env) == "1" && scalar_numeric.size() >= 2) enable_parallel = true;
+        if (std::string(par_env) == "0") enable_parallel = false;
+    } else {
+        if (reading_all_columns && scalar_numeric.size() >= 6 && rows_to_read >= 20000) {
+            enable_parallel = true;
+        }
+    }
+    bool pin_memory = false;
+    const char* pin_env = std::getenv("TORCHFITS_PIN_MEMORY");
+    if (pin_env && std::string(pin_env) == "1") pin_memory = true;
+
+    auto read_scalar_column = [&](const ColumnInfo &info)->std::pair<std::string, torch::Tensor> {
+        int status_local = 0;
+        // Open independent handle for this column to allow parallelism
+        FITSFileWrapper f_local(fptr->Fptr->filename); // reuse helper requires filename; if not accessible we fallback to reopening via fits_open_file
+        fitsfile* f2;
+        if (fits_open_file(&f2, fptr->Fptr->filename, READONLY, &status_local)) {
+            throw_fits_error(status_local, "Error reopening file for parallel column read: " + info.name);
+        }
+        // Move to same HDU number as original
+        int hdutype=0;
+        if (fits_movabs_hdu(f2, fptr->Fptr->curhdu+1, &hdutype, &status_local)) {
+            fits_close_file(f2, &status_local);
+            throw_fits_error(status_local, "Error moving to HDU for parallel column read: " + info.name);
+        }
+        torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
+        auto opts = torch::TensorOptions().dtype(torch_dtype);
+        if (pin_memory && device == torch::kCPU) opts = opts.pinned_memory(true);
+        torch::Tensor col_data = torch::empty({rows_to_read}, opts);
+        int anynul = 0; status_local = 0;
+        fits_read_col(f2, info.typecode, info.number, start_row + 1, 1, rows_to_read,
+                      nullptr, col_data.data_ptr(), &anynul, &status_local);
+        fits_close_file(f2, &status_local);
+        if (status_local) {
+            throw_fits_error(status_local, "Error reading column in parallel: " + info.name);
+        }
+        if (device != torch::kCPU) col_data = col_data.to(device);
+        return {info.name, col_data};
+    };
+
+    if (enable_parallel) {
+        // Limit concurrency to avoid oversubscription
+        size_t hw = std::max<size_t>(1, std::thread::hardware_concurrency());
+        size_t cap = std::min<size_t>(hw, 4);
+        if (const char* env = std::getenv("TORCHFITS_PAR_MAX_THREADS")) {
+            try { cap = std::max<size_t>(1, std::stoul(env)); } catch (...) {}
+        }
+        cap = std::min(cap, scalar_numeric.size());
+
+        // Partition columns into cap chunks; each worker opens a single handle and processes its chunk
+        std::vector<std::vector<ColumnInfo>> chunks(cap);
+        for (size_t i = 0; i < scalar_numeric.size(); ++i) {
+            chunks[i % cap].push_back(scalar_numeric[i]);
+        }
+
+        auto worker = [&](const std::vector<ColumnInfo>& cols)->std::vector<std::pair<std::string, torch::Tensor>> {
+            std::vector<std::pair<std::string, torch::Tensor>> out;
+            if (cols.empty()) return out;
+            int status_local = 0;
+            fitsfile* f2 = nullptr;
+            if (fits_open_file(&f2, fptr->Fptr->filename, READONLY, &status_local)) {
+                throw_fits_error(status_local, "Error reopening file for parallel column chunk");
+            }
+            int hdutype=0;
+            if (fits_movabs_hdu(f2, fptr->Fptr->curhdu+1, &hdutype, &status_local)) {
+                fits_close_file(f2, &status_local);
+                throw_fits_error(status_local, "Error moving to HDU for parallel column chunk");
+            }
+            out.reserve(cols.size());
+            for (const auto& info : cols) {
+                torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
+                auto opts = torch::TensorOptions().dtype(torch_dtype);
+                if (pin_memory && device == torch::kCPU) opts = opts.pinned_memory(true);
+                torch::Tensor col_data = torch::empty({rows_to_read}, opts);
+                int anynul = 0; int st = 0;
+                fits_read_col(f2, info.typecode, info.number, start_row + 1, 1, rows_to_read,
+                              nullptr, col_data.data_ptr(), &anynul, &st);
+                if (st) {
+                    fits_close_file(f2, &status_local);
+                    throw_fits_error(st, std::string("Error reading column in parallel chunk: ") + info.name);
+                }
+                if (device != torch::kCPU) col_data = col_data.to(device);
+                out.emplace_back(info.name, col_data);
+            }
+            fits_close_file(f2, &status_local);
+            return out;
+        };
+
+        std::vector<std::future<std::vector<std::pair<std::string, torch::Tensor>>>> futs;
+        futs.reserve(cap);
+        for (size_t i=0; i<cap; ++i) {
+            futs.emplace_back(std::async(std::launch::async, worker, std::cref(chunks[i])));
+        }
+        for (auto &fut : futs) {
+            auto vec = fut.get();
+            for (auto &kv : vec) {
+                result_dict[py::str(kv.first)] = kv.second;
+            }
+        }
+        g_last_read_info.used_parallel_columns = true;
+        // Mark processed so we don't re-read below
+        std::unordered_set<std::string> done;
+        for (auto &ci : scalar_numeric) done.insert(ci.name);
+        // Continue with remaining (including vector repeat) columns below
+        for (const auto& info : column_info) {
+            if (info.is_string || done.count(info.name)) continue;
+            if (info.is_varlen) {
+                py::list col_list;
+                for (long r = 0; r < rows_to_read; ++r) {
+                    LONGLONG llength = 0; LONGLONG offset = 0; int st3 = 0; int anynul = 0; int stread = 0;
+                    fits_read_descriptll(fptr, info.number, start_row + 1 + r, &llength, &offset, &st3);
+                    if (st3) throw_fits_error(st3, "Error reading VLA descriptor for column: " + info.name);
+                    long nelem = static_cast<long>(llength);
+                    int read_code = info.base_typecode;
+                    torch::Dtype torch_dtype = get_torch_dtype(read_code);
+                    auto opts = torch::TensorOptions().dtype(torch_dtype).device(torch::kCPU);
+                    torch::Tensor row_tensor;
+                    if (nelem > 0) {
+                        row_tensor = torch::empty({nelem}, opts);
+                        stread = 0; anynul = 0;
+                        if (fits_read_col(fptr, read_code, info.number, start_row + 1 + r, 1, nelem,
+                                          nullptr, row_tensor.data_ptr(), &anynul, &stread)) {
+                            stread = 0; anynul = 0;
+                            torch::Tensor tmp = torch::empty({nelem}, torch::TensorOptions().dtype(torch::kFloat64));
+                            if (fits_read_col(fptr, TDOUBLE, info.number, start_row + 1 + r, 1, nelem,
+                                              nullptr, tmp.data_ptr<double>(), &anynul, &stread)) {
+                                throw_fits_error(stread, "Error reading VLA data for column: " + info.name);
+                            }
+                            row_tensor = tmp.to(torch_dtype);
+                        }
+                    } else {
+                        row_tensor = torch::empty({0}, torch::TensorOptions().dtype(torch_dtype));
+                    }
+                    col_list.append(row_tensor);
+                }
+                result_dict[py::str(info.name)] = std::move(col_list);
+                continue;
+            }
+            torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
+            torch::TensorOptions opts = torch::TensorOptions().dtype(torch_dtype);
+            if (pin_memory && device == torch::kCPU) opts = opts.pinned_memory(true);
+            torch::Tensor col_data;
+            bool can_bulk = (info.repeat == 1);
+            if (can_bulk) {
+                col_data = torch::empty({rows_to_read}, opts);
+                int anynul = 0; status = 0;
+                fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1, rows_to_read,
+                              nullptr, col_data.data_ptr(), &anynul, &status);
+                if (status) throw_fits_error(status, "Error reading column: " + info.name);
+            } else {
+                col_data = torch::empty({rows_to_read, info.repeat}, opts);
+                size_t elem_size = elem_size_for(info.typecode);
+                std::vector<char> rowbuf(info.repeat * elem_size);
+                for (long r=0; r<rows_to_read; ++r) {
+                    int anynul=0; status=0;
+                    fits_read_col(fptr, info.typecode, info.number, start_row + 1 + r, 1, info.repeat, nullptr,
+                                   rowbuf.data(), &anynul, &status);
+                    if (status) throw_fits_error(status, "Error reading column (row-wise): " + info.name);
+                    char* dest = static_cast<char*>(col_data.data_ptr()) + r * info.repeat * elem_size;
+                    memcpy(dest, rowbuf.data(), info.repeat * elem_size);
+                }
+            }
+            if (device != torch::kCPU) col_data = col_data.to(device);
+            result_dict[py::str(info.name)] = (info.repeat == 1 ? col_data : col_data.squeeze());
+        }
+    return result_dict;
+    }
+
+    // Sequential path (existing logic with optional pinning)
     for (const auto& info : column_info) {
         if (info.is_string) continue;
-        
-        torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
-        
-        // Use memory pool for tensor allocation
-        torch::Tensor col_data;
-        // Temporarily disabled memory pool optimization
-        // if (torchfits_perf::global_memory_pool) {
-        //     std::vector<int64_t> shape = (info.repeat == 1) ? 
-        //         std::vector<int64_t>{rows_to_read} : 
-        //         std::vector<int64_t>{rows_to_read, info.repeat};
-        //     
-        //     col_data = torchfits_perf::global_memory_pool->get_tensor(shape, torch_dtype, torch::kCPU);
-        // } else {
-            // Fallback to direct allocation
-            if (info.repeat == 1) {
-                col_data = torch::empty({rows_to_read}, torch::TensorOptions().dtype(torch_dtype));
-            } else {
-                col_data = torch::empty({rows_to_read, info.repeat}, torch::TensorOptions().dtype(torch_dtype));
+        // Handle variable-length arrays as list[Tensor] per column
+        if (info.is_varlen) {
+            #ifdef TORCHFITS_DEBUG
+            fprintf(stderr, "[TORCHFITS_DEBUG] VLA column %s base_type=%d rows=%ld\n", info.name.c_str(), info.base_typecode, rows_to_read);
+            #endif
+            py::list col_list;
+            // Read each row descriptor to determine length, then read that many elements
+            for (long r = 0; r < rows_to_read; ++r) {
+                LONGLONG llength = 0; LONGLONG offset = 0; int st3 = 0; int anynul = 0; int stread = 0;
+                fits_read_descriptll(fptr, info.number, start_row + 1 + r, &llength, &offset, &st3);
+                if (st3) throw_fits_error(st3, "Error reading VLA descriptor for column: " + info.name);
+                long nelem = static_cast<long>(llength);
+        // Map base CFITSIO type from TFORM to torch dtype and allocate 1D tensor for this row
+        int read_code = info.base_typecode;
+        torch::Dtype torch_dtype = get_torch_dtype(read_code);
+                auto opts = torch::TensorOptions().dtype(torch_dtype).device(torch::kCPU);
+                torch::Tensor row_tensor;
+                if (nelem > 0) {
+                    row_tensor = torch::empty({nelem}, opts);
+                    // Read row elements; CFITSIO will convert types as needed based on typecode
+                    stread = 0; anynul = 0;
+            if (fits_read_col(fptr, read_code, info.number, start_row + 1 + r, 1, nelem,
+                                      nullptr, row_tensor.data_ptr(), &anynul, &stread)) {
+                        // Fallback: try reading as double then cast to target dtype
+                        stread = 0; anynul = 0;
+                        torch::Tensor tmp = torch::empty({nelem}, torch::TensorOptions().dtype(torch::kFloat64));
+                        if (fits_read_col(fptr, TDOUBLE, info.number, start_row + 1 + r, 1, nelem,
+                                          nullptr, tmp.data_ptr<double>(), &anynul, &stread)) {
+                            throw_fits_error(stread, "Error reading VLA data for column: " + info.name);
+                        }
+                        row_tensor = tmp.to(torch_dtype);
+                    }
+                } else {
+            row_tensor = torch::empty({0}, torch::TensorOptions().dtype(torch_dtype));
+                }
+                // Device move only supported for tensors; keep list on CPU to avoid fragmented device transfers
+                col_list.append(row_tensor);
             }
-        // }  // End of commented memory pool section
-        
-        // CFITSIO API OPTIMIZATION: Use most efficient column reading method
-        // For large datasets, bulk read operations are more efficient
-        status = 0;
-        
-        if (rows_to_read * info.repeat > 1000) {
-            // Large dataset: Use fits_read_colnull for better null value handling and performance
-            std::vector<char> null_array(rows_to_read * info.repeat, 0);  // Proper null array
-            int anynul = 0;  // Flag for any null values found
-            fits_read_colnull(fptr, info.typecode, info.number, start_row + 1, 1,
-                             rows_to_read * info.repeat,
-                             col_data.data_ptr(), null_array.data(), &anynul, &status);
+            result_dict[py::str(info.name)] = std::move(col_list);
+            continue;
+        }
+        torch::Dtype torch_dtype = get_torch_dtype(info.typecode);
+        torch::TensorOptions opts = torch::TensorOptions().dtype(torch_dtype);
+        if (pin_memory && device == torch::kCPU) opts = opts.pinned_memory(true);
+        torch::Tensor col_data;
+        bool can_bulk = (info.repeat == 1); // Simplest safe case first (scalar columns)
+        if (can_bulk) {
+            col_data = torch::empty({rows_to_read}, opts);
+            int anynul = 0; status = 0;
+            // Single CFITSIO call for entire column segment
+#ifdef TORCHFITS_DEBUG
+            fprintf(stderr, "[TORCHFITS_DEBUG] Read numeric column %s typecode=%d col=%d start=%ld n=%ld\n", info.name.c_str(), info.typecode, info.number, start_row, rows_to_read);
+#endif
+            fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1, rows_to_read,
+                          nullptr, col_data.data_ptr(), &anynul, &status);
+#ifdef TORCHFITS_DEBUG
+            if (!status) fprintf(stderr, "[TORCHFITS_DEBUG] ok column %s\n", info.name.c_str());
+#endif
+            if (status) {
+                // Fallback: retry row-wise in case of intermittent failure
+                status = 0;
+                for (long r=0; r<rows_to_read; ++r) {
+                    int anynul2=0;
+                    if (fits_read_col(fptr, info.typecode, info.number, start_row + 1 + r, 1, 1, nullptr,
+                                      static_cast<char*>(col_data.data_ptr()) + r * torch::elementSize(torch_dtype), &anynul2, &status)) {
+                        throw_fits_error(status, "Error reading column (row-wise fallback): " + info.name);
+                    }
+                }
+            }
         } else {
-            // Small dataset: Use standard fits_read_col
-            fits_read_col(fptr, info.typecode, info.number, start_row + 1, 1,
-                         rows_to_read * info.repeat,
-                         nullptr, col_data.data_ptr(), nullptr, &status);
+            // Existing row-wise path for vector/repeat columns
+            col_data = torch::empty({rows_to_read, info.repeat}, opts);
+            size_t elem_size = elem_size_for(info.typecode);
+            std::vector<char> rowbuf(info.repeat * elem_size);
+            for (long r=0; r<rows_to_read; ++r) {
+                int anynul=0; status=0;
+                fits_read_col(fptr, info.typecode, info.number, start_row + 1 + r, 1, info.repeat, nullptr,
+                               rowbuf.data(), &anynul, &status);
+                if (status) throw_fits_error(status, "Error reading column (row-wise): " + info.name);
+                char* dest = static_cast<char*>(col_data.data_ptr()) + r * info.repeat * elem_size;
+                memcpy(dest, rowbuf.data(), info.repeat * elem_size);
+            }
         }
-        
-        if (status) throw_fits_error(status, "Error reading column: " + info.name);
-        
-        // Transfer to target device
-        if (device != torch::kCPU) {
-            col_data = col_data.to(device);
-        }
-        
-        result_dict[py::str(info.name)] = col_data.squeeze();
+        if (device != torch::kCPU) col_data = col_data.to(device);
+        result_dict[py::str(info.name)] = (info.repeat == 1 ? col_data : col_data.squeeze());
+        ++numeric_processed;
     }
 
     return result_dict;
@@ -306,17 +630,16 @@ pybind11::object read_impl(
     long start_row,
     pybind11::object num_rows,
     size_t cache_capacity,
+    pybind11::object enable_mmap,
+    pybind11::object enable_buffered,
     pybind11::str device_str
 ) {
     torch::Device device(device_str);
-    DEBUG_SCOPE;
-    DEBUG_LOG("=== Starting read_impl ===");
-    std::cerr << "[TORCHFITS:FORCE] Starting read_impl function" << std::endl;
+    // read_impl core logic (debug instrumentation removed)
 
     try {
         std::string filename_or_url_str = py::str(filename_or_url).cast<std::string>();
-        DEBUG_LOG("Filename: " + filename_or_url_str);
-        std::cerr << "[TORCHFITS:FORCE] Filename: " << filename_or_url_str << std::endl;
+    // filename logged previously in debug mode
         
         // Handle remote URLs - download to cache if necessary
         std::string filename = RemoteFetcher::ensure_local(filename_or_url_str);
@@ -354,7 +677,14 @@ pybind11::object read_impl(
         std::string cache_key = cache_key_stream.str();
         auto cached_result = real_cache.try_get(cache_key);
         if (cached_result.has_value()) {
-            DEBUG_LOG("Cache hit for key: " + cache_key);
+            g_last_read_info.filename = filename;
+            g_last_read_info.hdu = hdu_num;
+            g_last_read_info.used_cache = true;
+            g_last_read_info.used_mmap = false;
+            g_last_read_info.used_buffered = false;
+            g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns; // preserve
+            g_last_read_info.path_used = std::string("cache");
+            // cache hit
             // For cache hits, we need to read the header separately
             FITSFileWrapper f(filename);
             int status = 0;
@@ -365,74 +695,96 @@ pybind11::object read_impl(
             return py::make_tuple(py::cast(cached_result.value()), py::cast(header));
         }
 
-        // === PERFORMANCE OPTIMIZATION: Try CFITSIO enhanced reading ===
-        // Temporarily disabled to fix segfault - will re-enable after debugging
-        /*
-        // Check if we should use memory mapping
-        try {
-            torchfits_cfitsio_enhanced::CFITSIOMemoryMapper mapper(filename);
-            DEBUG_LOG("CFITSIOMemoryMapper created successfully");
-            bool use_mapping = mapper.should_use_memory_mapping();
-            DEBUG_LOG("should_use_memory_mapping returned: " + std::to_string(use_mapping));
-            if (use_mapping && start.is_none() && shape.is_none()) {
-                DEBUG_LOG("Using CFITSIO memory mapping for large file");
-                std::vector<long> start_vec, shape_vec;
-                torch::Tensor result = mapper.read_with_memory_mapping(hdu_num, start_vec, shape_vec);
-                torch::Tensor device_result = result.to(device);
-                
-                // Cache the result
-                real_cache.put(cache_key, device_result);
-                
-                // Read header for complete return
-                FITSFileWrapper f(filename);
-                int status = 0;
-                if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
-                    throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
+        // === PERFORMANCE OPTIMIZATION: Optional memory-mapped reading (opt-in) ===
+        const char* mmap_env = std::getenv("TORCHFITS_ENABLE_MMAP");
+        bool mmap_enabled = mmap_env && std::string(mmap_env) == "1";
+        if (!enable_mmap.is_none()) {
+            try { mmap_enabled = enable_mmap.cast<bool>(); } catch (...) {}
+        }
+        if (mmap_enabled && start.is_none() && shape.is_none()) {
+            try {
+                // Only attempt mmap for images (uncompressed primary or image extension)
+                FITSFileWrapper fcheck(filename);
+                int st_m = 0;
+                if (fits_movabs_hdu(fcheck.get(), hdu_num, NULL, &st_m)) {
+                    throw_fits_error(st_m, "Error moving to HDU " + std::to_string(hdu_num));
                 }
-                auto header = read_fits_header(f.get());
-                
-                return py::make_tuple(py::cast(device_result), py::cast(header));
+                int hdu_type_m = 0; st_m = 0; fits_get_hdu_type(fcheck.get(), &hdu_type_m, &st_m);
+                if (st_m) throw_fits_error(st_m, "Error getting HDU type");
+                int stc_m = 0; int is_comp_m = fits_is_compressed_image(fcheck.get(), &stc_m); (void)stc_m;
+                if ((hdu_type_m == IMAGE_HDU) && !is_comp_m) {
+                    // Gate by size threshold (default 50MB, env override TORCHFITS_MMAP_MIN_MB)
+                    size_t file_sz = 0;
+                    {
+                        std::ifstream fs(filename, std::ifstream::ate | std::ifstream::binary);
+                        if (fs.is_open()) { file_sz = static_cast<size_t>(fs.tellg()); fs.close(); }
+                    }
+                    size_t min_mb = 50;
+                    if (const char* env = std::getenv("TORCHFITS_MMAP_MIN_MB")) {
+                        try { min_mb = std::stoul(env); } catch (...) {}
+                    }
+                    if (file_sz < min_mb * 1024ULL * 1024ULL) {
+                        throw std::runtime_error("mmap: below size threshold");
+                    }
+                    torchfits_cfitsio_enhanced::CFITSIOMemoryMapper mapper(filename);
+                    torch::Tensor t = mapper.read_with_memory_mapping(hdu_num);
+                    torch::Tensor device_t = t.to(device);
+                    auto header = read_fits_header(fcheck.get());
+                    // Cache and return
+                    auto& real_cache = torchfits_real_cache::RealSmartCache::get_instance();
+                    real_cache.put(cache_key_stream.str(), device_t);
+                    g_last_read_info.filename = filename;
+                    g_last_read_info.hdu = hdu_num;
+                    g_last_read_info.used_cache = false;
+                    g_last_read_info.used_mmap = true;
+                    g_last_read_info.used_buffered = false;
+                    g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns;
+                    g_last_read_info.path_used = std::string("mmap");
+                    return py::make_tuple(py::cast(device_t), py::cast(header));
+                }
+            } catch (const std::exception&) {
+                // Fall through to buffered/standard path
             }
-        } catch (const std::exception& e) {
-            DEBUG_LOG("Memory mapping failed, falling back: " + std::string(e.what()));
         }
-        */
-        
-        // Try buffered reading with CFITSIO optimizations
-        // Temporarily disabled to fix segfault - will re-enable after debugging  
-        /*
-        try {
-            torchfits_cfitsio_enhanced::CFITSIOBufferedReader buffered_reader(filename);
-            
-            // For image data, use optimized scaling read
-            FITSFileWrapper f(filename);
-            int status = 0;
-            if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
-                throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
-            }
-            
-            int hdu_type;
-            fits_get_hdu_type(f.get(), &hdu_type, &status);
-            if (status) throw_fits_error(status, "Error getting HDU type");
-            
-            if (hdu_type == IMAGE_HDU && start.is_none() && shape.is_none()) {
-                DEBUG_LOG("Using CFITSIO buffered reader with scaling");
-                torch::Tensor result = buffered_reader.read_with_scaling(hdu_num);
-                torch::Tensor device_result = result.to(device);
-                
-                // Cache the result
-                real_cache.put(cache_key, device_result);
-                
-                // Read header for complete return
-                auto header = read_fits_header(f.get());
-                
-                return py::make_tuple(py::cast(device_result), py::cast(header));
-            }
-            
-        } catch (const std::exception& e) {
-            DEBUG_LOG("Buffered reading failed, falling back: " + std::string(e.what()));
+
+        // === PERFORMANCE OPTIMIZATION: Optional CFITSIO enhanced reading (opt-in) ===
+        const char* enh_env = std::getenv("TORCHFITS_ENABLE_BUFFERED");
+        bool enhanced_enabled = enh_env && std::string(enh_env) == "1";
+        if (!enable_buffered.is_none()) {
+            try { enhanced_enabled = enable_buffered.cast<bool>(); } catch (...) {}
         }
-        */
+        if (enhanced_enabled && start.is_none() && shape.is_none()) {
+            try {
+                torchfits_cfitsio_enhanced::CFITSIOBufferedReader buffered_reader(filename);
+                FITSFileWrapper f2(filename);
+                int st_enh = 0;
+                if (fits_movabs_hdu(f2.get(), hdu_num, NULL, &st_enh)) {
+                    throw_fits_error(st_enh, "Error moving to HDU " + std::to_string(hdu_num));
+                }
+                int hdu_type_enh = 0; st_enh = 0; fits_get_hdu_type(f2.get(), &hdu_type_enh, &st_enh);
+                if (st_enh) throw_fits_error(st_enh, "Error getting HDU type");
+                // Prefer tiled path on compressed images
+                int stc_enh = 0; int is_comp = fits_is_compressed_image(f2.get(), &stc_enh); (void)stc_enh;
+                torch::Tensor result;
+                if (hdu_type_enh == IMAGE_HDU || is_comp) {
+                    if (is_comp) result = buffered_reader.read_tiled(hdu_num);
+                    else result = buffered_reader.read_with_scaling(hdu_num);
+                    torch::Tensor device_result = result.to(device);
+                    real_cache.put(cache_key, device_result);
+                    auto header = read_fits_header(f2.get());
+                    g_last_read_info.filename = filename;
+                    g_last_read_info.hdu = hdu_num;
+                    g_last_read_info.used_cache = false;
+                    g_last_read_info.used_mmap = false;
+                    g_last_read_info.used_buffered = true;
+                    g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns;
+                    g_last_read_info.path_used = std::string("buffered");
+                    return py::make_tuple(py::cast(device_result), py::cast(header));
+                }
+            } catch (const std::exception&) {
+                // Fall through to standard path on any failure
+            }
+        }
 
         // === FALLBACK: Standard reading with performance optimization ===
         FITSFileWrapper f(filename);
@@ -448,10 +800,11 @@ pybind11::object read_impl(
         if (file.is_open()) {
             file_size = static_cast<size_t>(file.tellg());
             file.close();
-            DEBUG_LOG("Detected file size: " + std::to_string(file_size) + " bytes");
+            // file size available for potential future optimization
         }
         
-        torchfits_cfitsio_enhanced::CFITSIOPerformanceOptimizer::optimize_file_access(f.get(), file_size);
+    // Temporarily disabled performance optimizer (suspected segfault source for table reads)
+    // torchfits_cfitsio_enhanced::CFITSIOPerformanceOptimizer::optimize_file_access(f.get(), file_size);
 
         auto header = read_fits_header(f.get());
 
@@ -459,17 +812,41 @@ pybind11::object read_impl(
         fits_get_hdu_type(f.get(), &hdu_type, &status);
         if (status) throw_fits_error(status, "Error getting HDU type");
 
+    status = 0;
+    int is_comp_api = fits_is_compressed_image(f.get(), &status); status = 0;
+    bool is_compressed_image = (is_comp_api != 0);
+
+        // If user asked primary but it's empty (NAXIS=0), try advancing to first compressed image extension
         if (hdu_type == IMAGE_HDU) {
-            DEBUG_LOG("Processing IMAGE_HDU");
             int naxis = 0;
             fits_get_img_dim(f.get(), &naxis, &status);
-            DEBUG_LOG("Got naxis = " + std::to_string(naxis));
             if (naxis == 0) {
-                DEBUG_LOG("Empty HDU detected, returning py::none()");
-                return py::make_tuple(py::none(), py::cast(header));
+                // Peek next HDU
+                int total_hdus = 0; fits_get_num_hdus(f.get(), &total_hdus, &status); status = 0;
+                if (total_hdus > 1) {
+                    int hdutype2 = 0;
+                    if (fits_movabs_hdu(f.get(), hdu_num + 1, &hdutype2, &status) == 0) {
+                        int stc = 0; int is_comp2 = fits_is_compressed_image(f.get(), &stc); stc = 0;
+                        auto hdr2 = read_fits_header(f.get());
+                        if (is_comp2) {
+                            // Treat this as image HDU
+                            header = std::move(hdr2);
+                            hdu_type = IMAGE_HDU; // Read using image routines
+                            is_compressed_image = true;
+                        } else {
+                            // Move back to original HDU
+                            status = 0; fits_movabs_hdu(f.get(), hdu_num, NULL, &status); status = 0;
+                        }
+                    }
+                }
+                // If still not a compressed image, return None for empty primary
+                if (!is_compressed_image) {
+                    return py::make_tuple(py::none(), py::cast(header));
+                }
             }
-            DEBUG_LOG("Non-empty HDU, calling read_image_data()");
+        }
 
+        if (hdu_type == IMAGE_HDU || is_compressed_image) {
             std::vector<long> start_vec, shape_vec;
             if (!start.is_none()) {
                 start_vec = start.cast<std::vector<long>>();
@@ -482,13 +859,35 @@ pybind11::object read_impl(
             if (data.defined()) {
                 real_cache.put(cache_key, data);
             }
+            g_last_read_info.filename = filename;
+            g_last_read_info.hdu = hdu_num;
+            g_last_read_info.used_cache = false;
+            g_last_read_info.used_mmap = false;
+            g_last_read_info.used_buffered = false;
+            g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns;
+            g_last_read_info.path_used = std::string("standard");
             
             return py::make_tuple(data, py::cast(header));
         } else if (hdu_type == BINARY_TBL || hdu_type == ASCII_TBL) {
+            // Always proceed to read table data (early return diagnostic removed)
             py::dict table_data = read_table_data(f.get(), device, columns, start_row, num_rows);
+            g_last_read_info.filename = filename;
+            g_last_read_info.hdu = hdu_num;
+            g_last_read_info.used_cache = false;
+            g_last_read_info.used_mmap = false;
+            g_last_read_info.used_buffered = false;
+            g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns;
+            g_last_read_info.path_used = std::string("standard");
             return py::make_tuple(table_data, py::cast(header));
         } else {
             // For unknown HDU types, return header but no data.
+            g_last_read_info.filename = filename;
+            g_last_read_info.hdu = hdu_num;
+            g_last_read_info.used_cache = false;
+            g_last_read_info.used_mmap = false;
+            g_last_read_info.used_buffered = false;
+            g_last_read_info.used_parallel_columns = g_last_read_info.used_parallel_columns;
+            g_last_read_info.path_used = std::string("standard");
             return py::make_tuple(py::none(), py::cast(header));
         }
 

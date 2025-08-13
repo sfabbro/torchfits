@@ -1,27 +1,59 @@
-from .fits_reader import (
+# ruff: noqa: I001  # import order in this file is intentionally constrained by import side-effects
+import os
+import sys
+
+import torch  # noqa: F401  # Ensure torch initializes its ScalarType registry before extension loads
+
+# Early OpenMP duplicate runtime mitigation (must run before importing C++ extension)
+if sys.platform == "darwin" and "KMP_DUPLICATE_LIB_OK" not in os.environ:
+    try:
+        # Heuristic detection (cheap): presence of core torch + any clang/omp hints in sys.modules path strings
+        # We set the var pre-emptively to avoid hard crash during extension import if duplication exists.
+        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    except Exception:
+        pass
+
+# Load extension after torch (import side-effect). Ignore type checkers for binary module symbol.
+from . import fits_reader_cpp  # type: ignore[attr-defined]
+from .fits_reader import (  # Torch-frame / DataFrame helpers
     FITS,
     HDU,
     _clear_cache,
+    dataframe_round_trip,
+    fits_table_to_torch_frame,
     get_dims,
     get_hdu_type,
     get_header,
     get_header_value,
     get_num_hdus,
     read,
+    read_table_with_null_masks,
+    torch_frame_round_trip_file,
+    torch_frame_to_fits,
 )
+
+# Public re-exports
+from .dataset import FITSDataset, FITSItemSpec, FITSIterableDataset
 from .fits_writer import (
-    write,
-    write_mef,
     append_hdu,
-    update_header,
     update_data,
-    write_image,
-    write_table,
+    update_header,
+    write,
     write_cube,
+    write_image,
+    write_mef,
+    write_table,
+    write_variable_length_array,
 )
 from .remote import RemoteFetcher
 from .smart_cache import SmartCache, configure_cache, get_cache, get_cache_manager
-from .table import ColumnInfo, FitsTable, GroupedFitsTable
+from .table import (
+    ColumnInfo,
+    FitsTable,
+    GroupedFitsTable,
+    apply_null_masks_to_dict,
+    pad_ragged,
+)
 from .version import __version__
 from .wcs_utils import (
     get_coordinate_names,
@@ -32,6 +64,20 @@ from .wcs_utils import (
     transform_cutout_wcs,
     world_to_pixel,
 )
+
+
+# Diagnostics passthroughs from extension
+def get_last_read_info():
+    """Return diagnostic information from the C++ reader, if available."""
+    try:
+        return fits_reader_cpp.get_last_read_info()  # type: ignore[attr-defined]
+    except Exception:
+        return {}
+
+# Temporary mitigation for OpenMP duplicate runtime crashes on macOS/conda
+# If multiple libomp instances are detected (common with PyTorch + compiler toolchain),
+# set KMP_DUPLICATE_LIB_OK early. This should be replaced by a proper build / linkage fix.
+## (Old late-setting OpenMP mitigation removed; moved earlier)
 
 
 def get_version():
@@ -65,39 +111,34 @@ def get_dependency_versions():
     return deps
 
 
-def has_feature(feature_name):
-    """Check if a feature is available.
+def cache_stats():
+    """Return current SmartCache statistics as a dictionary.
 
-    Args:
-        feature_name (str): Name of feature to check.
-                            One of: 'remote', 'dataframe', 'examples'
-
-    Returns:
-        bool: True if feature is available, False otherwise
+    Convenience wrapper around get_cache_manager().get_cache_statistics().
     """
-    if feature_name == "remote":
-        try:
-            import fsspec
+    try:
+        mgr = get_cache_manager()
+        return mgr.get_cache_statistics()
+    except Exception:
+        return {}
 
-            return True
-        except ImportError:
-            return False
-    elif feature_name == "dataframe":
-        try:
-            import torch_frame
 
-            return True
-        except ImportError:
-            return False
-    elif feature_name == "examples":
-        try:
-            import matplotlib
+def has_feature(feature_name):
+    """Check if an optional feature is available.
 
-            return True
-        except ImportError:
-            return False
-    else:
+    feature_name: one of {'remote', 'dataframe', 'examples'}.
+    """
+    import importlib.util as _util
+
+    mapping = {
+        "remote": "fsspec",
+        "dataframe": "torch_frame",
+        "examples": "matplotlib",
+    }
+    mod = mapping.get(feature_name)
+    if mod is None:
         return False
+    return _util.find_spec(mod) is not None
 
 
 # Backwards compatibility functions
@@ -135,27 +176,20 @@ def read_table(
 _has_advanced_features = False
 
 # Check for optional dependencies
-try:
-    import torch_frame
+import importlib.util as _util  # noqa: E402  (kept near feature checks)
 
-    _TORCH_FRAME_AVAILABLE = True
-    # Import PyTorch-Frame integration
-    from .table import _fits_table_to_torch_frame, read_dataframe
-except ImportError:
-    _TORCH_FRAME_AVAILABLE = False
+_TORCH_FRAME_AVAILABLE = _util.find_spec("torch_frame") is not None
 
-    # Provide helpful error functions
-    def read_dataframe(*args, **kwargs):
+
+def read_dataframe(*args, **kwargs):
+    """Raise ImportError if PyTorch-Frame isn't installed (placeholder)."""
+    if not _TORCH_FRAME_AVAILABLE:  # pragma: no cover - optional path
         raise ImportError(
-            "PyTorch-Frame is required for read_dataframe(). "
-            "Install with: pip install pytorch-frame"
+            "PyTorch-Frame is required for read_dataframe(). Install with: pip install pytorch-frame"
         )
-
-    def _fits_table_to_torch_frame(*args, **kwargs):
-        raise ImportError(
-            "PyTorch-Frame is required for DataFrame conversion. "
-            "Install with: pip install pytorch-frame"
-        )
+    raise NotImplementedError(
+        "read_dataframe isn't provided in this package; use fits_table_to_torch_frame instead."
+    )
 
 
 __all__ = [
@@ -169,13 +203,16 @@ __all__ = [
     "_clear_cache",
     # Writing functions (v1.0)
     "write",
-    "write_mef", 
+    "write_mef",
     "append_hdu",
     "update_header",
     "update_data",
     "write_image",
-    "write_table", 
+    "write_table",
     "write_cube",
+    "write_variable_length_array",
+    # Null mask helper
+    "read_table_with_null_masks",
     # Backwards compatibility functions
     "read_image",
     "read_table",
@@ -183,6 +220,8 @@ __all__ = [
     "FitsTable",
     "GroupedFitsTable",
     "ColumnInfo",
+    "pad_ragged",
+    "apply_null_masks_to_dict",
     # WCS utilities
     "world_to_pixel",
     "pixel_to_world",
@@ -199,6 +238,11 @@ __all__ = [
     "get_cache_manager",
     # PyTorch-Frame integration (optional)
     "read_dataframe",
+    # Round-trip helpers
+    "dataframe_round_trip",
+    "fits_table_to_torch_frame",
+    "torch_frame_to_fits",
+    "torch_frame_round_trip_file",
     # Low-level classes
     "FITS",
     "HDU",
@@ -208,6 +252,8 @@ __all__ = [
     # Version
     "__version__",
 ]
+
+__all__ += ["FITSItemSpec", "FITSDataset", "FITSIterableDataset"]
 
 # Add advanced features to __all__ if available
 # (Currently no advanced features implemented)

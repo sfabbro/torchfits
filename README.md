@@ -8,16 +8,16 @@
 
 ## Features
 
-*   **Fast FITS I/O:** Uses a highly optimized C++ backend (powered by `cfitsio`) for rapid data access.
-*   **Direct PyTorch Tensors:** Reads FITS data directly into PyTorch tensors, avoiding unnecessary data copies.
-*   **Flexible Cutout Reading:**  Supports CFITSIO-style cutout strings (e.g., `'myimage.fits[1][10:20,30:40]'`).
-*   **Simplified Cutout Definition:** Provides an easy way to read rectangular regions using `start` and `shape` parameters.
-*   **Automatic Data Type Handling:** Automatically determines the correct PyTorch data type.
-*   **Image, Cube, and Table Support:** Reads data from image HDUs (1D, 2D, and 3D) and binary/ASCII table HDUs.
-*   **WCS Support:** Includes functions for world-to-pixel and pixel-to-world coordinate transformations using `wcslib`. WCS information is automatically updated when reading cutouts. (Note: these functions are internal, WCS use is integrated directly into `read`).
-*   **Header Access:** Provides functions to access the full FITS header as a Python dictionary, or to retrieve individual header keyword values.
-*   **HDU Information:** Functions to get the number of HDUs, HDU types, and image dimensions.
-*   **Designed for PyTorch Datasets:** The API is designed to integrate seamlessly with PyTorch's `Dataset` and `DataLoader` classes, including distributed data loading.
+* **Fast FITS I/O:** Uses a highly optimized C++ backend (powered by `cfitsio`) for rapid data access.
+* **Direct PyTorch Tensors:** Reads FITS data directly into PyTorch tensors, avoiding unnecessary data copies.
+* **Flexible Cutout Reading:** Supports CFITSIO-style cutout strings (e.g., `'myimage.fits[1][10:20,30:40]'`).
+* **Simplified Cutout Definition:** Provides an easy way to read rectangular regions using `start` and `shape` parameters.
+* **Automatic Data Type Handling:** Automatically determines the correct PyTorch data type.
+* **Image, Cube, and Table Support:** Reads data from image HDUs (1D, 2D, and 3D) and binary/ASCII table HDUs.
+* **WCS Support:** Includes functions for world-to-pixel and pixel-to-world coordinate transformations using `wcslib`. WCS information is automatically updated when reading cutouts. (Note: these functions are internal, WCS use is integrated directly into `read`).
+* **Header Access:** Provides functions to access the full FITS header as a Python dictionary, or to retrieve individual header keyword values.
+* **HDU Information:** Functions to get the number of HDUs, HDU types, and image dimensions.
+* **Designed for PyTorch Datasets:** The API is designed to integrate seamlessly with PyTorch's `Dataset` and `DataLoader` classes, including distributed data loading.
 * **HDU selection**: Select HDU either by name or number.
 
 ## Installation
@@ -27,21 +27,25 @@
 Before installing `torchfits`, you need to install the required system libraries:
 
 **Linux (Debian/Ubuntu):**
+
 ```bash
 sudo apt-get install libcfitsio-dev libwcs-dev
 ```
 
 **Linux (Fedora/CentOS/RHEL):**
+
 ```bash
 sudo yum install cfitsio-devel wcslib-devel
 ```
 
 **macOS (Homebrew):**
+
 ```bash
 brew install cfitsio wcslib
 ```
 
 **macOS (MacPorts):**
+
 ```bash
 sudo port install cfitsio wcslib
 ```
@@ -100,6 +104,191 @@ print(f"RA shape: {ra_dec['RA'].shape}")
 first_1000 = torchfits.read("catalog.fits", hdu="CATALOG", num_rows=1000)
 ```
 
+### Variable-Length Array (VLA) columns
+
+Binary tables with variable-length array columns are supported. When reading a VLA column, `torchfits.read(..., format='tensor')` returns a Python list of 1D tensors: one tensor per row.
+
+You can easily pad/densify these ragged sequences with the `pad_ragged` helper:
+
+```python
+import torch, torchfits as tf
+
+# Write a VLA test file (one ragged array per row)
+arrays = [torch.arange(i, dtype=torch.float32) for i in range(5)]
+tf.write_variable_length_array("vla.fits", arrays, header={"EXTNAME": "VLA"})
+
+# Read back
+tbl = tf.read("vla.fits", hdu="VLA")
+vla_col = tbl["ARRAY"]  # list[Tensor], length == nrows
+
+# Convert to dense [rows, max_len] with lengths
+from torchfits import pad_ragged
+padded, lengths = pad_ragged(vla_col, pad_value=0.0)
+print(padded.shape, lengths)
+```
+
+Notes:
+
+* The base numeric dtype of the VLA column is preserved (writer uses double by default).
+* Table operations like filtering and sorting in `FitsTable` work with list-valued columns.
+* Keep VLA columns as ragged lists when possible; use `pad_ragged` for batching models that need dense tensors.
+
+### Batched reads and stacking
+
+Use the high-level dataset/batch helpers to read across many files efficiently. When all outputs are tensors of the same shape and dtype, you can request a stacked tensor.
+
+```python
+from torchfits.dataset import BatchReadSpec, read_batch
+
+specs = [
+    BatchReadSpec(path="im1.fits", hdu=0, start=(0,0), shape=(64,64)),
+    BatchReadSpec(path="im2.fits", hdu=0, start=(0,0), shape=(64,64)),
+]
+
+# Returns a tensor with shape [N, H, W]
+stacked = read_batch(specs, stack=True)
+
+# If you need to preserve headers when stacking image outputs,
+# request a tuple (stacked_tensor, headers_list):
+stacked, headers = read_batch(specs, stack=True, preserve_headers_on_stack=True)
+```
+
+For table cutouts, `read_multi_table_cutouts(..., stack=True)` stacks per-column tensors when shapes and dtypes match across the batch, returning a dict of stacked tensors keyed by column name. If you also request null masks (see below), stacking returns a tuple `(stacked_data_dict, stacked_masks_dict)`.
+
+### Column slicing aliases for tables
+
+Instead of listing column names, you can select a contiguous range of columns by index using `col_start`/`col_count`.
+
+```python
+from torchfits.dataset import TableCutoutSpec, read_multi_table_cutouts, BatchReadSpec, read_batch
+
+# Read first two columns (indices 0 and 1) for 5 rows
+spec = TableCutoutSpec(path="tab.fits", hdu=1, row_start=0, row_count=5, col_start=0, col_count=2)
+sub = read_multi_table_cutouts([spec], parallel=False)[0]
+
+# Same idea via batch read helper
+bspec = BatchReadSpec(path="tab.fits", hdu=1, row_start=10, row_count=3, col_start=1, col_count=1)
+row = read_batch([bspec], parallel=False)[0]  # dict with a single column
+
+### Null handling for tables (TNULL masks)
+
+When tables are written with integer null sentinels (TNULLn), torchfits preserves the sentinel values in the data tensors and exposes boolean null masks separately.
+
+- Low-level helper: `from torchfits import read_table_with_null_masks` returns `(data_dict, header, masks_dict)`.
+- Convenience cutouts: `read_table_cutout(..., return_null_masks=True)` returns `(data_dict, masks_dict)`.
+- Batched cutouts: `read_multi_table_cutouts([...], stack=True)` will stack both data and masks when `return_null_masks=True` is set in each `TableCutoutSpec`, returning `(stacked_data_dict, stacked_masks_dict)`.
+
+Example:
+
+```python
+from torchfits.dataset import read_table_cutout, TableCutoutSpec, read_multi_table_cutouts
+
+# Single cutout with masks
+data, masks = read_table_cutout("catalog.fits", hdu=1, row_start=0, row_count=100, return_null_masks=True)
+val_mask = masks.get("VAL")  # True where null
+
+# Batched stacking with masks
+specs = [
+    TableCutoutSpec(path="catalog1.fits", hdu=1, row_start=0, row_count=32, return_null_masks=True),
+    TableCutoutSpec(path="catalog2.fits", hdu=1, row_start=0, row_count=32, return_null_masks=True),
+]
+stacked_data, stacked_masks = read_multi_table_cutouts(specs, parallel=True, stack=True)
+
+# Apply masks to replace nulls with NaN in a dict-of-tensors
+from torchfits import apply_null_masks_to_dict
+clean = apply_null_masks_to_dict(data, masks)
+
+# Or for FitsTable objects
+from torchfits import FitsTable
+ft = FitsTable(data)
+ft_clean = ft.with_applied_null_masks(masks)
+```
+```
+
+## Writing & Updating FITS
+
+Use the unified write() API to create images, tables, and multi-extension files. You can also append new HDUs and update headers or pixel data in-place.
+
+Basic image write and append:
+
+```python
+import torch, torchfits as tf
+
+# Write an image (primary)
+img = torch.randint(0, 1000, (32, 32), dtype=torch.int16)
+tf.write("image.fits", img, {"OBJECT": "UnitTest"})
+
+# Append another image as a new HDU
+extra = torch.ones(16, 16)
+tf.write("image.fits", extra, {"EXTNAME": "SCI"}, append=True)
+```
+
+Write a table (dict) with null sentinels and append a second table:
+
+```python
+import torch, torchfits as tf
+
+table = {
+    "ID": torch.tensor([1,2,3,4], dtype=torch.int32),
+    "NAME": ["Alpha", "Beta", "Gamma", ""],  # strings supported
+    "VAL": torch.tensor([10, -9999, 30, -9999], dtype=torch.int32),
+}
+tf.write("catalog.fits", table, {"EXTNAME": "CAT"}, null_sentinels={"VAL": -9999})
+
+# Append another table HDU
+more = {"A": torch.arange(5), "B": torch.arange(5,10)}
+tf.write("catalog.fits", more, {"EXTNAME": "CAT2"}, append=True)
+```
+
+Append a FitsTable using per-column metadata (units/descriptions/null_value) via ColumnInfo:
+
+```python
+from torchfits import FitsTable, ColumnInfo
+
+data = {
+    "RA": torch.tensor([1.0, 2.0, 3.0]),
+    "DEC": torch.tensor([-1.0, -2.0, -3.0]),
+}
+meta = {
+    "RA": ColumnInfo("RA", dtype=torch.float32, unit="deg", description="Right Ascension"),
+    "DEC": ColumnInfo("DEC", dtype=torch.float32, unit="deg", description="Declination"),
+}
+ft = FitsTable(data, metadata=meta)
+tf.write("catalog.fits", ft, {"EXTNAME": "META"}, append=True)
+```
+
+Update headers and data in-place:
+
+```python
+# Update/add header keywords on a given HDU (by index or EXTNAME)
+tf.update_header("image.fits", {"OBJECT": "Updated", "EXPTIME": "42"}, hdu=1)
+
+# Update entire image data
+tf.update_data("image.fits", torch.zeros(32,32), hdu=1)
+
+# Update a sub-region (start is 0-based; shape in pixels)
+tf.update_data("image.fits", torch.full((8,8), 5.0), hdu=1, start=[4,4], shape=[8,8])
+```
+
+Notes:
+
+* write() auto-detects HDU type (image vs table) for tensors, dicts, and FitsTable.
+* For tables, you can pass null_sentinels to emit TNULLn and preserve masks; FitsTable ColumnInfo.null_value is also honored when present.
+* Compression writing is supported (GZIP, RICE, HCOMPRESS). When reading, if the primary HDU is empty and the next HDU is a tile‑compressed image, `read(hdu=0)` will transparently return that image.
+
+Write a 3D cube:
+
+```python
+import torch, torchfits as tf
+
+cube = torch.randn(4, 64, 64)
+tf.write_cube("cube.fits", cube, header={"OBJECT": "Demo"}, overwrite=True)
+# Later
+data, hdr = tf.read("cube.fits")
+print(data.shape)
+```
+
+
 ### File Information
 
 ```python
@@ -148,6 +337,8 @@ The `examples/` directory contains several example scripts demonstrating various
 * **`example_dataset.py`:**  A basic example of integrating `torchfits` with PyTorch's `Dataset` and `DataLoader` for efficient data loading.
 * **`example_mnist.py`:** A complete, self-contained example that downloads the MNIST dataset, converts it to FITS, and trains a simple CNN classifier using `torchfits` for FITS I/O.
 * **`example_sdss_classification.py`:**  A complete example that downloads a small subset of SDSS spectroscopic data, loads the spectra using `torchfits`, and trains a simple CNN classifier to distinguish between stars, galaxies, and quasars.
+* **`example_variable_length_write.py`:** Write a variable-length array table (ragged arrays per row) and read it back.
+* **`example_remote_caching.py`:** Read a remote FITS over HTTPS with SmartCache, showing cache hits and statistics.
 
 To run the examples, navigate to the `examples/` directory and run, for instance:
 
@@ -248,9 +439,97 @@ data, header = torchfits.read(fsspec_params)
 print(f"Data shape: {data.shape}, Header: {header}")
 ```
 
+## Remote & Caching
+
+TorchFits includes a production-ready SmartCache that can transparently fetch and cache remote files and also cache decoded tensors/tables when beneficial.
+
+* Environment variable: set TORCHFITS_CACHE to control the cache base directory.
+* Public helpers: configure_cache(), get_cache(), and get_cache_manager() for stats and maintenance.
+* Protocols: file, http(s), s3, gs (gcs), and other fsspec-backed URIs when fsspec and the relevant plugins are installed.
+
+Quick start:
+
+```python
+import os, torchfits as tf
+os.environ["TORCHFITS_CACHE"] = os.path.expanduser("~/.cache/torchfits")
+tf.configure_cache(max_size_gb=2.0)
+
+url = "https://example.org/data/sample.fits"
+data, header = tf.read(url)
+print(tf.get_cache_manager().get_cache_statistics())
+```
+
+See examples/example_remote_caching.py for a runnable demo.
+
+## Performance knobs
+
+TorchFits includes opt-in switches to experiment with advanced CFITSIO paths:
+
+* TORCHFITS_ENABLE_MMAP=1 or read(..., enable_mmap=True): opt-in memory-mapped full-image read for uncompressed images. Only applies to full-image reads; compressed images or subsets fall back.
+* TORCHFITS_ENABLE_BUFFERED=1 — enable buffered/tiled image read fast-paths (no cutouts). This prefers tiled reads for compressed images and scaled reads for uncompressed images. Falls back automatically on any error.
+* TORCHFITS_PAR_READ=1 — attempt parallel scalar column reads for wide tables (4+ scalar numeric columns).
+* TORCHFITS_PIN_MEMORY=1 — allocate pinned host memory for CPU tensors to improve host→GPU transfer via .to(device).
+
+These are safe to toggle off at any time; the default behavior is conservative.
+
+## Parity & Benchmarks Artifacts
+
+You can generate quick project artifacts to track API parity and basic I/O performance:
+
+* API Parity Matrix (symbols implemented vs tests covered):
+    * Run: pixi run parity-matrix
+    * Output: artifacts/validation/parity_matrix.md (+ JSON sidecar)
+
+* Basic I/O micro-benchmarks (reads example files if present):
+    * Run: pixi run benchmark-json
+    * Output: artifacts/validation/bench_basic.jsonl
+
+* Buffered vs default image read (micro):
+    * Run: pixi run bench-buffered
+    * Output: artifacts/validation/bench_buffered.jsonl
+
+* Memory-mapped vs default image read (micro):
+    * Run: pixi run bench-mmap
+    * Output: artifacts/validation/bench_mmap.jsonl
+
+These assist validation toward the v1.0 roadmap goals.
+
 ## Contributing
 
 Contributions are welcome! Traditional GitHub contributions style welcome.
+
+### Compression Support & Tests
+
+TorchFits supports writing compressed FITS images using CFITSIO tile compression (GZIP, RICE, HCOMPRESS) and reading them transparently. By convention, tile‑compressed images are stored in an extension while the primary HDU may be empty. TorchFits detects this and, when you call `read(hdu=0)`, will auto‑advance to the first compressed image extension and return its data.
+
+Why they are skipped by default:
+
+* Some platforms (notably macOS with both Homebrew and certain PyPI wheels installed) may load two OpenMP runtimes, leading to initialization errors or sporadic crashes inside dependency libraries unrelated to `torchfits` core.
+* Core (non‑compression) functionality should remain testable and reliable while the environment issue is investigated.
+
+How to run the compression tests locally (opt‑in):
+
+```bash
+export TORCHFITS_ENABLE_COMPRESSION_TESTS=1
+pixi run test-safe -k compression
+```
+
+or with plain pytest:
+
+```bash
+TORCHFITS_ENABLE_COMPRESSION_TESTS=1 pytest -k compression
+```
+
+If your environment is healthy (single OpenMP runtime), the tests will execute; otherwise you may see a skip or an early diagnostic from `torchfits.openmp_guard`.
+
+Troubleshooting duplicate OpenMP runtime (macOS example):
+
+1. Prefer a single distribution source for scientific packages (either all conda / pixi, or all PyPI wheels). Mixing can introduce another `libomp`.
+2. Ensure Homebrew's `libomp` path is not redundantly injected if a wheel already bundles one.
+3. Use `otool -L $(python -c 'import torch; import inspect, os; import torchfits; print(torchfits.__file__)')` to inspect linked libraries (advanced).
+4. Temporarily unset `KMP_DUPLICATE_LIB_OK` if previously exported; rely on detection instead of forcing acceptance.
+
+Once the broader environment duplication is resolved the default skip may be removed and failures will then guard compression regressions. Compression round‑trip tests assert lossless equality for integer images (GZIP/RICE) and tolerance‑based comparisons for floating point with HCOMPRESS.
 
 ## License
 

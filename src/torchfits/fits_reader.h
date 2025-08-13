@@ -43,7 +43,12 @@ pybind11::object read_impl(
     long start_row,
     pybind11::object num_rows,
     size_t cache_capacity,
+    pybind11::object enable_mmap,
+    pybind11::object enable_buffered,
     pybind11::str device_str
 );
+
+// Expose last read path/flags for diagnostics/benchmarks
+pybind11::dict get_last_read_info();
 
 #endif // TORCHFITS_FITS_READER_H

@@ -231,6 +231,26 @@ jobs:
         echo "Documentation build would go here"
         echo "README.md exists: $(ls -la README.md)"
 
+  parity-matrix:
+    name: API Parity Matrix
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Generate parity matrix
+      run: |
+        python scripts/gen_parity_matrix.py --output artifacts/validation/parity_matrix.md
+    - name: Upload parity artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: parity-matrix
+        path: |
+          artifacts/validation/parity_matrix.md
+          artifacts/validation/parity_matrix.json
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest

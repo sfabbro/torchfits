@@ -4,7 +4,7 @@ Enhanced WCS utilities for torchfits
 
 import torch
 
-from . import fits_reader_cpp
+from . import fits_reader_cpp  # type: ignore
 
 
 def world_to_pixel(world_coords, header):
@@ -126,7 +126,7 @@ def transform_cutout_wcs(header, start, shape):
     new_header = header.copy()
 
     # Update reference pixels for cutout
-    for i, (s, sh) in enumerate(zip(start, shape), 1):
+    for i, (s, sh) in enumerate(zip(start, shape, strict=True), 1):
         crpix_key = f"CRPIX{i}"
         if crpix_key in new_header:
             # Adjust reference pixel for cutout offset (convert to 1-based)

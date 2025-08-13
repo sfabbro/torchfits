@@ -33,8 +33,8 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
     // Initialize performance optimizations
     // torchfits_perf::initialize_performance_optimizations();  // Disabled temporarily
 
-    m.def("read", [](py::object filename_or_url, py::object hdu, py::object start, py::object shape, py::object columns, long start_row, py::object num_rows, size_t cache_capacity, py::str device_str) {
-        return read_impl(filename_or_url, hdu, start, shape, columns, start_row, num_rows, cache_capacity, device_str);
+    m.def("read", [](py::object filename_or_url, py::object hdu, py::object start, py::object shape, py::object columns, long start_row, py::object num_rows, size_t cache_capacity, py::object enable_mmap, py::object enable_buffered, py::str device_str) {
+        return read_impl(filename_or_url, hdu, start, shape, columns, start_row, num_rows, cache_capacity, enable_mmap, enable_buffered, device_str);
     },
         py::arg("filename_or_url"),
         py::arg("hdu") = 1,
@@ -44,9 +44,13 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         py::arg("start_row") = 0,
         py::arg("num_rows") = py::none(),
         py::arg("cache_capacity") = 0,
+        py::arg("enable_mmap") = py::none(),
+        py::arg("enable_buffered") = py::none(),
         py::arg("device") = "cpu",
         "Reads data from a FITS file."
     );
+
+    m.def("get_last_read_info", &get_last_read_info, "Get diagnostic info about the last read path used.");
 
     m.def("get_header", [](const std::string& filename, py::object hdu_spec) {
         int hdu_num = 1;
@@ -110,14 +114,26 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         "Write multiple tensors to a multi-extension FITS file."
     );
 
+
     m.def("write_table_to_fits", &torchfits_writer::write_table_to_fits,
         py::arg("filename"),
         py::arg("table_data"),
         py::arg("header") = std::map<std::string, std::string>(),
         py::arg("column_units") = std::vector<std::string>(),
         py::arg("column_descriptions") = std::vector<std::string>(),
+        py::arg("null_sentinels") = std::map<std::string, long>(),
         py::arg("overwrite") = false,
-        "Write a dictionary of tensors (table data) to a FITS table."
+        "Write a dictionary of tensors (table/list[str]) data to a FITS table with optional null sentinels."
+    );
+
+    m.def("append_table_to_fits", &torchfits_writer::append_table_to_fits,
+        py::arg("filename"),
+        py::arg("table_data"),
+        py::arg("header") = std::map<std::string, std::string>(),
+        py::arg("column_units") = std::vector<std::string>(),
+        py::arg("column_descriptions") = std::vector<std::string>(),
+        py::arg("null_sentinels") = std::map<std::string, long>(),
+        "Append a table (dictionary of tensors) to an existing FITS file as a new table HDU."
     );
 
     m.def("write_fits_table", &torchfits_writer::write_fits_table,

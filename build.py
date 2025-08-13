@@ -115,32 +115,45 @@ def validate_dependencies():
     return cfitsio_includes, wcslib_includes
 
 def get_platform_specific_settings():
-    """Get platform-specific build settings."""
+    """Get platform-specific build settings.
+
+    Returns
+    -------
+    (libraries, extra_compile_args, extra_link_args)
+    """
     libraries = ["cfitsio", "wcs", "m"]
     extra_compile_args = ['-std=c++17', '-O2']
-    
-    if platform.system() == "Windows":
-        # Windows-specific settings
+    extra_link_args: list[str] = []
+
+    system = platform.system()
+    if system == "Windows":
         libraries = ["cfitsio", "wcs"]
         extra_compile_args = ['/std:c++17', '/O2']
-    elif platform.system() == "Darwin":
-        # macOS-specific settings
+    elif system == "Darwin":
         libraries.append("curl")
+        # Normalize deployment target to suppress linker warnings
+        target = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "14.0")
+        os.environ["MACOSX_DEPLOYMENT_TARGET"] = target
+        min_flag = f"-mmacosx-version-min={target}"
+        if min_flag not in extra_compile_args:
+            extra_compile_args.append(min_flag)
+        if min_flag not in extra_link_args:
+            extra_link_args.append(min_flag)
     else:
-        # Linux and others
         libraries.append("curl")
-    
-    return libraries, extra_compile_args
+
+    return libraries, extra_compile_args, extra_link_args
+
 
 def create_extension():
     """Create the C++ extension module."""
     CppExtension, BuildExtension = get_torch_extensions()
     
-    # Validate dependencies first
+    # Validate dependencies first (always rely on system / preinstalled libs)
     cfitsio_includes, wcslib_includes = validate_dependencies()
     
     # Get platform-specific settings
-    libraries, platform_compile_args = get_platform_specific_settings()
+    libraries, platform_compile_args, platform_link_args = get_platform_specific_settings()
     
     # Debug settings
     debug_mode = os.environ.get('DEBUG', '0') == '1'
@@ -156,6 +169,18 @@ def create_extension():
             extra_compile_args.extend(['/DNDEBUG'])
         else:
             extra_compile_args.extend(['-DNDEBUG'])
+
+    # Torch library path for RPATH so we don't rely on symlinks
+    torch_lib_path = None
+    try:
+        import torch
+        torch_lib_path = os.path.join(os.path.dirname(torch.__file__), 'lib')
+        if os.path.isdir(torch_lib_path):
+            if torch_lib_path not in platform_link_args:
+                # Add as rpath
+                platform_link_args.append(f"-Wl,-rpath,{torch_lib_path}")
+    except Exception:
+        pass
 
     return CppExtension(
         "torchfits.fits_reader_cpp",
@@ -182,6 +207,8 @@ def create_extension():
         ],
         libraries=libraries,
         extra_compile_args=extra_compile_args,
+    extra_link_args=platform_link_args,
+    # No extra_objects; we never build vendored cfitsio/wcslib
         language="c++",
     )
 

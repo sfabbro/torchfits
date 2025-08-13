@@ -24,11 +24,11 @@ import sys
 import tempfile
 import threading
 import time
-import warnings
 import weakref
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import torch
 
@@ -45,7 +45,7 @@ class CacheEntry:
     data_type: str
     creation_time: float
     priority: int = 0  # Higher = more important
-    checksum: Optional[str] = None  # For corruption detection
+    checksum: str | None = None  # For corruption detection
     is_valid: bool = True  # For marking corrupted entries
 
 
@@ -62,14 +62,17 @@ class CacheStats:
 
     @property
     def hit_rate(self) -> float:
+        """Return cache hit ratio in [0,1]."""
         total = self.hits + self.misses
         return self.hits / total if total > 0 else 0.0
 
     @property
     def uptime(self) -> float:
+        """Return uptime in seconds since stats creation."""
         return time.time() - self.start_time
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize stats into a plain dictionary."""
         return {
             "hits": self.hits,
             "misses": self.misses,
@@ -95,7 +98,7 @@ class SmartCache:
 
     def __init__(
         self,
-        cache_dir: Optional[str] = None,
+        cache_dir: str | None = None,
         max_size_gb: float = 5.0,
         max_files: int = 1000,
         cleanup_threshold: float = 0.8,
@@ -126,9 +129,9 @@ class SmartCache:
         self.enable_prefetch = enable_prefetch
 
         # Cache metadata
-        self.entries: Dict[str, CacheEntry] = {}
+        self.entries: dict[str, CacheEntry] = {}
         self.total_size = 0
-        self.access_patterns: Dict[str, List[float]] = {}
+        self.access_patterns: dict[str, list[float]] = {}
 
         # Thread safety
         self._lock = threading.RLock()
@@ -148,9 +151,15 @@ class SmartCache:
 
     def _get_default_cache_dir(self) -> str:
         """Get default cache directory."""
-        cache_base = os.environ.get("TORCHFITS_CACHE_DIR")
+        # Preferred per PLAN.md
+        cache_base = os.environ.get("TORCHFITS_CACHE")
         if cache_base:
             return os.path.join(cache_base, "smart_cache")
+
+        # Back-compat env var
+        legacy = os.environ.get("TORCHFITS_CACHE_DIR")
+        if legacy:
+            return os.path.join(legacy, "smart_cache")
 
         # Use platform-appropriate cache directory
         if sys.platform.startswith("win"):
@@ -166,6 +175,22 @@ class SmartCache:
 
         return os.path.join(cache_base, "smart_cache")
 
+    @staticmethod
+    def _sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while True:
+                b = f.read(chunk_size)
+                if not b:
+                    break
+                h.update(b)
+        return h.hexdigest()
+
+    def _key_to_relpath(self, key: str) -> Path:
+        # Two-level sharding to avoid large fanout per directory
+        a, b = key[:2], key[2:4]
+        return Path(a) / b / key
+
     def _load_metadata(self):
         """Load cache metadata from disk."""
         metadata_file = self.cache_dir / "cache_metadata.json"
@@ -173,7 +198,7 @@ class SmartCache:
             return
 
         try:
-            with open(metadata_file, "r") as f:
+            with open(metadata_file) as f:
                 data = json.load(f)
 
             for entry_data in data.get("entries", []):
@@ -204,6 +229,8 @@ class SmartCache:
                         "data_type": entry.data_type,
                         "creation_time": entry.creation_time,
                         "priority": entry.priority,
+                        "checksum": entry.checksum,
+                        "is_valid": entry.is_valid,
                     }
                     for entry in self.entries.values()
                 ],
@@ -220,7 +247,7 @@ class SmartCache:
     def _generate_key(
         self,
         source: str,
-        hdu: Optional[int] = None,
+        hdu: int | None = None,
         format_type: str = "tensor",
         **kwargs,
     ) -> str:
@@ -234,6 +261,145 @@ class SmartCache:
 
         key_str = json.dumps(key_data, sort_keys=True)
         return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _ensure_dirs_for_key(self, key: str) -> Path:
+        rel = self._key_to_relpath(key)
+        target_dir = self.cache_dir / rel.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / rel.name
+
+    def put_file(
+        self,
+        source_path: str,
+        key: str | None = None,
+        *,
+        data_type: str = "file",
+        priority: int = 0,
+        compute_checksum: bool = True,
+    ) -> CacheEntry:
+        """Copy a file into cache under deterministic layout and register entry."""
+        if key is None:
+            key = self._generate_key(source_path, hdu=None, format_type=data_type)
+        target_path = str(self._ensure_dirs_for_key(key))
+        # Copy into place
+        shutil.copy2(source_path, target_path)
+        file_size = os.path.getsize(target_path)
+        checksum = self._sha256(target_path) if compute_checksum else None
+        now = time.time()
+        entry = CacheEntry(
+            key=key,
+            file_path=target_path,
+            access_count=0,
+            last_access=now,
+            file_size=file_size,
+            data_type=data_type,
+            creation_time=now,
+            priority=priority,
+            checksum=checksum,
+            is_valid=True,
+        )
+        with self._lock:
+            self.entries[key] = entry
+            self.total_size += file_size
+            self._save_metadata()
+        return entry
+
+    def _validate_entry(self, entry: CacheEntry) -> bool:
+        if not os.path.exists(entry.file_path):
+            entry.is_valid = False
+            return False
+        if entry.checksum:
+            try:
+                current = self._sha256(entry.file_path)
+                ok = current == entry.checksum
+            except Exception:
+                ok = False
+            entry.is_valid = ok
+            return ok
+        return True
+
+    def get_entry(self, key: str) -> CacheEntry | None:
+        """Return the cache entry if valid; purge and return None otherwise."""
+        with self._lock:
+            entry = self.entries.get(key)
+        if not entry:
+            return None
+        if not self._validate_entry(entry):
+            # Remove stale/corrupt file and metadata
+            try:
+                if os.path.exists(entry.file_path):
+                    os.remove(entry.file_path)
+            except Exception:
+                pass
+            with self._lock:
+                self.total_size -= max(0, entry.file_size)
+                self.entries.pop(key, None)
+                self._save_metadata()
+            return None
+        # Touch access
+        entry.access_count += 1
+        entry.last_access = time.time()
+        self._save_metadata()
+        return entry
+
+    def get_or_fetch_file(
+        self, source: str, *, hdu: int | None = None, format_type: str = "file"
+    ) -> str:
+        """Return local cached path for source. If missing or invalid, fetch/copy anew.
+
+        For local paths, performs a copy into cache. For http(s), downloads via urllib.
+        """
+        key = self._generate_key(source, hdu=hdu, format_type=format_type)
+        entry = self.get_entry(key)
+        if entry is not None:
+            return entry.file_path
+
+        # Miss or invalid: fetch into temp file then put
+        tmp = None
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(source)
+            scheme = parsed.scheme
+            if scheme in ("http", "https"):
+                import urllib.request
+
+                tmp_fd, tmp = tempfile.mkstemp(suffix=".fits")
+                os.close(tmp_fd)
+                urllib.request.urlretrieve(source, tmp)
+                src = tmp
+            elif scheme in ("s3", "gs", "gcs", "file"):
+                try:
+                    import fsspec  # optional dependency
+                except Exception as e:
+                    raise ImportError(
+                        "Reading from fsspec URIs requires fsspec (and s3fs/gcsfs as needed)"
+                    ) from e
+                tmp_fd, tmp = tempfile.mkstemp(
+                    suffix=os.path.splitext(parsed.path)[1] or ".fits"
+                )
+                os.close(tmp_fd)
+                fs, _, paths = fsspec.get_fs_token_paths(source)
+                if not paths:
+                    raise FileNotFoundError(f"No path resolved for {source}")
+                with fs.open(paths[0], "rb") as fsrc, open(tmp, "wb") as fdst:
+                    while True:
+                        chunk = fsrc.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        fdst.write(chunk)
+                src = tmp
+            else:
+                # Treat as local filesystem path
+                src = source
+            entry = self.put_file(src, key=key, data_type=format_type)
+            return entry.file_path
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
 
     def _should_cache(self, source: str, data_size_bytes: int) -> bool:
         """Determine if data should be cached."""
@@ -304,7 +470,7 @@ class SmartCache:
         self,
         source: str,
         loader_func: Callable[[], Any],
-        hdu: Optional[int] = None,
+        hdu: int | None = None,
         format_type: str = "tensor",
         priority: int = 0,
         **kwargs,
@@ -398,7 +564,7 @@ class SmartCache:
                     )
                 else:
                     data_size = sys.getsizeof(data)
-            except:
+            except Exception:
                 data_size = 1024 * 1024  # 1MB estimate
 
             # Cache if appropriate
@@ -450,7 +616,7 @@ class SmartCache:
 
             return data
 
-    def prefetch(self, sources: List[str], loader_func: Callable[[str], Any], **kwargs):
+    def prefetch(self, sources: list[str], loader_func: Callable[[str], Any], **kwargs):
         """
         Prefetch data for a list of sources.
 
@@ -463,7 +629,7 @@ class SmartCache:
 
         for i, source in enumerate(sources):
             try:
-                self.get(source, lambda: loader_func(source), **kwargs)
+                self.get(source, lambda s=source: loader_func(s), **kwargs)
                 if i % 10 == 0:
                     print(f"  Prefetched {i+1}/{len(sources)}")
             except Exception as e:
@@ -475,7 +641,7 @@ class SmartCache:
             for entry in self.entries.values():
                 try:
                     os.remove(entry.file_path)
-                except:
+                except Exception:
                     pass
 
             self.entries.clear()
@@ -486,7 +652,7 @@ class SmartCache:
             self._save_metadata()
             print("Cache cleared")
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         with self._lock:
             total_accesses = sum(entry.access_count for entry in self.entries.values())
@@ -504,7 +670,7 @@ class SmartCache:
 
 
 # Global cache instance
-_global_cache: Optional[SmartCache] = None
+_global_cache: SmartCache | None = None
 
 
 def get_cache() -> SmartCache:
@@ -536,9 +702,9 @@ class ProductionCacheManager:
     def __init__(self, cache: SmartCache):
         self.cache = cache
         self.stats = CacheStats()
-        self._corruption_detected = set()
+        self._corruption_detected: set[str] = set()
 
-    def validate_cache_integrity(self) -> Dict[str, Any]:
+    def validate_cache_integrity(self) -> dict[str, Any]:
         """
         Validate cache integrity and detect corrupted files.
 
@@ -617,7 +783,7 @@ class ProductionCacheManager:
             self._remove_corrupted_entry(key)
             results["repaired_files"] += 1
 
-        print(f"✅ Cache validation complete:")
+        print("✅ Cache validation complete:")
         print(f"   Valid files: {results['valid_files']}")
         print(f"   Corrupted files: {results['corrupted_files']} (removed)")
         print(f"   Missing files: {results['missing_files']} (removed)")
@@ -652,7 +818,7 @@ class ProductionCacheManager:
             self._corruption_detected.add(key)
             self.stats.corruptions += 1
 
-    def optimize_cache_for_training(self, dataset_files: List[str], epochs: int = 10):
+    def optimize_cache_for_training(self, dataset_files: list[str], epochs: int = 10):
         """
         Optimize cache for ML training scenarios.
 
@@ -663,7 +829,7 @@ class ProductionCacheManager:
         epochs : int
             Number of training epochs planned
         """
-        print(f"🎯 Optimizing cache for ML training:")
+        print("🎯 Optimizing cache for ML training:")
         print(f"   Dataset: {len(dataset_files)} files")
         print(f"   Planned epochs: {epochs}")
 
@@ -684,11 +850,11 @@ class ProductionCacheManager:
             print("⚠️  Dataset too large for cache - using intelligent replacement")
             self._setup_intelligent_replacement(dataset_files, epochs)
 
-    def _prefetch_dataset(self, files: List[str]):
+    def _prefetch_dataset(self, files: list[str]):
         """Prefetch dataset files for training."""
         print("📥 Prefetching dataset files...")
 
-        for i, file in enumerate(files):
+        for i, _file in enumerate(files):
             if i % 100 == 0:
                 print(f"   Prefetching {i}/{len(files)} files...")
 
@@ -698,8 +864,8 @@ class ProductionCacheManager:
 
         print("✅ Dataset prefetching complete")
 
-    def _setup_intelligent_replacement(self, files: List[str], epochs: int):
-        """Setup intelligent cache replacement for large datasets."""
+    def _setup_intelligent_replacement(self, files: list[str], epochs: int):
+        """Set up intelligent cache replacement for large datasets."""
         print("🧠 Setting up intelligent replacement strategy...")
 
         # Mark dataset files as high priority
@@ -710,7 +876,7 @@ class ProductionCacheManager:
 
         print("✅ Intelligent replacement configured")
 
-    def get_cache_statistics(self) -> Dict[str, Any]:
+    def get_cache_statistics(self) -> dict[str, Any]:
         """Get comprehensive cache statistics."""
         stats = self.stats.to_dict()
 
@@ -748,11 +914,9 @@ class ProductionCacheManager:
         if aggressive:
             # Remove files not accessed in last 7 days
             cutoff_time = time.time() - (7 * 24 * 3600)
-            threshold = 0.5  # Clean to 50% of max size
         else:
             # Remove files not accessed in last 30 days
             cutoff_time = time.time() - (30 * 24 * 3600)
-            threshold = self.cache.cleanup_threshold
 
         removed_keys = []
         for key, entry in list(self.cache.entries.items()):
@@ -766,7 +930,7 @@ class ProductionCacheManager:
         final_files = len(self.cache.entries)
         final_size = self.cache.total_size
 
-        print(f"✅ Cleanup complete:")
+        print("✅ Cleanup complete:")
         print(
             f"   Files: {initial_files} → {final_files} ({initial_files - final_files} removed)"
         )

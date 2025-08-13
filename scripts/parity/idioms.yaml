@@ -1,0 +1,94 @@
+{
+  "idioms": [
+    {
+      "id": "open_file",
+      "description": "Open FITS file via context manager",
+      "symbols": ["FITS"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_context_manager"]
+    },
+    {
+      "id": "list_hdus",
+      "description": "List or count HDUs",
+      "symbols": ["get_num_hdus"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_mef"]
+    },
+    {
+      "id": "read_image",
+      "description": "Read full image",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_full_image"]
+    },
+    {
+      "id": "image_cutout",
+      "description": "Read sub-image cutout",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_image_cutout"]
+    },
+    {
+      "id": "cube_cutout",
+      "description": "Read multi-dimensional cube cutout",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_cube_cutout"]
+    },
+    {
+      "id": "read_table",
+      "description": "Read full table",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_full_table"]
+    },
+    {
+      "id": "read_table_columns",
+      "description": "Read selected table columns",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_table_columns"]
+    },
+    {
+      "id": "read_table_rows",
+      "description": "Read subset of table rows",
+      "symbols": ["read"],
+      "tests": ["tests/test_fits_reader.py::TestFitsReader::test_read_table_rows"]
+    },
+    {
+      "id": "write_image",
+      "description": "Write image to new FITS file",
+      "symbols": ["write_image"],
+      "tests": ["tests/test_write_roundtrip.py::test_write_append_flag_image"]
+    },
+    {
+      "id": "write_table",
+      "description": "Write table with mixed dtypes & strings",
+      "symbols": ["write_table"],
+      "tests": ["tests/test_write_roundtrip.py::test_write_table_with_strings_and_nulls"]
+    },
+    {
+      "id": "append_hdu",
+      "description": "Append new HDU to existing file",
+      "symbols": ["append_hdu"],
+      "tests": ["tests/test_write_roundtrip.py::test_append_hdu_image_roundtrip"]
+    },
+    {
+      "id": "update_header",
+      "description": "Update header keyword in-place",
+      "symbols": ["update_header"],
+      "tests": ["tests/test_write_roundtrip.py::test_update_header_object_method"]
+    },
+    {
+      "id": "null_masks",
+      "description": "Read null mask(s) from table with TNULL",
+      "symbols": ["read_table_with_null_masks"],
+      "tests": ["tests/test_write_roundtrip.py::test_read_table_null_masks", "tests/test_write_roundtrip.py::test_read_table_multi_null_masks"]
+    },
+    {
+      "id": "var_length_arrays",
+      "description": "Write & read variable-length array column",
+      "symbols": ["write_variable_length_array"],
+      "tests": ["tests/test_variable_length_arrays.py::test_write_variable_length_array", "tests/test_write_roundtrip.py::test_write_variable_length_array_fuzz"]
+    },
+    {
+      "id": "string_edge_cases",
+      "description": "Handle string column edge cases (empty, mixed length, trailing space)",
+      "symbols": ["write_table"],
+      "tests": ["tests/test_string_columns.py::test_write_table_all_empty_strings", "tests/test_string_columns.py::test_write_table_mixed_length_strings", "tests/test_string_columns.py::test_write_table_trailing_space_strings"]
+    }
+  ]
+}

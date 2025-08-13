@@ -5,6 +5,7 @@
 #include <future>
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 
 namespace torchfits_cfitsio_enhanced {
 
@@ -22,12 +23,20 @@ CFITSIOMemoryMapper::CFITSIOMemoryMapper(const std::string& filename)
         throw_fits_error(status, "Cannot open file for memory mapping");
     }
     
-    // Get file size for mapping decision
-    // fits_file_size(fptr_, &file_size_, &status);
-    // if (status) {
-        DEBUG_LOG("Cannot get file size, assuming small file");
+    // Get file size for mapping decision using filesystem (portable)
+    try {
+        std::ifstream fs(filename, std::ifstream::ate | std::ifstream::binary);
+        if (fs.is_open()) {
+            file_size_ = static_cast<size_t>(fs.tellg());
+            fs.close();
+        } else {
+            DEBUG_LOG("Cannot open file to get size, assuming small file");
+            file_size_ = 0;
+        }
+    } catch (...) {
+        DEBUG_LOG("Exception getting file size, assuming small file");
         file_size_ = 0;
-    // }
+    }
     
     DEBUG_LOG("CFITSIOMemoryMapper initialized for " + filename 
                 + " (size: " + std::to_string(file_size_) + " bytes)");

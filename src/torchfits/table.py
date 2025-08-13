@@ -6,8 +6,10 @@ without requiring external dependencies. Includes rich metadata support for
 scientific data analysis.
 """
 
+from __future__ import annotations
+
 import warnings
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import torch
 
@@ -23,24 +25,23 @@ class ColumnInfo:
     def __init__(
         self,
         name: str,
-        dtype: Optional[torch.dtype] = None,
-        unit: Optional[str] = None,
-        description: Optional[str] = None,
-        null_value: Optional[Any] = None,
-        display_format: Optional[str] = None,
-        **kwargs,
-    ):
+        dtype: torch.dtype | None = None,
+        *,
+        unit: str | None = None,
+        description: str | None = None,
+        null_value: Any | None = None,
+        display_format: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         """
-        Initialize column metadata.
-
-        Parameters:
-        -----------
+        Parameters
+        ----------
         name : str
             Column name
-        dtype : torch.dtype
-            PyTorch data type
+        dtype : torch.dtype, optional
+            PyTorch dtype of the column
         unit : str, optional
-            Physical unit (e.g., 'mag', 'deg', 'arcsec')
+            Physical unit
         description : str, optional
             Human-readable description
         null_value : Any, optional
@@ -66,7 +67,7 @@ class ColumnInfo:
             parts.append(f"description='{self.description[:30]}...'")
         return f"ColumnInfo({', '.join(parts)})"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         result = {
             "name": self.name,
@@ -81,8 +82,8 @@ class ColumnInfo:
 
     @classmethod
     def from_fits_header(
-        cls, colname: str, header_dict: Dict[str, Any], dtype: torch.dtype
-    ) -> "ColumnInfo":
+    cls, colname: str, header_dict: dict[str, Any], dtype: torch.dtype
+    ) -> ColumnInfo:
         """
         Create ColumnInfo from FITS header information.
 
@@ -134,17 +135,18 @@ class FitsTable:
     """
 
     def __init__(
-        self,
-        data_dict: Dict[str, torch.Tensor],
-        metadata: Optional[Union[Dict, Dict[str, ColumnInfo]]] = None,
+    self,
+    data_dict: dict[str, Any],
+    metadata: dict | dict[str, ColumnInfo] | None = None,
     ):
         """
         Initialize FitsTable with tensor data and optional metadata.
 
         Parameters:
         -----------
-        data_dict : Dict[str, torch.Tensor]
-            Dictionary mapping column names to PyTorch tensors
+        data_dict : Dict[str, Any]
+            Dictionary mapping column names to column data. Values can be torch.Tensor for
+            fixed-size columns or list/tuple (e.g., list[Tensor] for VLA, list[str] for strings).
         metadata : Dict or Dict[str, ColumnInfo], optional
             Column metadata - can be simple dict or ColumnInfo objects
         """
@@ -157,7 +159,7 @@ class FitsTable:
             if hasattr(value, "shape"):
                 # This is a tensor
                 lengths[name] = value.shape[0]
-            elif isinstance(value, (list, tuple)):
+            elif isinstance(value, list | tuple):
                 # This is a list/tuple (e.g., string columns)
                 lengths[name] = len(value)
             else:
@@ -174,7 +176,7 @@ class FitsTable:
         first_value = next(iter(data_dict.values()))
         if hasattr(first_value, "shape"):
             self._length = first_value.shape[0]
-        elif isinstance(first_value, (list, tuple)):
+        elif isinstance(first_value, list | tuple):
             self._length = len(first_value)
         else:
             self._length = 1
@@ -216,21 +218,23 @@ class FitsTable:
                 else:
                     dtype = None  # For non-tensor data like string lists
                 self.column_info[col_name] = ColumnInfo(name=col_name, dtype=dtype)
+        # Lazy cache for derived null masks
+        self._cached_null_masks = None
 
     @property
-    def metadata(self) -> Dict[str, ColumnInfo]:
-        """Access to column metadata (backward compatibility)."""
+    def metadata(self) -> dict[str, ColumnInfo]:
+        """Access column metadata (backward compatibility)."""
         return self.column_info
 
     def __repr__(self) -> str:
-        """String representation showing shape and columns."""
+        """Return a compact string showing shape and columns."""
         return f"FitsTable(shape={self.shape}, columns={self.columns[:5]}{'...' if len(self.columns) > 5 else ''})"
 
     def __len__(self) -> int:
-        """Number of rows in the table."""
-        return self._length
+        """Return the number of rows in the table."""
+        return int(self._length)
 
-    def __getitem__(self, key) -> Union[torch.Tensor, "FitsTable"]:
+    def __getitem__(self, key) -> Any | torch.Tensor | FitsTable:
         """
         Access data by column name, row slice, or boolean mask.
 
@@ -246,15 +250,19 @@ class FitsTable:
             # Column access
             if key not in self.data:
                 raise KeyError(f"Column '{key}' not found. Available: {self.columns}")
-            return self.data[key]
+            # Column may be a tensor or list; type: ignore for list return case.
+            return self.data[key]  # type: ignore[return-value]
 
         elif isinstance(key, int):
-            # Single row access - return dict of column values at that row
+            # Single row access - return a single-row FitsTable for consistency
             if key < 0:
                 key = len(self) + key
             if key < 0 or key >= len(self):
-                raise IndexError(f"Row index {key} out of range for table with {len(self)} rows")
-            return {col: self.data[col][key] for col in self.data}
+                raise IndexError(
+                    f"Row index {key} out of range for table with {len(self)} rows"
+                )
+            # Slice row to preserve column types (tensor or list element)
+            return self._slice_rows(slice(key, key + 1))
 
         elif isinstance(key, slice):
             # Row slicing
@@ -292,12 +300,12 @@ class FitsTable:
         else:
             raise TypeError(f"Unsupported key type: {type(key)}")
 
-    def _slice_rows(self, row_slice: slice) -> "FitsTable":
+    def _slice_rows(self, row_slice: slice) -> FitsTable:
         """Create new FitsTable with sliced rows."""
         sliced_data = {name: tensor[row_slice] for name, tensor in self.data.items()}
         return FitsTable(sliced_data, self.column_info)
 
-    def to(self, device: Union[str, torch.device]) -> "FitsTable":
+    def to(self, device: str | torch.device) -> FitsTable:
         """
         Move all columns to specified device.
 
@@ -314,7 +322,7 @@ class FitsTable:
         device_data = {name: tensor.to(device) for name, tensor in self.data.items()}
         return FitsTable(device_data, self.column_info)
 
-    def select(self, columns: Union[str, List[str]]) -> "FitsTable":
+    def select(self, columns: str | list[str]) -> FitsTable:
         """
         Select specific columns.
 
@@ -341,7 +349,7 @@ class FitsTable:
         }
         return FitsTable(selected_data, selected_metadata)
 
-    def filter(self, mask: torch.Tensor) -> "FitsTable":
+    def filter(self, mask: torch.Tensor) -> FitsTable:
         """
         Filter rows using boolean mask.
 
@@ -362,10 +370,22 @@ class FitsTable:
                 f"Mask length {mask.shape[0]} doesn't match table length {self._length}"
             )
 
-        filtered_data = {name: tensor[mask] for name, tensor in self.data.items()}
+        # Apply mask to tensors and lists (VLA columns as list[Tensor])
+        filtered_data = {}
+        # Create python list of indices where mask is True
+        true_idx = [i for i, v in enumerate(mask.tolist()) if bool(v)]
+        for name, value in self.data.items():
+            if hasattr(value, "__getitem__") and hasattr(value, "dtype"):
+                # Torch tensor path
+                filtered_data[name] = value[mask]
+            elif isinstance(value, list | tuple):
+                filtered_data[name] = [value[i] for i in true_idx]
+            else:
+                # Scalar or unknown type, replicate selection semantics
+                filtered_data[name] = value
         return FitsTable(filtered_data, self.column_info)
 
-    def sort(self, column: str, descending: bool = False) -> "FitsTable":
+    def sort(self, column: str, descending: bool = False) -> FitsTable:
         """
         Sort table by column values.
 
@@ -385,10 +405,18 @@ class FitsTable:
             raise KeyError(f"Column '{column}' not found")
 
         sort_indices = torch.argsort(self.data[column], descending=descending)
-        sorted_data = {name: tensor[sort_indices] for name, tensor in self.data.items()}
+        idx_list = sort_indices.tolist()
+        sorted_data = {}
+        for name, value in self.data.items():
+            if hasattr(value, "__getitem__") and hasattr(value, "dtype"):
+                sorted_data[name] = value[sort_indices]
+            elif isinstance(value, list | tuple):
+                sorted_data[name] = [value[i] for i in idx_list]
+            else:
+                sorted_data[name] = value
         return FitsTable(sorted_data, self.column_info)
 
-    def groupby(self, column: str) -> "GroupedFitsTable":
+    def groupby(self, column: str) -> GroupedFitsTable:
         """
         Group table by column values.
 
@@ -407,7 +435,7 @@ class FitsTable:
 
         return GroupedFitsTable(self, column)
 
-    def query(self, condition: str) -> "FitsTable":
+    def query(self, condition: str) -> FitsTable:
         """
         Filter table using query string (simple implementation).
 
@@ -438,19 +466,20 @@ class FitsTable:
             raise KeyError(f"Column '{column}' not found")
 
         # Try to convert value to appropriate type
+        rhs: Any
         try:
             if "." in value_str:
-                value = float(value_str)
+                rhs = float(value_str)
             else:
-                value = int(value_str)
+                rhs = int(value_str)
         except ValueError:
-            value = value_str  # Keep as string
+            rhs = value_str  # Keep as string
 
         col_data = self.data[column]
 
         # Convert value to tensor for comparison
-        if isinstance(value, (int, float)):
-            value_tensor = torch.tensor(value, dtype=col_data.dtype)
+        if isinstance(rhs, int | float):
+            value_tensor = torch.tensor(rhs, dtype=col_data.dtype)
         else:
             # For string comparisons, this is more complex - simplified here
             raise ValueError("String comparisons not yet implemented in query()")
@@ -474,16 +503,177 @@ class FitsTable:
         return self.filter(mask)
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         """Table shape as (num_rows, num_columns)."""
         return (self._length, len(self.columns))
 
     @property
-    def dtypes(self) -> Dict[str, torch.dtype]:
+    def dtypes(self) -> dict[str, torch.dtype | None]:
         """Dictionary of column data types."""
-        return {name: tensor.dtype for name, tensor in self.data.items()}
+        out: dict[str, torch.dtype | None] = {}
+        for name, value in self.data.items():
+            dtype = getattr(value, "dtype", None)
+            if dtype is None and isinstance(value, list | tuple) and value:
+                # Infer from first element (for VLA columns as list[Tensor])
+                first = value[0]
+                dtype = getattr(first, "dtype", None)
+            # dtype can be None for non-tensor types (e.g., list of strings)
+            out[name] = dtype
+        return out
 
-    def head(self, n: int = 5) -> "FitsTable":
+    # --- Null mask helpers ---
+    def get_null_masks(
+        self, header: dict[str, Any] | None = None
+    ) -> dict[str, torch.Tensor]:
+        """Build boolean null masks per column.
+
+        Prefers ColumnInfo.null_value when available; if not and a FITS header is provided,
+        derives masks from TNULLn header keywords.
+
+        Returns a dict mapping column name -> bool tensor (True where value is null).
+        """
+        masks: dict[str, torch.Tensor] = {}
+        # ColumnInfo-based masks
+        for name, info in self.column_info.items():
+            if info is None or getattr(info, "null_value", None) is None:
+                continue
+            val = info.null_value
+            col = self.data.get(name)
+            if isinstance(col, torch.Tensor) and col.dtype in (
+                torch.int8,
+                torch.int16,
+                torch.int32,
+                torch.int64,
+            ):
+                try:
+                    masks[name] = col.eq(int(val))
+                except Exception:
+                    continue
+        # Header-derived masks (fills gaps where ColumnInfo not present)
+        if header:
+            try:
+                # Local import to avoid circular import at module import time
+                from .fits_reader import _build_null_masks as _build_masks
+
+                hdr_masks = _build_masks(self.data, header)
+                for k, m in hdr_masks.items():
+                    masks.setdefault(k, m)
+            except Exception:
+                pass
+        return masks
+
+    @property
+    def null_masks(self) -> dict[str, torch.Tensor]:
+        """Lazily compute and cache null masks using ColumnInfo null_value if present.
+
+        Note: Does not consider FITS header. For header-aware masks, call get_null_masks(header).
+        """
+        if self._cached_null_masks is None:
+            self._cached_null_masks = self.get_null_masks()
+        return self._cached_null_masks
+
+    def with_applied_null_masks(
+        self,
+        masks: dict[str, torch.Tensor] | None = None,
+        *,
+        fill_value: float | dict[str, float] | str = "nan",
+        float_dtype: torch.dtype = torch.float32,
+    ) -> FitsTable:
+        """Return a new FitsTable with nulls applied according to masks.
+
+        Parameters
+        ----------
+        masks : dict[str, torch.Tensor], optional
+            Precomputed boolean masks per column. If None, will derive from ColumnInfo/null_value.
+        fill_value : float | dict | 'nan'
+            Replacement value for nulls. If 'nan', integer columns will be cast to float_dtype and filled with NaN.
+            If a dict, map column name -> fill value.
+        float_dtype : torch.dtype
+            Float dtype to cast integer columns to when using 'nan' fill.
+        """
+        # Build masks if not provided
+        if masks is None:
+            masks = self.null_masks
+        if not masks:
+            return FitsTable(dict(self.data), dict(self.column_info))
+
+        def _col_fill(name: str) -> float | None:
+            if isinstance(fill_value, dict):
+                if name in fill_value:
+                    return float(fill_value[name])
+                return None
+            if isinstance(fill_value, int | float):
+                return float(fill_value)
+            return None
+
+        new_data: dict[str, Any] = {}
+        new_meta = dict(self.column_info)
+        for name, value in self.data.items():
+            mask = masks.get(name)
+            if mask is None or not isinstance(value, torch.Tensor):
+                new_data[name] = value
+                continue
+            if mask.dtype != torch.bool:
+                new_data[name] = value
+                continue
+            # Apply replacement
+            if isinstance(fill_value, str) and fill_value.lower() == "nan":
+                if value.dtype.is_floating_point:
+                    col = value.clone()
+                    col[mask] = torch.nan
+                    new_data[name] = col
+                elif value.dtype in (torch.int8, torch.int16, torch.int32, torch.int64):
+                    col = value.to(float_dtype)
+                    col[mask] = torch.nan
+                    new_data[name] = col
+                    # Update metadata dtype
+                    if (
+                        name in new_meta
+                        and getattr(new_meta[name], "dtype", None) is not None
+                    ):
+                        new_meta[name] = ColumnInfo(
+                            name=name,
+                            dtype=float_dtype,
+                            unit=new_meta[name].unit,
+                            description=new_meta[name].description,
+                            null_value=new_meta[name].null_value,
+                            display_format=new_meta[name].display_format,
+                            **new_meta[name].fits_metadata,
+                        )
+                else:
+                    # Unsupported dtype for NaN; leave unchanged
+                    new_data[name] = value
+            else:
+                fv = _col_fill(name)
+                if fv is None:
+                    new_data[name] = value
+                else:
+                    # Ensure dtype compatibility
+                    col = value.clone()
+                    if not col.dtype.is_floating_point and isinstance(fv, float):
+                        col = col.to(float_dtype)
+                        if (
+                            name in new_meta
+                            and getattr(new_meta[name], "dtype", None) is not None
+                        ):
+                            new_meta[name] = ColumnInfo(
+                                name=name,
+                                dtype=float_dtype,
+                                unit=new_meta[name].unit,
+                                description=new_meta[name].description,
+                                null_value=new_meta[name].null_value,
+                                display_format=new_meta[name].display_format,
+                                **new_meta[name].fits_metadata,
+                            )
+                    # fv guaranteed float here
+                    if col.dtype.is_floating_point:
+                        col[mask] = float(fv)
+                    else:
+                        col[mask] = int(fv)
+                    new_data[name] = col
+        return FitsTable(new_data, new_meta)
+
+    def head(self, n: int = 5) -> FitsTable:
         """Return first n rows."""
         result = self[:n]
         if isinstance(result, FitsTable):
@@ -491,7 +681,7 @@ class FitsTable:
         else:
             raise TypeError("head() should return FitsTable")
 
-    def tail(self, n: int = 5) -> "FitsTable":
+    def tail(self, n: int = 5) -> FitsTable:
         """Return last n rows."""
         result = self[-n:]
         if isinstance(result, FitsTable):
@@ -540,15 +730,15 @@ class FitsTable:
             raise KeyError(f"Column '{column}' not found")
         return self.column_info[column]
 
-    def get_units(self) -> Dict[str, Optional[str]]:
+    def get_units(self) -> dict[str, str | None]:
         """Get units for all columns."""
         return {name: info.unit for name, info in self.column_info.items()}
 
-    def get_descriptions(self) -> Dict[str, Optional[str]]:
+    def get_descriptions(self) -> dict[str, str | None]:
         """Get descriptions for all columns."""
         return {name: info.description for name, info in self.column_info.items()}
 
-    def describe(self) -> Dict[str, Dict[str, float]]:
+    def describe(self) -> dict[str, dict[str, float]]:
         """Compute basic statistics for numeric columns."""
         stats = {}
         for name, tensor in self.data.items():
@@ -562,17 +752,17 @@ class FitsTable:
                 }
         return stats
 
-    def to_dict(self) -> Dict[str, torch.Tensor]:
+    def to_dict(self) -> dict[str, torch.Tensor]:
         """Convert to dictionary of tensors (for backward compatibility)."""
         return self.data.copy()
 
-    def copy(self) -> "FitsTable":
+    def copy(self) -> FitsTable:
         """Create a deep copy of the table."""
         copied_data = {name: tensor.clone() for name, tensor in self.data.items()}
         copied_metadata = {name: info for name, info in self.column_info.items()}
         return FitsTable(copied_data, copied_metadata)
 
-    def convert_units(self, column: str, target_unit: str) -> "FitsTable":
+    def convert_units(self, column: str, target_unit: str) -> FitsTable:
         """
         Convert column units (basic implementation).
 
@@ -597,7 +787,9 @@ class FitsTable:
 
         col_info = self.column_info.get(column)
         if not col_info or not col_info.unit:
-            warnings.warn(f"No unit information for column '{column}'")
+            warnings.warn(
+                f"No unit information for column '{column}'", stacklevel=2
+            )
             return self.copy()
 
         current_unit = col_info.unit.lower()
@@ -682,7 +874,7 @@ class FitsTable:
         if denominator == 0:
             return float("nan")
 
-        return (numerator / denominator).item()
+        return float((numerator / denominator).item())
 
     def percentile(self, column: str, q: float) -> float:
         """
@@ -711,89 +903,111 @@ class FitsTable:
 
         return torch.quantile(valid_data, q / 100.0).item()
 
-    def join(self, other: "FitsTable", on: str, how: str = "inner") -> "FitsTable":
+    def join(self, other: FitsTable, on: str, how: str = "inner") -> FitsTable:
         """
-        Join with another FitsTable.
+        Join with another FitsTable on a key column.
 
-        Parameters:
-        -----------
-        other : FitsTable
-            Other table to join with
-        on : str
-            Column name to join on
-        how : str, default 'inner'
-            Join type: 'inner', 'left'
-
-        Returns:
-        --------
-        FitsTable
-            Joined table
-
-        Note:
-        -----
-        Simple implementation for common join patterns
+        Supports 'inner' and 'left' joins for numeric key columns.
         """
         if on not in self.data or on not in other.data:
             raise KeyError(f"Join column '{on}' not found in both tables")
 
-        # Get unique values and create index mappings
         left_values = self.data[on]
         right_values = other.data[on]
 
-        # Find matching indices
-        left_indices = []
-        right_indices = []
-
+        left_indices: list[int] = []
+        right_indices: list[int] = []
         for i, left_val in enumerate(left_values):
             matches = torch.where(right_values == left_val)[0]
-            if len(matches) > 0:
-                for match_idx in matches:
+            if matches.numel() > 0:
+                for m in matches.tolist():
                     left_indices.append(i)
-                    right_indices.append(match_idx.item())
+                    right_indices.append(int(m))
             elif how == "left":
                 left_indices.append(i)
-                right_indices.append(-1)  # Will handle this below
+                right_indices.append(-1)
 
-        if not left_indices:
-            # No matches found
-            if how == "inner":
-                # Return empty table
-                return FitsTable({on: torch.tensor([])})
+        if not left_indices and how == "inner":
+            return FitsTable({on: torch.tensor([], dtype=left_values.dtype)})
 
-        left_indices = torch.tensor(left_indices)
-        right_indices = torch.tensor([idx for idx in right_indices if idx >= 0])
+        left_idx_t = torch.tensor(left_indices, dtype=torch.long)
+        right_idx_filtered = [idx for idx in right_indices if idx >= 0]
+        if len(right_idx_filtered) == 0:
+            right_idx_t = torch.tensor([], dtype=torch.long)
+        else:
+            right_idx_t = torch.tensor(right_idx_filtered, dtype=torch.long)
 
-        # Build result data
-        result_data = {}
-        result_metadata = {}
+        result_data: dict[str, torch.Tensor] = {}
+        result_metadata: dict[str, ColumnInfo] = {}
 
-        # Add left table columns
         for col_name, col_data in self.data.items():
-            result_data[col_name] = col_data[left_indices]
+            result_data[col_name] = col_data[left_idx_t]
             if col_name in self.column_info:
                 result_metadata[col_name] = self.column_info[col_name]
 
-        # Add right table columns (avoiding duplicates)
         for col_name, col_data in other.data.items():
-            if col_name != on:  # Don't duplicate join column
-                # Handle name conflicts
-                result_col_name = col_name
-                if col_name in result_data:
-                    result_col_name = f"{col_name}_right"
-
-                if how == "left" and -1 in [idx for idx in right_indices if idx >= 0]:
-                    # Handle left join with missing values
-                    # This is a simplified implementation
-                    result_data[result_col_name] = col_data[
-                        right_indices[right_indices >= 0]
-                    ]
-                else:
-                    result_data[result_col_name] = col_data[right_indices]
-
-                if col_name in other.column_info:
-                    result_metadata[result_col_name] = other.column_info[col_name]
+            if col_name == on:
+                continue
+            out_name = col_name if col_name not in result_data else f"{col_name}_right"
+            result_data[out_name] = col_data[right_idx_t]
+            if col_name in other.column_info:
+                result_metadata[out_name] = other.column_info[col_name]
 
         return FitsTable(result_data, result_metadata)
+
+
+def apply_null_masks_to_dict(
+    data: dict[str, torch.Tensor],
+    masks: dict[str, torch.Tensor],
+    *,
+    fill_value: float | int | dict[str, float] = float("nan"),
+    float_dtype: torch.dtype = torch.float32,
+) -> dict[str, torch.Tensor]:
+    """Apply null masks to a plain dict of tensors and return a new dict.
+
+    If fill_value is NaN (default), integer tensors are cast to float_dtype and masked positions set to NaN.
+    If fill_value is numeric or a per-column dict, masked positions are set to that value.
+    """
+    out: dict[str, torch.Tensor] = {}
+    for name, t in data.items():
+        m = masks.get(name)
+        if m is None or not isinstance(t, torch.Tensor) or m.dtype != torch.bool:
+            out[name] = t
+            continue
+        # Check for NaN fill
+        if isinstance(fill_value, (int, float)) and (  # noqa: UP038 - runtime isinstance requires a tuple
+            float(fill_value) != float(fill_value)
+        ):
+            if t.dtype.is_floating_point:
+                col = t.clone()
+                col[m] = torch.nan
+                out[name] = col
+            elif t.dtype in (torch.int8, torch.int16, torch.int32, torch.int64):
+                col = t.to(float_dtype)
+                col[m] = torch.nan
+                out[name] = col
+            else:
+                out[name] = t
+        else:
+            if isinstance(fill_value, dict):
+                if name not in fill_value:
+                    out[name] = t
+                    continue
+                raw_fv = fill_value[name]
+            else:
+                raw_fv = fill_value
+            # Normalize and cast dtype if needed
+            fv_num = float(raw_fv)
+            col = t.clone()
+            # If a float fill is provided, cast to float dtype even if integer-valued like 0.0
+            if not col.dtype.is_floating_point and isinstance(raw_fv, float):
+                col = col.to(float_dtype)
+            if col.dtype.is_floating_point:
+                col[m] = float(fv_num)
+            else:
+                col[m] = int(fv_num)
+            out[name] = col
+    return out
 
 
 class GroupedFitsTable:
@@ -821,7 +1035,7 @@ class GroupedFitsTable:
             mask = inverse_indices == i
             self.group_indices[value.item()] = torch.where(mask)[0]
 
-    def agg(self, operations: Dict[str, Union[str, List[str]]]) -> FitsTable:
+    def agg(self, operations: dict[str, str | list[str]]) -> FitsTable:
         """
         Aggregate grouped data.
 
@@ -876,7 +1090,7 @@ class GroupedFitsTable:
 
     def mean(self) -> FitsTable:
         """Compute mean for all numeric columns."""
-        numeric_columns = {}
+        numeric_columns: dict[str, str | list[str]] = {}
         for name, tensor in self.table.data.items():
             if name != self.group_column and tensor.dtype in [
                 torch.float32,
@@ -889,7 +1103,7 @@ class GroupedFitsTable:
 
     def sum(self) -> FitsTable:
         """Compute sum for all numeric columns."""
-        numeric_columns = {}
+        numeric_columns: dict[str, str | list[str]] = {}
         for name, tensor in self.table.data.items():
             if name != self.group_column and tensor.dtype in [
                 torch.float32,
@@ -907,3 +1121,31 @@ class GroupedFitsTable:
             name for name in self.table.columns if name != self.group_column
         )
         return self.agg({first_col: "count"})
+
+
+def pad_ragged(
+    sequences: list[torch.Tensor],
+    pad_value: float = 0.0,
+    dtype: torch.dtype | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Pad a list of 1D tensors (ragged) into a 2D tensor [rows, max_len].
+
+    Returns (padded, lengths) where lengths is a 1D int64 tensor of original lengths.
+
+    Useful for variable-length array (VLA) FITS columns returned as list[Tensor].
+    """
+    if not sequences:
+        dt = dtype or torch.float32
+        return torch.empty((0, 0), dtype=dt), torch.empty((0,), dtype=torch.int64)
+    max_len = max(int(s.numel()) for s in sequences)
+    dt = dtype or sequences[0].dtype
+    rows = len(sequences)
+    padded = torch.full((rows, max_len), pad_value, dtype=dt)
+    lengths = torch.empty((rows,), dtype=torch.int64)
+    for i, s in enumerate(sequences):
+        n = int(s.numel())
+        lengths[i] = n
+        if n > 0:
+            padded[i, :n] = s.to(dt)
+    return padded, lengths

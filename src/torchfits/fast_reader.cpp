@@ -1,6 +1,6 @@
 #include "fast_reader.h"
 #include "fits_utils.h"
-#include "debug.h"
+#include "debug.h" // retained for potential future instrumentation
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -10,10 +10,7 @@ namespace torchfits_fast {
 const int MAX_DIMS = 32;
 
 torch::Tensor FastImageReader::read_image_fast(fitsfile* fptr, torch::Device device) {
-    DEBUG_SCOPE;
-    
-    // Simple indication that fast reader is being used
-    std::cerr << "[FAST_READER] Using FITSIO-optimized reader" << std::endl;
+    // Fast reader image path
     
     int status = 0;
     int bitpix;
@@ -34,7 +31,7 @@ torch::Tensor FastImageReader::read_image_fast(fitsfile* fptr, torch::Device dev
 
 template<typename T, int CfitsioType>
 torch::Tensor FastImageReader::read_image_typed_fast(fitsfile* fptr, torch::Device device) {
-    DEBUG_SCOPE;
+    // Fast image typed read
     
     int status = 0;
     
@@ -70,7 +67,7 @@ torch::Tensor FastImageReader::read_image_typed_fast(fitsfile* fptr, torch::Devi
     
     int anynul = 0; // We don't use null value handling for now
     
-    DEBUG_LOG("Reading " + std::to_string(total_size) + " pixels using fits_read_pixll");
+    // Reading pixels using fits_read_pixll
     
     if (fits_read_pixll(fptr, CfitsioType, firstpixels, total_size, nullptr, 
                         data.data_ptr<T>(), &anynul, &status)) {
@@ -96,16 +93,16 @@ pybind11::dict FastTableReader::read_table_fast(
     long num_rows,
     torch::Device device
 ) {
-    DEBUG_SCOPE;
+    // Fast table read
     
     // Simple indication that fast table reader is being used
-    std::cerr << "[FAST_READER] Using FITSIO-optimized table reader for " << columns.size() << " columns" << std::endl;
+    // Using fast table reader
     
     auto column_info = analyze_columns(fptr, columns);
     pybind11::dict result;
     
     for (const auto& col : column_info) {
-        DEBUG_LOG("Reading column: " + col.name + " (type " + std::to_string(col.fits_type) + ")");
+    // Reading column
         
         torch::Tensor tensor;
         switch (col.fits_type) {
@@ -128,7 +125,7 @@ pybind11::dict FastTableReader::read_table_fast(
                 tensor = read_column_fast<double, TDOUBLE>(fptr, col.col_num, start_row, num_rows, col.repeat);
                 break;
             default:
-                DEBUG_LOG("Skipping unsupported column type: " + std::to_string(col.fits_type));
+                // Skipping unsupported column type
                 continue;
         }
         
@@ -146,7 +143,7 @@ std::vector<FastTableReader::ColumnInfo> FastTableReader::analyze_columns(
     fitsfile* fptr, 
     const std::vector<std::string>& requested_columns
 ) {
-    DEBUG_SCOPE;
+    // Analyze columns
     
     int status = 0;
     std::vector<ColumnInfo> result;
@@ -178,14 +175,14 @@ std::vector<FastTableReader::ColumnInfo> FastTableReader::analyze_columns(
         status = 0;
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &info.col_num, &status);
         if (status) {
-            DEBUG_LOG("Column not found: " + col_name);
+            // Column not found
             continue; // Skip invalid columns
         }
         
         // Get column type information
         fits_get_coltype(fptr, info.col_num, &info.fits_type, &info.repeat, &info.width, &status);
         if (status) {
-            DEBUG_LOG("Error getting column type for: " + col_name);
+            // Error getting column type
             continue;
         }
         
@@ -198,7 +195,7 @@ std::vector<FastTableReader::ColumnInfo> FastTableReader::analyze_columns(
             case TFLOAT:    info.torch_dtype = torch::kFloat32; break;
             case TDOUBLE:   info.torch_dtype = torch::kFloat64; break;
             default:
-                DEBUG_LOG("Unsupported column type: " + std::to_string(info.fits_type));
+                // Unsupported column type
                 continue;
         }
         
@@ -210,7 +207,7 @@ std::vector<FastTableReader::ColumnInfo> FastTableReader::analyze_columns(
 
 template<typename T, int CfitsioType>
 torch::Tensor FastTableReader::read_column_fast(fitsfile* fptr, int col_num, long start_row, long num_rows, long repeat) {
-    DEBUG_SCOPE;
+    // Read column fast
     
     // Create tensor shape
     std::vector<int64_t> shape;
@@ -232,7 +229,7 @@ torch::Tensor FastTableReader::read_column_fast(fitsfile* fptr, int col_num, lon
         throw_fits_error(status, "Error reading column " + std::to_string(col_num));
     }
     
-    DEBUG_LOG("Read " + std::to_string(num_rows * repeat) + " elements from column " + std::to_string(col_num));
+    // Column read complete
     
     return tensor;
 }

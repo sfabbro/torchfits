@@ -30,12 +30,22 @@ void write_table_to_fits(const std::string& filename,
                         const std::map<std::string, std::string>& header = {},
                         const std::vector<std::string>& column_units = {},
                         const std::vector<std::string>& column_descriptions = {},
+                        const std::map<std::string, long>& null_sentinels = {},
                         bool overwrite = false);
+
 
 /// Write a FitsTable object to a FITS file
 void write_fits_table(const std::string& filename,
                      const py::object& fits_table,
                      bool overwrite = false);
+
+/// Append a table (dictionary of tensors) to an existing FITS file as a new table HDU
+void append_table_to_fits(const std::string& filename,
+                         const py::dict& table_data,
+                         const std::map<std::string, std::string>& header = {},
+                         const std::vector<std::string>& column_units = {},
+                         const std::vector<std::string>& column_descriptions = {},
+                         const std::map<std::string, long>& null_sentinels = {});
 
 /// Append an HDU to an existing FITS file
 void append_hdu_to_fits(const std::string& filename,
@@ -171,6 +181,9 @@ void update_fits_data(const std::string& filename,
 
 /// Get FITS data type code from PyTorch tensor
 int get_fits_datatype(torch::Tensor tensor);
+
+/// Get CFITSIO table datatype code from tensor (used for fits_write_col)
+int get_fits_table_datatype(torch::Tensor tensor);
 
 /// Get FITS table column format from PyTorch tensor
 std::string get_fits_column_format(torch::Tensor tensor);

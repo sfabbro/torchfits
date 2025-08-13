@@ -1,5 +1,5 @@
 #include "remote.h"
-#include "debug.h"
+#include "debug.h" // kept for compatibility; no debug usage below
 #include <curl/curl.h>
 #include <filesystem>
 #include <fstream>
@@ -60,7 +60,7 @@ bool RemoteFetcher::file_exists(const std::string& path) {
 }
 
 void RemoteFetcher::download_file(const std::string& url, const std::string& local_path) {
-    DEBUG_LOG("Downloading " + url + " to " + local_path);
+    // Starting remote download
     
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -101,7 +101,7 @@ void RemoteFetcher::download_file(const std::string& url, const std::string& loc
         throw std::runtime_error("HTTP error " + std::to_string(response_code) + " downloading: " + url);
     }
     
-    DEBUG_LOG("Successfully downloaded " + url);
+    // Download successful
 }
 
 std::string RemoteFetcher::fetch_file(const std::string& url, const std::string& cache_dir) {
@@ -110,7 +110,7 @@ std::string RemoteFetcher::fetch_file(const std::string& url, const std::string&
     std::string local_path = cache_path + "/" + local_filename;
     
     if (file_exists(local_path)) {
-        DEBUG_LOG("Using cached file: " + local_path);
+    // Using cached file
         return local_path;
     }
     

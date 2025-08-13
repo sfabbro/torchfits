@@ -1,5 +1,5 @@
 #include "real_cache.h"
-#include "debug.h"
+#include "debug.h" // retained; debug macros not used now
 #include <algorithm>
 
 namespace torchfits_real_cache {
@@ -15,11 +15,11 @@ RealSmartCache& RealSmartCache::get_instance() {
 
 RealSmartCache::RealSmartCache(size_t max_memory_mb) 
     : max_memory_bytes_(max_memory_mb * 1024 * 1024), hits_(0), misses_(0) {
-    DEBUG_LOG("RealSmartCache initialized with " + std::to_string(max_memory_mb) + " MB capacity");
+    // Cache initialized
 }
 
 RealSmartCache::~RealSmartCache() {
-    DEBUG_LOG("RealSmartCache destroyed");
+    // Cache destroyed
 }
 
 std::optional<torch::Tensor> RealSmartCache::try_get(const std::string& key) {
@@ -32,13 +32,13 @@ std::optional<torch::Tensor> RealSmartCache::try_get(const std::string& key) {
         it->second->access_count++;
         hits_++;
         
-        DEBUG_LOG("Cache HIT for " + key);
+    // Cache hit
         return it->second->data.clone();
     }
     
     // Cache miss
     misses_++;
-    DEBUG_LOG("Cache MISS for " + key);
+    // Cache miss
     return std::nullopt; // Return empty optional
 }
 
@@ -63,7 +63,7 @@ void RealSmartCache::put(const std::string& key, const torch::Tensor& data) {
     // Add to cache
     cache_[key] = std::move(entry);
     
-    DEBUG_LOG("Cached " + key + " (" + std::to_string(data.numel() * data.element_size() / 1024) + " KB)");
+    // Cached entry stored
 }
 
 void RealSmartCache::clear() {
@@ -71,7 +71,7 @@ void RealSmartCache::clear() {
     cache_.clear();
     hits_ = 0;
     misses_ = 0;
-    DEBUG_LOG("Cache cleared");
+    // Cache cleared
 }
 
 RealSmartCache::Stats RealSmartCache::get_stats() const {
@@ -97,7 +97,7 @@ void RealSmartCache::evict_if_needed() {
         if (!lru_key.empty()) {
             auto it = cache_.find(lru_key);
             if (it != cache_.end()) {
-                DEBUG_LOG("Evicting " + lru_key + " (LRU)");
+                // Evicting LRU entry
                 current_memory -= it->second->memory_usage;
                 cache_.erase(it);
             }
@@ -134,7 +134,7 @@ size_t RealSmartCache::calculate_current_memory() const {
 void initialize_real_cache(size_t max_memory_mb) {
     if (!global_real_cache) {
         global_real_cache = std::make_unique<RealSmartCache>(max_memory_mb);
-        DEBUG_LOG("Global real cache initialized");
+    // Global cache initialized
     }
 }
 

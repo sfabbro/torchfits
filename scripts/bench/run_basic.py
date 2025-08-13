@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import torchfits as tf
+import torch
 
 CASES = []
 
@@ -27,7 +28,16 @@ def bench_case(case):
         size = int(data.numel())
     else:
         table = tf.read(case["path"], hdu=case["hdu"], format="table")
-        size = sum(v.numel() for v in table.data.values())
+        # Sum tensor elements only; skip string columns and count VLA elements if present
+        size = 0
+        for v in table.data.values():
+            if isinstance(v, torch.Tensor):
+                size += int(v.numel())
+            elif isinstance(v, (list, tuple)):
+                # Variable-length array columns as list[Tensor]
+                for item in v:
+                    if isinstance(item, torch.Tensor):
+                        size += int(item.numel())
     dt = (time.perf_counter() - t0) * 1000
     return {
         "benchmark": "basic_read",

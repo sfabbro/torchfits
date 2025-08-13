@@ -141,3 +141,7 @@ fitsio/
 # Benchmark and validation artifacts (kept locally, not committed)
 artifacts/**
 !artifacts/.gitkeep
+
+# Generated demo FITS at repo root (examples may create these)
+/varlen_example.fits
+/vla_demo.fits

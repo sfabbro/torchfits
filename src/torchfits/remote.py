@@ -6,8 +6,8 @@ in the C++ backend but not yet fully exposed to Python.
 """
 
 import os
-import re
-from typing import Any, Dict, Optional, Union
+from collections.abc import Mapping
+from typing import Any
 
 
 class RemoteFetcher:
@@ -18,7 +18,7 @@ class RemoteFetcher:
     and provides a consistent interface for remote file handling.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None):
+    def __init__(self, cache_dir: str | None = None):
         """
         Initialize the remote fetcher.
 
@@ -29,7 +29,7 @@ class RemoteFetcher:
         """
         self.cache_dir = cache_dir or self._get_default_cache_dir()
 
-    def is_remote(self, filename_or_url: Union[str, Dict[str, Any]]) -> bool:
+    def is_remote(self, filename_or_url: str | Mapping[str, Any]) -> bool:
         """
         Check if a filename/URL/fsspec dict refers to a remote resource.
 
@@ -44,7 +44,7 @@ class RemoteFetcher:
             True if the URL is remote, False otherwise
         """
         # Handle fsspec dictionaries
-        if isinstance(filename_or_url, dict):
+        if isinstance(filename_or_url, Mapping):
             return self._is_fsspec_remote(filename_or_url)
 
         # Handle string URLs
@@ -74,7 +74,7 @@ class RemoteFetcher:
 
         return False
 
-    def _is_fsspec_remote(self, fsspec_dict: Dict[str, Any]) -> bool:
+    def _is_fsspec_remote(self, fsspec_dict: Mapping[str, Any]) -> bool:
         """
         Check if an fsspec dictionary refers to a remote resource.
 
@@ -108,7 +108,7 @@ class RemoteFetcher:
 
         return protocol in remote_protocols
 
-    def fsspec_to_url(self, fsspec_dict: Dict[str, Any]) -> str:
+    def fsspec_to_url(self, fsspec_dict: Mapping[str, Any]) -> str:
         """
         Convert fsspec dictionary to URL.
 
@@ -152,7 +152,7 @@ class RemoteFetcher:
 
         return os.path.join(tempfile.gettempdir(), "torchfits_cache")
 
-    def get_cached_filename(self, filename_or_url: Union[str, Dict[str, Any]]) -> str:
+    def get_cached_filename(self, filename_or_url: str | Mapping[str, Any]) -> str:
         """
         Generate cached filename for a URL or fsspec dict.
 
@@ -167,7 +167,7 @@ class RemoteFetcher:
             Path to the cached file
         """
         # Convert fsspec dict to URL if needed
-        if isinstance(filename_or_url, dict):
+        if isinstance(filename_or_url, Mapping):
             url = self.fsspec_to_url(filename_or_url)
         else:
             url = filename_or_url
@@ -182,7 +182,7 @@ class RemoteFetcher:
         """Check if a file exists."""
         return os.path.isfile(path)
 
-    def ensure_local(self, filename_or_url: Union[str, Dict[str, Any]]) -> str:
+    def ensure_local(self, filename_or_url: str | Mapping[str, Any]) -> str:
         """
         Ensure a file is available locally.
 
@@ -210,7 +210,7 @@ class RemoteFetcher:
             return self.get_cached_filename(filename_or_url)
         else:
             # For local files, return as-is (only works with string paths)
-            if isinstance(filename_or_url, dict):
+            if isinstance(filename_or_url, Mapping):
                 raise ValueError(
                     "Local file access requires string path, not fsspec dict"
                 )
