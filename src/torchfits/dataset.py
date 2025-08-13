@@ -34,6 +34,7 @@ from typing import Any, cast
 import torch
 
 from . import read  # core reader
+from . import fits_reader_cpp  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -157,11 +158,44 @@ def read_multi_cutouts(spec: FITSMultiCutoutSpec, stack: bool = False) -> Any:
         (c.hdu, tuple(c.start)) for c in spec.cutouts
     ]
 
+    # Fast-path: if all cutouts target the same (path,hdu), identical shape, same device, and small window (<=32x32),
+    # use C++ batched reader to avoid per-cutout overhead.
+    can_batch = False
+    batched_shape: list[int] | None = None
+    target_hdu: int | str | None = None
+    target_device: str | None = None
+    if spec.cutouts:
+        same_hdu = len({c.hdu for c in spec.cutouts}) == 1
+        shape_set = {tuple(c.shape) for c in spec.cutouts}
+        devices = {c.device for c in spec.cutouts}
+        if same_hdu and len(shape_set) == 1 and len(devices) == 1:
+            sh = list(next(iter(shape_set)))
+            # Only batch for 2D small windows for now
+            if len(sh) == 2 and sh[0] <= 32 and sh[1] <= 32:
+                can_batch = True
+                batched_shape = sh
+                target_hdu = spec.cutouts[0].hdu
+                target_device = spec.cutouts[0].device
+
     def _do(c: FITSCutoutSpec):  # returns tensor for image/cube HDUs
         out = read(spec.path, hdu=c.hdu, start=list(c.start), shape=list(c.shape), device=c.device)  # type: ignore[arg-type]
         if isinstance(out, tuple) and len(out) == 2 and torch.is_tensor(out[0]):
             return out[0]
         return out  # type: ignore[return-value]
+
+    # Batched path (sequential submission to single C++ call)
+    if can_batch and not spec.parallel and isinstance(target_hdu, (int, str)) and batched_shape is not None and target_device is not None:
+        try:
+            starts = [list(c.start) for c in spec.cutouts]
+            # HDU to CFITSIO (1-based) if int
+            hdu_cpp = target_hdu + 1 if isinstance(target_hdu, int) else target_hdu
+            tensors = fits_reader_cpp.read_many_cutouts(spec.path, hdu_cpp, starts, batched_shape, target_device)  # type: ignore[attr-defined]
+            if spec.return_dict:
+                return {k: v for k, v in zip(results_order, tensors, strict=True)}
+            return list(tensors)
+        except Exception:
+            # Fallback to original slow path on any error
+            pass
 
     if spec.parallel and len(spec.cutouts) > 1:
         from concurrent.futures import ThreadPoolExecutor, as_completed

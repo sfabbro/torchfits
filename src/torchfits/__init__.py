@@ -19,6 +19,7 @@ from .fits_reader import (  # Torch-frame / DataFrame helpers
     FITS,
     HDU,
     _clear_cache,
+    read_many_small_cutouts,
     dataframe_round_trip,
     fits_table_to_torch_frame,
     get_dims,
@@ -201,6 +202,7 @@ __all__ = [
     "get_hdu_type",
     "get_num_hdus",
     "_clear_cache",
+    "read_many_small_cutouts",
     # Writing functions (v1.0)
     "write",
     "write_mef",

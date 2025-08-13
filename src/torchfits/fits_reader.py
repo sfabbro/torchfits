@@ -307,6 +307,37 @@ def read(
     return result
 
 
+def read_many_small_cutouts(filename_or_url, hdu=0, starts=None, shape=None, device="cpu"):
+    """Fast path to read many small cutouts from the same image HDU.
+
+    Parameters
+    ----------
+    filename_or_url : str or dict
+        FITS path or URL.
+    hdu : int or str, default 0
+        0-based HDU index or name.
+    starts : list[list[int]]
+        List of 0-based start coordinates for each cutout.
+    shape : list[int]
+        Cutout shape common to all starts.
+    device : str, default 'cpu'
+        Target device for tensors.
+
+    Returns
+    -------
+    list[torch.Tensor]
+        Tensors in the same order as starts.
+    """
+    if fits_reader_cpp is None:
+        raise RuntimeError("fits_reader_cpp extension not loaded")
+    if not starts or not shape:
+        return []
+    cfitsio_hdu = hdu + 1 if isinstance(hdu, int) else hdu
+    return fits_reader_cpp.read_many_cutouts(
+        filename_or_url, cfitsio_hdu, starts, shape, device
+    )
+
+
 def _build_null_masks(table_dict, header):
     """Build boolean masks for columns with TNULLn sentinel in header.
 

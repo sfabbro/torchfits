@@ -52,6 +52,17 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
 
     m.def("get_last_read_info", &get_last_read_info, "Get diagnostic info about the last read path used.");
 
+    // Batched small-cutout reader (optimized for small windows from same HDU)
+    m.def("read_many_cutouts", [](py::object filename_or_url, py::object hdu, const std::vector<std::vector<long>>& starts, const std::vector<long>& shape, py::str device_str) {
+        return read_many_cutouts(filename_or_url, hdu, starts, shape, device_str);
+    },
+        py::arg("filename_or_url"),
+        py::arg("hdu") = 1,
+        py::arg("starts"),
+        py::arg("shape"),
+        py::arg("device") = "cpu",
+        "Read many small image cutouts from the same HDU efficiently in one session.");
+
     m.def("get_header", [](const std::string& filename, py::object hdu_spec) {
         int hdu_num = 1;
         if (py::isinstance<py::str>(hdu_spec)) {

@@ -48,6 +48,16 @@ pybind11::object read_impl(
     pybind11::str device_str
 );
 
+// Optimized path: read many small image cutouts from the same HDU in a single open session.
+// Returns a Python list of tensors in the same order as the provided starts.
+pybind11::object read_many_cutouts(
+    pybind11::object filename_or_url,
+    pybind11::object hdu,
+    const std::vector<std::vector<long>>& starts,
+    const std::vector<long>& shape,
+    pybind11::str device_str
+);
+
 // Expose last read path/flags for diagnostics/benchmarks
 pybind11::dict get_last_read_info();
 

@@ -897,3 +897,51 @@ pybind11::object read_impl(
         throw py::error_already_set();
     }
 }
+
+// Optimized batched cutouts: one file open, many small reads
+pybind11::object read_many_cutouts(
+    pybind11::object filename_or_url,
+    pybind11::object hdu,
+    const std::vector<std::vector<long>>& starts,
+    const std::vector<long>& shape,
+    pybind11::str device_str
+) {
+    torch::Device device(device_str);
+    try {
+        std::string filename_or_url_str = py::str(filename_or_url).cast<std::string>();
+        std::string filename = RemoteFetcher::ensure_local(filename_or_url_str);
+
+        int hdu_num = 1;
+        if (!hdu.is_none()) {
+            if (py::isinstance<py::str>(hdu)) {
+                hdu_num = get_hdu_num_by_name(filename, hdu.cast<std::string>());
+            } else {
+                hdu_num = hdu.cast<int>();
+            }
+        }
+
+        FITSFileWrapper f(filename);
+        int status = 0;
+        if (fits_movabs_hdu(f.get(), hdu_num, NULL, &status)) {
+            throw_fits_error(status, "Error moving to HDU " + std::to_string(hdu_num));
+        }
+
+        int hdu_type = 0;
+        fits_get_hdu_type(f.get(), &hdu_type, &status);
+        if (status) throw_fits_error(status, "Error getting HDU type");
+        if (hdu_type != IMAGE_HDU) {
+            throw std::runtime_error("read_many_cutouts: target HDU is not an image");
+        }
+
+        // For each start, perform a small region read
+        py::list out;
+        for (const auto& st : starts) {
+            torch::Tensor t = read_image_data(f.get(), device, st, shape);
+            out.append(py::cast(t));
+        }
+        return out;
+    } catch (const std::exception& e) {
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        throw py::error_already_set();
+    }
+}
