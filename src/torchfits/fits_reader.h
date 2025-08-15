@@ -7,7 +7,6 @@
 #include <vector>
 #include <map>
 #include <memory>
-#include "cache.h"
 
 // Forward declarations
 class FITSFile;
@@ -48,11 +47,31 @@ pybind11::object read_impl(
     pybind11::str device_str
 );
 
+// Read table data along with per-column null masks where supported; returns
+// a Python tuple (data_dict, header_dict, masks_dict) from bindings layer.
+pybind11::object read_table_with_null_masks_impl(
+    pybind11::object filename_or_url,
+    pybind11::object hdu,
+    pybind11::object columns,
+    long start_row,
+    pybind11::object num_rows,
+    pybind11::str device_str
+);
+
 // Optimized path: read many small image cutouts from the same HDU in a single open session.
 // Returns a Python list of tensors in the same order as the provided starts.
 pybind11::object read_many_cutouts(
     pybind11::object filename_or_url,
     pybind11::object hdu,
+    const std::vector<std::vector<long>>& starts,
+    const std::vector<long>& shape,
+    pybind11::str device_str
+);
+
+// Batched small-cutout reader across multiple HDUs (MEF optimization)
+pybind11::object read_many_cutouts_multi_hdu(
+    pybind11::object filename_or_url,
+    const std::vector<int>& hdus,
     const std::vector<std::vector<long>>& starts,
     const std::vector<long>& shape,
     pybind11::str device_str

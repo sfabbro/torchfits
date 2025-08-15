@@ -190,11 +190,9 @@ def create_extension():
             "src/torchfits/fits_utils.cpp", 
             "src/torchfits/wcs_utils.cpp",
             "src/torchfits/bindings.cpp",
-            "src/torchfits/cache.cpp",
             "src/torchfits/real_cache.cpp",  # Real cache implementation
             "src/torchfits/cfitsio_enhanced.cpp",  # CFITSIO optimizations
             "src/torchfits/remote.cpp",
-            # "src/torchfits/performance.cpp",  # Temporarily disabled for initial build
         ],
         include_dirs=[
             "src/torchfits",

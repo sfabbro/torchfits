@@ -1,5 +1,4 @@
 #include "fits_utils.h"
-#include "performance.h"
 #include "debug.h"
 #include <map>
 #include <string>

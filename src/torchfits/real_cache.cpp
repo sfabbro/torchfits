@@ -15,6 +15,15 @@ RealSmartCache& RealSmartCache::get_instance() {
 
 RealSmartCache::RealSmartCache(size_t max_memory_mb) 
     : max_memory_bytes_(max_memory_mb * 1024 * 1024), hits_(0), misses_(0) {
+    // Allow env override for capacity
+    if (const char* env = std::getenv("TORCHFITS_TILE_CACHE_MB")) {
+        try {
+            size_t mb = static_cast<size_t>(std::stoull(env));
+            if (mb > 0) max_memory_bytes_ = mb * 1024ULL * 1024ULL;
+        } catch (...) {
+            // ignore
+        }
+    }
     // Cache initialized
 }
 

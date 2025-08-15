@@ -20,6 +20,7 @@ from .fits_reader import (  # Torch-frame / DataFrame helpers
     HDU,
     _clear_cache,
     read_many_small_cutouts,
+    read_many_cutouts_multi_hdu,
     dataframe_round_trip,
     fits_table_to_torch_frame,
     get_dims,
@@ -124,6 +125,14 @@ def cache_stats():
         return {}
 
 
+def memory_cache_stats():
+    """Return in-memory RealSmartCache stats as a dictionary."""
+    try:
+        return fits_reader_cpp._memory_cache_stats()  # type: ignore[attr-defined]
+    except Exception:
+        return {}
+
+
 def has_feature(feature_name):
     """Check if an optional feature is available.
 
@@ -203,6 +212,7 @@ __all__ = [
     "get_num_hdus",
     "_clear_cache",
     "read_many_small_cutouts",
+    "read_many_cutouts_multi_hdu",
     # Writing functions (v1.0)
     "write",
     "write_mef",
@@ -238,6 +248,8 @@ __all__ = [
     "get_cache",
     "configure_cache",
     "get_cache_manager",
+    # In-memory cache stats
+    "memory_cache_stats",
     # PyTorch-Frame integration (optional)
     "read_dataframe",
     # Round-trip helpers

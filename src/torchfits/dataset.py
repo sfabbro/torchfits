@@ -334,18 +334,20 @@ def read_multi_sky_cutouts(
             outs.append(sl)
         return outs
 
-    # Fallback: per-cutout reads (still benefiting from batched WCS)
-    outs2: list[torch.Tensor] = []
+    # Fallback: batch through C++ cutout path to reuse tiles/coalescing
+    hdu_cpp = hdu
+    if isinstance(hdu_cpp, str):
+        # C++ expects numeric hdu resolved by name inside; keep string
+        pass
+    starts = []
+    shape = [2 * half_hw, 2 * half_hw]
     for i in range(len(world_points)):
         x, y = float(pix_points[i][0]), float(pix_points[i][1])
         ys = max(0, int(round(y)) - half_hw)
         xs = max(0, int(round(x)) - half_hw)
-        t = read(path, hdu=hdu, start=[ys, xs], shape=[2 * half_hw, 2 * half_hw], device=device)  # type: ignore[arg-type]
-        t0 = t[0] if isinstance(t, tuple) and torch.is_tensor(t[0]) else t
-        if not torch.is_tensor(t0):
-            raise TypeError("Expected tensor image for sky cutouts")
-        outs2.append(cast(torch.Tensor, t0))
-    return outs2
+        starts.append([ys, xs])
+    tensors = fits_reader_cpp.read_many_cutouts(path, hdu_cpp, starts, shape, device)  # type: ignore[attr-defined]
+    return [cast(torch.Tensor, t) for t in tensors]
 
 
 # ---------------------------------------------------------------------------

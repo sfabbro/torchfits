@@ -31,6 +31,9 @@ private:
     size_t file_size_;
     void* mapped_memory_;
     bool is_memory_mapped_;
+#ifndef _WIN32
+    int fd_ = -1;
+#endif
 };
 
 /// Advanced buffered I/O using CFITSIO's buffering system

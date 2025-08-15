@@ -6,6 +6,13 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <memory>
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace torchfits_cfitsio_enhanced {
 
@@ -13,7 +20,7 @@ namespace torchfits_cfitsio_enhanced {
 
 CFITSIOMemoryMapper::CFITSIOMemoryMapper(const std::string& filename) 
     : filename_(filename), fptr_(nullptr), file_size_(0), 
-      mapped_memory_(nullptr), is_memory_mapped_(false) {
+    mapped_memory_(nullptr), is_memory_mapped_(false) {
     
     int status = 0;
     
@@ -59,32 +66,28 @@ torch::Tensor CFITSIOMemoryMapper::read_with_memory_mapping(int hdu_num,
     if (status) {
         throw_fits_error(status, "Cannot move to HDU for memory mapping");
     }
-    
-    // Try to use CFITSIO's memory mapping capabilities
-    if (should_use_memory_mapping()) {
-        // Use ffgmem (CFITSIO memory mapping) if available
-        #ifdef CFITSIO_MEMORY_MAPPING_AVAILABLE
-        
-        size_t mem_size;
-        void* mem_ptr;
-        
-        // Get memory-mapped pointer from CFITSIO
-        fits_get_mem_addr(fptr_, &mem_ptr, &mem_size, 0, &status);
-        if (!status && mem_ptr) {
-            is_memory_mapped_ = true;
-            mapped_memory_ = mem_ptr;
-            
-            DEBUG_LOG("Using CFITSIO memory mapping for " + filename_);
-            
-            // Read data using memory-mapped access
-            // This would need specific implementation based on CFITSIO version
-            // For now, fall back to optimized regular reading
-        }
-        
-        #endif
+
+    // Only support full, uncompressed, unscaled images for zero-copy path
+    if (!start.empty() || !shape.empty()) {
+        throw std::runtime_error("Subset memory mapping not yet implemented");
     }
-    
-    // Enhanced reading with optimized buffers
+
+    int is_comp_status = 0;
+    int is_comp = fits_is_compressed_image(fptr_, &is_comp_status);
+    (void)is_comp_status;
+    if (is_comp) {
+        throw std::runtime_error("Compressed images not supported by mmap fast path");
+    }
+
+    // Check scaling
+    double bscale = 1.0, bzero = 0.0;
+    fits_read_key_dbl(fptr_, "BSCALE", &bscale, nullptr, &status); if (status) { status = 0; bscale = 1.0; }
+    fits_read_key_dbl(fptr_, "BZERO", &bzero, nullptr, &status);  if (status) { status = 0; bzero = 0.0; }
+    if (bscale != 1.0 || bzero != 0.0) {
+        throw std::runtime_error("Scaled images not supported by mmap fast path");
+    }
+
+    // Get dimensions and type
     int naxis;
     fits_get_img_dim(fptr_, &naxis, &status);
     if (status) throw_fits_error(status, "Error getting image dimensions");
@@ -92,70 +95,84 @@ torch::Tensor CFITSIOMemoryMapper::read_with_memory_mapping(int hdu_num,
     std::vector<long> naxes(naxis);
     fits_get_img_size(fptr_, naxis, naxes.data(), &status);
     if (status) throw_fits_error(status, "Error getting image size");
-    
-    // Optimize buffer size for this read
-    CFITSIOPerformanceOptimizer::set_optimal_buffers(fptr_, file_size_);
-    
-    // Read with optimized settings
-    torch::Tensor result;
-    if (start.empty()) {
-        // Full image read with optimization
-        size_t total_pixels = 1;
-        for (long dim : naxes) total_pixels *= dim;
-        
-        // Determine optimal data type
-        int bitpix;
-        fits_get_img_type(fptr_, &bitpix, &status);
-        if (status) throw_fits_error(status, "Cannot get image type");
-        
-        // Convert long dimensions to int64_t for PyTorch
-        std::vector<int64_t> tensor_dims_i64;
-        for (long dim : naxes) {
-            tensor_dims_i64.push_back(static_cast<int64_t>(dim));
-        }
-        torch::IntArrayRef tensor_dims(tensor_dims_i64);
-        
-        switch (bitpix) {
-            case FLOAT_IMG: {
-                result = torch::empty(tensor_dims, torch::kFloat32);
-                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr,
-                             result.data_ptr<float>(), nullptr, &status);
-                break;
-            }
-            case DOUBLE_IMG: {
-                result = torch::empty(tensor_dims, torch::kFloat64);
-                fits_read_img(fptr_, TDOUBLE, 1, total_pixels, nullptr,
-                             result.data_ptr<double>(), nullptr, &status);
-                break;
-            }
-            case SHORT_IMG: {
-                result = torch::empty(tensor_dims, torch::kInt16);
-                fits_read_img(fptr_, TSHORT, 1, total_pixels, nullptr,
-                             result.data_ptr<int16_t>(), nullptr, &status);
-                break;
-            }
-            case LONG_IMG: {
-                result = torch::empty(tensor_dims, torch::kInt32);
-                fits_read_img(fptr_, TINT, 1, total_pixels, nullptr,
-                             result.data_ptr<int32_t>(), nullptr, &status);
-                break;
-            }
-            default:
-                // Default to float32
-                result = torch::empty(tensor_dims, torch::kFloat32);
-                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr,
-                             result.data_ptr<float>(), nullptr, &status);
-        }
-        
-        if (status) throw_fits_error(status, "Memory-mapped read failed");
-        
-    } else {
-        // Subset read with memory mapping optimization
-        // Implementation would use fits_read_subset with optimized parameters
-        throw std::runtime_error("Subset memory mapping not yet implemented");
+
+    // Determine data type
+    int bitpix;
+    fits_get_img_type(fptr_, &bitpix, &status);
+    if (status) throw_fits_error(status, "Cannot get image type");
+
+    // Compute total elements and tensor dims (reversed for torch)
+    size_t total_pixels = 1;
+    std::vector<int64_t> tensor_dims_i64;
+    for (long dim : naxes) {
+        total_pixels *= static_cast<size_t>(dim);
+        tensor_dims_i64.push_back(static_cast<int64_t>(dim));
     }
-    
-    return result;
+    std::reverse(tensor_dims_i64.begin(), tensor_dims_i64.end());
+
+    // Find data offset within file
+    LONGLONG hdu_start = 0, data_start = 0, data_end = 0;
+    fits_get_hduaddrll(fptr_, &hdu_start, &data_start, &data_end, &status);
+    if (status) throw_fits_error(status, "fits_get_hduaddrll failed");
+
+    // Map file into memory (POSIX)
+#ifndef _WIN32
+    // Map file into memory (POSIX) with a local fd and holder
+    int fd = ::open(filename_.c_str(), O_RDONLY);
+    if (fd < 0) {
+        throw std::runtime_error("Failed to open file for mmap: " + filename_);
+    }
+    struct stat st{};
+    if (fstat(fd, &st) != 0) {
+        ::close(fd);
+        throw std::runtime_error("fstat failed for mmap: " + filename_);
+    }
+    size_t fsize = static_cast<size_t>(st.st_size);
+    void* ptr = mmap(nullptr, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (ptr == MAP_FAILED) {
+        ::close(fd);
+        throw std::runtime_error("mmap failed");
+    }
+    char* base = static_cast<char*>(ptr);
+    char* data_ptr = base + static_cast<size_t>(data_start);
+
+    // Holder to manage mapping lifetime when tensor is freed
+    struct MappingHolder {
+        void* ptr; size_t size; int fd;
+        MappingHolder(void* p, size_t s, int f): ptr(p), size(s), fd(f) {}
+        ~MappingHolder(){ if (ptr && size) munmap(ptr, size); if (fd>=0) ::close(fd); }
+    };
+    auto holder = std::make_shared<MappingHolder>(ptr, fsize, fd);
+
+    // Build tensor from blob
+    torch::TensorOptions opts;
+    switch (bitpix) {
+        case BYTE_IMG:     opts = torch::TensorOptions().dtype(torch::kUInt8); break;
+        case SHORT_IMG:    opts = torch::TensorOptions().dtype(torch::kInt16); break;
+        case LONG_IMG:     opts = torch::TensorOptions().dtype(torch::kInt32); break;
+        case LONGLONG_IMG: opts = torch::TensorOptions().dtype(torch::kInt64); break;
+        case FLOAT_IMG:    opts = torch::TensorOptions().dtype(torch::kFloat32); break;
+        case DOUBLE_IMG:   opts = torch::TensorOptions().dtype(torch::kFloat64); break;
+        default: throw std::runtime_error("Unsupported bitpix for mmap");
+    }
+
+    auto deleter = [holder](void* /*p*/ ) mutable {
+        // holder will go out of scope here when tensor free; destructor unmaps/closes
+        holder.reset();
+    };
+    torch::Tensor t = torch::from_blob(static_cast<void*>(data_ptr), tensor_dims_i64, deleter, opts);
+    // Optional zero-copy: if TORCHFITS_MMAP_ZERO_COPY=1, return directly without clone
+    bool zero_copy = false;
+    if (const char* env = std::getenv("TORCHFITS_MMAP_ZERO_COPY")) {
+        zero_copy = std::string(env) == "1";
+    }
+    if (zero_copy) {
+        return t; // caller must not write; lifetime tied to mapping holder
+    }
+    return t.clone().contiguous(); // default: detach from file mapping
+#else
+    throw std::runtime_error("Memory mapping not implemented on Windows");
+#endif
 }
 
 bool CFITSIOMemoryMapper::should_use_memory_mapping() const {

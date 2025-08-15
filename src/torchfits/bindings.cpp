@@ -4,9 +4,8 @@
 #include "fits_reader.h"
 #include "fits_writer.h"
 #include "fits_utils.h"
-#include "cache.h"
+#include "real_cache.h"
 #include "wcs_utils.h"
-#include "performance.h"
 
 namespace py = pybind11;
 
@@ -63,6 +62,17 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         py::arg("device") = "cpu",
         "Read many small image cutouts from the same HDU efficiently in one session.");
 
+        // Batched MEF cutouts across multiple HDUs
+        m.def("read_many_cutouts_multi_hdu", [](py::object filename_or_url, const std::vector<int>& hdus, const std::vector<std::vector<long>>& starts, const std::vector<long>& shape, py::str device_str) {
+            return read_many_cutouts_multi_hdu(filename_or_url, hdus, starts, shape, device_str);
+        },
+            py::arg("filename_or_url"),
+            py::arg("hdus"),
+            py::arg("starts"),
+            py::arg("shape"),
+            py::arg("device") = "cpu",
+            "Read many small image cutouts across multiple HDUs efficiently (MEF optimization).");
+
     m.def("get_header", [](const std::string& filename, py::object hdu_spec) {
         int hdu_num = 1;
         if (py::isinstance<py::str>(hdu_spec)) {
@@ -105,7 +115,40 @@ PYBIND11_MODULE(fits_reader_cpp, m) {
         return get_header_value(filename, hdu_num, key);
     }, py::arg("filename"), py::arg("hdu_spec"), py::arg("key"), "Get the value of a single header keyword.");
 
-    m.def("_clear_cache", &clear_cache, "Clear the FITS file cache.");
+    m.def("_clear_cache", []() {
+        try {
+            torchfits_real_cache::RealSmartCache::get_instance().clear();
+        } catch (...) {
+            // ignore
+        }
+    }, "Clear torchfits real cache");
+
+    m.def("_memory_cache_stats", []() {
+        try {
+            auto stats = torchfits_real_cache::RealSmartCache::get_instance().get_compact_stats();
+            py::dict d;
+            d["total_entries"] = stats.total_entries;
+            d["memory_usage_mb"] = stats.memory_usage_mb;
+            d["hits"] = stats.hits;
+            d["misses"] = stats.misses;
+            d["hit_rate"] = stats.hit_rate;
+            return d;
+        } catch (...) {
+            return py::dict();
+        }
+    }, "Get in-memory cache statistics (RealSmartCache)");
+
+    // One-pass table read with null masks (returns (data_dict, header, masks_dict))
+    m.def("read_table_with_null_masks", [](py::object filename_or_url, py::object hdu, py::object columns, long start_row, py::object num_rows, py::str device_str) {
+        return read_table_with_null_masks_impl(filename_or_url, hdu, columns, start_row, num_rows, device_str);
+    },
+        py::arg("filename_or_url"),
+        py::arg("hdu") = 1,
+        py::arg("columns") = py::none(),
+        py::arg("start_row") = 0,
+        py::arg("num_rows") = py::none(),
+        py::arg("device") = "cpu",
+        "Read table data and per-column null masks in one pass where possible.");
 
     // --- Writing Functions (v1.0) ---
     m.def("write_tensor_to_fits", &torchfits_writer::write_tensor_to_fits,

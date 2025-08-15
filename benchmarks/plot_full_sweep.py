@@ -71,6 +71,7 @@ def plot_bars_per_group(rows: List[Dict[str, Any]], outdir: str) -> List[str]:
             continue
         groups[_group_key(r)].append(r)
 
+    _ensure_dir(outdir)
     paths: List[str] = []
     for gk, items in groups.items():
         xs: List[str] = []
@@ -83,18 +84,17 @@ def plot_bars_per_group(rows: List[Dict[str, Any]], outdir: str) -> List[str]:
         order = sorted(range(len(xs)), key=lambda i: ys[i])
         xs = [xs[i] for i in order]
         ys = [ys[i] for i in order]
-        _ensure_dir(outdir)
-    p = cast(Any, plt)
-    p.figure(figsize=(8, 3 + max(1, len(xs) * 0.15)))
-    p.barh(range(len(xs)), ys, color="#3b82f6")
-    p.yticks(range(len(xs)), xs)
-    p.xlabel("mean ms")
-    p.title(gk)
-    p.tight_layout()
-    fname = os.path.join(outdir, gk.replace(" ", "_").replace("/", "-") + ".png")
-    p.savefig(fname)
-    p.close()
-    paths.append(fname)
+        p = cast(Any, plt)
+        p.figure(figsize=(8, 3 + max(1, len(xs) * 0.15)))
+        p.barh(range(len(xs)), ys, color="#3b82f6")
+        p.yticks(range(len(xs)), xs)
+        p.xlabel("mean ms")
+        p.title(gk)
+        p.tight_layout()
+        fname = os.path.join(outdir, gk.replace(" ", "_").replace("/", "-") + ".png")
+        p.savefig(fname)
+        p.close()
+        paths.append(fname)
     return paths
 
 

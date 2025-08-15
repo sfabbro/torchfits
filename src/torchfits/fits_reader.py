@@ -1,5 +1,6 @@
 """Python bindings and helpers for reading FITS files with torchfits."""
 import warnings
+import os
 
 import torch
 
@@ -244,24 +245,10 @@ def read(
         # Non-fatal: fall back to original source on any cache error
         src_obj = filename_or_url
 
-    # Heuristic: if caller didn’t force flags and we’re doing a full-image read (no start/shape)
-    # on a local path, decide mmap/buffered automatically. The backend is still authoritative
-    # and will fall back safely.
-    try:
-        auto_flags = (enable_mmap is None and enable_buffered is None and isinstance(src_obj, str)
-                      and start is None and shape is None and not str(src_obj).startswith(("http://", "https://")))
-        if auto_flags:
-            from .heuristics import choose_read_mode_for_image
-            choice = choose_read_mode_for_image(src_obj, hdu)
-            # Only set if not already specified
-            enable_mmap = choice.get("enable_mmap", enable_mmap)
-            enable_buffered = choice.get("enable_buffered", enable_buffered)
-    except Exception:
-        pass
+    # Simplify: rely on backend's automatic selection of fast paths.
+    # Keep flags for backward compatibility but do not compute heuristics here.
 
     # Call the C++ backend with converted HDU number
-    # Debug markers for segfault localization
-    # (debug removed for stability)
     if fits_reader_cpp is None:
         raise RuntimeError("fits_reader_cpp extension not loaded")
     result = fits_reader_cpp.read(
@@ -322,6 +309,26 @@ def read(
 
     # Return original result for other cases
     return result
+
+
+def read_many_cutouts_multi_hdu(filename_or_url: str, hdus: list[int], starts: list[list[int]], shape: list[int], device: str = "cpu"):
+    """Read many small cutouts across multiple HDUs efficiently.
+
+    Args:
+        filename_or_url: FITS file path or URL.
+        hdus: List of HDU indices (0-based, astropy-style) per cutout.
+        starts: List of [row, col] start positions per cutout.
+        shape: [height, width] of each cutout.
+        device: Target device ("cpu" or "cuda").
+
+    Returns:
+        List[torch.Tensor] in the same order as inputs.
+    """
+    if fits_reader_cpp is None:
+        raise RuntimeError("C++ extension not loaded")
+    # Convert 0-based HDU indices to 1-based for backend
+    hdus_1b = [int(h) + 1 for h in hdus]
+    return fits_reader_cpp.read_many_cutouts_multi_hdu(filename_or_url, hdus_1b, starts, shape, device)
 
 
 def read_many_small_cutouts(filename_or_url, hdu=0, starts=None, shape=None, device="cpu"):

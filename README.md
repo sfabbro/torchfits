@@ -17,6 +17,13 @@ See artifacts/benchmarks/plots for charts.
 <!-- perf:end -->
 
 
+
+
+
+
+
+
+
 ## Features
 
 * **Fast FITS I/O:** Uses a highly optimized C++ backend (powered by `cfitsio`) for rapid data access.
@@ -478,6 +485,12 @@ TorchFits includes opt-in switches to experiment with advanced CFITSIO paths:
 
 * TORCHFITS_ENABLE_MMAP=1 or read(..., enable_mmap=True): opt-in memory-mapped full-image read for uncompressed images. Only applies to full-image reads; compressed images or subsets fall back.
 * TORCHFITS_ENABLE_BUFFERED=1 — enable buffered/tiled image read fast-paths (no cutouts). This prefers tiled reads for compressed images and scaled reads for uncompressed images. Falls back automatically on any error.
+
+Additional knobs and notes:
+
+- TORCHFITS_SUBSET_FULL_FRAC: when reading a small window (start, shape) from an image, if the requested area is ≤ this fraction of the full image (default 0.05 = 5%) and the full image has ≤ TORCHFITS_SUBSET_FULL_MAX_PIXELS pixels (default 2048x2048), torchfits will read the full image once and slice the window from it. The full image is cached for reuse across repeated cutouts on the same HDU+device.
+- TORCHFITS_SUBSET_FULL_MAX_PIXELS: safety cap for the above heuristic (default 4194304 pixels).
+- Memory-mapped fast path currently supports only uncompressed, unscaled images (BSCALE=1 and BZERO=0) and only for full-image reads. For other cases torchfits automatically falls back to the buffered/standard path.
 * TORCHFITS_PAR_READ=1 — attempt parallel scalar column reads for wide tables (4+ scalar numeric columns).
 * TORCHFITS_PIN_MEMORY=1 — allocate pinned host memory for CPU tensors to improve host→GPU transfer via .to(device).
 

@@ -497,6 +497,14 @@ def bench_mef_cutouts(tmp: str, hdus: int, cutouts: int, cut_hw: int, reps: int,
                 _ = tf.read(path, hdu=h, start=[y, x], shape=[cut_hw, cut_hw], **_tf_opts(mmap_flag, cache_capacity, buffered_flag))[0]
         return _run
 
+    # New optimized API: batch across HDUs in one call
+    def _tf_multi_hdu():
+        hlist = [h for (h, _y, _x) in coords]
+        starts = [[int(y), int(x)] for (_h, y, x) in coords]
+        def _run():
+            _ = tf.read_many_cutouts_multi_hdu(path, hlist, starts, [cut_hw, cut_hw])
+        return _run
+
     if tf_mmap_mode == "auto":
         best = None
         for mm, buf, label in _tf_auto_candidates_size_aware(op="mef_cutouts", allow_buffered_default=True, cut_hw=cut_hw, hdus=hdus):
@@ -537,6 +545,13 @@ def bench_mef_cutouts(tmp: str, hdus: int, cutouts: int, cut_hw: int, reps: int,
         comp_rows.append(("fitsio", "slice per HDU", _fi))
     else:
         rows.append(["fitsio", "slice per HDU", "n/a", "", "missing module"]) 
+
+    # Include multi-HDU batched torchfits timing
+    try:
+        m, s, _ = time_repeat(_tf_multi_hdu(), reps=reps, warmup=1, use_median=True)
+        rows.append(["torchfits", "multi-hdu batch", f"{m:.2f}", f"{s:.2f}", f"{cutouts}x{cut_hw}^2 @ {hdus} HDUs"])
+    except Exception:
+        pass
 
     random.shuffle(comp_rows)
     for name, api, fn in comp_rows:
@@ -783,6 +798,9 @@ def bench_table_frameworks(tmp: str, rows_n: int, reps: int, collector: list | N
 
 
 def bench_sky_cutouts(tmp: str, size: int, cutouts: int, radius_arcsec: float, reps: int, collector: list | None = None, tf_mmap_mode: str = "auto", cache_capacity: int = 0) -> None:
+    if cutouts <= 0:
+        print("\n== Sky cutouts (skipped: cutouts <= 0) ==")
+        return
     path = os.path.join(tmp, "wcs_img.fits")
     created = _make_wcs_image(path, size=size)
     astropy = try_import("astropy.io.fits")

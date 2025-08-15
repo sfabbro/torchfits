@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <cstring>
-#include "cache.h"  // For clear_cache to invalidate after updates
+#include "real_cache.h"  // For real smart cache invalidation
 #include "real_cache.h"  // For real smart cache invalidation
 #include <torch/extension.h> // Ensure pybind11 type casters for torch::Tensor
 
@@ -612,7 +612,7 @@ void update_fits_header(const std::string& filename,
         
     // Header update complete
     // Invalidate any cached entries referencing this file
-    try { clear_cache(); } catch (...) {}
+    try { torchfits_real_cache::RealSmartCache::get_instance().clear(); } catch (...) {}
     try { torchfits_real_cache::RealSmartCache::get_instance().clear(); } catch (...) {}
         
     } catch (const std::exception& e) {
@@ -669,7 +669,7 @@ void update_fits_data(const std::string& filename,
         
     // Data update complete
     // Invalidate cache after pixel modification
-    try { clear_cache(); } catch (...) {}
+    try { torchfits_real_cache::RealSmartCache::get_instance().clear(); } catch (...) {}
     try { torchfits_real_cache::RealSmartCache::get_instance().clear(); } catch (...) {}
         
     } catch (const std::exception& e) {

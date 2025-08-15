@@ -1,3 +1,4 @@
+// Deprecated legacy LRU cache (kept as no-op shim for compatibility). Use real_cache.h instead.
 #ifndef TORCHFITS_CACHE_H
 #define TORCHFITS_CACHE_H
 
@@ -58,7 +59,7 @@ struct CacheEntry {
     }
 };
 
-// LRU Cache for FITS data
+// LRU Cache for FITS data (deprecated; minimal stub)
 class LRUCache {
 public:
     explicit LRUCache(size_t capacity_mb = 256);
@@ -83,13 +84,13 @@ private:
     std::unordered_map<std::string, typename std::list<ListEntry>::iterator> cache_map_;  // Key to list iterator
 };
 
-// Global cache instance
+// Global cache instance (deprecated)
 extern std::unique_ptr<LRUCache> cache;
 
-// Initialize cache with appropriate capacity (simplified)
+// Initialize cache (deprecated no-op)
 void ensure_cache_initialized(size_t capacity_mb);
 
-// Function to clear the global cache
+// Function to clear the global cache (deprecated no-op)
 void clear_cache();
 
 #endif // TORCHFITS_CACHE_H

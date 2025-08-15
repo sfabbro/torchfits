@@ -49,6 +49,8 @@ public:
     };
     
     Stats get_stats() const;
+    /// Compact stats as a plain struct for Python bindings
+    Stats get_compact_stats() const { return get_stats(); }
 
 private:
     size_t max_memory_bytes_;
