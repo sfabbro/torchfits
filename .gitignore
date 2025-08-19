@@ -124,3 +124,5 @@ fitsio/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+docs/*

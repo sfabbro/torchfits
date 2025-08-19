@@ -1,0 +1,101 @@
+[workspace]
+preview = ["pixi-build"]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[package]
+name = "torchfits"
+version = "0.1.0"
+description = "High-performance FITS I/O for PyTorch"
+authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
+
+[package.build]
+backend = { name = "pixi-build-cmake", version = "*" }
+channels = ["conda-forge"]
+
+# Build dependencies - tools needed to build the package
+# Note: cmake, ninja, and cxx-compiler are automatically provided by pixi-build-cmake
+[package.build-dependencies]
+pybind11 = ">=2.11.0"
+
+# Host dependencies - libraries that will be linked into the package
+[package.host-dependencies]
+python = ">=3.11"
+pytorch = "*"
+cfitsio = ">=4"
+wcslib = ">=7.11"
+
+# Run dependencies - packages needed at runtime
+[package.run-dependencies]
+pytorch = "*"
+pytorch-frame = ">=0.2.5,<0.3"
+
+# Workspace dependencies - development environment
+[dependencies]
+torchfits = { path = "." }
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+mypy = "*"
+ipykernel = "*"
+pip = "*"
+astropy = ">=5.0"
+fitsio = ">=1.0"
+matplotlib = "*"
+seaborn = "*"
+pandas = "*"
+psutil = "*"
+
+[tasks]
+# Development tasks
+dev = "pip install -e . --no-build-isolation"
+build = "pixi build"
+test = "pytest tests/"
+lint = "ruff check . && ruff format ."
+verify = "python verify_setup.py"
+
+# Core benchmarks (essential)
+bench = "python benchmarks/benchmark_all.py --output-dir benchmark_results"
+bench-basic = "python benchmarks/benchmark_basic.py"
+bench-core = "python benchmarks/benchmark_core.py"
+bench-ml = "python benchmarks/benchmark_ml.py"
+bench-table = "python benchmarks/benchmark_table.py"
+
+# Comprehensive benchmarks (renamed from exhaustive)
+bench-all = "python benchmarks/benchmark_all.py"
+bench-all-keep = "python benchmarks/benchmark_all.py --no-cleanup"
+
+# Comprehensive benchmark runner
+bench-all-auto = "python benchmarks/run_all_benchmarks.py --no-exhaustive"
+bench-all-runner = "python benchmarks/run_all_benchmarks.py"
+bench-all-force = "python benchmarks/run_all_benchmarks.py --exhaustive"
+
+# Pytest-based benchmarking
+bench-pytest = "pytest benchmarks/ --benchmark-only"
+
+# Development tools
+notebook = "jupyter lab"
+
+# Test phases for development workflow
+test-phase1 = "python -c 'import sys; sys.path.insert(0, \"src\"); import torchfits; print(\"Phase 1 COMPLETE: All core features implemented\")'"
+
+# Test feature with comparison libraries
+[feature.test.dependencies]
+astropy = ">=5.0"
+fitsio = ">=1.0"
+
+# Benchmark feature with additional dependencies
+[feature.bench.dependencies]
+astropy = ">=5.0"
+fitsio = ">=1.0"
+matplotlib = "*"
+seaborn = "*"
+pandas = "*"
+psutil = "*"
+pytest-benchmark = "*"
+
+# Environment definitions
+[environments]
+default = { solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+bench = { features = ["bench"], solve-group = "default" }
