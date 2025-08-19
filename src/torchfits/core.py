@@ -5,10 +5,11 @@ Implements support for all standard FITS data types, compression formats,
 and checksum verification as specified in Phase 1.
 """
 
-import torch
-import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from enum import Enum
+
+import torch
+import numpy as np
 
 class FITSDataType(Enum):
     """Standard FITS data types."""
@@ -82,14 +83,8 @@ class CompressionHandler:
         if not zcmptype:
             return CompressionType.NONE, {}
         
-        # Map FITS compression names to enum
-        compression_map = {
-            'RICE_1': CompressionType.RICE,
-            'GZIP_1': CompressionType.GZIP,
-            'GZIP_2': CompressionType.GZIP2,
-            'HCOMPRESS_1': CompressionType.HCOMPRESS,
-            'PLIO_1': CompressionType.PLIO,
-        }
+        # Map FITS compression names to enum (dynamic mapping)
+        compression_map = {comp_type.value: comp_type for comp_type in CompressionType if comp_type != CompressionType.NONE}
         
         comp_type = compression_map.get(zcmptype, CompressionType.NONE)
         
@@ -105,7 +100,7 @@ class CompressionHandler:
     @staticmethod
     def is_compressed(header: Dict[str, Any]) -> bool:
         """Check if HDU is compressed."""
-        return 'ZCMPTYPE' in header and header['ZCMPTYPE'].strip() != ''
+        return 'ZCMPTYPE' in header and header.get('ZCMPTYPE', '').strip() != ''
 
 class ChecksumVerifier:
     """FITS checksum verification."""
@@ -116,7 +111,8 @@ class ChecksumVerifier:
         if not expected_datasum or expected_datasum == '0':
             return True
         
-        # Simple checksum implementation (real implementation would use FITS algorithm)
+        # WARNING: Simplified checksum implementation - may not detect data corruption
+        # TODO: Replace with proper FITS checksum algorithm for production use
         computed = np.sum(data.view(np.uint8)) % (2**32)
         try:
             expected = int(expected_datasum)
@@ -143,6 +139,43 @@ class FITSCore:
     """Core FITS functionality."""
     
     @staticmethod
+    def parse_cutout_spec(spec: str) -> tuple[str, int, tuple[slice, ...]]:
+        """
+        Parses a CFITSIO-style cutout specification string.
+
+        Args:
+            spec: The cutout specification string (e.g., 'myimage.fits[1][10:20,30:40]').
+
+        Returns:
+            A tuple containing the file path, HDU index, and a tuple of slices.
+        """
+        import re
+        # Pattern: filename[hdu_index][slice_spec] - e.g., 'image.fits[1][10:20,30:40]'
+        match = re.match(r"(.+?)\[(\d+)\]\[(.+?)\]", spec)
+        if not match:
+            raise ValueError(f"Invalid cutout specification: {spec}")
+
+        file_path, hdu_str, slice_str = match.groups()
+        hdu_index = int(hdu_str)
+
+        slice_parts = slice_str.split(',')
+        slices = []
+        for part in slice_parts:
+            try:
+                if ':' in part:
+                    start_str, stop_str = part.split(':')
+                    start = int(start_str) if start_str else None
+                    stop = int(stop_str) if stop_str else None
+                    slices.append(slice(start, stop))
+                else:
+                    index = int(part)
+                    slices.append(slice(index, index + 1))
+            except ValueError as e:
+                raise ValueError(f"Invalid slice specification '{part}' in cutout spec: {spec}") from e
+        
+        return file_path, hdu_index, tuple(slices)
+    
+    @staticmethod
     def get_data_info(header: Dict[str, Any]) -> Dict[str, Any]:
         """Extract data information from FITS header."""
         naxis = header.get('NAXIS', 0)
@@ -154,9 +187,13 @@ class FITSCore:
         for i in range(naxis, 0, -1):  # FITS is FORTRAN order
             shape.append(header.get(f'NAXIS{i}', 1))
         
-        # Get data type
+        # Get data type with error handling
         bitpix = header.get('BITPIX', -32)
-        dtype = FITSDataTypeHandler.to_torch_dtype(bitpix)
+        try:
+            dtype = FITSDataTypeHandler.to_torch_dtype(bitpix)
+        except ValueError:
+            # Default to float32 for unsupported BITPIX values
+            dtype = torch.float32
         
         # Check compression
         compressed = CompressionHandler.is_compressed(header)
@@ -184,12 +221,17 @@ class FITSCore:
         if data.dtype.byteorder not in ('=', '|'):
             data = data.astype(data.dtype.newbyteorder('='))
         
-        # Convert to tensor
-        tensor = torch.from_numpy(data.copy())
+        # Convert to tensor (zero-copy when possible)
+        tensor = torch.from_numpy(data)
         
-        # Apply FITS scaling
+        # Apply FITS scaling with precision preservation
         bzero = header.get('BZERO', 0.0)
         bscale = header.get('BSCALE', 1.0)
-        tensor = FITSDataTypeHandler.apply_scaling(tensor, bzero, bscale)
+        if bscale != 1.0 or bzero != 0.0:
+            # Preserve precision for 64-bit data
+            if tensor.dtype in (torch.int64, torch.float64):
+                tensor = tensor.to(torch.float64) * bscale + bzero
+            else:
+                tensor = tensor.float() * bscale + bzero
         
         return tensor

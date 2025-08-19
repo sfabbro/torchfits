@@ -2,10 +2,8 @@
 # Compatible with both pip and pixi-build cmake backend
 # When using pixi-build, these are automatically provided but we keep them for pip compatibility
 requires = [
-    "scikit-build-core>=0.7.0",
-    "pybind11>=2.11.0",
-    "cmake",
-    "ninja"
+    "scikit-build-core>=0.10",
+    "pybind11>=2.11.0"
 ]
 build-backend = "scikit_build_core.build"
 
@@ -34,6 +32,8 @@ requires-python = ">=3.11"
 dependencies = [
     "torch>=2.0.0",
     "pytorch-frame>=0.2.0",
+    "psutil>=5.0.0",  # For system resource monitoring
+    "numpy>=1.20.0",  # Core numerical operations
 ]
 
 [project.urls]
@@ -53,9 +53,11 @@ dev = [
 bench = [
     "astropy>=5.0",
     "fitsio>=1.1",
+    "pandas>=1.0",
     "matplotlib>=3.0",
+    "seaborn>=0.11.0",
     "pytest-benchmark>=3.0",
-    "psutil>=5.0",  # For memory monitoring in benchmarks
+    "psutil>=5.0",
 ]
 test = [
     "pytest>=6.0",

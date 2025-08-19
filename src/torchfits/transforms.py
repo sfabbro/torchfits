@@ -218,6 +218,59 @@ class CenterCrop:
         return f"CenterCrop(size={self.size})"
 
 
+class RandomFlip:
+    """Random flip transformation for data augmentation."""
+    
+    def __init__(self, horizontal: bool = True, vertical: bool = True, p: float = 0.5):
+        self.horizontal = horizontal
+        self.vertical = vertical
+        self.p = p
+    
+    def __call__(self, tensor: Tensor) -> Tensor:
+        if self.horizontal and torch.rand(1) < self.p:
+            tensor = torch.flip(tensor, [-1])
+        if self.vertical and torch.rand(1) < self.p:
+            tensor = torch.flip(tensor, [-2])
+        return tensor
+    
+    def __repr__(self):
+        return f"RandomFlip(horizontal={self.horizontal}, vertical={self.vertical}, p={self.p})"
+
+
+class GaussianNoise:
+    """Add Gaussian noise for data augmentation."""
+    
+    def __init__(self, std: float = 0.01, snr_based: bool = False):
+        self.std = std
+        self.snr_based = snr_based
+    
+    def __call__(self, tensor: Tensor) -> Tensor:
+        if self.snr_based:
+            signal_std = tensor.std()
+            noise_std = signal_std / self.std
+        else:
+            noise_std = self.std
+        
+        noise = torch.randn_like(tensor) * noise_std
+        return tensor + noise
+    
+    def __repr__(self):
+        return f"GaussianNoise(std={self.std}, snr_based={self.snr_based})"
+
+
+class ToDevice:
+    """Move tensor to specified device."""
+    
+    def __init__(self, device: Union[str, torch.device]):
+        self.device = device
+    
+    def __call__(self, tensor: Tensor) -> Tensor:
+        return tensor.to(self.device)
+    
+    def __repr__(self):
+        return f"ToDevice(device={self.device})"
+
+
 class Compose:
     """
     Compose multiple transformations.
@@ -275,20 +328,64 @@ def create_display_transform(stretch: str = 'asinh', **kwargs):
     return Compose(transforms)
 
 
-def create_training_transform(crop_size: int = 224, normalize: bool = True):
+def create_training_transform(crop_size: int = 224, normalize: bool = True, augment: bool = True):
     """
     Create a standard training transformation pipeline.
     
     Args:
         crop_size: Size for random crop
         normalize: Whether to apply normalization
+        augment: Whether to apply data augmentation
     
     Returns:
         Composed transformation
     """
     transforms = [RandomCrop(crop_size)]
     
+    if augment:
+        transforms.extend([
+            RandomFlip(p=0.5),
+            GaussianNoise(std=0.01)
+        ])
+    
     if normalize:
-        transforms.append(Normalize())
+        transforms.append(ZScale())
+    
+    return Compose(transforms)
+
+
+def create_validation_transform(crop_size: int = 224, normalize: bool = True):
+    """
+    Create a standard validation transformation pipeline.
+    
+    Args:
+        crop_size: Size for center crop
+        normalize: Whether to apply normalization
+    
+    Returns:
+        Composed transformation
+    """
+    transforms = [CenterCrop(crop_size)]
+    
+    if normalize:
+        transforms.append(ZScale())
+    
+    return Compose(transforms)
+
+
+def create_inference_transform(normalize: bool = True):
+    """
+    Create a standard inference transformation pipeline.
+    
+    Args:
+        normalize: Whether to apply normalization
+    
+    Returns:
+        Composed transformation
+    """
+    transforms = []
+    
+    if normalize:
+        transforms.append(ZScale())
     
     return Compose(transforms)

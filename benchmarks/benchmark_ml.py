@@ -5,9 +5,9 @@ Benchmarks DataLoader performance, batch processing, and GPU transfer
 for different dataset sizes and configurations.
 """
 
+
 import time
 import sys
-import os
 from pathlib import Path
 import numpy as np
 import torch
@@ -19,12 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 import torchfits
 from torchfits.datasets import FITSDataset
 from torchfits.dataloader import create_dataloader
-
-try:
-    from astropy.io import fits as astropy_fits
-    HAS_ASTROPY = True
-except ImportError:
-    HAS_ASTROPY = False
+from astropy.io import fits as astropy_fits
 
 class MLBenchmarkData:
     """Generate ML-focused test data."""
@@ -32,8 +27,6 @@ class MLBenchmarkData:
     @staticmethod
     def create_image_dataset(num_files, image_shape=(256, 256), temp_dir=None):
         """Create a dataset of FITS image files."""
-        if not HAS_ASTROPY:
-            return []
         
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
@@ -53,8 +46,6 @@ class MLBenchmarkData:
     @staticmethod
     def create_mixed_dataset(num_files, temp_dir=None):
         """Create dataset with mixed data types and sizes."""
-        if not HAS_ASTROPY:
-            return []
         
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
@@ -310,9 +301,6 @@ class MLBenchmarkSuite:
         """Run complete ML benchmark suite."""
         print("torchfits ML Workflow Benchmark Suite")
         print("="*45)
-        
-        if not HAS_ASTROPY:
-            print("WARNING: astropy not available, most benchmarks will be skipped")
         
         self.benchmark_dataset_creation()
         self.benchmark_dataloader_performance()

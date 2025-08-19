@@ -9,6 +9,7 @@ multi-cutouts, multi-files, compression, WCS, scaling, all sizes.
 Produces comprehensive tables, plots, and summaries.
 """
 
+
 import sys
 import time
 import tempfile
@@ -16,8 +17,7 @@ import gc
 import tracemalloc
 import csv
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, List, Optional
 from statistics import mean, stdev
 import numpy as np
 import torch
@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 import torchfits
 from astropy.io import fits as astropy_fits
 from astropy.io.fits import CompImageHDU
-from astropy.wcs import WCS
 import fitsio
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -40,7 +39,6 @@ class ExhaustiveBenchmarkSuite:
     """
     Exhaustive benchmark suite for torchfits covering all use cases.
     """
-    
     def __init__(self, output_dir: Optional[Path] = None):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="torchfits_exhaustive_"))
         self.output_dir = output_dir or Path("benchmark_results")
@@ -297,7 +295,7 @@ class ExhaustiveBenchmarkSuite:
     
     def run_exhaustive_benchmarks(self, files: Dict[str, Path]) -> List[Dict]:
         """Run benchmarks on all test files."""
-        print("\\n" + "=" * 100)
+        print("\n" + "=" * 100)
         print("EXHAUSTIVE BENCHMARK SUITE")
         print("=" * 100)
         
@@ -324,7 +322,7 @@ class ExhaustiveBenchmarkSuite:
             writer.writeheader()
             writer.writerows(detailed_results)
         
-        print(f"\\n✓ Detailed results saved to: {self.csv_file}")
+        print(f"\n✓ Detailed results saved to: {self.csv_file}")
         return detailed_results
     
     def _benchmark_single_file(self, name: str, filepath: Path) -> Optional[Dict]:
@@ -338,7 +336,7 @@ class ExhaustiveBenchmarkSuite:
         dimensions = next((p for p in parts if p in ['1d', '2d', '3d']), 'unknown')
         compression = self._get_compression_type(name)
         
-        print(f"\\n{name} ({size_mb:.2f} MB) - {file_type} {data_type} {dimensions} {compression}")
+        print(f"\n{name} ({size_mb:.2f} MB) - {file_type} {data_type} {dimensions} {compression}")
         print("-" * 80)
         
         result = {
@@ -401,7 +399,7 @@ class ExhaustiveBenchmarkSuite:
                 speedup = best_time / tf_time if best_method != 'torchfits' else tf_time / min(v for k, v in valid_methods.items() if k != 'torchfits')
                 result['speedup_vs_best'] = speedup
                 
-                print(f"\\nBest method: {best_method} ({valid_methods[best_method]:.6f}s)")
+                print(f"\nBest method: {best_method} ({valid_methods[best_method]:.6f}s)")
                 print(f"torchfits rank: {torchfits_rank}/{len(valid_methods)}")
                 if best_method != 'torchfits':
                     print(f"torchfits vs best: {tf_time/valid_methods[best_method]:.2f}x")
@@ -515,7 +513,7 @@ class ExhaustiveBenchmarkSuite:
     
     def generate_plots(self, results: List[Dict]):
         """Generate comprehensive plots from benchmark results."""
-        print("\\nGenerating exhaustive plots...")
+        print("\nGenerating exhaustive plots...")
         df = pd.DataFrame(results)
         
         # Set up plotting style
@@ -617,7 +615,7 @@ class ExhaustiveBenchmarkSuite:
                 data_for_plot.append(speeds)
                 labels.append(method.replace('_', ' ').title())
             
-            ax.boxplot(data_for_plot, labels=labels)
+            ax.boxplot(data_for_plot, tick_labels=labels)
             ax.axhline(y=1, color='r', linestyle='--', alpha=0.5, label='No speedup')
             ax.set_ylabel('Speedup Factor (other/torchfits)')
             ax.set_title('torchfits Speedup vs Other Methods')
@@ -701,139 +699,201 @@ class ExhaustiveBenchmarkSuite:
     
     def generate_summary_report(self, results: List[Dict]):
         """Generate a comprehensive summary report."""
-        print("\\nGenerating exhaustive summary report...")
+        print("\nGenerating exhaustive summary report...")
         
         df = pd.DataFrame(results)
         
         with open(self.summary_file, 'w') as f:
-            f.write("# torchfits Exhaustive Benchmark Report\\n\\n")
-            f.write(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\\n\\n")
+            f.write("# torchfits Exhaustive Benchmark Report\n\n")
+            f.write(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
             # System information
-            f.write("## System Information\\n\\n")
-            f.write(f"- Python: {sys.version.split()[0]}\\n")
-            f.write(f"- PyTorch: {torch.__version__}\\n")
-            f.write(f"- CUDA available: {torch.cuda.is_available()}\\n")
+            f.write("## System Information\n\n")
+            f.write(f"- Python: {sys.version.split()[0]}\n")
+            f.write(f"- PyTorch: {torch.__version__}\n")
+            f.write(f"- CUDA available: {torch.cuda.is_available()}\n")
             if torch.cuda.is_available():
-                f.write(f"- CUDA device: {torch.cuda.get_device_name()}\\n")
-            f.write(f"- astropy available: True\\n")
-            f.write(f"- fitsio available: True\\n")
-            f.write(f"- System memory: {psutil.virtual_memory().total / (1024**3):.1f} GB\\n")
-            f.write("\\n")
+                f.write(f"- CUDA device: {torch.cuda.get_device_name()}\n")
+            f.write(f"- astropy available: True\n")
+            f.write(f"- fitsio available: True\n")
+            f.write(f"- System memory: {psutil.virtual_memory().total / (1024**3):.1f} GB\n")
+            f.write("\n")
             
             # Test coverage summary
-            f.write("## Test Coverage Summary\\n\\n")
-            f.write(f"- Total test files: {len(results)}\\n")
-            f.write(f"- File types tested: {', '.join(sorted(df['file_type'].unique()))}\\n")
-            f.write(f"- Data types tested: {', '.join(sorted(df['data_type'].unique()))}\\n")
-            f.write(f"- Dimensions tested: {', '.join(sorted(df['dimensions'].unique()))}\\n")
-            f.write(f"- Compression types: {', '.join(sorted(df['compression'].unique()))}\\n")
-            f.write("\\n")
+            f.write("## Test Coverage Summary\n\n")
+            f.write(f"- Total test files: {len(results)}\n")
+            f.write(f"- File types tested: {', '.join(sorted(df['file_type'].unique()))}\n")
+            f.write(f"- Data types tested: {', '.join(sorted(df['data_type'].unique()))}\n")
+            f.write(f"- Dimensions tested: {', '.join(sorted(df['dimensions'].unique()))}\n")
+            f.write(f"- Compression types: {', '.join(sorted(df['compression'].unique()))}\n")
+            f.write("\n")
             
             # Performance summary
             if 'torchfits_mean' in df.columns:
-                f.write("## Performance Summary\\n\\n")
+                f.write("## Performance Summary\n\n")
                 valid_df = df[df['torchfits_mean'].notna()]
                 
-                f.write(f"- Fastest torchfits time: {valid_df['torchfits_mean'].min():.6f}s\\n")
-                f.write(f"- Slowest torchfits time: {valid_df['torchfits_mean'].max():.6f}s\\n")
-                f.write(f"- Average torchfits time: {valid_df['torchfits_mean'].mean():.6f}s\\n")
-                f.write(f"- Median torchfits time: {valid_df['torchfits_mean'].median():.6f}s\\n")
-                f.write("\\n")
+                f.write(f"- Fastest torchfits time: {valid_df['torchfits_mean'].min():.6f}s\n")
+                f.write(f"- Slowest torchfits time: {valid_df['torchfits_mean'].max():.6f}s\n")
+                f.write(f"- Average torchfits time: {valid_df['torchfits_mean'].mean():.6f}s\n")
+                f.write(f"- Median torchfits time: {valid_df['torchfits_mean'].median():.6f}s\n")
+                f.write("\n")
             
             # File type breakdown
-            f.write("## Performance by File Type\\n\\n")
+            f.write("## Performance by File Type\n\n")
             if 'torchfits_mean' in df.columns:
                 type_stats = df.groupby('file_type')['torchfits_mean'].agg(['count', 'mean', 'min', 'max']).round(6)
                 f.write(type_stats.to_string())
-                f.write("\\n\\n")
+                f.write("\n\n")
             
             # Ranking analysis
             if 'torchfits_rank' in df.columns:
-                f.write("## Ranking Analysis\\n\\n")
+                f.write("## Ranking Analysis\n\n")
                 rank_counts = df['torchfits_rank'].value_counts().sort_index()
                 total_valid = rank_counts.sum()
                 
-                f.write(f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0)/total_valid*100:.1f}%)\\n")
-                f.write(f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0)/total_valid*100:.1f}%)\\n")
-                f.write(f"- Times torchfits ranked #3+: {sum(rank_counts[rank_counts.index >= 3])} ({sum(rank_counts[rank_counts.index >= 3])/total_valid*100:.1f}%)\\n")
-                f.write(f"- Average ranking: {df['torchfits_rank'].mean():.2f}\\n")
-                f.write("\\n")
+                f.write(f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0)/total_valid*100:.1f}%)\n")
+                f.write(f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0)/total_valid*100:.1f}%)\n")
+                f.write(f"- Times torchfits ranked #3+: {sum(rank_counts[rank_counts.index >= 3])} ({sum(rank_counts[rank_counts.index >= 3])/total_valid*100:.1f}%)\n")
+                f.write(f"- Average ranking: {df['torchfits_rank'].mean():.2f}\n")
+                f.write("\n")
             
             # Memory analysis
             if 'torchfits_memory' in df.columns:
-                f.write("## Memory Analysis\\n\\n")
+                f.write("## Memory Analysis\n\n")
                 mem_df = df[df['torchfits_memory'].notna()]
                 if not mem_df.empty:
-                    f.write(f"- Average memory usage: {mem_df['torchfits_memory'].mean():.1f} MB\\n")
-                    f.write(f"- Peak memory usage: {mem_df['torchfits_peak_memory'].mean():.1f} MB\\n")
-                    f.write(f"- Memory efficiency (data/peak): {(mem_df['torchfits_memory']/mem_df['torchfits_peak_memory']).mean():.2f}\\n")
-                f.write("\\n")
+                    f.write(f"- Average memory usage: {mem_df['torchfits_memory'].mean():.1f} MB\n")
+                    f.write(f"- Peak memory usage: {mem_df['torchfits_peak_memory'].mean():.1f} MB\n")
+                    f.write(f"- Memory efficiency (data/peak): {(mem_df['torchfits_memory']/mem_df['torchfits_peak_memory']).mean():.2f}\n")
+                f.write("\n")
             
             # Top performers
-            f.write("## Best Performing Files\\n\\n")
+            f.write("## Best Performing Files\n\n")
             if 'torchfits_mean' in df.columns:
                 fastest = valid_df.nsmallest(10, 'torchfits_mean')[['filename', 'torchfits_mean', 'size_mb', 'file_type']]
-                f.write("### Fastest Files:\\n")
+                f.write("### Fastest Files:\n")
                 for _, row in fastest.iterrows():
-                    f.write(f"- {row['filename']}: {row['torchfits_mean']:.6f}s ({row['size_mb']:.2f} MB, {row['file_type']})\\n")
-                f.write("\\n")
+                    f.write(f"- {row['filename']}: {row['torchfits_mean']:.6f}s ({row['size_mb']:.2f} MB, {row['file_type']})\n")
+                f.write("\n")
             
             # Issues and failures
             failed_files = df[df['torchfits_mean'].isna()]
             if not failed_files.empty:
-                f.write("## Failed Tests\\n\\n")
+                f.write("## Failed Tests\n\n")
                 for _, row in failed_files.iterrows():
-                    f.write(f"- {row['filename']}: Failed to benchmark\\n")
-                f.write("\\n")
+                    f.write(f"- {row['filename']}: Failed to benchmark\n")
+                f.write("\n")
             
             # Comprehensive recommendations
-            f.write("## Comprehensive Recommendations\\n\\n")
-            f.write("Based on the exhaustive benchmark results:\\n\\n")
+            f.write("## Comprehensive Recommendations\n\n")
+            f.write("Based on the exhaustive benchmark results:\n\n")
             
             if 'torchfits_rank' in df.columns:
                 avg_rank = df['torchfits_rank'].mean()
                 if avg_rank <= 2:
-                    f.write("✅ **torchfits shows excellent performance** across all test scenarios\\n")
+                    f.write("✅ **torchfits shows excellent performance** across all test scenarios\n")
                 elif avg_rank <= 3:
-                    f.write("⚠️ **torchfits shows good performance** with opportunities for optimization\\n")
+                    f.write("⚠️ **torchfits shows good performance** with opportunities for optimization\n")
                 else:
-                    f.write("❌ **torchfits performance needs significant improvement**\\n")
+                    f.write("❌ **torchfits performance needs significant improvement**\n")
             
             # Specific findings
-            f.write("\\n### Specific Findings:\\n\\n")
+            f.write("\n### Specific Findings:\n\n")
             
             # Best file types
             if 'torchfits_rank' in df.columns and 'file_type' in df.columns:
                 best_types = df.groupby('file_type')['torchfits_rank'].mean().sort_values()
-                f.write(f"- **Best file types**: {', '.join(best_types.head(3).index)}\\n")
-                f.write(f"- **Challenging file types**: {', '.join(best_types.tail(3).index)}\\n")
+                f.write(f"- **Best file types**: {', '.join(best_types.head(3).index)}\n")
+                f.write(f"- **Challenging file types**: {', '.join(best_types.tail(3).index)}\n")
             
             # Data type performance
             if 'data_type' in df.columns and 'torchfits_mean' in df.columns:
                 dtype_perf = df.groupby('data_type')['torchfits_mean'].mean().sort_values()
-                f.write(f"- **Fastest data types**: {', '.join(dtype_perf.head(3).index)}\\n")
-                f.write(f"- **Slowest data types**: {', '.join(dtype_perf.tail(3).index)}\\n")
-            
-            f.write("\\n")
-            f.write("## Files Generated\\n\\n")
-            f.write(f"- Detailed results: `{self.csv_file.name}`\\n")
-            f.write(f"- Performance plots: `*.png` files\\n")
-            f.write(f"- This summary: `{self.summary_file.name}`\\n")
-            f.write("\\n")
-            f.write("## Next Steps\\n\\n")
-            f.write("1. Review detailed CSV results for specific performance bottlenecks\\n")
-            f.write("2. Examine plots for visual performance patterns\\n")
-            f.write("3. Focus optimization efforts on underperforming file types\\n")
-            f.write("4. Consider implementing specialized paths for best-performing scenarios\\n")
-        
-        print(f"✓ Exhaustive summary report saved to: {self.summary_file}")
+                f.write(f"- **Fastest data types**: {', '.join(dtype_perf.head(3).index)}\n")
+                f.write(f"- **Slowest data types**: {', '.join(dtype_perf.tail(3).index)}\n")
+            f.write("\n")
+            f.write("## Files Generated\n\n")
+            f.write(f"- Detailed results: `{self.csv_file.name}`\n")
+            f.write(f"- Performance plots: `*.png` files\n")
+            f.write(f"- This summary: `{self.summary_file.name}`\n")
+            f.write("\n")
+            f.write("## Next Steps\n\n")
+            f.write("1. Review detailed CSV results for specific performance bottlenecks\n")
+            f.write("2. Examine plots for visual performance patterns\n")
+            f.write("3. Focus optimization efforts on underperforming file types\n")
+            f.write("4. Consider implementing specialized paths for best-performing scenarios\n")
     
     def cleanup(self):
         """Clean up temporary files."""
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         print(f"✓ Cleaned up temporary directory: {self.temp_dir}")
+    
+    def run_additional_benchmarks(self):
+        """Run additional focused benchmarks for new features."""
+        print("\n" + "=" * 60)
+        print("RUNNING ADDITIONAL FEATURE BENCHMARKS")
+        print("=" * 60)
+        
+        # Run C++ backend performance benchmark
+        try:
+            print("\n🎯 Running C++ Backend Performance Benchmark...")
+            from benchmark_cpp_backend import CPPBackendBenchmark
+            cpp_benchmark = CPPBackendBenchmark()
+            cpp_results = cpp_benchmark.run_comprehensive_benchmark()
+            print("✅ C++ backend benchmark completed")
+        except Exception as e:
+            print(f"⚠️  C++ backend benchmark failed: {e}")
+        
+        # Run GPU memory validation
+        try:
+            print("\n🚀 Running GPU Memory Validation...")
+            from benchmark_gpu_memory import GPUMemoryBenchmark
+            gpu_benchmark = GPUMemoryBenchmark()
+            gpu_benchmark.run_comprehensive_benchmark()
+            print("✅ GPU memory benchmark completed")
+        except Exception as e:
+            print(f"⚠️  GPU memory benchmark failed: {e}")
+        
+        # Run transform benchmarks
+        try:
+            print("\n🎨 Running Transform Benchmarks...")
+            import subprocess
+            result = subprocess.run([sys.executable, "benchmark_transforms.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("✅ Transform benchmarks completed")
+            else:
+                print(f"⚠️  Transform benchmarks failed: {result.stderr}")
+        except Exception as e:
+            print(f"⚠️  Transform benchmarks not available: {e}")
+        
+        # Run buffer benchmarks
+        try:
+            print("\n💾 Running Buffer Benchmarks...")
+            import subprocess
+            result = subprocess.run([sys.executable, "benchmark_buffer.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("✅ Buffer benchmarks completed")
+            else:
+                print(f"⚠️  Buffer benchmarks failed: {result.stderr}")
+        except Exception as e:
+            print(f"⚠️  Buffer benchmarks not available: {e}")
+        
+        # Run cache benchmarks
+        try:
+            print("\n🗄️  Running Cache Benchmarks...")
+            import subprocess
+            result = subprocess.run([sys.executable, "benchmark_cache.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("✅ Cache benchmarks completed")
+            else:
+                print(f"⚠️  Cache benchmarks failed: {result.stderr}")
+        except Exception as e:
+            print(f"⚠️  Cache benchmarks not available: {e}")
     
     def run_full_suite(self):
         """Run the complete exhaustive benchmark suite."""
@@ -844,8 +904,11 @@ class ExhaustiveBenchmarkSuite:
             # Create test files
             files = self.create_test_files()
             
-            # Run benchmarks
+            # Run core benchmarks
             results = self.run_exhaustive_benchmarks(files)
+            
+            # Run additional feature benchmarks
+            self.run_additional_benchmarks()
             
             # Generate visualizations
             self.generate_plots(results)
@@ -853,7 +916,7 @@ class ExhaustiveBenchmarkSuite:
             # Generate summary report
             self.generate_summary_report(results)
             
-            print("\\n" + "=" * 80)
+            print("\n" + "=" * 80)
             print("EXHAUSTIVE BENCHMARK SUITE COMPLETED SUCCESSFULLY")
             print("=" * 80)
             print(f"Results saved to: {self.output_dir}")
@@ -868,23 +931,22 @@ class ExhaustiveBenchmarkSuite:
 def main():
     """Main entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Exhaustive torchfits benchmark suite')
     parser.add_argument('--output-dir', type=Path, default=Path('benchmark_results'),
-                       help='Output directory for results')
+                        help='Output directory for results')
     parser.add_argument('--no-cleanup', action='store_true',
-                       help='Keep temporary files for debugging')
-    
+                        help='Keep temporary files for debugging')
+
     args = parser.parse_args()
-    
+
     suite = ExhaustiveBenchmarkSuite(output_dir=args.output_dir)
-    
+
     if args.no_cleanup:
         # Override cleanup method
         suite.cleanup = lambda: print(f"Temporary files kept in: {suite.temp_dir}")
-    
-    suite.run_full_suite()
 
+    suite.run_full_suite()
 
 if __name__ == "__main__":
     main()

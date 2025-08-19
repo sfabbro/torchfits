@@ -5,26 +5,14 @@ This module provides benchmark tests to measure performance
 against other FITS libraries like astropy and fitsio.
 """
 
+
 import time
 import torch
 import numpy as np
 import pytest
-from pathlib import Path
-
 import torchfits
-
-# Optional imports for comparison
-try:
-    from astropy.io import fits as astropy_fits
-    HAS_ASTROPY = True
-except ImportError:
-    HAS_ASTROPY = False
-
-try:
-    import fitsio
-    HAS_FITSIO = True
-except ImportError:
-    HAS_FITSIO = False
+from astropy.io import fits as astropy_fits
+import fitsio
 
 
 def create_test_data(shape=(1000, 1000), dtype=np.float32):
@@ -67,17 +55,16 @@ def benchmark_header_operations():
     
     print(f"torchfits Header (1000 iterations): {torchfits_time:.4f}s")
     
-    if HAS_ASTROPY:
-        # Benchmark astropy Header
-        astropy_header = astropy_fits.Header(header_data)
-        start_time = time.time()
-        for _ in range(1000):
-            _ = astropy_header['KEY500']
-            astropy_header['NEWKEY'] = 'NEWVALUE'
-        astropy_time = time.time() - start_time
+    # Benchmark astropy Header
+    astropy_header = astropy_fits.Header(header_data)
+    start_time = time.time()
+    for _ in range(1000):
+        _ = astropy_header['KEY500']
+        astropy_header['NEWKEY'] = 'NEWVALUE'
+    astropy_time = time.time() - start_time
         
-        print(f"astropy Header (1000 iterations): {astropy_time:.4f}s")
-        print(f"Speedup: {astropy_time/torchfits_time:.2f}x")
+    print(f"astropy Header (1000 iterations): {astropy_time:.4f}s")
+    print(f"Speedup: {astropy_time/torchfits_time:.2f}x")
     
     print()
 
@@ -195,12 +182,6 @@ def main():
     """Run all benchmarks."""
     print("torchfits Performance Benchmarks")
     print("=" * 40)
-    print()
-    
-    if not HAS_ASTROPY:
-        print("Warning: astropy not available, some comparisons will be skipped")
-    if not HAS_FITSIO:
-        print("Warning: fitsio not available, some comparisons will be skipped")
     print()
     
     benchmark_tensor_creation()

@@ -3,9 +3,9 @@ Core feature benchmarks for Phase 1 completion.
 Tests data type handling, scaling, compression detection, and caching.
 """
 
+
 import time
 import sys
-import tempfile
 from pathlib import Path
 import numpy as np
 import torch

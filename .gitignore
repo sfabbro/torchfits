@@ -126,3 +126,5 @@ fitsio/
 !.pixi/config.toml
 
 docs/*
+benchmark_results/
+fitsio

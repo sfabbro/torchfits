@@ -6,9 +6,10 @@ optimized for PyTorch tensors and pytorch-frame TensorFrames.
 """
 
 from typing import Union
-from torch import Tensor
+
 import torch
 import numpy as np
+from torch import Tensor
 
 from torch_frame import TensorFrame
 
@@ -18,12 +19,41 @@ _ = torch.empty(1)
 from .hdu import HDUList, TensorHDU, TableHDU, Header
 from .wcs import WCS
 from .cache import configure_for_environment, get_cache_stats, clear_cache
+from .dataloader import create_dataloader, create_fits_dataloader, create_streaming_dataloader
+from .datasets import FITSDataset, IterableFITSDataset
+from .transforms import (
+    ZScale, AsinhStretch, LogStretch, PowerStretch, Normalize,
+    RandomCrop, CenterCrop, RandomFlip, GaussianNoise, ToDevice, Compose,
+    create_training_transform, create_validation_transform, create_inference_transform
+)
+from .buffer import configure_buffers, get_buffer_stats, clear_buffers
+from .core import FITSCore, FITSDataType, CompressionType
 
-# Auto-configure cache on import
+# Auto-configure cache and buffers on import
 configure_for_environment()
 
 __version__ = "0.1.0"
-__all__ = ["read", "write", "open", "HDUList", "TensorHDU", "TableHDU", "Header", "WCS"]
+__all__ = [
+    # Core I/O functions
+    "read", "write", "open",
+    # HDU classes
+    "HDUList", "TensorHDU", "TableHDU", "Header",
+    # WCS functionality
+    "WCS",
+    # Dataset classes
+    "FITSDataset", "IterableFITSDataset",
+    # DataLoader factories
+    "create_dataloader", "create_fits_dataloader", "create_streaming_dataloader",
+    # Transforms
+    "ZScale", "AsinhStretch", "LogStretch", "PowerStretch", "Normalize",
+    "RandomCrop", "CenterCrop", "RandomFlip", "GaussianNoise", "ToDevice", "Compose",
+    "create_training_transform", "create_validation_transform", "create_inference_transform",
+    # Core types
+    "FITSCore", "FITSDataType", "CompressionType",
+    # Utility functions
+    "configure_for_environment", "get_cache_stats", "clear_cache",
+    "configure_buffers", "get_buffer_stats", "clear_buffers"
+]
 
 
 def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', mmap: bool = False):
@@ -40,6 +70,18 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', mmap: bool = 
 
 
 def write(path: str, data, header: Header = None, overwrite: bool = False):
+    """Write data to FITS file.
+    
+    Args:
+        path: Output file path
+        data: Data to write (Tensor or TensorFrame)
+        header: Optional FITS header
+        overwrite: Whether to overwrite existing files
+    """
+    import os
+    if not overwrite and os.path.exists(path):
+        raise FileExistsError(f"File '{path}' already exists. Use overwrite=True to overwrite.")
+    
     try:
         if isinstance(data, Tensor):
             from . import cpp
@@ -55,4 +97,28 @@ def write(path: str, data, header: Header = None, overwrite: bool = False):
 
 
 def open(path: str, mode: str = 'r') -> HDUList:
-    return HDUList.fromfile(path, mode)
+    """Open FITS file for reading/writing.
+    
+    Args:
+        path: File path to open
+        mode: File mode ('r' for read, 'w' for write)
+        
+    Returns:
+        HDUList object for accessing HDUs
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist in read mode
+        PermissionError: If insufficient permissions
+        RuntimeError: For other FITS-related errors
+    """
+    import os
+    
+    if mode == 'r' and not os.path.exists(path):
+        raise FileNotFoundError(f"FITS file not found: {path}")
+    
+    try:
+        return HDUList.fromfile(path, mode)
+    except PermissionError:
+        raise PermissionError(f"Permission denied accessing file: {path}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to open FITS file '{path}': {e}") from e

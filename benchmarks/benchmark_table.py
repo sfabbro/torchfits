@@ -5,6 +5,7 @@ Benchmarks table reading, filtering, and pytorch-frame integration
 across different table sizes and column types.
 """
 
+
 import time
 import sys
 import os
