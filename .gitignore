@@ -119,12 +119,9 @@ Makefile
 *.pyi
 .mypy_cache/
 
-# Temporary dependencies and external repos
-fitsio/
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml
 
-docs/*
 benchmark_results/
-fitsio
