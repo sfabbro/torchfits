@@ -144,7 +144,7 @@ PYBIND11_MODULE(cpp, m) {
         append_rows(filename.c_str(), hdu_num, tensor_dict);
     });
     
-    // Unified cache management
+    // Simple cache management
     m.def("clear_file_cache", []() {
         torchfits::global_cache.clear();
     });
@@ -153,10 +153,14 @@ PYBIND11_MODULE(cpp, m) {
         return torchfits::global_cache.size();
     });
     
-    // Cloud/HPC cache configuration
-    m.def("configure_cache", [](size_t max_files, size_t max_memory_mb) {
-        torchfits::global_cache.clear();
-        // Note: Would need to recreate cache with new parameters
+    // Performance hint: suggest optimal chunk size
+    m.def("get_optimal_chunk_size", [](size_t data_size) {
+        // Simple heuristic: use 64KB chunks for small data, 1MB for large
+        if (data_size < 1024 * 1024) {
+            return std::min(data_size, size_t(64 * 1024));
+        } else {
+            return std::min(data_size, size_t(1024 * 1024));
+        }
     });
     
     // Direct read function for minimal overhead
@@ -169,6 +173,15 @@ PYBIND11_MODULE(cpp, m) {
     m.def("read_mmap", [](const std::string& filename, int hdu_num) {
         torchfits::FITSFile file(filename, 0);
         return file.read_image(hdu_num, true);
+    });
+    
+    // Mixed precision conversion
+    m.def("convert_to_fp16", [](torch::Tensor tensor) {
+        return tensor.to(torch::kFloat16);
+    });
+    
+    m.def("convert_to_bf16", [](torch::Tensor tensor) {
+        return tensor.to(torch::kBFloat16);
     });
     
     // CFITSIO native string parsing (e.g., "file.fits[0:200,400:600]")

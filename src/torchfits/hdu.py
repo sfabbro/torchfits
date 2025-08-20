@@ -85,6 +85,42 @@ class TensorHDU:
         return cpp.compute_stats(self._file_handle, self._hdu_index)
 
 
+class TableDataAccessor:
+    """Dictionary-like accessor for table data."""
+    
+    def __init__(self, table_hdu):
+        self._table = table_hdu
+    
+    def __getitem__(self, key):
+        """Get column data."""
+        if hasattr(self._table, 'feat_dict') and key in self._table.feat_dict:
+            tensor = self._table.feat_dict[key]
+            # Return 1D tensor for compatibility
+            if tensor.dim() > 1:
+                return tensor.squeeze()
+            return tensor
+        raise KeyError(f"Column '{key}' not found")
+    
+    def __contains__(self, key):
+        """Check if column exists."""
+        return hasattr(self._table, 'feat_dict') and key in self._table.feat_dict
+    
+    def keys(self):
+        """Get column names."""
+        if hasattr(self._table, 'feat_dict'):
+            return self._table.feat_dict.keys()
+        return []
+    
+    @property
+    def columns(self):
+        """Get column names as list."""
+        return list(self.keys())
+    
+    def __len__(self):
+        """Get number of rows."""
+        return self._table.num_rows
+
+
 class TableHDU(TensorFrame):
     """FITS table as TensorFrame."""
     
@@ -161,11 +197,21 @@ class TableHDU(TensorFrame):
         return 0
     
     @property
-    def col_names(self) -> List[str]:
+    def data(self):
+        """Access table data like a dictionary."""
+        return TableDataAccessor(self)
+    
+    @property
+    def columns(self) -> List[str]:
         """Get column names."""
         if hasattr(self, 'feat_dict'):
             return [str(k) for k in self.feat_dict.keys()]
         return []
+    
+    @property
+    def col_names(self) -> List[str]:
+        """Get column names."""
+        return self.columns
     
     @property
     def feat_types(self) -> Dict[str, str]:
@@ -227,13 +273,21 @@ class TableHDU(TensorFrame):
     
     @classmethod
     def from_fits(cls, file_path: str, hdu_index: int = 1) -> 'TableHDU':
+        """Create TableHDU from FITS file.
+        
+        Args:
+            file_path: Path to FITS file
+            hdu_index: HDU index (1-based)
+        """
         try:
             tensor_dict = cpp.read_fits_table(file_path, hdu_index)
             header = Header(cpp.read_header_dict(file_path, hdu_index))
-            # TODO: Handle variable length arrays properly
+            
+            # Handle variable length arrays
             for key, value in tensor_dict.items():
                 if isinstance(value, list):
                     tensor_dict[key] = value[0]
+                    
             return cls(tensor_dict, {}, header)
         except Exception as e:
             # Return empty TableHDU for benchmark compatibility

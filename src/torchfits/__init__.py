@@ -56,16 +56,52 @@ __all__ = [
 ]
 
 
-def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', mmap: bool = False):
+def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', 
+         mmap: bool = False, fp16: bool = False, bf16: bool = False):
+    """Read FITS data with optimizations.
+    
+    Args:
+        path: File path or cutout specification
+        hdu: HDU index or name
+        device: Target device ('cpu', 'cuda')
+        mmap: Use memory mapping for large files
+        fp16: Convert to half precision
+        bf16: Convert to bfloat16
+    """
     from . import cpp
-    # Support CFITSIO string format: "file.fits[0:200,400:600]"
+    from .core import FITSCore
+    
+    # Support CFITSIO string format: "file.fits[0][100:200,300:400]"
     if '[' in path and ']' in path:
-        # Let CFITSIO handle the parsing natively
-        tensor = cpp.read_cfitsio_string(path)
+        try:
+            # Parse cutout specification
+            file_path, hdu_index, slices = FITSCore.parse_cutout_spec(path)
+            
+            # Open file and read subset
+            fits_file = cpp.FITSFile(file_path, 0)
+            if len(slices) == 2:
+                y_slice, x_slice = slices
+                tensor = fits_file.read_subset(hdu_index, 
+                                             x_slice.start or 0, y_slice.start or 0,
+                                             x_slice.stop or -1, y_slice.stop or -1)
+            else:
+                # Fall back to full read for non-2D cutouts
+                tensor = fits_file.read_image(hdu_index)
+        except Exception:
+            # Fall back to CFITSIO native parsing
+            tensor = cpp.read_cfitsio_string(path)
     elif mmap:
+        # Use memory mapping when requested
         tensor = cpp.read_mmap(path, hdu)
     else:
         tensor = cpp.read_full(path, hdu)
+    
+    # Apply mixed precision conversion
+    if fp16:
+        tensor = tensor.to(torch.float16)
+    elif bf16:
+        tensor = tensor.to(torch.bfloat16)
+    
     return tensor.to(device) if device != 'cpu' else tensor
 
 
