@@ -6,7 +6,11 @@
 #include <mutex>
 #include <chrono>
 #include <memory>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 // Architecture-specific SIMD headers
 #ifdef __x86_64__
@@ -18,7 +22,7 @@
 #include "hardware.cpp"
 #include "cache.cpp"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace torchfits {
 // --- Memory-mapped tensor logic (from mmap_tensor.cpp) ---
@@ -403,14 +407,14 @@ public:
         return (hdu_type == IMAGE_HDU) ? "IMAGE" : "TABLE";
     }
     
-    void write_hdus(py::list hdus, bool overwrite) {
+    void write_hdus(nb::list hdus, bool overwrite) {
         int status = 0;
 
         for (auto hdu_obj : hdus) {
-            if (py::isinstance<py::dict>(hdu_obj)) {
-                py::dict hdu_dict = hdu_obj.cast<py::dict>();
+            if (nb::isinstance<nb::dict>(hdu_obj)) {
+                nb::dict hdu_dict = nb::cast<nb::dict>(hdu_obj);
                 if (hdu_dict.contains("data")) {
-                    auto tensor = hdu_dict["data"].cast<torch::Tensor>();
+                    auto tensor = nb::cast<torch::Tensor>(hdu_dict["data"]);
                     write_image(tensor);
                 } else {
                     // TODO: Implement table writing

@@ -103,6 +103,11 @@ public:
         return pixel_to_world(corner_pixels);
     }
 
+    int naxis() const { return wcs_->naxis; }
+    torch::Tensor crpix() const { return torch::tensor({wcs_->crpix[0], wcs_->crpix[1]}, torch::kFloat64); }
+    torch::Tensor crval() const { return torch::tensor({wcs_->crval[0], wcs_->crval[1]}, torch::kFloat64); }
+    torch::Tensor cdelt() const { return torch::tensor({wcs_->cdelt[0], wcs_->cdelt[1]}, torch::kFloat64); }
+
 private:
     struct wcsprm* wcs_;
 };

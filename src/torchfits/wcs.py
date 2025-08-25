@@ -23,7 +23,7 @@ class WCS:
         Args:
             header: FITS header containing WCS keywords
         """
-        self._wcs = cpp.WCS(dict(header))
+        self._wcs = cpp.WCS({str(k): str(v) for k, v in header.items()})
     
     def pixel_to_world(self, pixels: Tensor) -> Tensor:
         """

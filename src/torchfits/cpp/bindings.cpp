@@ -1,44 +1,216 @@
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <torch/extension.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/function.h>
+
+#include <Python.h>
+#include <dlpack/dlpack.h>
+#include <memory>
+#include <cstring>
+
+#include <torch/torch.h>
+#include <ATen/DLConvertor.h>
 #include <fitsio.h>
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
 #include <vector>
 #include <unordered_map>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 #include "fits.cpp"
 #include "wcs.cpp"
 #include "table.cpp"
 
-PYBIND11_MODULE(cpp, m) {
+// Provide a nanobind type_caster for at::Tensor using DLPack + PyCapsule
+// exchange. This avoids depending on internal THPVariable symbols and
+// keeps conversions zero-copy when the Python runtime supports DLPack.
+//
+// Approach summary:
+// - To load (Python -> C++): accept a Python object; create a DLPack
+//   capsule from it by calling `torch.utils.dlpack.to_dlpack` or
+//   using the object's __dlpack__ if present. Then convert the
+//   capsule to an at::Tensor using torch._C._from_dlpack (via the C API
+//   surface exposed on the Python side). We keep ownership semantics
+//   such that the capsule's deleter runs when appropriate.
+// - To cast (C++ -> Python): obtain a DLManagedTensor capsule from the
+//   at::Tensor using torch._C._to_dlpack (exposed on torch._C) and
+//   return the result of `torch.utils.dlpack.from_dlpack(capsule)` so
+//   Python receives a proper Tensor object and ownership is transferred.
+
+namespace nanobind {
+namespace detail {
+
+    template <> struct type_caster<at::Tensor> {
+    public:
+        NB_TYPE_CASTER(at::Tensor, const_name("torch.Tensor"));
+
+        // Try to load a Python object as an at::Tensor using DLPack (zero-copy).
+        NB_INLINE bool from_python(handle src, uint8_t flags, cleanup_list * /*cl*/) noexcept {
+            if (!src) return false;
+
+            try {
+                nb::module_ dlpack_mod = nb::module_::import_("torch.utils.dlpack");
+
+                // If the object implements __dlpack__, call it; otherwise ask
+                // torch.utils.dlpack.to_dlpack to produce a capsule.
+                nb::object py_capsule;
+                if (nb::hasattr(src, "__dlpack__"))
+                    py_capsule = src.attr("__dlpack__")();
+                else
+                    py_capsule = dlpack_mod.attr("to_dlpack")(src);
+
+                // Extract the DLManagedTensor pointer from the capsule
+                PyObject *caps = py_capsule.ptr();
+                if (!caps) return false;
+
+                void *ptr = PyCapsule_GetPointer(caps, "dltensor");
+                if (!ptr) return false;
+
+                DLManagedTensor *mt = reinterpret_cast<DLManagedTensor*>(ptr);
+
+                // Construct an at::Tensor by consuming the DLManagedTensor.
+                // at::fromDLPack consumes the DLManagedTensor and takes ownership
+                // (invoking its deleter when appropriate).
+                at::Tensor t = at::fromDLPack(mt);
+                value = t;
+                return true;
+
+            } catch (...) {
+                return false;
+            }
+        }
+
+        // Cast an at::Tensor to a Python torch.Tensor using DLPack.
+        static void dl_managed_tensor_deleter(DLManagedTensor* mt) {
+            if (!mt) return;
+            // manager_ctx holds a pointer to a heap-allocated shared_ptr<at::Tensor>
+            auto holder = reinterpret_cast<std::shared_ptr<at::Tensor>*>(mt->manager_ctx);
+            if (holder) delete holder;
+            // free shape/strides arrays if present
+            if (mt->dl_tensor.shape) delete [] mt->dl_tensor.shape;
+            if (mt->dl_tensor.strides) delete [] mt->dl_tensor.strides;
+            delete mt;
+        }
+
+        // Helper that constructs a Python tensor via DLPack from a C++ at::Tensor
+        static handle tensor_to_python(const at::Tensor &src) {
+            try {
+                nb::module_ dlpack_mod = nb::module_::import_("torch.utils.dlpack");
+
+                // Build a DLManagedTensor that views the at::Tensor storage.
+                DLManagedTensor *mt = new DLManagedTensor();
+                std::memset(mt, 0, sizeof(DLManagedTensor));
+                DLDataType dtype;
+                auto scalar = src.scalar_type();
+                if (scalar == at::kFloat) { dtype.code = kDLFloat; dtype.bits = 32; dtype.lanes = 1; }
+                else if (scalar == at::kDouble) { dtype.code = kDLFloat; dtype.bits = 64; dtype.lanes = 1; }
+                else if (scalar == at::kInt) { dtype.code = kDLInt; dtype.bits = 32; dtype.lanes = 1; }
+                else if (scalar == at::kLong) { dtype.code = kDLInt; dtype.bits = 64; dtype.lanes = 1; }
+                else { /* fallback to float32 */ dtype.code = kDLFloat; dtype.bits = 32; dtype.lanes = 1; }
+
+                mt->dl_tensor.data = const_cast<void*>(src.data_ptr());
+                mt->dl_tensor.ndim = (int)src.dim();
+                mt->dl_tensor.dtype = dtype;
+
+                // allocate and fill shape and strides
+                int ndim = mt->dl_tensor.ndim;
+                if (ndim > 0) {
+                    mt->dl_tensor.shape = new int64_t[ndim];
+                    mt->dl_tensor.strides = new int64_t[ndim];
+                    for (int i = 0; i < ndim; ++i) {
+                        mt->dl_tensor.shape[i] = (int64_t)src.size(i);
+                        mt->dl_tensor.strides[i] = (int64_t)src.stride(i);
+                    }
+                } else {
+                    mt->dl_tensor.shape = nullptr;
+                    mt->dl_tensor.strides = nullptr;
+                }
+
+                // device mapping
+                DLDevice dev;
+                if (src.device().is_cuda()) {
+                    dev.device_type = kDLCUDA;
+                    dev.device_id = src.device().index();
+                } else {
+                    dev.device_type = kDLCPU;
+                    dev.device_id = 0;
+                }
+                mt->dl_tensor.device = dev;
+
+                // Keep a heap-allocated shared_ptr to keep src alive until deleter runs.
+                auto holder = new std::shared_ptr<at::Tensor>(std::make_shared<at::Tensor>(src));
+                mt->manager_ctx = reinterpret_cast<void*>(holder);
+                mt->deleter = &dl_managed_tensor_deleter;
+
+                // Create a PyCapsule from the DLManagedTensor
+                PyObject *caps = PyCapsule_New((void*)mt, "dltensor", nullptr);
+                if (!caps) {
+                    // cleanup on failure
+                    dl_managed_tensor_deleter(mt);
+                    return handle();
+                }
+
+                // Wrap the raw PyObject* into a nanobind object without altering refcount
+                nb::object capsule_obj = nb::steal<nb::object>(nb::handle(caps));
+
+                // Call torch.utils.dlpack.from_dlpack(capsule) to obtain a Python tensor
+                nb::object py_tensor = dlpack_mod.attr("from_dlpack")(capsule_obj);
+                return py_tensor;
+            } catch (...) {
+                return handle();
+            }
+        }
+
+        // Overloads to satisfy nanobind's call patterns (pointer and const-ref/value)
+        static handle from_cpp(at::Tensor *p, rv_policy /* policy */, cleanup_list * /* list */) {
+            if (!p) return handle();
+            return tensor_to_python(*p);
+        }
+
+        static handle from_cpp(const at::Tensor &src, rv_policy /* policy */, cleanup_list * /* list */) {
+            return tensor_to_python(src);
+        }
+    };
+
+} // namespace detail
+} // namespace nanobind
+
+NB_MODULE(cpp, m) {
     m.doc() = "torchfits C++ extension";
     
     // FITS file class
-    py::class_<torchfits::FITSFile>(m, "FITSFile")
-        .def(py::init<const std::string&, int>(), py::arg("filename"), py::arg("mode") = 0)
+    nb::class_<torchfits::FITSFile>(m, "FITSFile")
+        .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("mode") = 0)
         .def("read_image", &torchfits::FITSFile::read_image, 
-             py::arg("hdu_num") = 0, py::arg("use_mmap") = false)
+             nb::arg("hdu_num") = 0, nb::arg("use_mmap") = false)
         .def("write_image", &torchfits::FITSFile::write_image, 
-             py::arg("tensor"), py::arg("hdu_num") = 0, 
-             py::arg("bscale") = 1.0, py::arg("bzero") = 0.0)
-        .def("get_header", &torchfits::FITSFile::get_header, py::arg("hdu_num") = 0)
-        .def("get_shape", &torchfits::FITSFile::get_shape, py::arg("hdu_num") = 0)
-        .def("get_dtype", &torchfits::FITSFile::get_dtype, py::arg("hdu_num") = 0)
+             nb::arg("tensor"), nb::arg("hdu_num") = 0, 
+             nb::arg("bscale") = 1.0, nb::arg("bzero") = 0.0)
+        .def("get_header", &torchfits::FITSFile::get_header, nb::arg("hdu_num") = 0)
+        .def("get_shape", &torchfits::FITSFile::get_shape, nb::arg("hdu_num") = 0)
+        .def("get_dtype", &torchfits::FITSFile::get_dtype, nb::arg("hdu_num") = 0)
         .def("read_subset", &torchfits::FITSFile::read_subset)
-        .def("compute_stats", &torchfits::FITSFile::compute_stats, py::arg("hdu_num") = 0)
+        .def("compute_stats", &torchfits::FITSFile::compute_stats, nb::arg("hdu_num") = 0)
         .def("get_num_hdus", &torchfits::FITSFile::get_num_hdus)
         .def("get_hdu_type", &torchfits::FITSFile::get_hdu_type)
         .def("write_hdus", &torchfits::FITSFile::write_hdus);
     
     // WCS class
-    py::class_<torchfits::WCS>(m, "WCS")
-        .def(py::init<const std::unordered_map<std::string, std::string>&>())
+    nb::class_<torchfits::WCS>(m, "WCS")
+        .def(nb::init<const std::unordered_map<std::string, std::string>&>())
         .def("pixel_to_world", &torchfits::WCS::pixel_to_world)
         .def("world_to_pixel", &torchfits::WCS::world_to_pixel)
-        .def("get_footprint", &torchfits::WCS::get_footprint);
+        .def("get_footprint", &torchfits::WCS::get_footprint)
+        .def_prop_ro("naxis", [](const torchfits::WCS &wcs) { return wcs.naxis(); })
+        .def_prop_ro("crpix", [](const torchfits::WCS &wcs) { return wcs.crpix(); })
+        .def_prop_ro("crval", [](const torchfits::WCS &wcs) { return wcs.crval(); })
+                .def_prop_ro("cdelt", [](const torchfits::WCS &wcs) { return wcs.cdelt(); });
+
+    
+
+    
     
     // HDU operations
     m.def("open_fits_file", [](const std::string& path, const std::string& mode) {
@@ -91,7 +263,7 @@ PYBIND11_MODULE(cpp, m) {
         return file->compute_stats(hdu_num);
     });
     
-    m.def("write_fits_file", [](const std::string& path, py::list hdus, bool overwrite) {
+    m.def("write_fits_file", [](const std::string& path, nb::list hdus, bool overwrite) {
         torchfits::FITSFile file(path, 1);
         file.write_hdus(hdus, overwrite);
     });
@@ -103,7 +275,7 @@ PYBIND11_MODULE(cpp, m) {
             throw std::runtime_error("Failed to open table reader");
         }
 
-        py::dict result_dict;
+        nb::dict result_dict;
         int status = read_table_columns(reader, nullptr, 0, 1, -1, &result_dict);
         close_table_reader(reader);
 
@@ -120,7 +292,7 @@ PYBIND11_MODULE(cpp, m) {
             throw std::runtime_error("Failed to open table reader");
         }
 
-        py::dict result_dict;
+        nb::dict result_dict;
         int status = read_table_columns(reader, nullptr, 0, 1, -1, &result_dict);
         close_table_reader(reader);
 
@@ -136,11 +308,11 @@ PYBIND11_MODULE(cpp, m) {
         return file.get_header(hdu_num);
     });
     
-    m.def("write_fits_table", [](const std::string& filename, py::dict tensor_dict, py::dict header, bool overwrite) {
+    m.def("write_fits_table", [](const std::string& filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
         write_fits_table(filename.c_str(), tensor_dict, header, overwrite);
     });
 
-    m.def("append_rows", [](const std::string& filename, int hdu_num, py::dict tensor_dict) {
+    m.def("append_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict) {
         append_rows(filename.c_str(), hdu_num, tensor_dict);
     });
     
@@ -176,12 +348,18 @@ PYBIND11_MODULE(cpp, m) {
     });
     
     // Mixed precision conversion
-    m.def("convert_to_fp16", [](torch::Tensor tensor) {
-        return tensor.to(torch::kFloat16);
+    // Accept a Python tensor object and perform the .to(dtype) call in Python
+    // to avoid relying on a nanobind caster for torch::Tensor.
+    m.def("convert_to_fp16", [](nb::object tensor_py) {
+        nb::module_ torch = nb::module_::import_("torch");
+        nb::object dtype = torch.attr("float16");
+        return tensor_py.attr("to")(dtype);
     });
     
-    m.def("convert_to_bf16", [](torch::Tensor tensor) {
-        return tensor.to(torch::kBFloat16);
+    m.def("convert_to_bf16", [](nb::object tensor_py) {
+        nb::module_ torch = nb::module_::import_("torch");
+        nb::object dtype = torch.attr("bfloat16");
+        return tensor_py.attr("to")(dtype);
     });
     
     // CFITSIO native string parsing (e.g., "file.fits[0:200,400:600]")
@@ -197,7 +375,7 @@ PYBIND11_MODULE(cpp, m) {
             torchfits::hw_info = torchfits::detect_hardware();
             torchfits::hw_detected = true;
         }
-        py::dict info;
+        nb::dict info;
         info["l3_cache_size"] = torchfits::hw_info.l3_cache_size;
         info["memory_bandwidth"] = torchfits::hw_info.memory_bandwidth;
         info["available_memory"] = torchfits::hw_info.available_memory;
@@ -206,7 +384,7 @@ PYBIND11_MODULE(cpp, m) {
     });
     
     // CFITSIO iterator function for optimal table processing
-    m.def("iterate_table", [](const std::string& filename, int hdu_num, py::function work_func) {
+    m.def("iterate_table", [](const std::string& filename, int hdu_num, std::function<void(nb::dict)> work_func) {
         // Placeholder for fits_iterate_data implementation
         // This would be the "golden path" for table processing
         throw std::runtime_error("Table iteration not yet implemented");

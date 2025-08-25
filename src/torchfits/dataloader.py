@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data.distributed import DistributedSampler
 
+import torchfits
 from .datasets import FITSDataset, IterableFITSDataset
 
 
@@ -45,7 +46,7 @@ def create_dataloader(
         dataset = FITSDataset(dataset)
     
     # Adjust parameters based on dataset type
-    if isinstance(dataset, IterableFITSDataset):
+    if isinstance(dataset, torchfits.datasets.IterableFITSDataset):
         # IterableDataset doesn't support shuffle
         shuffle = False
     
@@ -55,7 +56,7 @@ def create_dataloader(
         'shuffle': shuffle,
         'num_workers': num_workers,
         'pin_memory': pin_memory and torch.cuda.is_available(),
-        'prefetch_factor': prefetch_factor if num_workers > 0 else 2,
+        'prefetch_factor': prefetch_factor if num_workers > 0 else None,
         'persistent_workers': persistent_workers and num_workers > 0,
         'drop_last': False,  # Keep all samples
     }

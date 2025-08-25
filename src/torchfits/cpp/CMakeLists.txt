@@ -5,8 +5,20 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
-find_package(pybind11 REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
+# Find nanobind
+# Detect the installed nanobind package and import it into CMake
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+  OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT
+)
+execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+    OUTPUT_VARIABLE PYTHON_SITE_PACKAGES
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+) 
+find_package(nanobind CONFIG REQUIRED)
 
 # Find PyTorch
 execute_process(
@@ -20,6 +32,14 @@ find_package(Torch REQUIRED)
 # Find CFITSIO with performance flags
 find_path(CFITSIO_INCLUDE_DIR fitsio.h)
 find_library(CFITSIO_LIBRARY cfitsio)
+
+# Find DLPack headers (used for zero-copy tensor exchange)
+find_path(DLPACK_INCLUDE_DIR dlpack/dlpack.h)
+if(DLPACK_INCLUDE_DIR)
+    message(STATUS "Found DLPack include: ${DLPACK_INCLUDE_DIR}")
+else()
+    message(WARNING "DLPack headers not found - DLPack-based zero-copy will fail to compile until headers are available")
+endif()
 
 # Check if CFITSIO has thread safety and hardware acceleration
 include(CheckCSourceCompiles)
@@ -51,13 +71,16 @@ set(SOURCES
     bindings.cpp
 )
 
-# Create pybind11 module
-pybind11_add_module(cpp ${SOURCES})
+# Create python binding module
+nanobind_add_module(cpp ${SOURCES})
 
 # Link libraries
 target_link_libraries(cpp PRIVATE ${TORCH_LIBRARIES})
 target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARY})
 target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIR})
+if(DLPACK_INCLUDE_DIR)
+    target_include_directories(cpp PRIVATE ${DLPACK_INCLUDE_DIR})
+endif()
 target_compile_definitions(cpp PRIVATE HAS_CFITSIO)
 
 target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARY})

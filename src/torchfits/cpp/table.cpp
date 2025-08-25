@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 
 
 #include <fitsio.h>
@@ -17,7 +17,7 @@
 #include <omp.h>
 #endif
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace torchfits {
 // --- Optimized Table Reading Logic (from table_optimized.cpp) ---
@@ -69,7 +69,7 @@ public:
         iter_data.column_names = column_names;
         iter_data.batch_size = batch_size;
         int status = 0;
-        fits_iterate_data(fptr_, 0, nullptr, 0, 0, iterator_callback, &iter_data, &status);
+        fits_iterate_data(0, nullptr, 0, 0, iterator_callback, &iter_data, &status);
         if (status != 0) throw std::runtime_error("Failed to iterate table data");
     }
 private:
@@ -100,7 +100,7 @@ private:
             info.col_num = col;
             char col_name[FLEN_VALUE];
             char col_format[FLEN_VALUE];
-            fits_get_bcolparms(fptr_, col, col_name, nullptr, col_format, &info.repeat, nullptr, nullptr, nullptr, &status);
+            fits_get_bcolparms(fptr_, col, col_name, nullptr, col_format, &info.repeat, nullptr, nullptr, nullptr, nullptr, &status);
             if (status != 0) continue;
             info.name = col_name;
             info.format = col_format;
@@ -179,10 +179,10 @@ private:
             }
         }
     }
-    static int iterator_callback(long total_rows, long offset, long first_row, long num_rows, int num_cols, void* user_data) {
-        IteratorData* data = static_cast<IteratorData*>(user_data);
-        auto chunk_data = data->reader->read_columns(data->column_names, first_row, num_rows);
-        data->callback(chunk_data);
+    static int iterator_callback(long total_rows, long offset, long first_row, long num_rows, int num_cols, iteratorCol* data, void* user_data) {
+        IteratorData* iter_data = static_cast<IteratorData*>(user_data);
+        auto chunk_data = iter_data->reader->read_columns(iter_data->column_names, first_row, num_rows);
+        iter_data->callback(chunk_data);
         return 0;
     }
 };
@@ -323,12 +323,12 @@ public:
 
     }
     
-    std::unordered_map<std::string, py::object> read_columns(
+    std::unordered_map<std::string, nb::object> read_columns(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1) {
         
         int status = 0;
-        std::unordered_map<std::string, py::object> result;
+        std::unordered_map<std::string, nb::object> result;
         
         // Check if we have any data
         if (nrows_ == 0 || ncols_ == 0) {
@@ -374,7 +374,7 @@ public:
             switch (col.type) {
                 case FITSColumnType::VARIABLE: {
                     // Variable length arrays - simplified implementation
-                    py::list tensors;
+                    nb::list tensors;
                     for (long i = 0; i < num_rows; ++i) {
                         auto data = torch::empty({1}, torch::TensorOptions().dtype(col.torch_type));
                         tensors.append(data);
@@ -467,7 +467,7 @@ public:
                 throw std::runtime_error("Failed to read column: " + col.name);
             }
             
-            result[col.name] = py::cast(tensor);
+            result[col.name] = nb::cast(tensor);
         }
         
         return result;
@@ -540,7 +540,7 @@ void close_table_reader(void* reader_handle) {
 }
 
 int read_table_columns(void* reader_handle, const char** column_names, int num_columns,
-                      long start_row, long num_rows, py::dict* result_dict) {
+                      long start_row, long num_rows, nb::dict* result_dict) {
     if (!reader_handle) return -1;
     
     try {
@@ -552,14 +552,14 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
         }
         
         auto result = reader->read_columns(cols, start_row, num_rows);
-        *result_dict = py::cast(result);
+        *result_dict = nb::cast<nb::dict>(nb::cast(result));
         return 0;
     } catch (...) {
         return -1;
     }
 }
 
-void write_fits_table(const char* filename, py::dict tensor_dict, py::dict header, bool overwrite) {
+void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
     fitsfile* fptr;
     int status = 0;
 
@@ -576,7 +576,7 @@ void write_fits_table(const char* filename, py::dict tensor_dict, py::dict heade
     int num_cols = tensor_dict.size();
     long num_rows = 0;
     if (num_cols > 0) {
-        auto first_col = tensor_dict.begin()->second.cast<torch::Tensor>();
+        auto first_col = nb::cast<torch::Tensor>((*tensor_dict.begin()).second);
         num_rows = first_col.size(0);
     }
 
@@ -586,8 +586,8 @@ void write_fits_table(const char* filename, py::dict tensor_dict, py::dict heade
 
     int i = 0;
     for (auto item : tensor_dict) {
-        std::string col_name = item.first.cast<std::string>();
-        torch::Tensor tensor = item.second.cast<torch::Tensor>();
+        std::string col_name = nb::cast<std::string>(item.first);
+        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
 
         ttype[i] = new char[col_name.length() + 1];
         strncpy(ttype[i], col_name.c_str(), col_name.length());
@@ -622,7 +622,7 @@ void write_fits_table(const char* filename, py::dict tensor_dict, py::dict heade
 
     i = 0;
     for (auto item : tensor_dict) {
-        torch::Tensor tensor = item.second.cast<torch::Tensor>();
+        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
         void* data_ptr = tensor.data_ptr();
         int fits_type;
         if (tensor.dtype() == torch::kUInt8) {
@@ -657,7 +657,7 @@ void write_fits_table(const char* filename, py::dict tensor_dict, py::dict heade
     }
 }
 
-void append_rows(const char* filename, int hdu_num, py::dict tensor_dict) {
+void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
     fitsfile* fptr;
     int status = 0;
 
@@ -673,7 +673,7 @@ void append_rows(const char* filename, int hdu_num, py::dict tensor_dict) {
 
     long num_rows = 0;
     if (tensor_dict.size() > 0) {
-        auto first_col = tensor_dict.begin()->second.cast<torch::Tensor>();
+        auto first_col = nb::cast<torch::Tensor>((*tensor_dict.begin()).second);
         num_rows = first_col.size(0);
     }
 
@@ -685,7 +685,7 @@ void append_rows(const char* filename, int hdu_num, py::dict tensor_dict) {
 
     int i = 0;
     for (auto item : tensor_dict) {
-        torch::Tensor tensor = item.second.cast<torch::Tensor>();
+        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
         void* data_ptr = tensor.data_ptr();
         int fits_type;
         if (tensor.dtype() == torch::kUInt8) {

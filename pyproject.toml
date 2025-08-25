@@ -3,7 +3,7 @@
 # When using pixi-build, these are automatically provided but we keep them for pip compatibility
 requires = [
     "scikit-build-core>=0.10",
-    "pybind11>=2.11.0"
+    "nanobind>=2.7.0"
 ]
 build-backend = "scikit_build_core.build"
 
