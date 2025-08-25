@@ -257,6 +257,11 @@ NB_MODULE(cpp, m) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
         return file->read_image(hdu_num);
     });
+
+    // Simple passthrough for testing DLPack caster: returns the same tensor
+    m.def("echo_tensor", [](const at::Tensor &t) {
+        return t;
+    });
     
     m.def("compute_stats", [](uintptr_t handle, int hdu_num) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
