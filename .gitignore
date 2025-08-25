@@ -1,3 +1,5 @@
+# Ignore environment/lock artifacts
+pixi.lock
 # .gitignore for torchfits
 
 # General Python ignores
