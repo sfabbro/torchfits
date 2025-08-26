@@ -99,56 +99,28 @@ namespace detail {
             try {
                 nb::module_ dlpack_mod = nb::module_::import_("torch.utils.dlpack");
 
-                // Build a DLManagedTensor that views the at::Tensor storage.
-                DLManagedTensor *mt = new DLManagedTensor();
-                std::memset(mt, 0, sizeof(DLManagedTensor));
-                DLDataType dtype;
-                auto scalar = src.scalar_type();
-                if (scalar == at::kFloat) { dtype.code = kDLFloat; dtype.bits = 32; dtype.lanes = 1; }
-                else if (scalar == at::kDouble) { dtype.code = kDLFloat; dtype.bits = 64; dtype.lanes = 1; }
-                else if (scalar == at::kInt) { dtype.code = kDLInt; dtype.bits = 32; dtype.lanes = 1; }
-                else if (scalar == at::kLong) { dtype.code = kDLInt; dtype.bits = 64; dtype.lanes = 1; }
-                else { /* fallback to float32 */ dtype.code = kDLFloat; dtype.bits = 32; dtype.lanes = 1; }
+                // Use ATen's toDLPack to create a DLManagedTensor with correct
+                // ownership semantics. Then create a PyCapsule whose destructor
+                // calls the DLManagedTensor deleter exactly once.
+                DLManagedTensor *mt = at::toDLPack(src);
+                if (!mt) {
+                    return handle();
+                }
 
-                mt->dl_tensor.data = const_cast<void*>(src.data_ptr());
-                mt->dl_tensor.ndim = (int)src.dim();
-                mt->dl_tensor.dtype = dtype;
-
-                // allocate and fill shape and strides
-                int ndim = mt->dl_tensor.ndim;
-                if (ndim > 0) {
-                    mt->dl_tensor.shape = new int64_t[ndim];
-                    mt->dl_tensor.strides = new int64_t[ndim];
-                    for (int i = 0; i < ndim; ++i) {
-                        mt->dl_tensor.shape[i] = (int64_t)src.size(i);
-                        mt->dl_tensor.strides[i] = (int64_t)src.stride(i);
+                // Create a capsule destructor that calls the DLManagedTensor deleter
+                auto capsule_destructor = [](PyObject *caps) {
+                    DLManagedTensor *m = reinterpret_cast<DLManagedTensor *>(PyCapsule_GetPointer(caps, "dltensor"));
+                    if (m && m->deleter) {
+                        m->deleter(m);
                     }
-                } else {
-                    mt->dl_tensor.shape = nullptr;
-                    mt->dl_tensor.strides = nullptr;
-                }
+                };
 
-                // device mapping
-                DLDevice dev;
-                if (src.device().is_cuda()) {
-                    dev.device_type = kDLCUDA;
-                    dev.device_id = src.device().index();
-                } else {
-                    dev.device_type = kDLCPU;
-                    dev.device_id = 0;
-                }
-                mt->dl_tensor.device = dev;
-
-                // Keep a heap-allocated shared_ptr to keep src alive until deleter runs.
-                auto holder = new std::shared_ptr<at::Tensor>(std::make_shared<at::Tensor>(src));
-                mt->manager_ctx = reinterpret_cast<void*>(holder);
-                mt->deleter = &dl_managed_tensor_deleter;
-
-                // Create a PyCapsule from the DLManagedTensor
-                PyObject *caps = PyCapsule_New((void*)mt, "dltensor", nullptr);
+                PyObject *caps = PyCapsule_New((void*)mt, "dltensor", /*destructor=*/(PyCapsule_Destructor) +[](PyObject *caps){
+                    capsule_destructor(caps);
+                });
                 if (!caps) {
-                    // cleanup on failure
-                    dl_managed_tensor_deleter(mt);
+                    // If capsule creation failed, make sure to call deleter to avoid leak
+                    if (mt->deleter) mt->deleter(mt);
                     return handle();
                 }
 
@@ -344,6 +316,11 @@ NB_MODULE(cpp, m) {
     m.def("read_full", [](const std::string& filename, int hdu_num) {
         torchfits::FITSFile file(filename, 0);
         return file.read_image(hdu_num);
+    });
+    
+    // Echo tensor for DLPack round-trip testing (returns the same tensor)
+    m.def("echo_tensor", [](const at::Tensor &t) {
+        return t;
     });
     
     // Memory-mapped read function
