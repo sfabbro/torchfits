@@ -133,18 +133,21 @@ private:
         return torch::empty(shape, col_info.torch_type);
     }
     void read_chunk_optimized(const std::vector<ColumnInfo>& columns, long start_row, long num_rows, std::unordered_map<std::string, torch::Tensor>& tensors, long tensor_offset) {
-        size_t row_size = calculate_row_size(columns);
-        size_t chunk_bytes = row_size * num_rows;
-        std::vector<uint8_t> buffer(chunk_bytes);
+        // True zero-copy implementation: read directly into tensor memory
         int status = 0;
-        fits_read_tblbytes(fptr_, start_row, 1, chunk_bytes, buffer.data(), &status);
-        if (status != 0) throw std::runtime_error("Failed to read table bytes");
-        size_t buffer_offset = 0;
+        
+        // Read each column directly into its tensor memory
         for (const auto& col : columns) {
             auto& tensor = tensors[col.name];
             void* tensor_data = get_tensor_data_ptr(tensor, tensor_offset);
-            copy_column_data(buffer.data(), buffer_offset, tensor_data, col, num_rows, row_size);
-            buffer_offset += col.width * col.repeat;
+            
+            // Direct CFITSIO read into tensor memory - true zero-copy
+            fits_read_col(fptr_, col.data_type, col.col_num, start_row, 1, num_rows, 
+                         nullptr, tensor_data, nullptr, &status);
+            
+            if (status != 0) {
+                throw std::runtime_error("Failed to read column '" + col.name + "' directly into tensor");
+            }
         }
     }
     void* get_tensor_data_ptr(torch::Tensor& tensor, long offset) {

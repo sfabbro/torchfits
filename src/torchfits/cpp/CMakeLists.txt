@@ -9,10 +9,38 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Find nanobind
 # Detect the installed nanobind package and import it into CMake
+# For pixi builds, nanobind is in the build environment, not host environment
+if(DEFINED ENV{BUILD_PREFIX})
+    # In pixi build environment, use build prefix python for nanobind detection
+    set(NANOBIND_PYTHON_EXECUTABLE "$ENV{BUILD_PREFIX}/bin/python")
+    message(STATUS "Using build environment Python for nanobind: ${NANOBIND_PYTHON_EXECUTABLE}")
+else()
+    # Normal development environment
+    set(NANOBIND_PYTHON_EXECUTABLE "${Python_EXECUTABLE}")
+endif()
+
 execute_process(
-  COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+  COMMAND "${NANOBIND_PYTHON_EXECUTABLE}" -m nanobind --cmake_dir
   OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT
+  ERROR_QUIET
 )
+
+if(nanobind_ROOT)
+    message(STATUS "Found nanobind cmake directory: ${nanobind_ROOT}")
+    list(APPEND CMAKE_PREFIX_PATH ${nanobind_ROOT})
+else()
+    # Fallback: try to find nanobind via Python import in build environment
+    execute_process(
+        COMMAND "${NANOBIND_PYTHON_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
+        OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT
+        ERROR_QUIET
+    )
+    if(nanobind_ROOT)
+        message(STATUS "Found nanobind via Python import: ${nanobind_ROOT}")
+        list(APPEND CMAKE_PREFIX_PATH ${nanobind_ROOT})
+    endif()
+endif()
+
 execute_process(
     COMMAND ${Python_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('purelib'))"
     OUTPUT_VARIABLE PYTHON_SITE_PACKAGES

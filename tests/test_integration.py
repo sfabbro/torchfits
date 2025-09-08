@@ -238,7 +238,7 @@ class TestRealDataIntegration:
                 assert result.ndim == 3
                 
                 # Test spectral slice
-                spectrum = result[50, 256, 256]  # Single spectrum
+                spectrum = result[:, 256, 256]  # Single spectrum (all wavelengths at y=256, x=256)
                 assert spectrum.shape == (100,)
                 
             finally:

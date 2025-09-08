@@ -418,26 +418,37 @@ class ExhaustiveBenchmarkSuite:
         memory_usage = []
         peak_memory_usage = []
         
+        # Import psutil for memory measurement
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_available = True
+        except ImportError:
+            memory_available = False
+        
         for i in range(runs):
             try:
                 gc.collect()
                 for _ in range(3):  # Extra cleanup
                     gc.collect()
                 
-                # Start memory tracing
-                tracemalloc.start()
+                # Get initial memory usage
+                if memory_available:
+                    initial_memory = process.memory_info().rss / 1024 / 1024  # MB
                 
                 # Time the operation
                 start_time = time.perf_counter()
                 data = method_func()
                 elapsed = time.perf_counter() - start_time
                 
-                # Get memory usage
-                current, peak = tracemalloc.get_traced_memory()
-                tracemalloc.stop()
+                # Get final memory usage
+                if memory_available:
+                    final_memory = process.memory_info().rss / 1024 / 1024  # MB
+                    peak_memory_increase = max(0, final_memory - initial_memory)
+                else:
+                    peak_memory_increase = 0
                 
-                # Calculate memory usage
-                peak_mb = peak / 1024 / 1024
+                # Calculate data memory usage
                 if hasattr(data, 'element_size') and hasattr(data, 'numel'):
                     # PyTorch tensor
                     data_size_mb = (data.element_size() * data.numel()) / 1024 / 1024
@@ -445,11 +456,11 @@ class ExhaustiveBenchmarkSuite:
                     # NumPy array
                     data_size_mb = data.nbytes / 1024 / 1024
                 else:
-                    data_size_mb = peak_mb
+                    data_size_mb = peak_memory_increase
                 
                 times.append(elapsed)
                 memory_usage.append(data_size_mb)
-                peak_memory_usage.append(peak_mb)
+                peak_memory_usage.append(peak_memory_increase)
                 
                 del data
                 gc.collect()

@@ -29,6 +29,20 @@ from .transforms import (
 from .buffer import configure_buffers, get_buffer_stats, clear_buffers
 from .core import FITSCore, FITSDataType, CompressionType
 
+# Main API functions
+__all__ = [
+    'read', 'write', 'writeto', 'open', 'info',
+    'HDUList', 'TensorHDU', 'TableHDU', 'Header',
+    'WCS', 'FITSDataset', 'IterableFITSDataset',
+    'create_dataloader', 'create_fits_dataloader', 'create_streaming_dataloader',
+    'configure_for_environment', 'get_cache_stats', 'clear_cache',
+    'configure_buffers', 'get_buffer_stats', 'clear_buffers',
+    'ZScale', 'AsinhStretch', 'LogStretch', 'PowerStretch', 'Normalize',
+    'RandomCrop', 'CenterCrop', 'RandomFlip', 'GaussianNoise', 'ToDevice', 'Compose',
+    'create_training_transform', 'create_validation_transform', 'create_inference_transform',
+    'FITSCore', 'FITSDataType', 'CompressionType'
+]
+
 # Auto-configure cache and buffers on import
 configure_for_environment()
 
@@ -105,31 +119,64 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     return tensor.to(device) if device != 'cpu' else tensor
 
 
-def write(path: str, data, header: Header = None, overwrite: bool = False):
+def write(path: str, data, header: Header = None, overwrite: bool = False, compress: bool = False):
     """Write data to FITS file.
     
     Args:
         path: Output file path
-        data: Data to write (Tensor or TensorFrame)
-        header: Optional FITS header
+        data: Data to write (Tensor, TensorFrame, or HDUList)
+        header: Optional FITS header dictionary
         overwrite: Whether to overwrite existing files
+        compress: Whether to use tile compression (Rice algorithm)
     """
     import os
     if not overwrite and os.path.exists(path):
         raise FileExistsError(f"File '{path}' already exists. Use overwrite=True to overwrite.")
     
     try:
+        # Remove existing file if overwriting
+        if overwrite and os.path.exists(path):
+            os.remove(path)
+            
+        from . import cpp
+        
         if isinstance(data, Tensor):
-            from . import cpp
-            fits_file = cpp.FITSFile(path, 1)
+            # Write single tensor as primary HDU
+            fits_file = cpp.FITSFile(path, 1)  # Create mode
             fits_file.write_image(data, 0)
+            
+            # TODO: Implement header writing and compression in C++ layer
             if header:
-                # TODO: Implement header writing
-                pass
+                pass  # Header writing will be implemented in C++
+                            
+        elif hasattr(data, '__iter__') and not isinstance(data, (str, Tensor)):
+            # Write multiple HDUs
+            hdus = []
+            for item in data:
+                if isinstance(item, dict):
+                    hdus.append(item)
+                elif hasattr(item, '__dict__'):
+                    hdus.append(item.__dict__)
+                else:
+                    hdus.append({'data': item})
+            cpp.write_fits_file(path, hdus, overwrite)
+            
         else:
-            raise ValueError(f"Unsupported data type: {type(data)}")
+            raise ValueError(f"Unsupported data type for FITS writing: {type(data)}")
+            
     except Exception as e:
+        # Clean up partial file on error
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except:
+                pass
         raise RuntimeError(f"Failed to write FITS file '{path}': {e}") from e
+
+
+def writeto(path: str, data, header: Header = None, overwrite: bool = False, compress: bool = False):
+    """Alias for write() function for astropy compatibility."""
+    return write(path, data, header, overwrite, compress)
 
 
 def open(path: str, mode: str = 'r') -> HDUList:

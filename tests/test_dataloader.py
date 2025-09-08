@@ -66,7 +66,7 @@ class TestDataLoaderCreation:
         )
         
         assert dataloader.batch_size == 8
-        assert isinstance(dataloader.sampler, SequentialSampler)  # Should be False for IterableDataset
+        assert dataloader.sampler is None  # IterableDataset should have no sampler
     
     def test_create_fits_dataloader(self):
         """Test convenience function for FITS DataLoader."""

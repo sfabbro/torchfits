@@ -204,9 +204,15 @@ private:
                 if (has_scaling) {
                     return read_with_scaling_simple(shape, total_pixels, TFLOAT, bscale, bzero);
                 } else {
-                    // Optimized: pre-allocate with proper alignment
-                    auto tensor = torch::empty(shape, torch::TensorOptions().dtype(torch::kUInt8).pinned_memory(false));
-                    fits_read_img(fptr_, TBYTE, 1, total_pixels, nullptr, tensor.data_ptr<uint8_t>(), nullptr, &status);
+                    // True zero-copy: pre-allocate with optimal memory alignment
+                    auto options = torch::TensorOptions()
+                        .dtype(torch::kUInt8)
+                        .memory_format(torch::MemoryFormat::Contiguous);
+                    auto tensor = torch::empty(shape, options);
+                    
+                    // Direct read into tensor memory - true zero-copy
+                    fits_read_img(fptr_, TBYTE, 1, total_pixels, nullptr, 
+                                 tensor.data_ptr<uint8_t>(), nullptr, &status);
                     if (status != 0) throw std::runtime_error("Failed to read image data");
                     return tensor;
                 }
@@ -215,33 +221,53 @@ private:
                 if (has_scaling) {
                     return read_with_scaling_simple(shape, total_pixels, TFLOAT, bscale, bzero);
                 } else {
-                    auto tensor = torch::empty(shape, torch::kInt16);
-                    fits_read_img(fptr_, TSHORT, 1, total_pixels, nullptr, tensor.data_ptr<int16_t>(), nullptr, &status);
+                    auto options = torch::TensorOptions()
+                        .dtype(torch::kInt16)
+                        .memory_format(torch::MemoryFormat::Contiguous);
+                    auto tensor = torch::empty(shape, options);
+                    fits_read_img(fptr_, TSHORT, 1, total_pixels, nullptr, 
+                                 tensor.data_ptr<int16_t>(), nullptr, &status);
                     if (status != 0) throw std::runtime_error("Failed to read image data");
                     return tensor;
                 }
             }
             case LONG_IMG: {
-                auto tensor = torch::empty(shape, torch::kInt32);
-                fits_read_img(fptr_, TINT, 1, total_pixels, nullptr, tensor.data_ptr<int32_t>(), nullptr, &status);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kInt32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty(shape, options);
+                fits_read_img(fptr_, TINT, 1, total_pixels, nullptr, 
+                             tensor.data_ptr<int32_t>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             case FLOAT_IMG: {
-                auto tensor = torch::empty(shape, torch::kFloat32);
-                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, tensor.data_ptr<float>(), nullptr, &status);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty(shape, options);
+                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, 
+                             tensor.data_ptr<float>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             case DOUBLE_IMG: {
-                auto tensor = torch::empty(shape, torch::kFloat64);
-                fits_read_img(fptr_, TDOUBLE, 1, total_pixels, nullptr, tensor.data_ptr<double>(), nullptr, &status);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat64)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty(shape, options);
+                fits_read_img(fptr_, TDOUBLE, 1, total_pixels, nullptr, 
+                             tensor.data_ptr<double>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             default: {
-                auto tensor = torch::empty(shape, torch::kFloat32);
-                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, tensor.data_ptr<float>(), nullptr, &status);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty(shape, options);
+                fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, 
+                             tensor.data_ptr<float>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
@@ -255,6 +281,78 @@ private:
         fits_read_img(fptr_, dst_type, 1, total_pixels, nullptr, tensor.data_ptr<float>(), nullptr, &status);
         if (status != 0) throw std::runtime_error("Failed to read scaled image data");
         return tensor;
+    }
+    
+    torch::Tensor read_compressed_subset(int bitpix, long* fpixel, long* lpixel, long* inc,
+                                        long width, long height, bool has_scaling) {
+        int status = 0;
+        int anynul;
+        
+        // For compressed images, use the standard fits_read_subset which handles compression automatically
+        // CFITSIO automatically decompresses tiles as needed
+        
+        switch (bitpix) {
+            case BYTE_IMG: {
+                auto options = torch::TensorOptions()
+                    .dtype(has_scaling ? torch::kFloat32 : torch::kUInt8)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
+                int fits_type = has_scaling ? TFLOAT : TBYTE;
+                void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<uint8_t>();
+                
+                // CFITSIO handles tile decompression automatically in fits_read_subset
+                fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc, 
+                               nullptr, data_ptr, &anynul, &status);
+                if (status != 0) throw std::runtime_error("Failed to read compressed subset");
+                return tensor;
+            }
+            case SHORT_IMG: {
+                auto options = torch::TensorOptions()
+                    .dtype(has_scaling ? torch::kFloat32 : torch::kInt16)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
+                int fits_type = has_scaling ? TFLOAT : TSHORT;
+                void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<int16_t>();
+                
+                fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc,
+                               nullptr, data_ptr, &anynul, &status);
+                if (status != 0) throw std::runtime_error("Failed to read compressed subset");
+                return tensor;
+            }
+            case FLOAT_IMG: {
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
+                
+                fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc,
+                               nullptr, tensor.data_ptr<float>(), &anynul, &status);
+                if (status != 0) throw std::runtime_error("Failed to read compressed subset");
+                return tensor;
+            }
+            case DOUBLE_IMG: {
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat64)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
+                
+                fits_read_subset(fptr_, TDOUBLE, fpixel, lpixel, inc,
+                               nullptr, tensor.data_ptr<double>(), &anynul, &status);
+                if (status != 0) throw std::runtime_error("Failed to read compressed subset");
+                return tensor;
+            }
+            default: {
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
+                
+                fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc,
+                               nullptr, tensor.data_ptr<float>(), &anynul, &status);
+                if (status != 0) throw std::runtime_error("Failed to read compressed subset");
+                return tensor;
+            }
+        }
     }
     
 
@@ -271,6 +369,12 @@ public:
         int bitpix;
         fits_get_img_type(fptr_, &bitpix, &status);
         
+        // Check for compression - optimize for tiled data
+        bool is_compressed = false;
+        char zcmptype[FLEN_VALUE]; int comp_status = 0;
+        fits_read_key(fptr_, TSTRING, "ZCMPTYPE", zcmptype, nullptr, &comp_status);
+        if (comp_status == 0) is_compressed = true;
+        
         // FITS uses 1-based inclusive ranges, but we want Python-style exclusive ranges
         long width = x2 - x1;
         long height = y2 - y1;
@@ -286,38 +390,62 @@ public:
         fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &bzero_status);
         bool has_scaling = (bscale_status == 0 && bscale != 1.0) || (bzero_status == 0 && bzero != 0.0);
         
+        // Optimized path for compressed images - use tile-aware reading
+        if (is_compressed) {
+            return read_compressed_subset(bitpix, fpixel, lpixel, inc, width, height, has_scaling);
+        }
+        
+        // Regular uncompressed reading
         switch (bitpix) {
             case BYTE_IMG: {
-                auto tensor = torch::empty({height, width}, has_scaling ? torch::kFloat32 : torch::kUInt8);
+                auto options = torch::TensorOptions()
+                    .dtype(has_scaling ? torch::kFloat32 : torch::kUInt8)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 int fits_type = has_scaling ? TFLOAT : TBYTE;
                 void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<uint8_t>();
                 fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc, nullptr, data_ptr, &anynul, &status);
                 return tensor;
             }
             case SHORT_IMG: {
-                auto tensor = torch::empty({height, width}, has_scaling ? torch::kFloat32 : torch::kInt16);
+                auto options = torch::TensorOptions()
+                    .dtype(has_scaling ? torch::kFloat32 : torch::kInt16)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 int fits_type = has_scaling ? TFLOAT : TSHORT;
                 void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<int16_t>();
                 fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc, nullptr, data_ptr, &anynul, &status);
                 return tensor;
             }
             case LONG_IMG: {
-                auto tensor = torch::empty({height, width}, torch::kInt32);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kInt32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 fits_read_subset(fptr_, TINT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<int32_t>(), &anynul, &status);
                 return tensor;
             }
             case FLOAT_IMG: {
-                auto tensor = torch::empty({height, width}, torch::kFloat32);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<float>(), &anynul, &status);
                 return tensor;
             }
             case DOUBLE_IMG: {
-                auto tensor = torch::empty({height, width}, torch::kFloat64);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat64)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 fits_read_subset(fptr_, TDOUBLE, fpixel, lpixel, inc, nullptr, tensor.data_ptr<double>(), &anynul, &status);
                 return tensor;
             }
             default: {
-                auto tensor = torch::empty({height, width}, torch::kFloat32);
+                auto options = torch::TensorOptions()
+                    .dtype(torch::kFloat32)
+                    .memory_format(torch::MemoryFormat::Contiguous);
+                auto tensor = torch::empty({height, width}, options);
                 fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<float>(), &anynul, &status);
                 return tensor;
             }
@@ -435,59 +563,90 @@ public:
                     double bscale = 1.0, double bzero = 0.0) {
         int status = 0;
         
-        auto shape = tensor.sizes();
+        // Ensure tensor is contiguous for direct memory access
+        auto contiguous_tensor = tensor.contiguous();
+        auto shape = contiguous_tensor.sizes();
         int naxis = shape.size();
+        
+        if (naxis == 0) {
+            throw std::runtime_error("Cannot write scalar tensor as FITS image");
+        }
+        
+        // FITS uses reversed axis order (FORTRAN-style)
         long* naxes = new long[naxis];
         for (int i = 0; i < naxis; i++) {
             naxes[i] = shape[naxis - 1 - i];
         }
-
+        
         int bitpix;
         int fits_type;
         void* data_ptr;
-
-        if (tensor.dtype() == torch::kUInt8) {
-            bitpix = BYTE_IMG;
-            fits_type = TBYTE;
-            data_ptr = tensor.data_ptr<uint8_t>();
-        } else if (tensor.dtype() == torch::kInt16) {
-            bitpix = SHORT_IMG;
-            fits_type = TSHORT;
-            data_ptr = tensor.data_ptr<int16_t>();
-        } else if (tensor.dtype() == torch::kInt32) {
-            bitpix = LONG_IMG;
-            fits_type = TINT;
-            data_ptr = tensor.data_ptr<int32_t>();
-        } else if (tensor.dtype() == torch::kFloat32) {
-            bitpix = FLOAT_IMG;
-            fits_type = TFLOAT;
-            data_ptr = tensor.data_ptr<float>();
-        } else if (tensor.dtype() == torch::kFloat64) {
-            bitpix = DOUBLE_IMG;
-            fits_type = TDOUBLE;
-            data_ptr = tensor.data_ptr<double>();
-        } else {
-            throw std::runtime_error("Unsupported tensor data type");
+        
+        // Map PyTorch dtypes to FITS types with proper BITPIX values
+        switch (contiguous_tensor.scalar_type()) {
+            case torch::kUInt8:
+                bitpix = BYTE_IMG;
+                fits_type = TBYTE;
+                data_ptr = contiguous_tensor.data_ptr<uint8_t>();
+                break;
+            case torch::kInt16:
+                bitpix = SHORT_IMG;
+                fits_type = TSHORT;
+                data_ptr = contiguous_tensor.data_ptr<int16_t>();
+                break;
+            case torch::kInt32:
+                bitpix = LONG_IMG;
+                fits_type = TINT;
+                data_ptr = contiguous_tensor.data_ptr<int32_t>();
+                break;
+            case torch::kFloat32:
+                bitpix = FLOAT_IMG;
+                fits_type = TFLOAT;
+                data_ptr = contiguous_tensor.data_ptr<float>();
+                break;
+            case torch::kFloat64:
+                bitpix = DOUBLE_IMG;
+                fits_type = TDOUBLE;
+                data_ptr = contiguous_tensor.data_ptr<double>();
+                break;
+            default:
+                delete[] naxes;
+                throw std::runtime_error("Unsupported tensor dtype for FITS writing");
         }
-
+        
+        // Create image HDU
         fits_create_img(fptr_, bitpix, naxis, naxes, &status);
         if (status != 0) {
-            throw std::runtime_error("Failed to create image HDU");
+            delete[] naxes;
+            char error_text[FLEN_ERRMSG];
+            fits_get_errstatus(status, error_text);
+            throw std::runtime_error(std::string("Failed to create image HDU: ") + error_text);
         }
-
+        
+        // Write scaling keywords if provided
         if (bscale != 1.0) {
-            fits_write_key(fptr_, TDOUBLE, "BSCALE", &bscale, "", &status);
+            fits_write_key(fptr_, TDOUBLE, "BSCALE", &bscale, "Linear scaling factor", &status);
         }
         if (bzero != 0.0) {
-            fits_write_key(fptr_, TDOUBLE, "BZERO", &bzero, "", &status);
+            fits_write_key(fptr_, TDOUBLE, "BZERO", &bzero, "Zero point offset", &status);
         }
-
-        fits_write_img(fptr_, fits_type, 1, tensor.numel(), data_ptr, &status);
-        if (status != 0) {
-            throw std::runtime_error("Failed to write image data");
+        
+        // Calculate total number of pixels
+        long total_pixels = 1;
+        for (int i = 0; i < naxis; i++) {
+            total_pixels *= naxes[i];
         }
-
+        
+        // Write image data directly from tensor memory (zero-copy)
+        fits_write_img(fptr_, fits_type, 1, total_pixels, data_ptr, &status);
+        
         delete[] naxes;
+        
+        if (status != 0) {
+            char error_text[FLEN_ERRMSG];
+            fits_get_errstatus(status, error_text);
+            throw std::runtime_error(std::string("Failed to write image data: ") + error_text);
+        }
     }
 
     fitsfile* get_fptr() { return fptr_; }

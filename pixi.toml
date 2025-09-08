@@ -1,7 +1,7 @@
 [workspace]
 preview = ["pixi-build"]
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-arm64", "osx-64"]
+platforms = ["osx-arm64"]
 
 [package]
 name = "torchfits"
@@ -15,11 +15,14 @@ backend = { name = "pixi-build-cmake", version = "*"}
 # Build dependencies - tools needed to build the package
 # Note: cmake, ninja, and cxx-compiler are automatically provided by pixi-build-cmake
 [package.build-dependencies]
-nanobind = ">=2.0"
+nanobind = ">=2.8.0"
 scikit-build-core = ">=0.10"
 cmake = ">=3.21"
 ninja = ">=1.10"
-dlpack = "*"
+python = ">=3.11"
+pytorch = ">=2.0"
+cfitsio = ">=4"
+wcslib = ">=7.11"
 
 # Host dependencies - libraries that will be linked into the package
 [package.host-dependencies]
@@ -27,8 +30,7 @@ python = ">=3.11"
 pytorch = ">=2.0"
 cfitsio = ">=4"
 wcslib = ">=7.11"
-nanobind = ">=2.0"
-dlpack = "*"
+#dlpack = "*"
 
 
 # Run dependencies - packages needed at runtime
@@ -39,7 +41,7 @@ psutil = ">=5.0"  # For system resource monitoring
 
 # Workspace dependencies - development environment
 [dependencies]
-torchfits = { path = "." }
+# torchfits = { path = "." }  # Don't add self-dependency - causes circular dependency
 pytest = ">=8.4.1,<9"
 pytest-cov = ">=6.2.1,<7"
 ruff = ">=0.12.9,<0.13"
@@ -55,6 +57,11 @@ scikit-build-core = ">=0.11.5,<0.12"
 cmake = ">=4.1.0,<5"
 ninja = ">=1.13.1,<2"
 nanobind = ">=2.8.0,<3"
+python = ">=3.11"
+pytorch = ">=2.0"
+pytorch-frame = ">=0.2.5"
+cfitsio = ">=4"
+wcslib = ">=7.11"
 
 [tasks]
 # Development tasks
