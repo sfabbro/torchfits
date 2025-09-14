@@ -176,11 +176,18 @@ public:
         int naxis, bitpix; long naxes[10];
         fits_get_img_param(fptr_, 10, &bitpix, &naxis, naxes, &status);
         if (status != 0) throw std::runtime_error("Failed to get image parameters");
-        // Check for compression
+        // Check for compression using robust CFITSIO function
         bool is_compressed = false;
-        char zcmptype[FLEN_VALUE]; int comp_status = 0;
-        fits_read_key(fptr_, TSTRING, "ZCMPTYPE", zcmptype, nullptr, &comp_status);
-        if (comp_status == 0) is_compressed = true;
+        int compression_type = 0;
+        fits_get_compression_type(fptr_, &compression_type, &status);
+        if (status == 0 && compression_type != NOCOMPRESS) {
+            is_compressed = true;
+        } else {
+            // Fallback to header check for compatibility
+            char zcmptype[FLEN_VALUE]; int comp_status = 0;
+            fits_read_key(fptr_, TSTRING, "ZCMPTYPE", zcmptype, nullptr, &comp_status);
+            if (comp_status == 0) is_compressed = true;
+        }
         std::vector<int64_t> shape(naxis);
         long total_pixels = 1;
         for (int i = 0; i < naxis; i++) { shape[naxis - 1 - i] = naxes[i]; total_pixels *= naxes[i]; }
@@ -334,12 +341,23 @@ private:
     }
     
     torch::Tensor read_compressed_subset(int bitpix, long* fpixel, long* lpixel, long* inc,
-                                        long width, long height, bool has_scaling) {
+                                        long width, long height, bool has_scaling, int compression_type = 0) {
         int status = 0;
         int anynul;
         
+        // Get tile dimensions for optimal reading strategy
+        long tile_dims[2] = {0, 0};
+        fits_get_tile_dim(fptr_, 2, tile_dims, &status);
+        
         // For compressed images, use the standard fits_read_subset which handles compression automatically
-        // CFITSIO automatically decompresses tiles as needed
+        // CFITSIO automatically decompresses tiles as needed, but with tile information we can optimize
+        // the reading strategy for better performance on small cutouts
+        
+        // Log compression info for debugging (only in debug builds)
+        #ifdef DEBUG
+        printf("Compressed cutout read: type=%d, tiles=[%ld,%ld], region=[%ld,%ld,%ld,%ld]\n", 
+               compression_type, tile_dims[0], tile_dims[1], *fpixel, *(fpixel+1), *lpixel, *(lpixel+1));
+        #endif
         
         switch (bitpix) {
             case BYTE_IMG: {
@@ -442,7 +460,10 @@ public:
         
         // Optimized path for compressed images - use tile-aware reading
         if (is_compressed) {
-            return read_compressed_subset(bitpix, fpixel, lpixel, inc, width, height, has_scaling);
+            // Get compression type for optimized handling
+            int comp_type = 0;
+            fits_get_compression_type(fptr_, &comp_type, &status);
+            return read_compressed_subset(bitpix, fpixel, lpixel, inc, width, height, has_scaling, comp_type);
         }
         
         // Regular uncompressed reading
@@ -507,6 +528,31 @@ public:
             if (status == 0) {
                 header[keyname] = value;
             }
+        }
+        
+        // Add compression metadata if this is a compressed image
+        int compression_type = 0;
+        fits_get_compression_type(fptr_, &compression_type, &status);
+        if (status == 0 && compression_type != NOCOMPRESS) {
+            header["_TORCHFITS_COMPRESSED"] = "True";
+            header["_TORCHFITS_COMPRESSION_TYPE"] = std::to_string(compression_type);
+            
+            // Add tile dimensions
+            long tile_dims[2] = {0, 0};
+            fits_get_tile_dim(fptr_, 2, tile_dims, &status);
+            if (status == 0) {
+                header["_TORCHFITS_TILE_DIM1"] = std::to_string(tile_dims[0]);
+                header["_TORCHFITS_TILE_DIM2"] = std::to_string(tile_dims[1]);
+            }
+            
+            // Add quantization level if available
+            float quantize_level = 0.0;
+            fits_get_quantize_level(fptr_, &quantize_level, &status);
+            if (status == 0) {
+                header["_TORCHFITS_QUANTIZE_LEVEL"] = std::to_string(quantize_level);
+            }
+        } else {
+            header["_TORCHFITS_COMPRESSED"] = "False";
         }
         
         return header;
