@@ -337,7 +337,7 @@ NB_MODULE(cpp, m) {
         nb::gil_scoped_release release;
         torchfits::FITSFile file(filename, 0);
         return file.read_image(hdu_num);
-    });
+    }, nb::arg("filename"), nb::arg("hdu_num") = 0);
     
     // Note: echo_tensor already defined above
     

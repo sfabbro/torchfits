@@ -163,6 +163,10 @@ public:
     }
     
     torch::Tensor read_image(int hdu_num = 0, bool use_mmap = false) {
+        return read_image_with_device(hdu_num, use_mmap, torch::kCPU);
+    }
+    
+    torch::Tensor read_image_with_device(int hdu_num, bool use_mmap, torch::Device device) {
         int status = 0;
         fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
         if (status != 0) throw std::runtime_error("Failed to move to HDU " + std::to_string(hdu_num));
@@ -185,30 +189,62 @@ public:
         fits_read_key(fptr_, TDOUBLE, "BSCALE", &bscale, nullptr, &bscale_status);
         fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &bzero_status);
         bool has_scaling = (bscale_status == 0 && bscale != 1.0) || (bzero_status == 0 && bzero != 0.0);
-        // If mmap requested and suitable, use mmap logic
-        if (use_mmap && !is_compressed && !has_scaling) {
-            return FITSMMapReader::read_fits_mmap(filename_, hdu_num);
+        // Fast path for CPU operations - avoid device checking overhead
+        if (device.is_cpu()) {
+            // If mmap requested and suitable, use mmap logic
+            if (use_mmap && !is_compressed && !has_scaling) {
+                return FITSMMapReader::read_fits_mmap(filename_, hdu_num);
+            }
+            // Otherwise, use optimized regular read (CPU fast path)
+            return read_image_simple(bitpix, shape, total_pixels, has_scaling, bscale, bzero);
+        } else {
+            // Device-aware path for non-CPU devices
+            return read_image_simple(bitpix, shape, total_pixels, has_scaling, bscale, bzero, device);
         }
-        // Otherwise, use regular read
-        return read_image_simple(bitpix, shape, total_pixels, has_scaling, bscale, bzero);
     }
     
 private:
+    // Create optimized tensor options with proper alignment and memory layout
+    torch::TensorOptions create_optimized_tensor_options(torch::ScalarType dtype, torch::Device device = torch::kCPU) {
+        auto options = torch::TensorOptions()
+            .dtype(dtype)
+            .device(device)
+            .memory_format(torch::MemoryFormat::Contiguous)
+            .pinned_memory(device.is_cpu())  // Use pinned memory for CPU tensors for faster GPU transfers
+            .requires_grad(false);           // Disable gradients for performance
+        return options;
+    }
+    
+    // Enhanced zero-copy tensor allocation with alignment optimization
+    torch::Tensor allocate_aligned_tensor(const std::vector<int64_t>& shape, torch::ScalarType dtype, torch::Device device = torch::kCPU) {
+        auto options = create_optimized_tensor_options(dtype, device);
+        auto tensor = torch::empty(shape, options);
+        
+        // Ensure tensor is properly aligned for optimal memory access
+        if (!tensor.is_contiguous()) {
+            tensor = tensor.contiguous();
+        }
+        
+        return tensor;
+    }
+    
     torch::Tensor read_image_simple(int bitpix, const std::vector<int64_t>& shape, 
                                    long total_pixels, bool has_scaling, 
-                                   double bscale, double bzero) {
+                                   double bscale, double bzero, torch::Device device = torch::kCPU) {
         int status = 0;
+        
+        // For device tensors, we need to handle differently
+        if (device.is_cuda()) {
+            return read_image_with_device_transfer(bitpix, shape, total_pixels, has_scaling, bscale, bzero, device);
+        }
         
         switch (bitpix) {
             case BYTE_IMG: {
                 if (has_scaling) {
-                    return read_with_scaling_simple(shape, total_pixels, TFLOAT, bscale, bzero);
+                    return read_with_scaling_optimized(shape, total_pixels, TFLOAT, bscale, bzero, device);
                 } else {
-                    // True zero-copy: pre-allocate with optimal memory alignment
-                    auto options = torch::TensorOptions()
-                        .dtype(torch::kUInt8)
-                        .memory_format(torch::MemoryFormat::Contiguous);
-                    auto tensor = torch::empty(shape, options);
+                    // Optimized zero-copy allocation
+                    auto tensor = allocate_aligned_tensor(shape, torch::kUInt8, device);
                     
                     // Direct read into tensor memory - true zero-copy
                     fits_read_img(fptr_, TBYTE, 1, total_pixels, nullptr, 
@@ -219,12 +255,9 @@ private:
             }
             case SHORT_IMG: {
                 if (has_scaling) {
-                    return read_with_scaling_simple(shape, total_pixels, TFLOAT, bscale, bzero);
+                    return read_with_scaling_optimized(shape, total_pixels, TFLOAT, bscale, bzero);
                 } else {
-                    auto options = torch::TensorOptions()
-                        .dtype(torch::kInt16)
-                        .memory_format(torch::MemoryFormat::Contiguous);
-                    auto tensor = torch::empty(shape, options);
+                    auto tensor = allocate_aligned_tensor(shape, torch::kInt16);
                     fits_read_img(fptr_, TSHORT, 1, total_pixels, nullptr, 
                                  tensor.data_ptr<int16_t>(), nullptr, &status);
                     if (status != 0) throw std::runtime_error("Failed to read image data");
@@ -232,40 +265,28 @@ private:
                 }
             }
             case LONG_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kInt32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty(shape, options);
+                auto tensor = allocate_aligned_tensor(shape, torch::kInt32);
                 fits_read_img(fptr_, TINT, 1, total_pixels, nullptr, 
                              tensor.data_ptr<int32_t>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             case FLOAT_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty(shape, options);
+                auto tensor = allocate_aligned_tensor(shape, torch::kFloat32);
                 fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, 
                              tensor.data_ptr<float>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             case DOUBLE_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat64)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty(shape, options);
+                auto tensor = allocate_aligned_tensor(shape, torch::kFloat64);
                 fits_read_img(fptr_, TDOUBLE, 1, total_pixels, nullptr, 
                              tensor.data_ptr<double>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
                 return tensor;
             }
             default: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty(shape, options);
+                auto tensor = allocate_aligned_tensor(shape, torch::kFloat32);
                 fits_read_img(fptr_, TFLOAT, 1, total_pixels, nullptr, 
                              tensor.data_ptr<float>(), nullptr, &status);
                 if (status != 0) throw std::runtime_error("Failed to read image data");
@@ -274,6 +295,35 @@ private:
         }
     }
     
+    // Optimized scaling operation that avoids intermediate copies
+    torch::Tensor read_with_scaling_optimized(const std::vector<int64_t>& shape, long total_pixels,
+                                              int dst_type, double bscale, double bzero, torch::Device device = torch::kCPU) {
+        auto tensor = allocate_aligned_tensor(shape, torch::kFloat32, device);
+        int status = 0;
+        
+        // Use CFITSIO's built-in scaling by reading as float with scaling applied automatically
+        fits_read_img(fptr_, dst_type, 1, total_pixels, nullptr, tensor.data_ptr<float>(), nullptr, &status);
+        if (status != 0) throw std::runtime_error("Failed to read scaled image data");
+        
+        return tensor;
+    }
+    
+    // Handle GPU tensor allocation with CPU staging
+    torch::Tensor read_image_with_device_transfer(int bitpix, const std::vector<int64_t>& shape, 
+                                                  long total_pixels, bool has_scaling, 
+                                                  double bscale, double bzero, torch::Device device) {
+        // Read to CPU first, then transfer to device
+        auto cpu_tensor = read_image_simple(bitpix, shape, total_pixels, has_scaling, bscale, bzero, torch::kCPU);
+        
+        // Optimize GPU transfer with pinned memory
+        if (device.is_cuda()) {
+            // Use non-blocking transfer if possible
+            return cpu_tensor.to(device, /*non_blocking=*/true);
+        }
+        
+        return cpu_tensor.to(device);
+    }
+
     torch::Tensor read_with_scaling_simple(const std::vector<int64_t>& shape, long total_pixels,
                                           int dst_type, double bscale, double bzero) {
         auto tensor = torch::empty(shape, torch::kFloat32);
@@ -398,54 +448,36 @@ public:
         // Regular uncompressed reading
         switch (bitpix) {
             case BYTE_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(has_scaling ? torch::kFloat32 : torch::kUInt8)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, has_scaling ? torch::kFloat32 : torch::kUInt8);
                 int fits_type = has_scaling ? TFLOAT : TBYTE;
                 void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<uint8_t>();
                 fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc, nullptr, data_ptr, &anynul, &status);
                 return tensor;
             }
             case SHORT_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(has_scaling ? torch::kFloat32 : torch::kInt16)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, has_scaling ? torch::kFloat32 : torch::kInt16);
                 int fits_type = has_scaling ? TFLOAT : TSHORT;
                 void* data_ptr = has_scaling ? (void*)tensor.data_ptr<float>() : (void*)tensor.data_ptr<int16_t>();
                 fits_read_subset(fptr_, fits_type, fpixel, lpixel, inc, nullptr, data_ptr, &anynul, &status);
                 return tensor;
             }
             case LONG_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kInt32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, torch::kInt32);
                 fits_read_subset(fptr_, TINT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<int32_t>(), &anynul, &status);
                 return tensor;
             }
             case FLOAT_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, torch::kFloat32);
                 fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<float>(), &anynul, &status);
                 return tensor;
             }
             case DOUBLE_IMG: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat64)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, torch::kFloat64);
                 fits_read_subset(fptr_, TDOUBLE, fpixel, lpixel, inc, nullptr, tensor.data_ptr<double>(), &anynul, &status);
                 return tensor;
             }
             default: {
-                auto options = torch::TensorOptions()
-                    .dtype(torch::kFloat32)
-                    .memory_format(torch::MemoryFormat::Contiguous);
-                auto tensor = torch::empty({height, width}, options);
+                auto tensor = allocate_aligned_tensor({height, width}, torch::kFloat32);
                 fits_read_subset(fptr_, TFLOAT, fpixel, lpixel, inc, nullptr, tensor.data_ptr<float>(), &anynul, &status);
                 return tensor;
             }
