@@ -105,9 +105,10 @@ class CacheManager:
         """Configure the C++ cache backend."""
         try:
             from . import cpp
-            cpp.configure_cache(self.config.max_files, self.config.max_memory_mb)
-        except ImportError:
-            # Fallback when C++ module not available
+            if hasattr(cpp, 'configure_cache'):
+                cpp.configure_cache(self.config.max_files, self.config.max_memory_mb)
+        except (ImportError, AttributeError):
+            # Fallback when C++ module not available or function missing
             pass
     
     def get_stats(self) -> Dict[str, Any]:

@@ -330,6 +330,13 @@ NB_MODULE(cpp, m) {
         return torchfits::global_cache.size();
     });
     
+    // Configure cache function for Python cache module compatibility
+    m.def("configure_cache", [](int max_files, int max_memory_mb) {
+        // This is a placeholder for cache configuration
+        // The actual cache configuration is handled by the global_cache object
+        // which is configured at compile time or through other mechanisms
+    });
+    
     // Performance hint: suggest optimal chunk size
     m.def("get_optimal_chunk_size", [](size_t data_size) {
         // Simple heuristic: use 64KB chunks for small data, 1MB for large
