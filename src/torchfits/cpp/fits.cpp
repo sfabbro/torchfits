@@ -19,7 +19,7 @@
 #include <arm_neon.h>   // ARM NEON intrinsics
 #endif
 
-#include "hardware.cpp"
+#include "hardware.h"
 #include "cache.cpp"
 
 namespace nb = nanobind;

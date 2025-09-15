@@ -5,7 +5,7 @@ This module provides efficient FITS file reading and writing capabilities
 optimized for PyTorch tensors and pytorch-frame TensorFrames.
 """
 
-from typing import Union
+from typing import Union, Optional, List
 
 import torch
 import numpy as np
@@ -71,7 +71,9 @@ __all__ = [
 
 
 def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', 
-         mmap: bool = False, fp16: bool = False, bf16: bool = False):
+         mmap: bool = False, fp16: bool = False, bf16: bool = False,
+         columns: Optional[List[str]] = None, start_row: int = 1, num_rows: int = -1,
+         cache_capacity: int = 10):
     """Read FITS data with optimizations.
     
     Args:
@@ -81,9 +83,17 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
         mmap: Use memory mapping for large files
         fp16: Convert to half precision
         bf16: Convert to bfloat16
+        columns: List of column names for table reading (None = all columns)
+        start_row: Starting row for table reading (1-based)
+        num_rows: Number of rows to read (-1 = all rows)
+        cache_capacity: File cache capacity
+        
+    Returns:
+        torch.Tensor for images, dict for tables, and header dict
     """
     from . import cpp
     from .core import FITSCore
+    from .hdu import TableHDU, Header
     
     # Support CFITSIO string format: "file.fits[0][100:200,300:400]"
     if '[' in path and ']' in path:
@@ -92,31 +102,102 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
             file_path, hdu_index, slices = FITSCore.parse_cutout_spec(path)
             
             # Open file and read subset
-            fits_file = cpp.FITSFile(file_path, 0)
-            if len(slices) == 2:
-                y_slice, x_slice = slices
-                tensor = fits_file.read_subset(hdu_index, 
-                                             x_slice.start or 0, y_slice.start or 0,
-                                             x_slice.stop or -1, y_slice.stop or -1)
-            else:
-                # Fall back to full read for non-2D cutouts
-                tensor = fits_file.read_image(hdu_index)
+            file_handle = cpp.open_fits_file(file_path, "r")
+            try:
+                if len(slices) == 2:
+                    y_slice, x_slice = slices
+                    tensor = cpp.read_subset(file_handle, hdu_index, 
+                                           x_slice.start or 0, y_slice.start or 0,
+                                           x_slice.stop or -1, y_slice.stop or -1)
+                else:
+                    # Fall back to full read for non-2D cutouts
+                    tensor = cpp.read_full(file_handle, hdu_index)
+                return tensor, {}
+            finally:
+                cpp.close_fits_file(file_handle)
         except Exception:
             # Fall back to CFITSIO native parsing
             tensor = cpp.read_cfitsio_string(path)
-    elif mmap:
-        # Use memory mapping when requested
-        tensor = cpp.read_mmap(path, hdu)
+            return tensor, {}
     else:
-        tensor = cpp.read_full(path, hdu)
-    
-    # Apply mixed precision conversion
-    if fp16:
-        tensor = tensor.to(torch.float16)
-    elif bf16:
-        tensor = tensor.to(torch.bfloat16)
-    
-    return tensor.to(device) if device != 'cpu' else tensor
+        # Resolve HDU name to index if needed
+        hdu_index = hdu
+        if isinstance(hdu, str):
+            # Open file to resolve HDU name
+            try:
+                file_handle = cpp.open_fits_file(path, "r")
+                try:
+                    num_hdus = cpp.get_num_hdus(file_handle)
+                    hdu_index = None
+                    for i in range(num_hdus):
+                        header = cpp.read_header(file_handle, i)
+                        if header.get('EXTNAME') == hdu:
+                            hdu_index = i
+                            break
+                    if hdu_index is None:
+                        raise ValueError(f"HDU '{hdu}' not found in file")
+                finally:
+                    cpp.close_fits_file(file_handle)
+            except Exception as e:
+                raise RuntimeError(f"Failed to resolve HDU name '{hdu}': {e}")
+        
+        # Determine HDU type and read accordingly
+        try:
+            file_handle = cpp.open_fits_file(path, "r")
+            try:
+                hdu_type = cpp.get_hdu_type(file_handle, hdu_index)
+                
+                if hdu_type in ['BINARY_TBL', 'ASCII_TBL', 'TABLE']:
+                    # Table reading - try different approaches
+                    try:
+                        # Use table reader with column/row selection support
+                        result = cpp.read_fits_table_from_handle(file_handle, hdu_index)
+                        tensor_dict = result.get('tensor_dict', {})
+                        header = cpp.read_header(file_handle, hdu_index)
+                        
+                        # Filter columns if requested
+                        if columns is not None:
+                            tensor_dict = {k: v for k, v in tensor_dict.items() if k in columns}
+                        
+                        return tensor_dict, header
+                    except Exception as e:
+                        # Fall back to simple table reader
+                        result = cpp.read_fits_table(path, hdu_index)
+                        header = cpp.read_header_dict(path, hdu_index)
+                        return result, header
+                else:
+                    # Image reading
+                    if mmap:
+                        tensor = cpp.read_mmap(path, hdu_index)
+                    else:
+                        tensor = cpp.read_full(file_handle, hdu_index)
+                        
+                    # Apply mixed precision conversion
+                    if fp16:
+                        tensor = tensor.to(torch.float16)
+                    elif bf16:
+                        tensor = tensor.to(torch.bfloat16)
+                    
+                    final_tensor = tensor.to(device) if device != 'cpu' else tensor
+                    header = cpp.read_header(file_handle, hdu_index)
+                    return final_tensor, header
+            finally:
+                cpp.close_fits_file(file_handle)
+                
+        except Exception as e:
+            # Fall back to original behavior for backward compatibility
+            if mmap:
+                tensor = cpp.read_mmap(path, hdu_index if isinstance(hdu_index, int) else hdu)
+            else:
+                tensor = cpp.read_full(path, hdu_index if isinstance(hdu_index, int) else hdu)
+            
+            # Apply mixed precision conversion
+            if fp16:
+                tensor = tensor.to(torch.float16)
+            elif bf16:
+                tensor = tensor.to(torch.bfloat16)
+            
+            return tensor.to(device) if device != 'cpu' else tensor, {}
 
 
 def write(path: str, data, header: Header = None, overwrite: bool = False, compress: bool = False):
