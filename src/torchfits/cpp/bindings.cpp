@@ -18,9 +18,11 @@
 
 namespace nb = nanobind;
 
+#include "hardware.h"
 #include "fits.cpp"
 #include "wcs.cpp"
 #include "table.cpp"
+#include "hardware.cpp"
 
 // Provide a nanobind type_caster for at::Tensor using DLPack + PyCapsule
 // exchange. This avoids depending on internal THPVariable symbols and
@@ -32,7 +34,7 @@ namespace nb = nanobind;
 //   using the object's __dlpack__ if present. Then convert the
 //   capsule to an at::Tensor using torch._C._from_dlpack (via the C API
 //   surface exposed on the Python side). We keep ownership semantics
-//   such that the capsule's deleter runs when appropriate.
+//   such that the capsule's deleter runs when appropriate. 
 // - To cast (C++ -> Python): obtain a DLManagedTensor capsule from the
 //   at::Tensor using torch._C._to_dlpack (exposed on torch._C) and
 //   return the result of `torch.utils.dlpack.from_dlpack(capsule)` so
@@ -221,6 +223,12 @@ NB_MODULE(cpp, m) {
     m.def("read_header", [](uintptr_t handle, int hdu_num) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
         return file->get_header(hdu_num);
+    });
+    
+    // Fast bulk header reading - OPTIMIZE.md Task #5
+    m.def("read_header_string", [](uintptr_t handle, int hdu_num) {
+        auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
+        return file->read_header_to_string(hdu_num);
     });
     
     m.def("get_shape", [](uintptr_t handle, int hdu_num) {

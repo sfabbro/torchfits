@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <mutex>
 
 namespace torchfits {
 
@@ -12,6 +13,11 @@ struct HardwareInfo {
     bool is_nvme = true;  // Assume fast storage
     size_t storage_bandwidth = 3 * 1024 * 1024 * 1024ULL;  // 3GB/s default (NVMe)
 };
+
+// Global hardware info cache
+extern HardwareInfo hw_info;
+extern bool hw_detected;
+extern std::mutex hw_mutex;
 
 // Function declarations
 HardwareInfo detect_hardware();

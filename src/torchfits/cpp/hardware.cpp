@@ -1,3 +1,4 @@
+#include "hardware.h"
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -5,13 +6,10 @@
 
 namespace torchfits {
 
-struct HardwareInfo {
-    size_t l3_cache_size = 8 * 1024 * 1024;  // 8MB default
-    size_t memory_bandwidth = 50 * 1024 * 1024 * 1024ULL;  // 50GB/s default
-    size_t available_memory = 8 * 1024 * 1024 * 1024ULL;   // 8GB default
-    bool is_nvme = true;  // Assume fast storage
-    size_t storage_bandwidth = 3 * 1024 * 1024 * 1024ULL;  // 3GB/s default (NVMe)
-};
+// Global hardware info cache
+HardwareInfo hw_info;
+bool hw_detected = false;
+std::mutex hw_mutex;
 
 size_t detect_storage_speed(const std::string& filepath) {
     // Simple storage speed detection
@@ -93,7 +91,7 @@ HardwareInfo detect_hardware() {
     return info;
 }
 
-size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, const std::string& filepath = "") {
+size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, const std::string& filepath) {
     // CFITSIO MINDIRECT threshold - 3 FITS blocks (8640 bytes)
     const size_t CFITSIO_MINDIRECT = 8640;
     
@@ -121,7 +119,7 @@ size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, co
     // But don't exceed 1/8 of available memory
     size_t memory_limit = hw.available_memory / 8;
     
-    return std::min({bandwidth_chunk, memory_limit, data_size / 2});
+    return std::min(std::min(bandwidth_chunk, memory_limit), data_size / 2);
 }
 
 }  // namespace torchfits

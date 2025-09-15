@@ -69,11 +69,29 @@ __all__ = [
     "configure_buffers", "get_buffer_stats", "clear_buffers"
 ]
 
+def _read_header_fast(file_handle, hdu_index: int, fast_header: bool = True):
+    """Read header using fast bulk parsing or fallback to slow method."""
+    from . import cpp
+    from .header_parser import fast_parse_header
+    
+    if fast_header:
+        try:
+            # Try fast bulk header reading
+            header_string = cpp.read_header_string(file_handle, hdu_index)
+            if header_string:
+                return fast_parse_header(header_string)
+        except (AttributeError, Exception):
+            # Fall back to slow method if fast parsing fails
+            pass
+    
+    # Fall back to keyword-by-keyword reading
+    return cpp.read_header(file_handle, hdu_index)
+
 
 def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu', 
          mmap: bool = False, fp16: bool = False, bf16: bool = False,
          columns: Optional[List[str]] = None, start_row: int = 1, num_rows: int = -1,
-         cache_capacity: int = 10):
+         cache_capacity: int = 10, fast_header: bool = True):
     """Read FITS data with optimizations.
     
     Args:
@@ -87,6 +105,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
         start_row: Starting row for table reading (1-based)
         num_rows: Number of rows to read (-1 = all rows)
         cache_capacity: File cache capacity
+        fast_header: Use fast bulk header parsing (default: True)
         
     Returns:
         torch.Tensor for images, dict for tables, and header dict
@@ -94,6 +113,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     from . import cpp
     from .core import FITSCore
     from .hdu import TableHDU, Header
+    from .header_parser import fast_parse_header
     
     # Support CFITSIO string format: "file.fits[0][100:200,300:400]"
     if '[' in path and ']' in path:
@@ -153,7 +173,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                         # Use table reader with column/row selection support
                         result = cpp.read_fits_table_from_handle(file_handle, hdu_index)
                         tensor_dict = result.get('tensor_dict', {})
-                        header = cpp.read_header(file_handle, hdu_index)
+                        header = _read_header_fast(file_handle, hdu_index, fast_header)
                         
                         # Filter columns if requested
                         if columns is not None:
@@ -179,7 +199,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                         tensor = tensor.to(torch.bfloat16)
                     
                     final_tensor = tensor.to(device) if device != 'cpu' else tensor
-                    header = cpp.read_header(file_handle, hdu_index)
+                    header = _read_header_fast(file_handle, hdu_index, fast_header)
                     return final_tensor, header
             finally:
                 cpp.close_fits_file(file_handle)

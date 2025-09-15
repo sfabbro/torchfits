@@ -22,20 +22,99 @@
 namespace nb = nanobind;
 
 namespace torchfits {
-// --- Optimized Table Reading Logic (from table_optimized.cpp) ---
+
+// Enhanced error handling utilities
+class FITSError {
+public:
+    static std::string get_error_message(int status) {
+        char error_text[FLEN_ERRMSG];
+        fits_get_errstatus(status, error_text);
+        return std::string(error_text);
+    }
+    
+    static void check_status(int status, const std::string& operation) {
+        if (status != 0) {
+            std::string error_msg = operation + ": " + get_error_message(status);
+            throw std::runtime_error(error_msg);
+        }
+    }
+};
+
+// Performance monitoring for chunk optimization
+struct PerformanceMetrics {
+    double total_read_time = 0.0;
+    size_t total_bytes_read = 0;
+    size_t chunk_count = 0;
+    double avg_chunk_time = 0.0;
+    double throughput_mbps = 0.0;
+    
+    void update(double chunk_time, size_t bytes_read) {
+        total_read_time += chunk_time;
+        total_bytes_read += bytes_read;
+        chunk_count++;
+        avg_chunk_time = total_read_time / chunk_count;
+        throughput_mbps = (total_bytes_read / (1024.0 * 1024.0)) / total_read_time;
+    }
+    
+    void reset() {
+        total_read_time = 0.0;
+        total_bytes_read = 0;
+        chunk_count = 0;
+        avg_chunk_time = 0.0;
+        throughput_mbps = 0.0;
+    }
+};
+
+// --- Enhanced Optimized Table Reading Logic ---
 class OptimizedTableReader {
 public:
     OptimizedTableReader(fitsfile* fptr, int hdu_num) : fptr_(fptr), hdu_num_(hdu_num) {
         int status = 0;
+        
+        // Move to specified HDU with error checking
         fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
-        if (status != 0) throw std::runtime_error("Failed to move to table HDU");
+        FITSError::check_status(status, "Moving to table HDU " + std::to_string(hdu_num));
+        
+        // Get table dimensions with validation
         fits_get_num_rows(fptr_, &nrows_, &status);
+        FITSError::check_status(status, "Getting number of rows");
+        
         fits_get_num_cols(fptr_, &ncols_, &status);
-        if (status != 0) throw std::runtime_error("Failed to get table dimensions");
+        FITSError::check_status(status, "Getting number of columns");
+        
+        // Validate table dimensions
+        if (nrows_ < 0 || ncols_ < 0) {
+            throw std::runtime_error("Invalid table dimensions: " + 
+                                   std::to_string(nrows_) + " rows, " + 
+                                   std::to_string(ncols_) + " columns");
+        }
+        
+        // Cache column information with validation
         cache_column_info();
+        
+        // Initialize performance metrics
+        metrics_.reset();
     }
     std::unordered_map<std::string, torch::Tensor> read_columns(const std::vector<std::string>& column_names, long start_row = 1, long num_rows = -1) {
+        // Input validation
+        if (column_names.empty()) {
+            return {};
+        }
+        
         if (num_rows == -1) num_rows = nrows_;
+        
+        // Validate row range
+        if (start_row < 1 || start_row > nrows_) {
+            throw std::runtime_error("Invalid start_row: " + std::to_string(start_row) + 
+                                   " (table has " + std::to_string(nrows_) + " rows)");
+        }
+        
+        if (num_rows <= 0 || start_row + num_rows - 1 > nrows_) {
+            throw std::runtime_error("Invalid num_rows: " + std::to_string(num_rows) + 
+                                   " starting from row " + std::to_string(start_row));
+        }
+        
+        // Find requested columns and validate they exist
         std::vector<int> col_indices;
         std::vector<ColumnInfo> selected_cols;
         for (const auto& name : column_names) {
@@ -43,25 +122,63 @@ public:
             if (it != column_map_.end()) {
                 col_indices.push_back(it->second.col_num);
                 selected_cols.push_back(it->second);
+            } else {
+                throw std::runtime_error("Column '" + name + "' not found in table");
             }
         }
-        if (col_indices.empty()) return {};
+        
+        if (col_indices.empty()) {
+            throw std::runtime_error("No valid columns found");
+        }
+        
+        // Calculate optimal chunk size with adaptive strategy
         HardwareInfo hw = detect_hardware();
         size_t row_size = calculate_row_size(selected_cols);
-        size_t optimal_chunk_rows = calculate_optimal_chunk_size(row_size * num_rows, hw) / row_size;
+        size_t total_data_size = row_size * num_rows;
+        
+        // Adaptive chunking based on data size and previous performance
+        size_t optimal_chunk_rows = calculate_adaptive_chunk_size(total_data_size, hw, row_size);
         optimal_chunk_rows = std::max(1UL, std::min(optimal_chunk_rows, (size_t)num_rows));
+        
+        // Pre-allocate tensors
         std::unordered_map<std::string, torch::Tensor> result;
-        for (size_t i = 0; i < column_names.size(); i++) {
-            const auto& col_info = selected_cols[i];
-            auto tensor = create_tensor_for_column(col_info, num_rows);
-            result[column_names[i]] = tensor;
+        try {
+            for (size_t i = 0; i < column_names.size(); i++) {
+                const auto& col_info = selected_cols[i];
+                auto tensor = create_tensor_for_column(col_info, num_rows);
+                result[column_names[i]] = tensor;
+            }
+        } catch (const std::exception& e) {
+            throw std::runtime_error("Failed to allocate tensors: " + std::string(e.what()));
         }
+        
+        // Read data in optimized chunks with performance monitoring
         long rows_read = 0;
         while (rows_read < num_rows) {
             long chunk_rows = std::min(optimal_chunk_rows, (size_t)(num_rows - rows_read));
-            read_chunk_optimized(selected_cols, start_row + rows_read, chunk_rows, result, rows_read);
+            
+            auto start_time = std::chrono::high_resolution_clock::now();
+            
+            try {
+                read_chunk_optimized(selected_cols, start_row + rows_read, chunk_rows, result, rows_read);
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Failed to read chunk at row " + std::to_string(start_row + rows_read) + 
+                                       ": " + std::string(e.what()));
+            }
+            
+            auto end_time = std::chrono::high_resolution_clock::now();
+            double chunk_time = std::chrono::duration<double>(end_time - start_time).count();
+            size_t chunk_bytes = row_size * chunk_rows;
+            metrics_.update(chunk_time, chunk_bytes);
+            
             rows_read += chunk_rows;
+            
+            // Adaptive chunk size adjustment based on performance
+            if (rows_read < num_rows && metrics_.chunk_count >= 2) {
+                optimal_chunk_rows = adjust_chunk_size_dynamically(optimal_chunk_rows, chunk_time, chunk_bytes);
+            }
         }
+        
         return result;
     }
     void iterate_rows(std::function<void(const std::unordered_map<std::string, torch::Tensor>&)> callback, const std::vector<std::string>& column_names, size_t batch_size = 1000) {
@@ -94,19 +211,130 @@ private:
     long nrows_;
     int ncols_;
     std::unordered_map<std::string, ColumnInfo> column_map_;
+    PerformanceMetrics metrics_;
+    
+    // Enhanced chunk sizing with adaptive optimization
+    size_t calculate_adaptive_chunk_size(size_t total_data_size, const HardwareInfo& hw, size_t row_size) {
+        // Start with hardware-optimized base chunk size
+        size_t base_chunk_size = calculate_optimal_chunk_size(total_data_size, hw);
+        size_t base_chunk_rows = base_chunk_size / row_size;
+        
+        // Apply adaptive adjustments based on performance history
+        if (metrics_.chunk_count > 0) {
+            // If previous reads were slow, reduce chunk size
+            if (metrics_.throughput_mbps < 100.0) {  // Below 100 MB/s threshold
+                base_chunk_rows = std::max(1UL, base_chunk_rows / 2);
+            }
+            // If reads were fast, potentially increase chunk size
+            else if (metrics_.throughput_mbps > 500.0) {  // Above 500 MB/s threshold
+                base_chunk_rows = std::min(base_chunk_rows * 2, total_data_size / row_size);
+            }
+        }
+        
+        // Ensure minimum viable chunk size (at least 1000 rows or 1MB)
+        size_t min_chunk_size = std::max(1000UL, 1024 * 1024 / row_size);
+        
+        // Ensure maximum chunk size doesn't exceed memory constraints
+        size_t max_chunk_size = hw.available_memory / 8 / row_size;  // Use 1/8 of available memory
+        
+        return std::max(min_chunk_size, std::min(base_chunk_rows, max_chunk_size));
+    }
+    
+    size_t adjust_chunk_size_dynamically(size_t current_chunk_rows, double chunk_time, size_t chunk_bytes) {
+        // Target ~50ms per chunk for optimal balance
+        const double target_time = 0.05;  // 50ms
+        
+        double time_ratio = chunk_time / target_time;
+        
+        if (time_ratio > 1.5) {
+            // Too slow, reduce chunk size
+            return std::max(1UL, static_cast<size_t>(current_chunk_rows * 0.8));
+        } else if (time_ratio < 0.5) {
+            // Too fast, could increase chunk size
+            return static_cast<size_t>(current_chunk_rows * 1.2);
+        }
+        
+        return current_chunk_rows;  // Keep current size
+    }
+    
+    // Public method to access performance metrics
+public:
+    PerformanceMetrics get_performance_metrics() const {
+        return metrics_;
+    }
+    
+    void reset_performance_metrics() {
+        metrics_.reset();
+    }
     void cache_column_info() {
         int status = 0;
+        column_map_.clear();
+        
         for (int col = 1; col <= ncols_; col++) {
             ColumnInfo info;
             info.col_num = col;
+            
             char col_name[FLEN_VALUE];
             char col_format[FLEN_VALUE];
-            fits_get_bcolparms(fptr_, col, col_name, nullptr, col_format, &info.repeat, nullptr, nullptr, nullptr, nullptr, &status);
-            if (status != 0) continue;
-            info.name = col_name;
-            info.format = col_format;
-            parse_fits_format(col_format, info);
+            char col_unit[FLEN_VALUE];
+            double tscal, tzero;
+            long tnull;
+            char tdisp[FLEN_VALUE];
+            
+            // Initialize arrays to prevent garbage data
+            std::memset(col_name, 0, FLEN_VALUE);
+            std::memset(col_format, 0, FLEN_VALUE);
+            std::memset(col_unit, 0, FLEN_VALUE);
+            std::memset(tdisp, 0, FLEN_VALUE);
+            
+            // Get column parameters with comprehensive error checking
+            long repeat_long = 0;
+            int col_status = 0;
+            fits_get_bcolparms(fptr_, col, col_name, col_unit, col_format, &repeat_long, 
+                             &tscal, &tzero, &tnull, tdisp, &col_status);
+            
+            if (col_status != 0) {
+                // Log warning but continue - some columns might be readable
+                continue;
+            }
+            
+            info.repeat = static_cast<int>(repeat_long);
+            info.name = std::string(col_name);
+            info.format = std::string(col_format);
+            
+            // Validate column name
+            if (info.name.empty()) {
+                info.name = "col" + std::to_string(col);  // Generate default name
+            }
+            
+            // Validate format string
+            if (info.format.empty()) {
+                throw std::runtime_error("Column " + std::to_string(col) + " has empty format string");
+            }
+            
+            try {
+                parse_fits_format(info.format, info);
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Failed to parse format for column '" + info.name + 
+                                       "': " + std::string(e.what()));
+            }
+            
+            // Validate parsed information
+            if (info.repeat <= 0) {
+                info.repeat = 1;  // Default to single element
+            }
+            
+            if (info.width <= 0) {
+                throw std::runtime_error("Column '" + info.name + "' has invalid width: " + 
+                                       std::to_string(info.width));
+            }
+            
             column_map_[info.name] = info;
+        }
+        
+        // Validate that we successfully parsed at least some columns
+        if (column_map_.empty() && ncols_ > 0) {
+            throw std::runtime_error("Failed to parse any columns from table");
         }
     }
     void parse_fits_format(const std::string& format, ColumnInfo& info) {
@@ -133,21 +361,60 @@ private:
         else shape = {num_rows};
         return torch::empty(shape, col_info.torch_type);
     }
-    void read_chunk_optimized(const std::vector<ColumnInfo>& columns, long start_row, long num_rows, std::unordered_map<std::string, torch::Tensor>& tensors, long tensor_offset) {
-        // True zero-copy implementation: read directly into tensor memory
+    void read_chunk_optimized(const std::vector<ColumnInfo>& columns, long start_row, long num_rows, 
+                             std::unordered_map<std::string, torch::Tensor>& tensors, long tensor_offset) {
+        // Validate input parameters
+        if (columns.empty()) {
+            throw std::runtime_error("No columns specified for reading");
+        }
+        
+        if (num_rows <= 0) {
+            throw std::runtime_error("Invalid num_rows: " + std::to_string(num_rows));
+        }
+        
+        if (start_row < 1 || start_row + num_rows - 1 > nrows_) {
+            throw std::runtime_error("Row range [" + std::to_string(start_row) + ", " + 
+                                   std::to_string(start_row + num_rows - 1) + 
+                                   "] exceeds table bounds [1, " + std::to_string(nrows_) + "]");
+        }
+        
         int status = 0;
         
-        // Read each column directly into its tensor memory
+        // Read each column directly into its tensor memory with comprehensive error checking
         for (const auto& col : columns) {
-            auto& tensor = tensors[col.name];
-            void* tensor_data = get_tensor_data_ptr(tensor, tensor_offset);
+            auto tensor_it = tensors.find(col.name);
+            if (tensor_it == tensors.end()) {
+                throw std::runtime_error("Tensor not found for column '" + col.name + "'");
+            }
+            
+            auto& tensor = tensor_it->second;
+            
+            // Validate tensor dimensions
+            if (tensor.numel() < tensor_offset + num_rows * col.repeat) {
+                throw std::runtime_error("Tensor for column '" + col.name + "' is too small");
+            }
+            
+            // Get pointer to the correct offset in tensor memory
+            void* tensor_data = nullptr;
+            try {
+                tensor_data = get_tensor_data_ptr(tensor, tensor_offset * col.repeat);
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Failed to get tensor data pointer for column '" + 
+                                       col.name + "': " + std::string(e.what()));
+            }
             
             // Direct CFITSIO read into tensor memory - true zero-copy
+            int col_status = 0;
             fits_read_col(fptr_, col.data_type, col.col_num, start_row, 1, num_rows, 
-                         nullptr, tensor_data, nullptr, &status);
+                         nullptr, tensor_data, nullptr, &col_status);
             
-            if (status != 0) {
-                throw std::runtime_error("Failed to read column '" + col.name + "' directly into tensor");
+            if (col_status != 0) {
+                std::string error_msg = "Failed to read column '" + col.name + "' (column " + 
+                                      std::to_string(col.col_num) + ") at rows [" + 
+                                      std::to_string(start_row) + ", " + 
+                                      std::to_string(start_row + num_rows - 1) + "]: " +
+                                      FITSError::get_error_message(col_status);
+                throw std::runtime_error(error_msg);
             }
         }
     }
@@ -278,9 +545,11 @@ public:
             
             // Get column parameters using fits_get_bcolparms with correct parameter types
             long repeat_long = 0;
-            long width_long = 0;
+            double tscal = 0.0, tzero = 0.0;
+            long tnull = 0;
+            char tdisp[FLEN_VALUE];
             int col_status = 0;
-            fits_get_bcolparms(fptr_, i, ttype, tunit, tform, &repeat_long, &width_long, nullptr, nullptr, nullptr, &col_status);
+            fits_get_bcolparms(fptr_, i, ttype, tunit, tform, &repeat_long, &tscal, &tzero, &tnull, tdisp, &col_status);
             
             if (col_status != 0) {
                 // Skip problematic columns but log the issue

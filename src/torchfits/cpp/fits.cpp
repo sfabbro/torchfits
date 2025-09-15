@@ -126,10 +126,6 @@ public:
     }
 };
 
-// Hardware info cache
-static HardwareInfo hw_info;
-static bool hw_detected = false;
-static std::mutex hw_mutex;
 
 class FITSFile {
 public:
@@ -509,6 +505,27 @@ public:
         }
     }
     
+    // Fast bulk header reading using fits_hdr2str - implements OPTIMIZE.md Task #5
+    std::string read_header_to_string(int hdu_num = 0) {
+        int status = 0;
+        fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
+        if (status != 0) return "";
+        
+        char* header_str = nullptr;
+        int nkeys = 0;
+        
+        // Use CFITSIO's bulk header dump function - much faster than keyword-by-keyword
+        fits_hdr2str(fptr_, 0, nullptr, 0, &header_str, &nkeys, &status);
+        if (status != 0 || !header_str) {
+            if (header_str) free(header_str);
+            return "";
+        }
+        
+        std::string result(header_str);
+        free(header_str);
+        return result;
+    }
+    
     std::unordered_map<std::string, std::string> get_header(int hdu_num = 0) {
         int status = 0;
         std::unordered_map<std::string, std::string> header;
@@ -516,17 +533,24 @@ public:
         fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
         if (status != 0) return header;
         
-        int nkeys;
-        fits_get_hdrspace(fptr_, &nkeys, nullptr, &status);
-        
-        for (int i = 1; i <= nkeys; i++) {
-            char keyname[FLEN_KEYWORD];
-            char value[FLEN_VALUE];
-            char comment[FLEN_COMMENT];
+        // Try fast bulk header reading first
+        std::string header_str = read_header_to_string(hdu_num);
+        if (!header_str.empty()) {
+            header = parse_header_string(header_str);
+        } else {
+            // Fallback to keyword-by-keyword reading for compatibility
+            int nkeys;
+            fits_get_hdrspace(fptr_, &nkeys, nullptr, &status);
             
-            fits_read_keyn(fptr_, i, keyname, value, comment, &status);
-            if (status == 0) {
-                header[keyname] = value;
+            for (int i = 1; i <= nkeys; i++) {
+                char keyname[FLEN_KEYWORD];
+                char value[FLEN_VALUE];
+                char comment[FLEN_COMMENT];
+                
+                fits_read_keyn(fptr_, i, keyname, value, comment, &status);
+                if (status == 0) {
+                    header[keyname] = value;
+                }
             }
         }
         
@@ -557,6 +581,65 @@ public:
         
         return header;
     }
+    
+private:
+    // Fast C++ header string parser - processes entire header block at once
+    std::unordered_map<std::string, std::string> parse_header_string(const std::string& header_str) {
+        std::unordered_map<std::string, std::string> header;
+        
+        // Split header string into 80-character FITS cards
+        size_t pos = 0;
+        while (pos < header_str.length()) {
+            // Extract one 80-character FITS card
+            std::string card = header_str.substr(pos, 80);
+            pos += 80;
+            
+            // Skip END cards and empty cards
+            if (card.substr(0, 3) == "END" || card.find_first_not_of(' ') == std::string::npos) {
+                continue;
+            }
+            
+            // Parse keyword = value
+            size_t equals_pos = card.find('=');
+            if (equals_pos != std::string::npos && equals_pos < 8) {  // Keyword must be in first 8 chars
+                std::string keyword = card.substr(0, equals_pos);
+                std::string value_part = card.substr(equals_pos + 1);
+                
+                // Trim whitespace from keyword
+                keyword.erase(keyword.find_last_not_of(' ') + 1);
+                
+                // Extract value (handle quotes and comments)
+                size_t value_start = value_part.find_first_not_of(' ');
+                if (value_start != std::string::npos) {
+                    std::string value;
+                    
+                    if (value_part[value_start] == '\'') {
+                        // String value - find closing quote
+                        size_t quote_end = value_part.find('\'', value_start + 1);
+                        if (quote_end != std::string::npos) {
+                            value = value_part.substr(value_start + 1, quote_end - value_start - 1);
+                        }
+                    } else {
+                        // Numeric or logical value - read until comment or end
+                        size_t value_end = value_part.find('/', value_start);
+                        if (value_end == std::string::npos) value_end = value_part.length();
+                        value = value_part.substr(value_start, value_end - value_start);
+                        
+                        // Trim trailing whitespace
+                        value.erase(value.find_last_not_of(' ') + 1);
+                    }
+                    
+                    if (!keyword.empty()) {
+                        header[keyword] = value;
+                    }
+                }
+            }
+        }
+        
+        return header;
+    }
+
+public:
     
     std::vector<int64_t> get_shape(int hdu_num = 0) {
         int status = 0;
