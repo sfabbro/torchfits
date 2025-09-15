@@ -838,8 +838,9 @@ void* open_table_reader(const char* filename, int hdu_num) {
 
 void* open_table_reader_from_handle(uintptr_t handle, int hdu_num) {
     try {
-        auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
-        return new torchfits::TableReader(file->get_fptr(), hdu_num);
+        // Cast to fitsfile pointer directly since we can't include FITSFile here
+        auto* fptr = reinterpret_cast<fitsfile*>(handle);
+        return new torchfits::TableReader(fptr, hdu_num);
     } catch (...) {
         return nullptr;
     }

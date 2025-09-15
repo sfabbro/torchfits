@@ -28,6 +28,7 @@ from .transforms import (
 )
 from .buffer import configure_buffers, get_buffer_stats, clear_buffers
 from .core import FITSCore, FITSDataType, CompressionType
+from .header_parser import fast_parse_header
 
 # Main API functions
 __all__ = [
@@ -40,7 +41,7 @@ __all__ = [
     'ZScale', 'AsinhStretch', 'LogStretch', 'PowerStretch', 'Normalize',
     'RandomCrop', 'CenterCrop', 'RandomFlip', 'GaussianNoise', 'ToDevice', 'Compose',
     'create_training_transform', 'create_validation_transform', 'create_inference_transform',
-    'FITSCore', 'FITSDataType', 'CompressionType'
+    'FITSCore', 'FITSDataType', 'CompressionType', 'fast_parse_header'
 ]
 
 # Auto-configure cache and buffers on import
@@ -64,6 +65,8 @@ __all__ = [
     "create_training_transform", "create_validation_transform", "create_inference_transform",
     # Core types
     "FITSCore", "FITSDataType", "CompressionType",
+    # Header parsing
+    "fast_parse_header",
     # Utility functions
     "configure_for_environment", "get_cache_stats", "clear_cache",
     "configure_buffers", "get_buffer_stats", "clear_buffers"
@@ -72,7 +75,6 @@ __all__ = [
 def _read_header_fast(file_handle, hdu_index: int, fast_header: bool = True):
     """Read header using fast bulk parsing or fallback to slow method."""
     from . import cpp
-    from .header_parser import fast_parse_header
     
     if fast_header:
         try:
@@ -113,7 +115,6 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     from . import cpp
     from .core import FITSCore
     from .hdu import TableHDU, Header
-    from .header_parser import fast_parse_header
     
     # Support CFITSIO string format: "file.fits[0][100:200,300:400]"
     if '[' in path and ']' in path:
