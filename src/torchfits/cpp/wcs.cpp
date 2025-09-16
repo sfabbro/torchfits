@@ -130,11 +130,22 @@ public:
         
         // Standard wcslib transformation
         double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
-        double* phi = (double*)malloc(ncoord * sizeof(double));
-        double* theta = (double*)malloc(ncoord * sizeof(double));
-        int* stat = (int*)malloc(ncoord * sizeof(int));
+        if (!imgcrd) throw std::runtime_error("Failed to allocate memory for imgcrd");
         
-        wcsp2s(wcs_, ncoord, 2, pixcrd, imgcrd, phi, theta, worldcrd, stat);
+        double* phi = (double*)malloc(ncoord * sizeof(double));
+        if (!phi) { free(imgcrd); throw std::runtime_error("Failed to allocate memory for phi"); }
+        
+        double* theta = (double*)malloc(ncoord * sizeof(double));
+        if (!theta) { free(imgcrd); free(phi); throw std::runtime_error("Failed to allocate memory for theta"); }
+        
+        int* stat = (int*)malloc(ncoord * sizeof(int));
+        if (!stat) { free(imgcrd); free(phi); free(theta); throw std::runtime_error("Failed to allocate memory for stat"); }
+        
+        int wcs_status = wcsp2s(wcs_, ncoord, 2, pixcrd, imgcrd, phi, theta, worldcrd, stat);
+        if (wcs_status != 0) {
+            free(imgcrd); free(phi); free(theta); free(stat);
+            throw std::runtime_error("WCS transformation failed");
+        }
         
         free(imgcrd);
         free(phi);
@@ -173,11 +184,22 @@ public:
         
         // Standard wcslib transformation
         double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
-        double* phi = (double*)malloc(ncoord * sizeof(double));
-        double* theta = (double*)malloc(ncoord * sizeof(double));
-        int* stat = (int*)malloc(ncoord * sizeof(int));
+        if (!imgcrd) throw std::runtime_error("Failed to allocate memory for imgcrd");
         
-        wcss2p(wcs_, ncoord, 2, worldcrd, phi, theta, imgcrd, pixcrd, stat);
+        double* phi = (double*)malloc(ncoord * sizeof(double));
+        if (!phi) { free(imgcrd); throw std::runtime_error("Failed to allocate memory for phi"); }
+        
+        double* theta = (double*)malloc(ncoord * sizeof(double));
+        if (!theta) { free(imgcrd); free(phi); throw std::runtime_error("Failed to allocate memory for theta"); }
+        
+        int* stat = (int*)malloc(ncoord * sizeof(int));
+        if (!stat) { free(imgcrd); free(phi); free(theta); throw std::runtime_error("Failed to allocate memory for stat"); }
+        
+        int wcs_status = wcss2p(wcs_, ncoord, 2, worldcrd, phi, theta, imgcrd, pixcrd, stat);
+        if (wcs_status != 0) {
+            free(imgcrd); free(phi); free(theta); free(stat);
+            throw std::runtime_error("WCS transformation failed");
+        }
         
         free(imgcrd);
         free(phi);

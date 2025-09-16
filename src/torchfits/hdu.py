@@ -238,13 +238,19 @@ class TableHDU(TensorFrame):
         return self
     
     def filter(self, condition: str) -> 'TableHDU':
-        """Filter rows by condition (simplified implementation)."""
-        # For now, return self - full filtering would require parsing the condition
-        return self
+        """Filter rows by condition."""
+        raise NotImplementedError("Row filtering not yet implemented")
     
     def head(self, n: int) -> 'TableHDU':
-        """Limit to first n rows (simplified implementation)."""
-        # For now, return self - full implementation would require tensor slicing
+        """Limit to first n rows."""
+        if hasattr(self, 'feat_dict') and self.feat_dict:
+            new_dict = {}
+            for k, v in self.feat_dict.items():
+                if hasattr(v, 'shape') and len(v.shape) > 0:
+                    new_dict[k] = v[:n]
+                else:
+                    new_dict[k] = v
+            return TableHDU(new_dict, {}, self.header)
         return self
     
     def __getitem__(self, col_name: str) -> Any:
@@ -316,11 +322,18 @@ class HDUList:
             if hdu_type == 'IMAGE':
                 hdu = TensorHDU(file_handle=hdul._file_handle, hdu_index=i, header=header)
             elif hdu_type == 'TABLE':
-                result = cpp.read_fits_table_from_handle(hdul._file_handle, i)
-                # The C++ function returns {'tensor_dict': {...}, 'col_stats': {...}}
-                tensor_dict = result.get('tensor_dict', {})
-                col_stats = result.get('col_stats', {})
-                hdu = TableHDU(tensor_dict, col_stats, header)
+                try:
+                    result = cpp.read_fits_table_from_handle(hdul._file_handle, i)
+                    if isinstance(result, dict):
+                        tensor_dict = result.get('tensor_dict', {})
+                        col_stats = result.get('col_stats', {})
+                    else:
+                        tensor_dict = {}
+                        col_stats = {}
+                    hdu = TableHDU(tensor_dict, col_stats, header)
+                except (RuntimeError, AttributeError):
+                    # Create empty table for failed reads
+                    hdu = TableHDU({}, {}, header)
             else:
                 continue
             

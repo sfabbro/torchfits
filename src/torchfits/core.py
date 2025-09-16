@@ -78,6 +78,9 @@ class FITSDataTypeHandler:
 class CompressionHandler:
     """Handles FITS compression detection and metadata."""
     
+    # Cache compression map as class attribute
+    _compression_map = {comp_type.value: comp_type for comp_type in CompressionType if comp_type != CompressionType.NONE}
+    
     @staticmethod
     def detect_compression(header: Dict[str, Any]) -> Tuple[CompressionType, Dict[str, Any]]:
         """Detect compression type and parameters from header."""
@@ -86,8 +89,8 @@ class CompressionHandler:
         if not zcmptype:
             return CompressionType.NONE, {}
         
-        # Map FITS compression names to enum (dynamic mapping)
-        compression_map = {comp_type.value: comp_type for comp_type in CompressionType if comp_type != CompressionType.NONE}
+        # Use cached compression map
+        compression_map = CompressionHandler._compression_map
         
         comp_type = compression_map.get(zcmptype, CompressionType.NONE)
         

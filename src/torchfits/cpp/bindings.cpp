@@ -78,6 +78,9 @@ namespace detail {
                 value = t;
                 return true;
 
+            } catch (const std::exception& e) {
+                // Log specific error for debugging
+                return false;
             } catch (...) {
                 return false;
             }

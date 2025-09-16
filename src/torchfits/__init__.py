@@ -30,19 +30,7 @@ from .buffer import configure_buffers, get_buffer_stats, clear_buffers
 from .core import FITSCore, FITSDataType, CompressionType
 from .header_parser import fast_parse_header
 
-# Main API functions
-__all__ = [
-    'read', 'write', 'writeto', 'open', 'info',
-    'HDUList', 'TensorHDU', 'TableHDU', 'Header',
-    'WCS', 'FITSDataset', 'IterableFITSDataset',
-    'create_dataloader', 'create_fits_dataloader', 'create_streaming_dataloader',
-    'configure_for_environment', 'get_cache_stats', 'clear_cache',
-    'configure_buffers', 'get_buffer_stats', 'clear_buffers',
-    'ZScale', 'AsinhStretch', 'LogStretch', 'PowerStretch', 'Normalize',
-    'RandomCrop', 'CenterCrop', 'RandomFlip', 'GaussianNoise', 'ToDevice', 'Compose',
-    'create_training_transform', 'create_validation_transform', 'create_inference_transform',
-    'FITSCore', 'FITSDataType', 'CompressionType', 'fast_parse_header'
-]
+
 
 # Auto-configure cache and buffers on import
 configure_for_environment()
@@ -82,7 +70,7 @@ def _read_header_fast(file_handle, hdu_index: int, fast_header: bool = True):
             header_string = cpp.read_header_string(file_handle, hdu_index)
             if header_string:
                 return fast_parse_header(header_string)
-        except (AttributeError, Exception):
+        except (AttributeError, RuntimeError, IOError):
             # Fall back to slow method if fast parsing fails
             pass
     
@@ -136,7 +124,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                 return tensor, {}
             finally:
                 cpp.close_fits_file(file_handle)
-        except Exception:
+        except (RuntimeError, ValueError):
             # Fall back to CFITSIO native parsing
             tensor = cpp.read_cfitsio_string(path)
             return tensor, {}
@@ -205,7 +193,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
             finally:
                 cpp.close_fits_file(file_handle)
                 
-        except Exception as e:
+        except (RuntimeError, IOError, ValueError) as e:
             # Fall back to original behavior for backward compatibility
             if mmap:
                 tensor = cpp.read_mmap(path, hdu_index if isinstance(hdu_index, int) else hdu)
