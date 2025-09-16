@@ -285,6 +285,17 @@ class TableHDU(TensorFrame):
             file_path: Path to FITS file
             hdu_index: HDU index (1-based)
         """
+        # Input validation
+        if not file_path or not isinstance(file_path, str):
+            raise ValueError("file_path must be a non-empty string")
+        
+        if not isinstance(hdu_index, int) or hdu_index < 0:
+            raise ValueError("hdu_index must be a non-negative integer")
+        
+        import os
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"FITS file not found: {file_path}")
+        
         try:
             tensor_dict = cpp.read_fits_table(file_path, hdu_index)
             header = Header(cpp.read_header_dict(file_path, hdu_index))
@@ -295,9 +306,15 @@ class TableHDU(TensorFrame):
                     tensor_dict[key] = value[0]
                     
             return cls(tensor_dict, {}, header)
-        except Exception as e:
+        except (IOError, RuntimeError) as e:
+            from .logging import logger
+            logger.error(f"Failed to read table from {file_path}[{hdu_index}]: {str(e)}")
             # Return empty TableHDU for benchmark compatibility
             return cls({}, {}, Header())
+        except Exception as e:
+            from .logging import logger
+            logger.critical(f"Unexpected error reading {file_path}[{hdu_index}]: {str(e)}")
+            raise
     
     def to_fits(self, file_path: str, overwrite: bool = False):
         cpp.write_fits_table(file_path, self, self.header, overwrite)
@@ -312,8 +329,22 @@ class HDUList:
     
     @classmethod
     def fromfile(cls, path: str, mode: str = 'r') -> 'HDUList':
+        # Input validation
+        if not path or not isinstance(path, str):
+            raise ValueError("Path must be a non-empty string")
+        
+        if mode not in ['r', 'w', 'rw']:
+            raise ValueError("Mode must be 'r', 'w', or 'rw'")
+        
+        import os
+        if mode == 'r' and not os.path.exists(path):
+            raise FileNotFoundError(f"FITS file not found: {path}")
+        
         hdul = cls()
-        hdul._file_handle = cpp.open_fits_file(path, mode)
+        try:
+            hdul._file_handle = cpp.open_fits_file(path, mode)
+        except Exception as e:
+            raise RuntimeError(f"Failed to open FITS file '{path}': {str(e)}") from e
         
         for i in range(cpp.get_num_hdus(hdul._file_handle)):
             hdu_type = cpp.get_hdu_type(hdul._file_handle, i)

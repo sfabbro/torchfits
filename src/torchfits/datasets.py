@@ -157,8 +157,12 @@ class IterableFITSDataset(IterableDataset):
                     data = self.transform(data)
                 
                 yield data
-            except Exception as e:
+            except (IOError, RuntimeError, ValueError) as e:
                 # Log error and continue with next file
-                import logging
-                logging.warning(f"Error processing {file_path}: {e}")
+                from .logging import logger
+                logger.error(f"Failed to process file {file_path}: {str(e)}")
                 continue
+            except Exception as e:
+                from .logging import logger
+                logger.critical(f"Unexpected error processing {file_path}: {str(e)}")
+                raise

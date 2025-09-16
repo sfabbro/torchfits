@@ -83,13 +83,19 @@ class StreamingBuffer:
         self._size = 0
         self._lock = threading.RLock()
     
-    def put(self, item: Tensor) -> bool:
+    def put(self, item: Tensor, zero_copy: bool = False) -> bool:
         """Put an item into the buffer. Returns False if buffer is full."""
         with self._lock:
             if self._size >= self.capacity:
                 return False
             
-            self.buffer[self._write_idx].copy_(item)
+            if zero_copy and item.is_contiguous() and item.shape == self.item_shape and item.dtype == self.dtype:
+                # Zero-copy: swap tensor storage
+                self.buffer[self._write_idx], item = item, self.buffer[self._write_idx]
+            else:
+                # Standard copy
+                self.buffer[self._write_idx].copy_(item)
+            
             self._write_idx = (self._write_idx + 1) % self.capacity
             self._size += 1
             return True

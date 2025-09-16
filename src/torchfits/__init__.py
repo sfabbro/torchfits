@@ -99,7 +99,28 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
         
     Returns:
         torch.Tensor for images, dict for tables, and header dict
+        
+    Raises:
+        ValueError: Invalid parameters
+        FileNotFoundError: File not found
+        RuntimeError: FITS reading errors
     """
+    # Input validation
+    if not path or not isinstance(path, str):
+        raise ValueError("Path must be a non-empty string")
+    
+    if isinstance(hdu, int) and hdu < 0:
+        raise ValueError("HDU index must be non-negative")
+    
+    if start_row < 1:
+        raise ValueError("start_row must be >= 1 (FITS uses 1-based indexing)")
+    
+    if num_rows < -1 or num_rows == 0:
+        raise ValueError("num_rows must be > 0 or -1 for all rows")
+    
+    if device not in ['cpu', 'cuda'] and not device.startswith('cuda:'):
+        raise ValueError("device must be 'cpu' or 'cuda' or 'cuda:N'")
+
     from . import cpp
     from .core import FITSCore
     from .hdu import TableHDU, Header

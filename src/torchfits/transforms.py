@@ -86,10 +86,12 @@ class LogStretch:
             a: Scaling parameter
         """
         self.a = a
+        # Cache the log computation to avoid repeated calculation
+        self._log_factor = torch.log(torch.tensor(self.a + 1))
     
     def __call__(self, tensor: Tensor) -> Tensor:
         """Apply log stretch."""
-        return torch.log(self.a * tensor + 1) / torch.log(torch.tensor(self.a + 1))
+        return torch.log(self.a * tensor + 1) / self._log_factor
     
     def __repr__(self):
         return f"LogStretch(a={self.a})"
@@ -173,9 +175,9 @@ class RandomCrop:
         if h < th or w < tw:
             raise ValueError(f"Input size {(h, w)} smaller than crop size {self.size}")
         
-        # Random crop position
-        i = torch.randint(0, h - th + 1, (1,)).item()
-        j = torch.randint(0, w - tw + 1, (1,)).item()
+        # Random crop position - use scalar tensor generation for efficiency
+        i = torch.randint(0, h - th + 1, ()).item()
+        j = torch.randint(0, w - tw + 1, ()).item()
         
         return tensor[..., i:i+th, j:j+tw]
     

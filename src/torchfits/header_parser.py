@@ -222,21 +222,23 @@ class FastHeaderParser:
             return quoted_str
             
         # Find the closing quote, handling escaped quotes
-        content = ""
+        content_parts = []
         i = 1  # Skip opening quote
         while i < len(quoted_str):
             char = quoted_str[i]
             if char == "'":
                 if i + 1 < len(quoted_str) and quoted_str[i + 1] == "'":
                     # Escaped quote
-                    content += "'"
+                    content_parts.append("'")
                     i += 2
                 else:
                     # End of string
                     break
             else:
-                content += char
+                content_parts.append(char)
                 i += 1
+        
+        content = ''.join(content_parts)
                 
         return content
     
