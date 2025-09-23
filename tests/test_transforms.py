@@ -5,6 +5,10 @@ Tests for torchfits transforms module.
 import pytest
 import torch
 import numpy as np
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 from torchfits.transforms import (
     ZScale, AsinhStretch, LogStretch, PowerStretch, Normalize,
     RandomCrop, CenterCrop, RandomFlip, GaussianNoise, ToDevice, Compose,

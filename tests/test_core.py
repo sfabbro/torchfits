@@ -1,4 +1,8 @@
 import pytest
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 from torchfits.core import FITSCore
 
 def test_parse_cutout_spec_valid():

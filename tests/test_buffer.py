@@ -7,6 +7,10 @@ import torch
 import threading
 import time
 from unittest.mock import patch, Mock
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 from torchfits.buffer import (
     MemoryPool, StreamingBuffer, BufferManager,
     get_buffer_manager, configure_buffers, get_buffer_stats, clear_buffers,

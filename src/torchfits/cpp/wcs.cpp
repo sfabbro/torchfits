@@ -65,7 +65,7 @@ public:
         char* h = (char*)malloc(nkey * 80);
         char* p = h;
         for (const auto& [key, value] : header) {
-            snprintf(p, 80, "%-8s= %-70s", key.c_str(), value.c_str());
+            snprintf(p, 81, "%-8s= %-70s", key.c_str(), value.c_str());
             p += 80;
         }
 
