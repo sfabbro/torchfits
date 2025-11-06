@@ -77,7 +77,7 @@ public:
     }
     static bool should_use_mmap(size_t file_size, size_t tensor_size) {
         const size_t MMAP_THRESHOLD = 64 * 1024 * 1024; // 64MB
-        return (file_size > MMAP_THRESHOLD) || ((tensor_size < file_size / 4) && (file_size > MMAP_THRESHOLD / 4));
+        return file_size > MMAP_THRESHOLD || (tensor_size < file_size / 4 && file_size > MMAP_THRESHOLD / 4);
     }
 };
 
@@ -104,7 +104,7 @@ public:
             case 32: dtype = torch::kInt32; break;
             case -32: dtype = torch::kFloat32; break;
             case -64: dtype = torch::kFloat64; break;
-            default: dtype = torch::kFloat32; break;
+            default: dtype = torch::kFloat32;
         }
         return MMapTensorManager::create_mmap_tensor(filepath, shape, dtype, data_offset);
     }
@@ -122,7 +122,7 @@ public:
         fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &scale_status);
         bool has_scaling = (bscale != 1.0) || (bzero != 0.0);
         fits_close_file(fptr, &status);
-        return (comp_status != 0) && (!has_scaling);
+        return (comp_status != 0) && !has_scaling;
     }
 };
 
@@ -191,7 +191,7 @@ public:
         int bscale_status = 0, bzero_status = 0;
         fits_read_key(fptr_, TDOUBLE, "BSCALE", &bscale, nullptr, &bscale_status);
         fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &bzero_status);
-        bool has_scaling = ((bscale_status == 0) && (bscale != 1.0)) || ((bzero_status == 0) && (bzero != 0.0));
+        bool has_scaling = (bscale_status == 0 && bscale != 1.0) || (bzero_status == 0 && bzero != 0.0);
         // Fast path for CPU operations - avoid device checking overhead
         if (device.is_cpu()) {
             // If mmap requested and suitable, use mmap logic
@@ -452,7 +452,7 @@ public:
         int bscale_status = 0, bzero_status = 0;
         fits_read_key(fptr_, TDOUBLE, "BSCALE", &bscale, nullptr, &bscale_status);
         fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &bzero_status);
-        bool has_scaling = ((bscale_status == 0) && (bscale != 1.0)) || ((bzero_status == 0) && (bzero != 0.0));
+        bool has_scaling = (bscale_status == 0 && bscale != 1.0) || (bzero_status == 0 && bzero != 0.0);
         
         // Optimized path for compressed images - use tile-aware reading
         if (is_compressed) {

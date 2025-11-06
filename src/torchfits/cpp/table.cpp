@@ -581,7 +581,7 @@ public:
             char type_char = tform[tform_len - 1];
             
             // Handle variable length arrays
-            bool is_variable = (strchr(tform, 'P') != nullptr) || (strchr(tform, 'Q') != nullptr);
+            bool is_variable = (strchr(tform, 'P') != nullptr || strchr(tform, 'Q') != nullptr);
             
             if (is_variable) {
                 col.type = FITSColumnType::VARIABLE;
@@ -644,7 +644,7 @@ public:
         #endif
         
         // Verify we have the expected number of columns
-        if (static_cast<int>(columns_.size()) != ncols_) {
+        if ((int)columns_.size() != ncols_) {
             // This is a critical error - the table metadata is inconsistent
             throw std::runtime_error("Column count mismatch: expected " + std::to_string(ncols_) + 
                                     ", found " + std::to_string(columns_.size()));
