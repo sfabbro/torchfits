@@ -59,10 +59,18 @@ __global__ void world_to_pixel_kernel(
 #endif
 
 class WCS {
+private:
+    struct wcsprm* wcs_;
+    int nwcs_;  // Store the actual number of WCS structs returned by wcspih
+
 public:
-    WCS(const std::unordered_map<std::string, std::string>& header) {
+    WCS(const std::unordered_map<std::string, std::string>& header) : wcs_(nullptr), nwcs_(0) {
         int nkey = header.size();
-        char* h = (char*)malloc(nkey * 80);
+        char* h = (char*)malloc(nkey * 81); // Allocate one extra byte for safety
+        if (!h) {
+            throw std::runtime_error("Failed to allocate memory for header");
+        }
+        
         char* p = h;
         for (const auto& [key, value] : header) {
             snprintf(p, 81, "%-8s= %-70s", key.c_str(), value.c_str());
@@ -71,22 +79,34 @@ public:
 
         int nreject;
         int ctrl = 0;
-        int nwcs;
-        struct wcsprm* wcs_array;
-        int status = wcspih(h, nkey, WCSHDR_all, ctrl, &nreject, &nwcs, &wcs_array);
-        if (nwcs > 0) {
-            wcs_ = wcs_array;
-        } else {
-            throw std::runtime_error("No WCS found in header");
+        struct wcsprm* wcs_array = nullptr;
+        int status = wcspih(h, nkey, WCSHDR_all, ctrl, &nreject, &nwcs_, &wcs_array);
+        free(h); // Free the header buffer immediately after use
+        
+        if (status != 0 || nwcs_ <= 0) {
+            // Clean up and throw error
+            if (wcs_array) {
+                wcsvfree(&nwcs_, &wcs_array);
+            }
+            if (status != 0) {
+                throw std::runtime_error("Failed to parse WCS from header");
+            } else {
+                throw std::runtime_error("No WCS found in header");
+            }
         }
-        free(h);
-
-        if (status) {
-            throw std::runtime_error("Failed to parse WCS from header");
-        }
+        
+        // Use the first wcs struct
+        wcs_ = wcs_array;
 
         status = wcsset(wcs_);
-        if (status) {
+        if (status != 0) {
+            // Clean up and throw error
+            // Note: we've already transferred ownership to wcs_, so we need to free it properly
+            if (wcs_) {
+                wcsvfree(&nwcs_, &wcs_);
+                wcs_ = nullptr;
+                nwcs_ = 0;
+            }
             throw std::runtime_error("wcsset failed");
         }
         
@@ -96,8 +116,10 @@ public:
     
     ~WCS() {
         if (wcs_) {
-            wcsfree(wcs_);
-            free(wcs_);
+            // Use the actual number of WCS structs that were allocated
+            wcsvfree(&nwcs_, &wcs_);
+            wcs_ = nullptr;
+            nwcs_ = 0;
         }
     }
     
@@ -121,12 +143,12 @@ public:
         double* pixcrd = cpu_pixels.data_ptr<double>();
         double* worldcrd = world.data_ptr<double>();
         
-        // Use OpenMP for parallel processing on CPU
-#ifdef HAS_OPENMP
-        if (ncoord > 1000) {
-            return pixel_to_world_parallel(cpu_pixels, world, ncoord);
-        }
-#endif
+        // Temporarily disable OpenMP path to debug
+        // #ifdef HAS_OPENMP
+        // if (ncoord > 1000) {
+        //     return pixel_to_world_parallel(cpu_pixels, world, ncoord);
+        // }
+        // #endif
         
         // Standard wcslib transformation
         double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
@@ -175,12 +197,12 @@ public:
         double* worldcrd = cpu_world.data_ptr<double>();
         double* pixcrd = pixels.data_ptr<double>();
         
-        // Use OpenMP for parallel processing on CPU
-#ifdef HAS_OPENMP
-        if (ncoord > 1000) {
-            return world_to_pixel_parallel(cpu_world, pixels, ncoord);
-        }
-#endif
+        // Temporarily disable OpenMP path to debug
+        // #ifdef HAS_OPENMP
+        // if (ncoord > 1000) {
+        //     return world_to_pixel_parallel(cpu_world, pixels, ncoord);
+        // }
+        // #endif
         
         // Standard wcslib transformation
         double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
@@ -210,15 +232,15 @@ public:
     }
     
     torch::Tensor get_footprint() {
-        double corners[4][2] = {
-            {0.5, 0.5},
-            {wcs_->crpix[0] * 2 - 0.5, 0.5},
-            {wcs_->crpix[0] * 2 - 0.5, wcs_->crpix[1] * 2 - 0.5},
-            {0.5, wcs_->crpix[1] * 2 - 0.5}
-        };
+        auto corners = torch::empty({4, 2}, torch::kFloat64);
+        double* data = corners.data_ptr<double>();
         
-        auto corner_pixels = torch::from_blob(corners, {4, 2}, torch::kFloat64);
-        return pixel_to_world(corner_pixels);
+        data[0] = 0.5; data[1] = 0.5;
+        data[2] = wcs_->crpix[0] * 2 - 0.5; data[3] = 0.5;
+        data[4] = wcs_->crpix[0] * 2 - 0.5; data[5] = wcs_->crpix[1] * 2 - 0.5;
+        data[6] = 0.5; data[7] = wcs_->crpix[1] * 2 - 0.5;
+        
+        return pixel_to_world(corners);
     }
 
     int naxis() const { return wcs_->naxis; }
@@ -243,8 +265,6 @@ public:
     }
 
 private:
-    struct wcsprm* wcs_;
-    
     // Cached matrices for GPU optimization
     double cd_matrix_[4];
     double cd_matrix_inv_[4];
@@ -359,14 +379,15 @@ private:
         #pragma omp parallel
         {
             // Thread-local storage for wcslib workspace
-            double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
-            double* phi = (double*)malloc(ncoord * sizeof(double));
-            double* theta = (double*)malloc(ncoord * sizeof(double));
-            int* stat = (int*)malloc(ncoord * sizeof(int));
+            // Each thread processes a subset of coordinates
+            double* imgcrd = (double*)malloc(2 * sizeof(double));
+            double* phi = (double*)malloc(sizeof(double));
+            double* theta = (double*)malloc(sizeof(double));
+            int* stat = (int*)malloc(sizeof(int));
             
             #pragma omp for
             for (int i = 0; i < ncoord; i++) {
-                wcsp2s(wcs_, 1, 2, &pixcrd[i*2], &imgcrd[i*2], &phi[i], &theta[i], &worldcrd[i*2], &stat[i]);
+                wcsp2s(wcs_, 1, 2, &pixcrd[i*2], imgcrd, phi, theta, &worldcrd[i*2], stat);
             }
             
             free(imgcrd);
@@ -386,14 +407,15 @@ private:
         #pragma omp parallel
         {
             // Thread-local storage for wcslib workspace
-            double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
-            double* phi = (double*)malloc(ncoord * sizeof(double));
-            double* theta = (double*)malloc(ncoord * sizeof(double));
-            int* stat = (int*)malloc(ncoord * sizeof(int));
+            // Each thread processes a subset of coordinates
+            double* imgcrd = (double*)malloc(2 * sizeof(double));
+            double* phi = (double*)malloc(sizeof(double));
+            double* theta = (double*)malloc(sizeof(double));
+            int* stat = (int*)malloc(sizeof(int));
             
             #pragma omp for
             for (int i = 0; i < ncoord; i++) {
-                wcss2p(wcs_, 1, 2, &worldcrd[i*2], &phi[i], &theta[i], &imgcrd[i*2], &pixcrd[i*2], &stat[i]);
+                wcss2p(wcs_, 1, 2, &worldcrd[i*2], phi, theta, imgcrd, &pixcrd[i*2], stat);
             }
             
             free(imgcrd);

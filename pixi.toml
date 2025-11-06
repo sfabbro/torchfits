@@ -16,7 +16,7 @@ backend = { name = "pixi-build-cmake", version = "*"}
 # Note: cmake, ninja, and cxx-compiler are automatically provided by pixi-build-cmake
 [package.build-dependencies]
 nanobind = ">=2.8.0"
-scikit-build-core = ">=0.10"
+scikit-build-core = ">=0.11.5"
 cmake = ">=3.21"
 ninja = ">=1.10"
 python = ">=3.11"
@@ -30,6 +30,7 @@ python = ">=3.11"
 pytorch = ">=2.0"
 cfitsio = ">=4"
 wcslib = ">=7.11"
+nanobind = ">=2.8.0"
 #dlpack = "*"
 
 
@@ -42,26 +43,26 @@ psutil = ">=5.0"  # For system resource monitoring
 # Workspace dependencies - development environment
 [dependencies]
 # torchfits = { path = "." }  # Don't add self-dependency - causes circular dependency
-pytest = ">=8.4.1,<9"
-pytest-cov = ">=6.2.1,<7"
-ruff = ">=0.12.9,<0.13"
-mypy = ">=1.17.1,<2"
+pytest = ">=8.4.2,<9"
+pytest-cov = ">=7.0.0,<8"
+ruff = ">=0.14.0,<0.15"
+mypy = ">=1.18.2,<2"
 pip = ">=25.2,<26"
-astropy = ">=7.1.0,<8"
-fitsio = ">=1.2.6,<2"
-matplotlib = ">=3.10.5,<4"
+astropy = ">=7.1.1,<8"
+fitsio = ">=1.2.8,<2"
+matplotlib = ">=3.10.7,<4"
 seaborn = ">=0.13.2,<0.14"
-pandas = ">=2.3.1,<3"
-psutil = ">=7.0.0,<8"
-scikit-build-core = ">=0.11.5,<0.12"
-cmake = ">=4.1.0,<5"
+pandas = ">=2.3.3,<3"
+psutil = ">=7.1.0,<8"
+scikit-build-core = ">=0.11.6,<0.12"
+cmake = ">=4.1.2,<5"
 ninja = ">=1.13.1,<2"
-nanobind = ">=2.8.0,<3"
-python = ">=3.11"
-pytorch = ">=2.0"
-pytorch-frame = ">=0.2.5"
-cfitsio = ">=4"
-wcslib = ">=7.11"
+nanobind = ">=2.9.2,<3"
+python = ">=3.13.9,<3.14"
+pytorch = ">=2.8.0,<3"
+pytorch-frame = ">=0.2.5,<0.3"
+cfitsio = ">=4.6.3,<5"
+wcslib = ">=8.2.2,<9"
 
 [tasks]
 # Development tasks
@@ -106,18 +107,18 @@ test-buffer = "python -m pytest tests/test_buffer.py -v"
 
 # Test feature with comparison libraries
 [feature.test.dependencies]
-astropy = ">=5.0"
-fitsio = ">=1.0"
+astropy = ">=7.1.1,<8"
+fitsio = ">=1.2.8,<2"
 
 # Benchmark feature with additional dependencies
 [feature.bench.dependencies]
-astropy = ">=5.0"
-fitsio = ">=1.0"
-matplotlib = "*"
-seaborn = "*"
-pandas = "*"
-psutil = "*"
-pytest-benchmark = "*"
+astropy = ">=7.1.1,<8"
+fitsio = ">=1.2.8,<2"
+matplotlib = ">=3.10.7,<4"
+seaborn = ">=0.13.2,<0.14"
+pandas = ">=2.3.3,<3"
+psutil = ">=7.1.0,<8"
+pytest-benchmark = ">=5.1.0,<6"
 
 # Environment definitions
 [environments]

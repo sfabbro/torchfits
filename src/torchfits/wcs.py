@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 from .hdu import Header
-from . import cpp
+from torchfits.cpp import cpp
 
 
 class WCS:
@@ -24,7 +24,17 @@ class WCS:
             header: FITS header containing WCS keywords
         """
         self._header = header
-        self._wcs = cpp.WCS({str(k): str(v) for k, v in header.items()})
+        # Add minimal required FITS headers for WCS initialization
+        wcs_header = {
+            'SIMPLE': 'T',
+            'BITPIX': '-32',
+            'NAXIS': '2',
+            'NAXIS1': '100',
+            'NAXIS2': '100'
+        }
+        # Update with provided header values
+        wcs_header.update({str(k): str(v) for k, v in header.items()})
+        self._wcs = cpp.WCS(wcs_header)
     
     def pixel_to_world(self, pixels: Tensor, batch_size: Optional[int] = None) -> Tensor:
         """
@@ -213,6 +223,7 @@ class WCS:
             torch.cuda.synchronize()
         start_time = time.perf_counter()
         
+        world_coords = None
         for _ in range(10):
             world_coords = self.pixel_to_world(pixels)
             
@@ -225,9 +236,10 @@ class WCS:
             torch.cuda.synchronize()
         start_time = time.perf_counter()
         
-        for _ in range(10):
-            pixel_coords = self.world_to_pixel(world_coords)
-            
+        if world_coords is not None:
+            for _ in range(10):
+                pixel_coords = self.world_to_pixel(world_coords)
+                
         if device == 'cuda':
             torch.cuda.synchronize()
         w2p_time = time.perf_counter() - start_time

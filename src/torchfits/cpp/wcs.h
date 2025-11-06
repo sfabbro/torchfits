@@ -6,10 +6,17 @@
 
 #pragma once
 
-#include <torch/torch.h>
 #include <string>
 #include <map>
 #include <unordered_map>
+#include <vector>
+
+// Forward declarations
+namespace torch {
+    class Tensor;
+}
+
+struct wcsprm;
 
 namespace torchfits {
 
@@ -19,20 +26,40 @@ public:
     WCS(const std::unordered_map<std::string, std::string>& header);
     ~WCS();
     
+    // Disable copy constructor and assignment operator to prevent double free
+    WCS(const WCS&) = delete;
+    WCS& operator=(const WCS&) = delete;
+    
     torch::Tensor pixel_to_world(const torch::Tensor& pixels);
     torch::Tensor world_to_pixel(const torch::Tensor& coords);
     torch::Tensor get_footprint();
-    std::string test_method();
+    int test_method() const;
     
-    int naxis();
-    torch::Tensor crpix();
-    torch::Tensor crval();
-    torch::Tensor cdelt();
+    int naxis() const;
+    torch::Tensor crpix() const;
+    torch::Tensor crval() const;
+    torch::Tensor cdelt() const;
     
 private:
-    void* wcsprm_;  // wcsprm struct from wcslib
-    int naxis_;
-    bool is_initialized_;
+    void precompute_matrices();
+    bool is_simple_projection() const;
+    
+    struct wcsprm* wcs_;
+    int nwcs_;
+    
+#ifdef TORCH_CUDA_AVAILABLE
+    torch::Tensor pixel_to_world_gpu(const torch::Tensor& pixels);
+    torch::Tensor world_to_pixel_gpu(const torch::Tensor& world);
+    double cd_matrix_[4];
+    double cd_matrix_inv_[4];
+#endif
+
+#ifdef HAS_OPENMP
+    torch::Tensor pixel_to_world_parallel(const torch::Tensor& cpu_pixels, torch::Tensor& world, int ncoord);
+    torch::Tensor world_to_pixel_parallel(const torch::Tensor& cpu_world, torch::Tensor& pixels, int ncoord);
+#endif
+    
+    bool is_linear_wcs_;
     std::unordered_map<std::string, std::string> header_;
 };
 

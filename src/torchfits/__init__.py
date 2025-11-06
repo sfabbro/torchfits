@@ -166,24 +166,64 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
             header = dict(hdu_obj.header)
             
             if hasattr(hdu_obj, 'data') and hdu_obj.data is not None:
-                if hdu_obj.data.ndim == 0:
+                # Check if this is a table (has columns attribute)
+                if hasattr(hdu_obj, 'columns') and hdu_obj.columns is not None:
+                    # Table data with column selection and row range support
+                    data = {}
+                    
+                    # Determine which columns to read
+                    if columns is not None:
+                        # Only read specified columns
+                        column_names = [col.name for col in hdu_obj.columns if col.name in columns]
+                    else:
+                        # Read all columns
+                        column_names = [col.name for col in hdu_obj.columns]
+                    
+                    # Read data for each column
+                    for col_name in column_names:
+                        try:
+                            # Get the column data
+                            col_data = hdu_obj.data[col_name]
+                            
+                            # Apply row range selection
+                            if start_row > 1 or num_rows != -1:
+                                end_row = start_row + num_rows - 1 if num_rows != -1 else len(col_data)
+                                # Convert to 1-based indexing for Python 0-based indexing
+                                col_data = col_data[start_row-1:end_row]
+                            
+                            # Skip string columns for now
+                            if col_data.dtype.kind in ['U', 'S']:  # String columns
+                                continue
+                            
+                            # Preserve original data type when possible
+                            if col_data.dtype.kind in ['i', 'u']:  # Integer types
+                                # Map to appropriate PyTorch integer types
+                                if col_data.dtype.itemsize <= 1:
+                                    numpy_dtype = np.int8 if col_data.dtype.kind == 'i' else np.uint8
+                                elif col_data.dtype.itemsize <= 2:
+                                    numpy_dtype = np.int16
+                                elif col_data.dtype.itemsize <= 4:
+                                    numpy_dtype = np.int32
+                                else:
+                                    numpy_dtype = np.int64
+                                data[col_name] = torch.from_numpy(col_data.astype(numpy_dtype))
+                            else:
+                                # For float types, preserve precision when possible
+                                if col_data.dtype == np.float64:
+                                    data[col_name] = torch.from_numpy(col_data)
+                                else:
+                                    data[col_name] = torch.from_numpy(col_data.astype(np.float32))
+                        except Exception as e:
+                            # For debugging - print the error but don't skip
+                            print(f'Warning: Failed to read column {col_name}: {e}')
+                            continue  # Skip problematic columns
+                    return data, header
+                elif hdu_obj.data.ndim == 0:
                     # Scalar data
                     data = torch.tensor(float(hdu_obj.data))
                 elif hdu_obj.data.ndim >= 1:
                     # Array data
                     data = torch.from_numpy(hdu_obj.data.astype(np.float32))
-                else:
-                    # Table data
-                    data = {}
-                    for col in hdu_obj.columns:
-                        try:
-                            col_data = hdu_obj.data[col.name]
-                            if col_data.dtype.kind in ['U', 'S']:  # String columns
-                                continue  # Skip string columns for now
-                            data[col.name] = torch.from_numpy(col_data.astype(np.float32))
-                        except Exception:
-                            continue  # Skip problematic columns
-                    return data, header
                 
                 # Apply precision conversion
                 if fp16:

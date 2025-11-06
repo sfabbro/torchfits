@@ -40,116 +40,19 @@ namespace nb = nanobind;
 //   return the result of `torch.utils.dlpack.from_dlpack(capsule)` so
 //   Python receives a proper Tensor object and ownership is transferred.
 
-namespace nanobind {
-namespace detail {
 
-    template <> struct type_caster<at::Tensor> {
-    public:
-        NB_TYPE_CASTER(at::Tensor, const_name("torch.Tensor"));
-
-        // Try to load a Python object as an at::Tensor using DLPack (zero-copy).
-        NB_INLINE bool from_python(handle src, uint8_t flags, cleanup_list * /*cl*/) noexcept {
-            if (!src) return false;
-
-            try {
-                nb::module_ dlpack_mod = nb::module_::import_("torch.utils.dlpack");
-
-                // If the object implements __dlpack__, call it; otherwise ask
-                // torch.utils.dlpack.to_dlpack to produce a capsule.
-                nb::object py_capsule;
-                if (nb::hasattr(src, "__dlpack__"))
-                    py_capsule = src.attr("__dlpack__")();
-                else
-                    py_capsule = dlpack_mod.attr("to_dlpack")(src);
-
-                // Extract the DLManagedTensor pointer from the capsule
-                PyObject *caps = py_capsule.ptr();
-                if (!caps) return false;
-
-                void *ptr = PyCapsule_GetPointer(caps, "dltensor");
-                if (!ptr) return false;
-
-                DLManagedTensor *mt = reinterpret_cast<DLManagedTensor*>(ptr);
-
-                // Construct an at::Tensor by consuming the DLManagedTensor.
-                // at::fromDLPack consumes the DLManagedTensor and takes ownership
-                // (invoking its deleter when appropriate).
-                at::Tensor t = at::fromDLPack(mt);
-                value = t;
-                return true;
-
-            } catch (...) {
-                return false;
-            }
-        }
-
-        // Cast an at::Tensor to a Python torch.Tensor using DLPack.
-        static void dl_managed_tensor_deleter(DLManagedTensor* mt) {
-            if (!mt) return;
-            // manager_ctx holds a pointer to a heap-allocated shared_ptr<at::Tensor>
-            auto holder = reinterpret_cast<std::shared_ptr<at::Tensor>*>(mt->manager_ctx);
-            if (holder) delete holder;
-            // free shape/strides arrays if present
-            if (mt->dl_tensor.shape) delete [] mt->dl_tensor.shape;
-            if (mt->dl_tensor.strides) delete [] mt->dl_tensor.strides;
-            delete mt;
-        }
-
-        // Helper that constructs a Python tensor via DLPack from a C++ at::Tensor
-        static handle tensor_to_python(const at::Tensor &src) {
-            try {
-                nb::module_ dlpack_mod = nb::module_::import_("torch.utils.dlpack");
-
-                // Use ATen's toDLPack to create a DLManagedTensor with correct
-                // ownership semantics. Then create a PyCapsule whose destructor
-                // calls the DLManagedTensor deleter exactly once.
-                DLManagedTensor *mt = at::toDLPack(src);
-                if (!mt) {
-                    return handle();
-                }
-
-                // Create a capsule with direct destructor
-                PyObject *caps = PyCapsule_New((void*)mt, "dltensor", [](PyObject *caps){
-                    DLManagedTensor *m = reinterpret_cast<DLManagedTensor *>(PyCapsule_GetPointer(caps, "dltensor"));
-                    if (m && m->deleter) {
-                        m->deleter(m);
-                    }
-                });
-                
-                if (!caps) {
-                    // If capsule creation failed, make sure to call deleter to avoid leak
-                    if (mt->deleter) mt->deleter(mt);
-                    return handle();
-                }
-
-                // Wrap the raw PyObject* into a nanobind object without altering refcount
-                nb::object capsule_obj = nb::steal<nb::object>(nb::handle(caps));
-
-                // Call torch.utils.dlpack.from_dlpack(capsule) to obtain a Python tensor
-                nb::object py_tensor = dlpack_mod.attr("from_dlpack")(capsule_obj);
-                return py_tensor;
-            } catch (...) {
-                return handle();
-            }
-        }
-
-        // Overloads to satisfy nanobind's call patterns (pointer and const-ref/value)
-        static handle from_cpp(at::Tensor *p, rv_policy /* policy */, cleanup_list * /* list */) {
-            if (!p) return handle();
-            return tensor_to_python(*p);
-        }
-
-        static handle from_cpp(const at::Tensor &src, rv_policy /* policy */, cleanup_list * /* list */) {
-            return tensor_to_python(src);
-        }
-    };
-
-} // namespace detail
-} // namespace nanobind
 
 NB_MODULE(cpp, m) {
     m.doc() = "torchfits C++ extension";
     
+    // Simple test function to return a tensor
+    m.def("test_tensor_return", []() -> torch::Tensor {
+        auto tensor = torch::empty({2}, torch::TensorOptions().dtype(torch::kFloat64));
+        tensor[0] = 1.0;
+        tensor[1] = 2.0;
+        return tensor;
+    });
+
     // FITS file class with GIL release for I/O operations
     nb::class_<torchfits::FITSFile>(m, "FITSFile")
         .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("mode") = 0)
@@ -251,11 +154,6 @@ NB_MODULE(cpp, m) {
         return file->read_image(hdu_num);
     });
 
-    // Simple passthrough for testing DLPack caster: returns the same tensor
-    m.def("echo_tensor", [](const torch::Tensor &t) {
-        return t;
-    });
-    
     m.def("compute_stats", [](uintptr_t handle, int hdu_num) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
         return file->compute_stats(hdu_num);
@@ -354,6 +252,14 @@ NB_MODULE(cpp, m) {
         return file.read_image(hdu_num);
     }, nb::arg("filename"), nb::arg("hdu_num") = 0);
     
+    // Simple test function to return a tensor
+    m.def("test_tensor_return", []() -> torch::Tensor {
+        auto tensor = torch::empty({2}, torch::TensorOptions().dtype(torch::kFloat64));
+        tensor[0] = 1.0;
+        tensor[1] = 2.0;
+        return tensor;
+    });
+
     // Note: echo_tensor already defined above
     
     // Memory-mapped read function with GIL release
