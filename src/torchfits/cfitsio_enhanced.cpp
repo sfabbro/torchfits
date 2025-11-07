@@ -392,9 +392,9 @@ void CFITSIOPerformanceOptimizer::set_optimal_buffers(fitsfile* fptr, size_t fil
 }
 
 size_t CFITSIOPerformanceOptimizer::calculate_optimal_buffer_size(size_t file_size, int data_type) {
-    // Improved heuristic for optimal buffer size based on benchmarks
+    // Aggressive buffer sizing for maximum performance based on benchmarks
     size_t element_size = 4; // Default to 4 bytes (float)
-    
+
     switch (data_type) {
         case TDOUBLE: case TLONGLONG: element_size = 8; break;
         case TSHORT: element_size = 2; break;
@@ -402,30 +402,36 @@ size_t CFITSIOPerformanceOptimizer::calculate_optimal_buffer_size(size_t file_si
         case TINT: case TFLOAT: element_size = 4; break;
         default: element_size = 4; break;
     }
-    
-    // OPTIMIZATION: Dynamic buffer sizing based on file characteristics
+
+    // AGGRESSIVE OPTIMIZATION: Larger buffers for better throughput
     size_t base_buffer;
-    
-    if (file_size < 1024 * 1024) {
-        // Small files (< 1MB): Use smaller buffers to reduce overhead
-        base_buffer = 32 * 1024;  // 32KB for small files
-    } else if (file_size < 16 * 1024 * 1024) {
-        // Medium files (1-16MB): Use moderate buffers  
-        base_buffer = 256 * 1024; // 256KB
-    } else if (file_size < 256 * 1024 * 1024) {
-        // Large files (16-256MB): Use large buffers
-        base_buffer = 1024 * 1024; // 1MB
+
+    if (file_size < 512 * 1024) {
+        // Small files (< 512KB): Use 128KB buffer
+        base_buffer = 128 * 1024;
+    } else if (file_size < 4 * 1024 * 1024) {
+        // Medium files (512KB-4MB): Use 512KB buffer
+        base_buffer = 512 * 1024;
+    } else if (file_size < 64 * 1024 * 1024) {
+        // Large files (4-64MB): Use 2MB buffer
+        base_buffer = 2 * 1024 * 1024;
+    } else if (file_size < 512 * 1024 * 1024) {
+        // Very large files (64-512MB): Use 8MB buffer
+        base_buffer = 8 * 1024 * 1024;
     } else {
-        // Very large files (>256MB): Use very large buffers
-        base_buffer = 4 * 1024 * 1024; // 4MB
+        // Huge files (>512MB): Use 16MB buffer
+        base_buffer = 16 * 1024 * 1024;
     }
-    
-    // Align buffer size to element boundaries for better performance
-    size_t aligned_buffer = (base_buffer / element_size) * element_size;
-    
-    // Don't exceed 25% of file size for buffer
-    size_t max_buffer = std::max(size_t(32 * 1024), file_size / 4);
-    
+
+    // Align buffer size to cache line boundaries (64 bytes) and element size
+    size_t alignment = std::max(size_t(64), element_size);
+    size_t aligned_buffer = ((base_buffer + alignment - 1) / alignment) * alignment;
+
+    // Allow buffers up to 50% of file size for maximum performance
+    // but cap at 32MB to avoid excessive memory usage
+    size_t max_buffer = std::min(size_t(32 * 1024 * 1024),
+                                 std::max(size_t(128 * 1024), file_size / 2));
+
     return std::min(aligned_buffer, max_buffer);
 }
 

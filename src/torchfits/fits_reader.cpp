@@ -30,14 +30,14 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
     // Handle empty HDU (NAXIS=0) case - no image data
     if (naxis == 0) {
         DEBUG_LOG("Empty HDU detected (NAXIS=0), returning empty tensor");
-        torch::TensorOptions options = torch::TensorOptions().device(device);
+        torch::TensorOptions options = torch::TensorOptions().device(torch::kCPU);
         if      (std::is_same<T, uint8_t>::value) options = options.dtype(torch::kUInt8);
         else if (std::is_same<T, int16_t>::value) options = options.dtype(torch::kInt16);
         else if (std::is_same<T, int32_t>::value) options = options.dtype(torch::kInt32);
         else if (std::is_same<T, int64_t>::value) options = options.dtype(torch::kInt64);
         else if (std::is_same<T, float>::value)   options = options.dtype(torch::kFloat32);
         else if (std::is_same<T, double>::value)  options = options.dtype(torch::kFloat64);
-        
+
         return torch::empty({0}, options);  // Return empty 1D tensor with 0 elements
     }
 
@@ -45,13 +45,21 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
     fits_get_img_size(fptr, naxis, naxes.data(), &status);
     if (status) throw_fits_error(status, "Error getting image size");
 
-    torch::TensorOptions options = torch::TensorOptions().device(device);
-    if      (std::is_same<T, uint8_t>::value) options = options.dtype(torch::kUInt8);
-    else if (std::is_same<T, int16_t>::value) options = options.dtype(torch::kInt16);
-    else if (std::is_same<T, int32_t>::value) options = options.dtype(torch::kInt32);
-    else if (std::is_same<T, int64_t>::value) options = options.dtype(torch::kInt64);
-    else if (std::is_same<T, float>::value)   options = options.dtype(torch::kFloat32);
-    else if (std::is_same<T, double>::value)  options = options.dtype(torch::kFloat64);
+    // PERFORMANCE: Always allocate on CPU first, then transfer to GPU if needed
+    // This avoids potential issues with direct GPU allocation and CFITSIO
+    torch::TensorOptions cpu_options = torch::TensorOptions().device(torch::kCPU);
+    if      (std::is_same<T, uint8_t>::value) cpu_options = cpu_options.dtype(torch::kUInt8);
+    else if (std::is_same<T, int16_t>::value) cpu_options = cpu_options.dtype(torch::kInt16);
+    else if (std::is_same<T, int32_t>::value) cpu_options = cpu_options.dtype(torch::kInt32);
+    else if (std::is_same<T, int64_t>::value) cpu_options = cpu_options.dtype(torch::kInt64);
+    else if (std::is_same<T, float>::value)   cpu_options = cpu_options.dtype(torch::kFloat32);
+    else if (std::is_same<T, double>::value)  cpu_options = cpu_options.dtype(torch::kFloat64);
+
+    // OPTIMIZATION: Use pinned memory for GPU transfers
+    bool use_pinned = (device.type() == torch::kCUDA);
+    if (use_pinned) {
+        cpu_options = cpu_options.pinned_memory(true);
+    }
 
     if (!start.empty()) {
         // Reading a subset
@@ -66,31 +74,40 @@ torch::Tensor read_image_data_typed(fitsfile* fptr, torch::Device device,
             cutout_dims.push_back(dim_size);
         }
 
-        torch::Tensor data = torch::empty(cutout_dims, options);
+        torch::Tensor data = torch::empty(cutout_dims, cpu_options);
+
+        // OPTIMIZATION: Use fits_read_subset with null values for better performance
         fits_read_subset(fptr, CfitsioType, fpixel.data(), lpixel.data(), inc.data(),
                          nullptr, data.data_ptr<T>(), nullptr, &status);
         if (status) throw_fits_error(status, "Error reading data subset");
-        return data;
+
+        // Transfer to GPU if needed
+        if (use_pinned && device.type() == torch::kCUDA) {
+            return data.to(device, /*non_blocking=*/true);
+        }
+        return device.type() == torch::kCPU ? data : data.to(device);
     } else {
-        // Reading the full image - CFITSIO API OPTIMIZATION
+        // Reading the full image - OPTIMIZED PATH
         std::vector<int64_t> torch_dims;
         for(long val : naxes) {
             torch_dims.push_back(val);
         }
         std::reverse(torch_dims.begin(), torch_dims.end());
 
-        torch::Tensor data = torch::empty(torch_dims, options);
+        torch::Tensor data = torch::empty(torch_dims, cpu_options);
         long n_elements = data.numel();
-        
-        // OPTIMIZATION: Use fits_read_pix for better performance on full images
-        // fits_read_pix is often faster than fits_read_img for full image reads
-        long fpixel[MAX_COMPRESS_DIM] = {1,1,1,1,1,1};  // Start at pixel 1,1,1... in FITS convention
-        
-        fits_read_pix(fptr, CfitsioType, fpixel, n_elements, nullptr,
+
+        // OPTIMIZATION: Use fits_read_img instead of fits_read_pix for better buffering
+        // fits_read_img uses CFITSIO's internal buffering more effectively
+        fits_read_img(fptr, CfitsioType, 1, n_elements, nullptr,
                       data.data_ptr<T>(), nullptr, &status);
-        if (status) throw_fits_error(status, "Error reading full image with fits_read_pix");
-        
-        return data;
+        if (status) throw_fits_error(status, "Error reading full image");
+
+        // Transfer to GPU if needed with async copy for pinned memory
+        if (use_pinned && device.type() == torch::kCUDA) {
+            return data.to(device, /*non_blocking=*/true);
+        }
+        return device.type() == torch::kCPU ? data : data.to(device);
     }
 }
 
