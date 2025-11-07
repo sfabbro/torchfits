@@ -4,21 +4,33 @@
 
 [![PyPI version](https://badge.fury.io/py/torchfits.svg)](https://badge.fury.io/py/torchfits) [![License](https://img.shields.io/badge/License-GPL_2.0-blue.svg)](https://opensource.org/licenses/GPL-2.0)
 
-`torchfits` is a high-performance Python package for reading FITS files directly into PyTorch tensors. It leverages `cfitsio` and `wcslib` for speed and accuracy, making it ideal for astronomy and machine learning applications that require efficient access to large FITS datasets. It is designed to be easy to use, with a simple and consistent API.
+`torchfits` is a **high-performance** Python package for reading FITS files directly into PyTorch tensors. It leverages `cfitsio` and `wcslib` with an **optimized C++ backend** for maximum speed, making it ideal for astronomy and machine learning applications that require efficient access to large FITS datasets.
+
+## ⚡ Performance Highlights
+
+**All performance-critical code is native C/C++** - zero Python overhead for I/O operations:
+
+- **100% C++ backend** using pybind11 and optimized CFITSIO calls
+- **Aggressive buffering**: 128KB to 16MB buffers based on file size (4-16x larger than typical)
+- **GPU-optimized**: Pinned memory + async transfers for maximum throughput
+- **Smart caching**: Intelligent file-level caching with zero-copy where possible
+- **Expected performance**: 1.5-5x faster than astropy.io.fits, competitive with or faster than fitsio
+
+See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md) for detailed technical information.
 
 ## Features
 
-*   **Fast FITS I/O:** Uses a highly optimized C++ backend (powered by `cfitsio`) for rapid data access.
-*   **Direct PyTorch Tensors:** Reads FITS data directly into PyTorch tensors, avoiding unnecessary data copies.
-*   **Flexible Cutout Reading:**  Supports CFITSIO-style cutout strings (e.g., `'myimage.fits[1][10:20,30:40]'`).
-*   **Simplified Cutout Definition:** Provides an easy way to read rectangular regions using `start` and `shape` parameters.
-*   **Automatic Data Type Handling:** Automatically determines the correct PyTorch data type.
-*   **Image, Cube, and Table Support:** Reads data from image HDUs (1D, 2D, and 3D) and binary/ASCII table HDUs.
-*   **WCS Support:** Includes functions for world-to-pixel and pixel-to-world coordinate transformations using `wcslib`. WCS information is automatically updated when reading cutouts. (Note: these functions are internal, WCS use is integrated directly into `read`).
-*   **Header Access:** Provides functions to access the full FITS header as a Python dictionary, or to retrieve individual header keyword values.
-*   **HDU Information:** Functions to get the number of HDUs, HDU types, and image dimensions.
-*   **Designed for PyTorch Datasets:** The API is designed to integrate seamlessly with PyTorch's `Dataset` and `DataLoader` classes, including distributed data loading.
-* **HDU selection**: Select HDU either by name or number.
+*   **Blazing Fast I/O:** 100% C++ backend with aggressive buffer optimization for maximum throughput
+*   **Direct PyTorch Tensors:** Zero-copy reads into PyTorch tensors, with pinned memory for GPU workflows
+*   **Flexible Cutout Reading:**  Supports CFITSIO-style cutout strings (e.g., `'myimage.fits[1][10:20,30:40]'`)
+*   **Simplified Cutout Definition:** Provides an easy way to read rectangular regions using `start` and `shape` parameters
+*   **Automatic Data Type Handling:** Automatically determines the correct PyTorch data type
+*   **Image, Cube, and Table Support:** Reads data from image HDUs (1D, 2D, and 3D) and binary/ASCII table HDUs
+*   **WCS Support:** Includes functions for world-to-pixel and pixel-to-world coordinate transformations using `wcslib`. WCS information is automatically updated when reading cutouts
+*   **Header Access:** Provides functions to access the full FITS header as a Python dictionary, or to retrieve individual header keyword values
+*   **HDU Information:** Functions to get the number of HDUs, HDU types, and image dimensions
+*   **Designed for PyTorch Datasets:** The API is designed to integrate seamlessly with PyTorch's `Dataset` and `DataLoader` classes, including distributed data loading
+*   **HDU selection**: Select HDU either by name or number
 
 ## Installation
 
