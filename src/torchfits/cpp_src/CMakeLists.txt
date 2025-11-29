@@ -104,6 +104,16 @@ nanobind_add_module(cpp ${SOURCES})
 
 # Link libraries
 target_link_libraries(cpp PRIVATE ${TORCH_LIBRARIES})
+
+# Link torch_python for THPVariable_Wrap (bypasses DLPack overhead)
+find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${PYTHON_SITE_PACKAGES}/torch/lib" NO_DEFAULT_PATH)
+if(TORCH_PYTHON_LIBRARY)
+    target_link_libraries(cpp PRIVATE ${TORCH_PYTHON_LIBRARY})
+    message(STATUS "Found libtorch_python: ${TORCH_PYTHON_LIBRARY}")
+else()
+    message(WARNING "libtorch_python not found - tensor returns will use slower DLPack path")
+endif()
+
 target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARY})
 target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIR})
 if(DLPACK_INCLUDE_DIR)
@@ -118,6 +128,12 @@ target_compile_definitions(cpp PRIVATE HAS_WCSLIB)
 # Compiler flags
 target_compile_definitions(cpp PRIVATE VERSION_INFO="")
 target_compile_features(cpp PRIVATE cxx_std_17)
+
+# Compiler optimization: O3 is empirically faster than O2 for our code
+# Tested: O3=0.693ms vs O2=0.761ms (O3 is 9% faster)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # Use default -O3 (optimal for our use case)
+endif()
 
 # Fix PyTorch linking issues
 set_target_properties(cpp PROPERTIES

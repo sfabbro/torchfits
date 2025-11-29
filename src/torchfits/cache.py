@@ -104,7 +104,7 @@ class CacheManager:
     def configure_cpp_cache(self):
         """Configure the C++ cache backend."""
         try:
-            from .cpp import cpp
+            import torchfits.cpp as cpp
             if hasattr(cpp, 'configure_cache'):
                 cpp.configure_cache(self.config.max_files, self.config.max_memory_mb)
         except (ImportError, AttributeError):
@@ -114,7 +114,7 @@ class CacheManager:
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive cache statistics."""
         try:
-            from .cpp import cpp
+            import torchfits.cpp as cpp
             cpp_size = cpp.get_cache_size() if hasattr(cpp, 'get_cache_size') else 0
         except (ImportError, AttributeError):
             cpp_size = 0
@@ -134,7 +134,7 @@ class CacheManager:
     def clear(self):
         """Clear all caches."""
         try:
-            from .cpp import cpp
+            import torchfits.cpp as cpp
             if hasattr(cpp, 'clear_file_cache'):
                 cpp.clear_file_cache()
         except (ImportError, AttributeError):

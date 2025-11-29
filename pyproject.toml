@@ -68,7 +68,7 @@ test = [
 # Configuration for the scikit-build-core build system.
 [tool.scikit-build]
 # Specifies the directory containing the top-level CMakeLists.txt file.
-cmake.source-dir = "src/torchfits/cpp"
+cmake.source-dir = "src/torchfits/cpp_src"
 
 # Configures the install directory for the compiled extension.
 # This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.

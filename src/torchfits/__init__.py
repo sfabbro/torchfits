@@ -27,7 +27,7 @@ from .transforms import (
     create_training_transform, create_validation_transform, create_inference_transform
 )
 from .buffer import configure_buffers, get_buffer_stats, clear_buffers
-from .core import FITSCore, FITSDataType, CompressionType
+from .core import FITSCore, CompressionType
 from .header_parser import fast_parse_header
 
 
@@ -58,7 +58,7 @@ __all__ = [
     "RandomCrop", "CenterCrop", "RandomFlip", "GaussianNoise", "ToDevice", "Compose",
     "create_training_transform", "create_validation_transform", "create_inference_transform",
     # Core types
-    "FITSCore", "FITSDataType", "CompressionType",
+    "FITSCore", "CompressionType",
     # Header parsing
     "fast_parse_header",
     # Utility functions
@@ -68,7 +68,7 @@ __all__ = [
 
 def _read_header_fast(file_handle, hdu_index: int, fast_header: bool = True):
     """Read header using fast bulk parsing or fallback to slow method."""
-    from .cpp import cpp
+    import torchfits.cpp as cpp
     
     if fast_header:
         try:
@@ -127,77 +127,87 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     if device not in ['cpu', 'cuda'] and not device.startswith('cuda:'):
         raise ValueError("device must be 'cpu' or 'cuda' or 'cuda:N'")
 
-    # Temporary workaround: use astropy for reading until C++ tensor conversion is fixed
+    # Use C++ backend for high-performance I/O
+    import torchfits.cpp as cpp
+
+    # Cache tracking
+    global _cache_stats, _file_cache
+    _cache_stats['total_requests'] += 1
+
+    # Use tuple for cache key (faster than f-string)
+    cache_key = (path, hdu, device, fp16, bf16, columns, start_row, num_rows)
+    if cache_key in _file_cache:
+        _cache_stats['hits'] += 1
+        cached_data, cached_header = _file_cache[cache_key]
+        if isinstance(cached_data, torch.Tensor) and device != 'cpu':
+            cached_data = cached_data.to(device)
+        return cached_data, cached_header
+    else:
+        _cache_stats['misses'] += 1
+
     try:
-        from astropy.io import fits
-        import os
-        
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"FITS file not found: {path}")
-        
-        # Simple cache tracking
-        global _cache_stats, _file_cache
-        _cache_stats['total_requests'] += 1
-        
-        cache_key = f"{path}:{hdu}:{device}:{fp16}:{bf16}"
-        if cache_key in _file_cache:
-            _cache_stats['hits'] += 1
-            cached_data, cached_header = _file_cache[cache_key]
-            if device != 'cpu':
-                cached_data = cached_data.to(device)
-            return cached_data, cached_header
-        else:
-            _cache_stats['misses'] += 1
-        
-        with fits.open(path) as hdul:
+        # Use handle-based API (most reliable)
+        file_handle = cpp.open_fits_file(path, "r")
+
+        try:
+            # Handle HDU selection (int or name)
             if isinstance(hdu, str):
-                # Find HDU by name
-                hdu_index = None
-                for i, h in enumerate(hdul):
-                    if h.header.get('EXTNAME') == hdu:
-                        hdu_index = i
-                        break
-                if hdu_index is None:
+                num_hdus = cpp.get_num_hdus(file_handle)
+                hdu_num = None
+                for i in range(num_hdus):
+                    try:
+                        hdr = cpp.read_header(file_handle, i)
+                        if hdr.get('EXTNAME') == hdu:
+                            hdu_num = i
+                            break
+                    except:
+                        continue
+                if hdu_num is None:
                     raise ValueError(f"HDU '{hdu}' not found in file")
             else:
-                hdu_index = hdu
-            
-            hdu_obj = hdul[hdu_index]
-            header = dict(hdu_obj.header)
-            
-            if hasattr(hdu_obj, 'data') and hdu_obj.data is not None:
-                # Check if this is a table (has columns attribute)
-                if hasattr(hdu_obj, 'columns') and hdu_obj.columns is not None:
-                    # Table data with column selection and row range support
-                    data = {}
-                    
-                    # Determine which columns to read
-                    if columns is not None:
-                        # Only read specified columns
-                        column_names = [col.name for col in hdu_obj.columns if col.name in columns]
-                    else:
-                        # Read all columns
-                        column_names = [col.name for col in hdu_obj.columns]
-                    
-                    # Read data for each column
+                hdu_num = hdu
+
+            # Get header
+            header = cpp.read_header(file_handle, hdu_num)
+
+            # Try reading as IMAGE first (for slow path)
+            try:
+                data = cpp.read_full(file_handle, hdu_num)
+
+                # Apply precision conversion
+                if fp16:
+                    data = data.to(torch.float16)
+                elif bf16:
+                    data = data.to(torch.bfloat16)
+
+                # Move to device
+                if device != 'cpu':
+                    data = data.to(device)
+
+                # Cache result
+                _file_cache[cache_key] = (data.cpu() if device != 'cpu' else data, header)
+                _cache_stats['cache_size'] = len(_file_cache)
+
+                return data, header
+
+            except (RuntimeError, TypeError):
+                # Not an image, read as table using astropy
+                from astropy.io import fits as astropy_fits
+                with astropy_fits.open(path) as hdul:
+                    table_data = {}
+                    column_names = columns if columns else [col.name for col in hdul[hdu_num].columns]
+
                     for col_name in column_names:
                         try:
-                            # Get the column data
-                            col_data = hdu_obj.data[col_name]
-                            
-                            # Apply row range selection
+                            col_data = hdul[hdu_num].data[col_name]
                             if start_row > 1 or num_rows != -1:
                                 end_row = start_row + num_rows - 1 if num_rows != -1 else len(col_data)
-                                # Convert to 1-based indexing for Python 0-based indexing
                                 col_data = col_data[start_row-1:end_row]
-                            
-                            # Skip string columns for now
-                            if col_data.dtype.kind in ['U', 'S']:  # String columns
+
+                            if col_data.dtype.kind in ['U', 'S']:
                                 continue
-                            
-                            # Preserve original data type when possible
-                            if col_data.dtype.kind in ['i', 'u']:  # Integer types
-                                # Map to appropriate PyTorch integer types
+
+                            if col_data.dtype.kind in ['i', 'u']:
                                 if col_data.dtype.itemsize <= 1:
                                     numpy_dtype = np.int8 if col_data.dtype.kind == 'i' else np.uint8
                                 elif col_data.dtype.itemsize <= 2:
@@ -206,64 +216,26 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                                     numpy_dtype = np.int32
                                 else:
                                     numpy_dtype = np.int64
-                                data[col_name] = torch.from_numpy(col_data.astype(numpy_dtype))
+                                table_data[col_name] = torch.from_numpy(col_data.astype(numpy_dtype))
                             else:
-                                # For float types, preserve precision when possible
                                 if col_data.dtype == np.float64:
-                                    data[col_name] = torch.from_numpy(col_data)
+                                    table_data[col_name] = torch.from_numpy(col_data)
                                 else:
-                                    data[col_name] = torch.from_numpy(col_data.astype(np.float32))
+                                    table_data[col_name] = torch.from_numpy(col_data.astype(np.float32))
                         except Exception as e:
-                            # For debugging - print the error but don't skip
                             print(f'Warning: Failed to read column {col_name}: {e}')
-                            continue  # Skip problematic columns
-                    return data, header
-                elif hdu_obj.data.ndim == 0:
-                    # Scalar data
-                    data = torch.tensor(float(hdu_obj.data))
-                elif hdu_obj.data.ndim >= 1:
-                    # Array data
-                    data = torch.from_numpy(hdu_obj.data.astype(np.float32))
-                
-                # Apply precision conversion
-                if fp16:
-                    data = data.to(torch.float16)
-                elif bf16:
-                    data = data.to(torch.bfloat16)
-                
-                # Move to device
-                if device != 'cpu':
-                    data = data.to(device)
-                
-                # Cache the result (keep on CPU for caching)
-                _file_cache[cache_key] = (data.cpu() if device != 'cpu' else data, header)
-                _cache_stats['cache_size'] = len(_file_cache)
-                
-                return data, header
-            else:
-                # Empty HDU or table
-                return {}, header
-                
-    except ImportError:
-        # astropy not available, create dummy data
-        import os
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"FITS file not found: {path}")
-        
-        # Return dummy data for testing
-        data = torch.randn(100, 100)  # Dummy 100x100 image
-        header = {'SIMPLE': True, 'BITPIX': -32, 'NAXIS': 2, 'NAXIS1': 100, 'NAXIS2': 100}
-        
-        if fp16:
-            data = data.to(torch.float16)
-        elif bf16:
-            data = data.to(torch.bfloat16)
-        
-        if device != 'cpu':
-            data = data.to(device)
-        
-        return data, header
-    
+                            continue
+
+                    _file_cache[cache_key] = (table_data, header)
+                    _cache_stats['cache_size'] = len(_file_cache)
+                    return table_data, header
+
+        finally:
+            try:
+                cpp.close_fits_file(file_handle)
+            except:
+                pass
+
     except Exception as e:
         raise RuntimeError(f"Failed to read FITS file '{path}': {e}") from e
 
@@ -472,7 +444,7 @@ def clear_file_cache():
     
     # Also try to clear C++ cache if available
     try:
-        from .cpp import cpp
+        import torchfits.cpp as cpp
         cpp.clear_file_cache()
     except (AttributeError, RuntimeError):
         pass

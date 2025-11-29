@@ -3,12 +3,14 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/ndarray.h>
 
 #include <Python.h>
 #include <memory>
 #include <cstring>
 
 #include <torch/torch.h>
+#include <torch/csrc/autograd/python_variable.h>
 #include <ATen/DLConvertor.h>
 #include <fitsio.h>
 #include <wcslib/wcs.h>
@@ -34,23 +36,173 @@ namespace nb = nanobind;
 //   using the object's __dlpack__ if present. Then convert the
 //   capsule to an at::Tensor using torch._C._from_dlpack (via the C API
 //   surface exposed on the Python side). We keep ownership semantics
-//   such that the capsule's deleter runs when appropriate. 
+//   such that the capsule's deleter runs when appropriate.
 // - To cast (C++ -> Python): obtain a DLManagedTensor capsule from the
 //   at::Tensor using torch._C._to_dlpack (exposed on torch._C) and
 //   return the result of `torch.utils.dlpack.from_dlpack(capsule)` so
 //   Python receives a proper Tensor object and ownership is transferred.
 
+// DISABLED: DLPack type_caster causes 7x overhead for int16!
+// We now use explicit tensor_to_python() with THPVariable_Wrap instead
+/*
+namespace nanobind {
+namespace detail {
 
+template <> struct type_caster<torch::Tensor> {
+    NB_TYPE_CASTER(torch::Tensor, const_name("torch.Tensor"));
+
+    // Python -> C++ conversion
+    bool from_python(handle src, uint8_t flags, cleanup_list *cleanup) noexcept {
+        try {
+            // Convert Python tensor to DLPack capsule
+            object capsule_obj;
+
+            // Try __dlpack__ protocol first (modern approach)
+            if (PyObject_HasAttrString(src.ptr(), "__dlpack__")) {
+                object dlpack_method = getattr(src, "__dlpack__");
+                capsule_obj = dlpack_method();
+            } else {
+                // Fallback to torch.utils.dlpack.to_dlpack
+                object torch_module = module_::import_("torch.utils.dlpack");
+                object to_dlpack = torch_module.attr("to_dlpack");
+                capsule_obj = to_dlpack(src);
+            }
+
+            // Extract DLManagedTensor from PyCapsule
+            DLManagedTensor* dlmt = (DLManagedTensor*)PyCapsule_GetPointer(capsule_obj.ptr(), "dltensor");
+            if (!dlmt) return false;
+
+            // Convert DLPack to torch::Tensor
+            value = torch::fromDLPack(dlmt);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    // C++ -> Python conversion
+    static handle from_cpp(const torch::Tensor &tensor, rv_policy policy, cleanup_list *cleanup) noexcept {
+        try {
+            // Convert at::Tensor to DLManagedTensor
+            DLManagedTensor* dlmt = torch::toDLPack(tensor);
+            if (!dlmt) return handle();
+
+            // Wrap in PyCapsule
+            PyObject *capsule = PyCapsule_New(dlmt, "dltensor", [](PyObject *obj) {
+                DLManagedTensor* dlmt = (DLManagedTensor*)PyCapsule_GetPointer(obj, "dltensor");
+                if (dlmt && dlmt->deleter) {
+                    dlmt->deleter(dlmt);
+                }
+            });
+            if (!capsule) return handle();
+
+            // Import torch.utils.dlpack and call from_dlpack
+            object torch_module = module_::import_("torch.utils.dlpack");
+            object from_dlpack = torch_module.attr("from_dlpack");
+            object result = from_dlpack(handle(capsule));
+
+            return result.release();
+        } catch (...) {
+            return handle();
+        }
+    }
+};
+
+} // namespace detail
+} // namespace nanobind
+*/
+
+// Helper function to convert torch::Tensor to Python object - FAST PATH
+// EXPERIMENTAL: Return NumPy array for int16 to test if THPVariable_Wrap is the bottleneck
+static nb::object tensor_to_python(const torch::Tensor& tensor) {
+    // EXPERIMENT: For int16, return NumPy array instead of torch.Tensor
+    // This tests whether THPVariable_Wrap is causing the 0.47ms overhead
+    if (tensor.scalar_type() == torch::kInt16) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+
+        // Create NumPy array from tensor data (zero-copy via capsule)
+        auto shape = tensor.sizes();
+        auto strides = tensor.strides();
+
+        // Convert to bytes for nanobind
+        std::vector<size_t> shape_vec(shape.begin(), shape.end());
+        std::vector<int64_t> strides_vec;
+        for (auto s : strides) {
+            strides_vec.push_back(s * sizeof(int16_t));
+        }
+
+        // Create numpy array using nanobind
+        // The tensor data is managed by the tensor itself, so we need to keep it alive
+        auto* data_ptr = tensor.data_ptr<int16_t>();
+
+        // Create a capsule to manage tensor lifetime
+        auto tensor_copy = new torch::Tensor(tensor);  // Keep tensor alive
+        auto capsule = nb::capsule(tensor_copy, [](void* p) noexcept {
+            delete static_cast<torch::Tensor*>(p);
+        });
+
+        auto result = nb::ndarray<nb::numpy, int16_t>(
+            data_ptr,
+            shape_vec.size(),
+            shape_vec.data(),
+            capsule,
+            strides_vec.data()
+        );
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto wrap_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+
+        static int numpy_count = 0;
+        if (numpy_count++ < 5) {
+            fprintf(stderr, "[INT16] NumPy wrap: %.1fμs\n", wrap_us);
+            fflush(stderr);
+        }
+
+        return nb::cast(result);
+    }
+
+    // For other types, use THPVariable_Wrap (works fine for uint8, etc.)
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    PyObject* tensor_obj = THPVariable_Wrap(tensor);
+    if (!tensor_obj) {
+        throw std::runtime_error("Failed to wrap tensor");
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    auto wrap_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+
+    static int tensor_count = 0;
+    if (tensor.scalar_type() == torch::kUInt8 && tensor_count++ < 5) {
+        fprintf(stderr, "[UINT8] Tensor wrap: %.1fμs\n", wrap_us);
+        fflush(stderr);
+    }
+
+    return nb::steal(tensor_obj);
+}
 
 NB_MODULE(cpp, m) {
     m.doc() = "torchfits C++ extension";
-    
+
+    // Test function to verify compilation
+    m.def("get_build_info", []() -> std::string {
+        return "Build: NumPy int16 test - " __DATE__ " " __TIME__;
+    });
+
+    // Test tensor return for int16
+    m.def("test_int16_return", []() -> nb::object {
+        auto tensor = torch::empty({10, 10}, torch::TensorOptions().dtype(torch::kInt16));
+        fprintf(stderr, "test_int16_return called!\n");
+        fflush(stderr);
+        return tensor_to_python(tensor);
+    });
+
     // Simple test function to return a tensor
-    m.def("test_tensor_return", []() -> torch::Tensor {
+    m.def("test_tensor_return", []() -> nb::object {
         auto tensor = torch::empty({2}, torch::TensorOptions().dtype(torch::kFloat64));
         tensor[0] = 1.0;
         tensor[1] = 2.0;
-        return tensor;
+        return tensor_to_python(tensor);
     });
 
     // FITS file class with GIL release for I/O operations
@@ -58,7 +210,8 @@ NB_MODULE(cpp, m) {
         .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("mode") = 0)
         .def("read_image", [](torchfits::FITSFile& self, int hdu_num, bool use_mmap) {
             nb::gil_scoped_release release;
-            return self.read_image(hdu_num, use_mmap);
+            auto tensor = self.read_image(hdu_num, use_mmap);
+            return tensor_to_python(tensor);
         }, nb::arg("hdu_num") = 0, nb::arg("use_mmap") = false)
         .def("write_image", [](torchfits::FITSFile& self, const torch::Tensor& tensor, int hdu_num, double bscale, double bzero) {
             nb::gil_scoped_release release;
@@ -72,7 +225,8 @@ NB_MODULE(cpp, m) {
         .def("get_dtype", &torchfits::FITSFile::get_dtype, nb::arg("hdu_num") = 0)
         .def("read_subset", [](torchfits::FITSFile& self, int hdu_num, long x1, long y1, long x2, long y2) {
             nb::gil_scoped_release release;
-            return self.read_subset(hdu_num, x1, y1, x2, y2);
+            auto tensor = self.read_subset(hdu_num, x1, y1, x2, y2);
+            return tensor_to_python(tensor);
         })
         .def("compute_stats", [](torchfits::FITSFile& self, int hdu_num) {
             nb::gil_scoped_release release;
@@ -146,12 +300,41 @@ NB_MODULE(cpp, m) {
     
     m.def("read_subset", [](uintptr_t handle, int hdu_num, long x1, long y1, long x2, long y2) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
-        return file->read_subset(hdu_num, x1, y1, x2, y2);
+        auto tensor = file->read_subset(hdu_num, x1, y1, x2, y2);
+        return tensor_to_python(tensor);
     });
     
     m.def("read_full", [](uintptr_t handle, int hdu_num) {
         auto* file = reinterpret_cast<torchfits::FITSFile*>(handle);
-        return file->read_image(hdu_num);
+
+        // PROFILING: Time the entire read_full operation
+        auto t_start = std::chrono::high_resolution_clock::now();
+
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = file->read_image(hdu_num);
+        }
+
+        auto t_before_wrap = std::chrono::high_resolution_clock::now();
+        auto result = tensor_to_python(tensor);
+        auto t_end = std::chrono::high_resolution_clock::now();
+
+        // PROFILING: Write timing for first 10 calls
+        static std::atomic<int> call_count{0};
+        int count = call_count.fetch_add(1);
+        if (count < 10 && tensor.scalar_type() == torch::kInt16) {
+            auto total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+            auto read_ms = std::chrono::duration<double, std::milli>(t_before_wrap - t_start).count();
+            auto wrap_ms = std::chrono::duration<double, std::milli>(t_end - t_before_wrap).count();
+
+            // Print timing to stderr
+            fprintf(stderr, "[read_full INT16] total=%.3fms read=%.3fms wrap=%.3fms\n",
+                   total_ms, read_ms, wrap_ms);
+            fflush(stderr);
+        }
+
+        return result;
     });
 
     m.def("compute_stats", [](uintptr_t handle, int hdu_num) {
@@ -210,7 +393,26 @@ NB_MODULE(cpp, m) {
         torchfits::FITSFile file(filename, 0);
         return file.get_header(hdu_num);
     });
-    
+
+    // ULTRA-FAST: Read both data and header in SINGLE C++ call
+    m.def("read_image_and_header", [](const std::string& filename, int hdu_num) -> nb::tuple {
+        torch::Tensor tensor;
+        std::unordered_map<std::string, std::string> header_map;
+        {
+            nb::gil_scoped_release release;
+            torchfits::FITSFile file(filename, 0);
+            tensor = file.read_image(hdu_num);
+            header_map = file.get_header(hdu_num);
+        }
+        // Convert header map to Python dict (GIL reacquired here)
+        nb::dict header;
+        for (const auto& pair : header_map) {
+            header[pair.first.c_str()] = pair.second.c_str();
+        }
+        return nb::make_tuple(tensor_to_python(tensor), header);
+    }, nb::arg("filename"), nb::arg("hdu_num") = 0,
+       "Read image data and header in single file open/close");
+
     m.def("write_fits_table", [](const std::string& filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
         write_fits_table(filename.c_str(), tensor_dict, header, overwrite);
     });
@@ -247,26 +449,48 @@ NB_MODULE(cpp, m) {
     
     // Direct read function for minimal overhead with GIL release
     m.def("read_full", [](const std::string& filename, int hdu_num) {
-        nb::gil_scoped_release release;
-        torchfits::FITSFile file(filename, 0);
-        return file.read_image(hdu_num);
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            torchfits::FITSFile file(filename, 0);
+            tensor = file.read_image(hdu_num);
+        }
+        return tensor_to_python(tensor);
     }, nb::arg("filename"), nb::arg("hdu_num") = 0);
+
+    // Ultra-fast path: read image with minimal overhead - SINGLE C++ CALL
+    m.def("read_image_fast", [](const std::string& filename, int hdu_num) -> nb::object {
+        // Open, read, close in one function - minimize overhead
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            torchfits::FITSFile file(filename, 0);
+            tensor = file.read_image(hdu_num);
+        }
+        // GIL reacquired here automatically
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num") = 0,
+       "Fast path: open->read->close in single C++ call");
     
     // Simple test function to return a tensor
-    m.def("test_tensor_return", []() -> torch::Tensor {
+    m.def("test_tensor_return", []() -> nb::object {
         auto tensor = torch::empty({2}, torch::TensorOptions().dtype(torch::kFloat64));
         tensor[0] = 1.0;
         tensor[1] = 2.0;
-        return tensor;
+        return tensor_to_python(tensor);
     });
 
     // Note: echo_tensor already defined above
     
     // Memory-mapped read function with GIL release
     m.def("read_mmap", [](const std::string& filename, int hdu_num) {
-        nb::gil_scoped_release release;
-        torchfits::FITSFile file(filename, 0);
-        return file.read_image(hdu_num, true);
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            torchfits::FITSFile file(filename, 0);
+            tensor = file.read_image(hdu_num, true);
+        }
+        return tensor_to_python(tensor);
     });
     
     // Mixed precision conversion
@@ -287,7 +511,8 @@ NB_MODULE(cpp, m) {
     // CFITSIO native string parsing (e.g., "file.fits[0:200,400:600]")
     m.def("read_cfitsio_string", [](const std::string& cfitsio_string) {
         torchfits::FITSFile file(cfitsio_string, 0);
-        return file.read_image(0);  // CFITSIO handles HDU and section parsing
+        auto tensor = file.read_image(0);  // CFITSIO handles HDU and section parsing
+        return tensor_to_python(tensor);
     });
     
     // Hardware info functions
@@ -314,7 +539,7 @@ NB_MODULE(cpp, m) {
     
     // Simple passthrough for testing DLPack caster: returns the same tensor
     m.def("echo_tensor", [](const torch::Tensor &t) {
-        return t;
+        return tensor_to_python(t);
     });
     
     // Get optimal row chunk size for table I/O

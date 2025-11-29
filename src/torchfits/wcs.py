@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 from .hdu import Header
-from torchfits.cpp import cpp
+import torchfits.cpp as cpp
 
 
 class WCS:
