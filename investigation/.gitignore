@@ -1,0 +1,20 @@
+# Ignore all investigation artifacts
+# These are temporary files from performance investigation
+
+# Compiled binaries
+binaries/*
+
+# Benchmark results
+benchmarks/*.txt
+benchmarks/*.json
+
+# Test data files
+tests/*.fits
+
+# Baseline results
+baseline_results/*.txt
+baseline_results/*.json
+
+# But keep directory structure and documentation
+!**/.gitkeep
+!**/README.md

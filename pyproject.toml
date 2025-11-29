@@ -1,189 +1,81 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# Compatible with both pip and pixi-build cmake backend
+# When using pixi-build, these are automatically provided but we keep them for pip compatibility
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.8.0"
+]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "0.2.0"
-authors = [
-    {name = "Seb Fabbro", email = "sebfabbro@gmail.com"},
-]
-description = "A fast FITS reader for PyTorch"
+version = "0.1.0"
+description = "High-performance FITS I/O for PyTorch"
+authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
-license = "GPL-2.0-only"
+license = { text = "GPL-2" }
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Science/Research", 
-    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GPL-2 License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: C++",
-    "Topic :: Scientific/Engineering :: Astronomy",
-    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering",
 ]
+requires-python = ">=3.11"
+
+# Core runtime dependencies for the library.
+# These are automatically managed by pixi for conda packages
+# but needed here for PyPI compatibility
 dependencies = [
-    "torch>=2.0.0,<3",
-    "numpy>=1.20.0"
+    "torch>=2.0.0",
+    "pytorch-frame>=0.2.0",
+    "psutil>=5.0.0",  # For system resource monitoring
+    "numpy>=1.20.0",  # Core numerical operations
 ]
 
 [project.urls]
 Homepage = "https://github.com/sfabbro/torchfits"
-Issues = "https://github.com/sfabbro/torchfits/issues"
-Documentation = "https://github.com/sfabbro/torchfits/blob/main/README.md"
+Repository = "https://github.com/sfabbro/torchfits"
 
+# Defines optional dependencies for different use cases.
+# For pixi environments, these are managed separately via features
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.0.0",
-    "pre-commit>=2.0.0",
-    "astropy>=5.0.0",
-    "fitsio>=1.1.0",
-    "black>=23.0.0",
-    "isort>=5.0.0",
-    "mypy>=1.0.0",
-    "build>=0.10.0"
+    "pytest>=6.0",
+    "pytest-cov>=2.0", 
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "ipykernel",
 ]
-examples = [
-    "matplotlib>=3.0.0",
-    "fsspec>=2023.1.0"
+bench = [
+    "astropy>=5.0",
+    "fitsio>=1.1",
+    "pandas>=1.0",
+    "matplotlib>=3.0",
+    "seaborn>=0.11.0",
+    "pytest-benchmark>=3.0",
+    "psutil>=5.0",
 ]
-remote = [
-    "fsspec>=2023.1.0"
-]
-dataframe = [
-    "pytorch-frame>=0.2.0"
-]
-all = [
-    "torchfits[dev,examples,remote,dataframe]"
+test = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0", 
+    "pytest-benchmark>=3.0",
 ]
 
-# Tool configurations
-[tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra --tb=short"
-testpaths = ["tests"]
-norecursedirs = ["build", "dist", ".git", ".tox", "*.egg"]
+# Configuration for the scikit-build-core build system.
+[tool.scikit-build]
+# Specifies the directory containing the top-level CMakeLists.txt file.
+cmake.source-dir = "src/torchfits/cpp_src"
 
-[tool.black]
-line-length = 88
-target-version = ['py312']
+# Configures the install directory for the compiled extension.
+# This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.
+install.strip = false
+wheel.packages = ["src/torchfits"]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/torchfits"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/src",
-    "/tests",
-    "/examples", 
-    "/README.md",
-    "/LICENSE",
-    "/pyproject.toml"
-]
-
-# Pixi workspace configuration
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["osx-arm64", "linux-64"]
-
-[tool.pixi.pypi-dependencies]
-torchfits = { path = ".", editable = true }
-
-# Core dependencies (system libraries only via conda)
-[tool.pixi.dependencies]
-python = ">=3.10,<3.14"
-cfitsio = ">=4.0.0"
-wcslib = ">=8.2.2,<9"
-pytest = ">=8.4.1,<9"
-astropy = ">=7.1.0,<8"
-psutil = ">=7.0.0,<8"
-editables = "*"
-hatchling = "*"
-pip = "*"
-cxx-compiler = "*"
-cmake = ">=3.15"
-ninja = "*"
-pkg-config = "*"
-mypy = ">=1.17.1,<2"
-
-# Development feature - Additional conda dependencies
-[tool.pixi.feature.dev.dependencies]
-pip = "*"
-
-# Build feature for C++ compilation
-[tool.pixi.feature.build.dependencies]
-cxx-compiler = "*"
-cmake = ">=3.15"
-ninja = "*"
-pkg-config = "*"
-
-# Examples feature - Additional conda dependencies only
-[tool.pixi.feature.examples.dependencies]
-
-# Remote access feature - Additional conda dependencies only  
-[tool.pixi.feature.remote.dependencies]
-
-# DataFrame integration feature - Additional conda dependencies only
-[tool.pixi.feature.dataframe.dependencies]
-
-# Benchmarking feature - Additional conda dependencies only
-[tool.pixi.feature.bench.dependencies]
-
-# Environment definitions
-[tool.pixi.environments]
-default = { solve-group = "default" }
-dev = { features = ["dev", "build"], solve-group = "default" }
-examples = { features = ["examples"], solve-group = "default" }
-remote = { features = ["remote"], solve-group = "default" }
-dataframe = { features = ["dataframe"], solve-group = "default" }
-bench = { features = ["bench", "dev"], solve-group = "default" }
-full = { features = ["dev", "build", "examples", "remote", "dataframe", "bench"], solve-group = "default" }
-
-# Task definitions
-[tool.pixi.tasks]
-# Build tasks
-build = "python -m pip install -e . --no-build-isolation"
-build-dev = "python -m pip install -e .[dev] --no-build-isolation"
-clean = "rm -rf build/ dist/ src/torchfits.egg-info/ src/torchfits/__pycache__/"
-
-# Testing tasks  
-test = "pytest tests/"
-test-verbose = "pytest -v tests/"
-test-coverage = "pytest --cov=torchfits tests/"
-
-# Code quality tasks
-format = "black src tests examples && isort src tests examples"
-lint = "black --check src tests examples && isort --check src tests examples"
-type-check = "mypy src/torchfits"
-pre-commit-install = "pre-commit install"
-pre-commit-run = "pre-commit run --all-files"
-
-# Development tasks
-dev-setup = { cmd = "pixi run pre-commit-install && pixi run build-dev", depends-on = ["build-dev", "pre-commit-install"] }
-check-all = { cmd = "pixi run lint && pixi run type-check && pixi run test", depends-on = ["lint", "type-check", "test"] }
-
-# Benchmark tasks
-[tool.pixi.feature.bench.tasks]
-benchmark = "python -m pytest tests/test_official_benchmark_suite.py -v"
-benchmark-quick = "python tests/benchmark_runner.py"
-
-# Add benchmark tasks to default environment too
-[tool.pixi.tasks.benchmark-default]
-cmd = "python -m pytest tests/test_official_benchmark_suite.py -v"
-
-[tool.pixi.tasks.benchmark-quick-default]  
-cmd = "python tests/benchmark_runner.py"
+# This setting enables CMake's incremental build feature. When you re-run the build,
+# CMake and Ninja will automatically detect which C++ files have changed and only
+# recompile those, leading to much faster iteration times.
+build-dir = "build/{wheel_tag}"
