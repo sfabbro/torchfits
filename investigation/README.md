@@ -1,6 +1,6 @@
 # Investigation Files
 
-This directory contains all files generated during the int16 performance investigation (November 2024).
+This directory contains all files generated during the int16 performance investigation (November 2024), plus historical design documents from prior development phases.
 
 ## Structure
 
@@ -9,6 +9,7 @@ This directory contains all files generated during the int16 performance investi
 - `tests/` - Test scripts (Python and C/C++) and test data files
 - `binaries/` - Compiled C/C++ test programs
 - `baseline_results/` - Baseline benchmark results for validation
+- `docs/` - Historical design documents (pre-refactor architecture, pybind11 references)
 
 ## Main Report
 
