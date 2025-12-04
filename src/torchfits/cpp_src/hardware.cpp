@@ -3,7 +3,10 @@
 #include <fstream>
 #include <string>
 #include <algorithm>
-
+#include <algorithm>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
 namespace torchfits {
 
 // Global hardware info cache
@@ -120,6 +123,39 @@ size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, co
     size_t memory_limit = hw.available_memory / 8;
     
     return std::min(std::min(bandwidth_chunk, memory_limit), data_size / 2);
+}
+
+MMapHandle::MMapHandle(const std::string& filename) {
+    fd = open(filename.c_str(), O_RDONLY);
+    if (fd == -1) {
+        throw std::runtime_error("Failed to open file descriptor: " + filename);
+    }
+    
+    struct stat st;
+    if (fstat(fd, &st) == -1) {
+        close(fd);
+        throw std::runtime_error("Failed to stat file: " + filename);
+    }
+    size = st.st_size;
+    
+    ptr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (ptr == MAP_FAILED) {
+        close(fd);
+        throw std::runtime_error("Failed to mmap file: " + filename);
+    }
+    owner = true;
+}
+
+void MMapHandle::cleanup() {
+    if (ptr) {
+        munmap(ptr, size);
+        ptr = nullptr;
+    }
+    if (owner && fd != -1) {
+        close(fd);
+        fd = -1;
+    }
+    size = 0;
 }
 
 }  // namespace torchfits

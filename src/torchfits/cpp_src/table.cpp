@@ -6,14 +6,25 @@
 #include <torch/torch.h>
 #include <vector>
 #include <memory>
-#include <string>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <unordered_map>
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/unordered_map.h>
+#include <ATen/Parallel.h>
 #include <functional>
 #include <cstring>  // for memset
 
+#define DEBUG_TABLE 1
+
 #include <fitsio.h>
 #include "hardware.h"
+#include "torch_compat.h"
 
 #ifdef HAS_OPENMP
 #include <omp.h>
@@ -22,6 +33,8 @@
 namespace nb = nanobind;
 
 namespace torchfits {
+
+
 
 // Enhanced error handling utilities
 class FITSError {
@@ -66,397 +79,7 @@ struct PerformanceMetrics {
 };
 
 // --- Enhanced Optimized Table Reading Logic ---
-class OptimizedTableReader {
-public:
-    OptimizedTableReader(fitsfile* fptr, int hdu_num) : fptr_(fptr), hdu_num_(hdu_num) {
-        int status = 0;
-        
-        // Move to specified HDU with error checking
-        fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
-        FITSError::check_status(status, "Moving to table HDU " + std::to_string(hdu_num));
-        
-        // Get table dimensions with validation
-        fits_get_num_rows(fptr_, &nrows_, &status);
-        FITSError::check_status(status, "Getting number of rows");
-        
-        fits_get_num_cols(fptr_, &ncols_, &status);
-        FITSError::check_status(status, "Getting number of columns");
-        
-        // Validate table dimensions
-        if (nrows_ < 0 || ncols_ < 0) {
-            throw std::runtime_error("Invalid table dimensions: " + 
-                                   std::to_string(nrows_) + " rows, " + 
-                                   std::to_string(ncols_) + " columns");
-        }
-        
-        // Cache column information with validation
-        cache_column_info();
-        
-        // Initialize performance metrics
-        metrics_.reset();
-    }
-    std::unordered_map<std::string, torch::Tensor> read_columns(const std::vector<std::string>& column_names, long start_row = 1, long num_rows = -1) {
-        // Input validation
-        if (column_names.empty()) {
-            return {};
-        }
-        
-        if (num_rows == -1) num_rows = nrows_;
-        
-        // Validate row range
-        if (start_row < 1 || start_row > nrows_) {
-            throw std::runtime_error("Invalid start_row: " + std::to_string(start_row) + 
-                                   " (table has " + std::to_string(nrows_) + " rows)");
-        }
-        
-        if (num_rows <= 0 || start_row + num_rows - 1 > nrows_) {
-            throw std::runtime_error("Invalid num_rows: " + std::to_string(num_rows) + 
-                                   " starting from row " + std::to_string(start_row));
-        }
-        
-        // Find requested columns and validate they exist
-        std::vector<int> col_indices;
-        std::vector<ColumnInfo> selected_cols;
-        for (const auto& name : column_names) {
-            auto it = column_map_.find(name);
-            if (it != column_map_.end()) {
-                col_indices.push_back(it->second.col_num);
-                selected_cols.push_back(it->second);
-            } else {
-                throw std::runtime_error("Column '" + name + "' not found in table");
-            }
-        }
-        
-        if (col_indices.empty()) {
-            throw std::runtime_error("No valid columns found");
-        }
-        
-        // Calculate optimal chunk size with adaptive strategy
-        HardwareInfo hw = detect_hardware();
-        size_t row_size = calculate_row_size(selected_cols);
-        size_t total_data_size = row_size * num_rows;
-        
-        // Adaptive chunking based on data size and previous performance
-        size_t optimal_chunk_rows = calculate_adaptive_chunk_size(total_data_size, hw, row_size);
-        optimal_chunk_rows = std::max(1UL, std::min(optimal_chunk_rows, (size_t)num_rows));
-        
-        // Pre-allocate tensors
-        std::unordered_map<std::string, torch::Tensor> result;
-        try {
-            for (size_t i = 0; i < column_names.size(); i++) {
-                const auto& col_info = selected_cols[i];
-                auto tensor = create_tensor_for_column(col_info, num_rows);
-                result[column_names[i]] = tensor;
-            }
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to allocate tensors: " + std::string(e.what()));
-        }
-        
-        // Read data in optimized chunks with performance monitoring
-        long rows_read = 0;
-        while (rows_read < num_rows) {
-            long chunk_rows = std::min(optimal_chunk_rows, (size_t)(num_rows - rows_read));
-            
-            auto start_time = std::chrono::high_resolution_clock::now();
-            
-            try {
-                read_chunk_optimized(selected_cols, start_row + rows_read, chunk_rows, result, rows_read);
-            } catch (const std::exception& e) {
-                throw std::runtime_error("Failed to read chunk at row " + std::to_string(start_row + rows_read) + 
-                                       ": " + std::string(e.what()));
-            }
-            
-            auto end_time = std::chrono::high_resolution_clock::now();
-            double chunk_time = std::chrono::duration<double>(end_time - start_time).count();
-            size_t chunk_bytes = row_size * chunk_rows;
-            metrics_.update(chunk_time, chunk_bytes);
-            
-            rows_read += chunk_rows;
-            
-            // Adaptive chunk size adjustment based on performance
-            if (rows_read < num_rows && metrics_.chunk_count >= 2) {
-                optimal_chunk_rows = adjust_chunk_size_dynamically(optimal_chunk_rows, chunk_time, chunk_bytes);
-            }
-        }
-        
-        return result;
-    }
-    void iterate_rows(std::function<void(const std::unordered_map<std::string, torch::Tensor>&)> callback, const std::vector<std::string>& column_names, size_t batch_size = 1000) {
-        // Simple implementation: read in batches
-        long total_rows = nrows_;
-        for (long start_row = 1; start_row <= total_rows; start_row += batch_size) {
-            long chunk_rows = std::min(batch_size, (size_t)(total_rows - start_row + 1));
-            auto chunk_data = read_columns(column_names, start_row, chunk_rows);
-            callback(chunk_data);
-        }
-    }
-private:
-    struct ColumnInfo {
-        int col_num;
-        int data_type;
-        long repeat;
-        long width;
-        std::string name;
-        std::string format;
-        torch::ScalarType torch_type;
-    };
-    struct IteratorData {
-        OptimizedTableReader* reader;
-        std::function<void(const std::unordered_map<std::string, torch::Tensor>&)> callback;
-        std::vector<std::string> column_names;
-        size_t batch_size;
-    };
-    fitsfile* fptr_;
-    int hdu_num_;
-    long nrows_;
-    int ncols_;
-    std::unordered_map<std::string, ColumnInfo> column_map_;
-    PerformanceMetrics metrics_;
-    
-    // Enhanced chunk sizing with adaptive optimization
-    size_t calculate_adaptive_chunk_size(size_t total_data_size, const HardwareInfo& hw, size_t row_size) {
-        // Start with hardware-optimized base chunk size
-        size_t base_chunk_size = calculate_optimal_chunk_size(total_data_size, hw);
-        size_t base_chunk_rows = base_chunk_size / row_size;
-        
-        // Apply adaptive adjustments based on performance history
-        if (metrics_.chunk_count > 0) {
-            // If previous reads were slow, reduce chunk size
-            if (metrics_.throughput_mbps < 100.0) {  // Below 100 MB/s threshold
-                base_chunk_rows = std::max(1UL, base_chunk_rows / 2);
-            }
-            // If reads were fast, potentially increase chunk size
-            else if (metrics_.throughput_mbps > 500.0) {  // Above 500 MB/s threshold
-                base_chunk_rows = std::min(base_chunk_rows * 2, total_data_size / row_size);
-            }
-        }
-        
-        // Ensure minimum viable chunk size (at least 1000 rows or 1MB)
-        size_t min_chunk_size = std::max(1000UL, 1024 * 1024 / row_size);
-        
-        // Ensure maximum chunk size doesn't exceed memory constraints
-        size_t max_chunk_size = hw.available_memory / 8 / row_size;  // Use 1/8 of available memory
-        
-        return std::max(min_chunk_size, std::min(base_chunk_rows, max_chunk_size));
-    }
-    
-    size_t adjust_chunk_size_dynamically(size_t current_chunk_rows, double chunk_time, size_t chunk_bytes) {
-        // Target ~50ms per chunk for optimal balance
-        const double target_time = 0.05;  // 50ms
-        
-        double time_ratio = chunk_time / target_time;
-        
-        if (time_ratio > 1.5) {
-            // Too slow, reduce chunk size
-            return std::max(1UL, static_cast<size_t>(current_chunk_rows * 0.8));
-        } else if (time_ratio < 0.5) {
-            // Too fast, could increase chunk size
-            return static_cast<size_t>(current_chunk_rows * 1.2);
-        }
-        
-        return current_chunk_rows;  // Keep current size
-    }
-    
-    // Public method to access performance metrics
-public:
-    PerformanceMetrics get_performance_metrics() const {
-        return metrics_;
-    }
-    
-    void reset_performance_metrics() {
-        metrics_.reset();
-    }
-    void cache_column_info() {
-        int status = 0;
-        column_map_.clear();
-        
-        for (int col = 1; col <= ncols_; col++) {
-            ColumnInfo info;
-            info.col_num = col;
-            
-            char col_name[FLEN_VALUE];
-            char col_format[FLEN_VALUE];
-            char col_unit[FLEN_VALUE];
-            double tscal, tzero;
-            long tnull;
-            char tdisp[FLEN_VALUE];
-            
-            // Initialize arrays to prevent garbage data
-            std::memset(col_name, 0, FLEN_VALUE);
-            std::memset(col_format, 0, FLEN_VALUE);
-            std::memset(col_unit, 0, FLEN_VALUE);
-            std::memset(tdisp, 0, FLEN_VALUE);
-            
-            // Get column parameters with comprehensive error checking
-            long repeat_long = 0;
-            int col_status = 0;
-            fits_get_bcolparms(fptr_, col, col_name, col_unit, col_format, &repeat_long, 
-                             &tscal, &tzero, &tnull, tdisp, &col_status);
-            
-            if (col_status != 0) {
-                // Log warning but continue - some columns might be readable
-                continue;
-            }
-            
-            info.repeat = static_cast<int>(repeat_long);
-            info.name = std::string(col_name);
-            info.format = std::string(col_format);
-            
-            // Validate column name
-            if (info.name.empty()) {
-                info.name = "col" + std::to_string(col);  // Generate default name
-            }
-            
-            // Validate format string
-            if (info.format.empty()) {
-                throw std::runtime_error("Column " + std::to_string(col) + " has empty format string");
-            }
-            
-            try {
-                parse_fits_format(info.format, info);
-            } catch (const std::exception& e) {
-                throw std::runtime_error("Failed to parse format for column '" + info.name + 
-                                       "': " + std::string(e.what()));
-            }
-            
-            // Validate parsed information
-            if (info.repeat <= 0) {
-                info.repeat = 1;  // Default to single element
-            }
-            
-            if (info.width <= 0) {
-                throw std::runtime_error("Column '" + info.name + "' has invalid width: " + 
-                                       std::to_string(info.width));
-            }
-            
-            column_map_[info.name] = info;
-        }
-        
-        // Validate that we successfully parsed at least some columns
-        if (column_map_.empty() && ncols_ > 0) {
-            throw std::runtime_error("Failed to parse any columns from table");
-        }
-    }
-    void parse_fits_format(const std::string& format, ColumnInfo& info) {
-        char type_char = format.back();
-        switch (type_char) {
-            case 'L': info.data_type = TLOGICAL; info.torch_type = torch::kBool; info.width = 1; break;
-            case 'B': info.data_type = TBYTE; info.torch_type = torch::kUInt8; info.width = 1; break;
-            case 'I': info.data_type = TSHORT; info.torch_type = torch::kInt16; info.width = 2; break;
-            case 'J': info.data_type = TINT; info.torch_type = torch::kInt32; info.width = 4; break;
-            case 'K': info.data_type = TLONGLONG; info.torch_type = torch::kInt64; info.width = 8; break;
-            case 'E': info.data_type = TFLOAT; info.torch_type = torch::kFloat32; info.width = 4; break;
-            case 'D': info.data_type = TDOUBLE; info.torch_type = torch::kFloat64; info.width = 8; break;
-            default: info.data_type = TFLOAT; info.torch_type = torch::kFloat32; info.width = 4;
-        }
-    }
-    size_t calculate_row_size(const std::vector<ColumnInfo>& columns) {
-        size_t total = 0;
-        for (const auto& col : columns) total += col.width * col.repeat;
-        return total;
-    }
-    torch::Tensor create_tensor_for_column(const ColumnInfo& col_info, long num_rows) {
-        std::vector<int64_t> shape;
-        if (col_info.repeat > 1) shape = {num_rows, col_info.repeat};
-        else shape = {num_rows};
-        return torch::empty(shape, col_info.torch_type);
-    }
-    void read_chunk_optimized(const std::vector<ColumnInfo>& columns, long start_row, long num_rows, 
-                             std::unordered_map<std::string, torch::Tensor>& tensors, long tensor_offset) {
-        // Validate input parameters
-        if (columns.empty()) {
-            throw std::runtime_error("No columns specified for reading");
-        }
-        
-        if (num_rows <= 0) {
-            throw std::runtime_error("Invalid num_rows: " + std::to_string(num_rows));
-        }
-        
-        if (start_row < 1 || start_row + num_rows - 1 > nrows_) {
-            throw std::runtime_error("Row range [" + std::to_string(start_row) + ", " + 
-                                   std::to_string(start_row + num_rows - 1) + 
-                                   "] exceeds table bounds [1, " + std::to_string(nrows_) + "]");
-        }
-        
-        int status = 0;
-        
-        // Read each column directly into its tensor memory with comprehensive error checking
-        for (const auto& col : columns) {
-            auto tensor_it = tensors.find(col.name);
-            if (tensor_it == tensors.end()) {
-                throw std::runtime_error("Tensor not found for column '" + col.name + "'");
-            }
-            
-            auto& tensor = tensor_it->second;
-            
-            // Validate tensor dimensions
-            if (tensor.numel() < tensor_offset + num_rows * col.repeat) {
-                throw std::runtime_error("Tensor for column '" + col.name + "' is too small");
-            }
-            
-            // Get pointer to the correct offset in tensor memory
-            void* tensor_data = nullptr;
-            try {
-                tensor_data = get_tensor_data_ptr(tensor, tensor_offset * col.repeat);
-            } catch (const std::exception& e) {
-                throw std::runtime_error("Failed to get tensor data pointer for column '" + 
-                                       col.name + "': " + std::string(e.what()));
-            }
-            
-            // Direct CFITSIO read into tensor memory - true zero-copy
-            int col_status = 0;
-            fits_read_col(fptr_, col.data_type, col.col_num, start_row, 1, num_rows, 
-                         nullptr, tensor_data, nullptr, &col_status);
-            
-            if (col_status != 0) {
-                std::string error_msg = "Failed to read column '" + col.name + "' (column " + 
-                                      std::to_string(col.col_num) + ") at rows [" + 
-                                      std::to_string(start_row) + ", " + 
-                                      std::to_string(start_row + num_rows - 1) + "]: " +
-                                      FITSError::get_error_message(col_status);
-                throw std::runtime_error(error_msg);
-            }
-        }
-    }
-    void* get_tensor_data_ptr(torch::Tensor& tensor, long offset) {
-        switch (tensor.scalar_type()) {
-            case torch::kBool: return tensor.data_ptr<bool>() + offset;
-            case torch::kUInt8: return tensor.data_ptr<uint8_t>() + offset;
-            case torch::kInt16: return tensor.data_ptr<int16_t>() + offset;
-            case torch::kInt32: return tensor.data_ptr<int32_t>() + offset;
-            case torch::kInt64: return tensor.data_ptr<int64_t>() + offset;
-            case torch::kFloat32: return tensor.data_ptr<float>() + offset;
-            case torch::kFloat64: return tensor.data_ptr<double>() + offset;
-            default: throw std::runtime_error("Unsupported tensor type");
-        }
-    }
-    void copy_column_data(const uint8_t* buffer, size_t buffer_offset, void* tensor_data, const ColumnInfo& col, long num_rows, size_t row_size) {
-        if (col.repeat == 1) {
-            const uint8_t* src = buffer + buffer_offset;
-            uint8_t* dst = static_cast<uint8_t*>(tensor_data);
-            for (long row = 0; row < num_rows; row++) {
-                std::memcpy(dst, src, col.width);
-                src += row_size;
-                dst += col.width;
-            }
-        } else {
-            const uint8_t* src = buffer + buffer_offset;
-            uint8_t* dst = static_cast<uint8_t*>(tensor_data);
-            size_t block_size = col.width * col.repeat;
-            for (long row = 0; row < num_rows; row++) {
-                std::memcpy(dst, src, block_size);
-                src += row_size;
-                dst += block_size;
-            }
-        }
-    }
-    static int iterator_callback(long total_rows, long offset, long first_row, long num_rows, int num_cols, iteratorCol* data, void* user_data) {
-        IteratorData* iter_data = static_cast<IteratorData*>(user_data);
-        auto chunk_data = iter_data->reader->read_columns(iter_data->column_names, first_row, num_rows);
-        iter_data->callback(chunk_data);
-        return 0;
-    }
-};
+
 
 enum class FITSColumnType {
     LOGICAL,    // L
@@ -476,6 +99,7 @@ struct ColumnInfo {
     int repeat;
     int width;
     torch::ScalarType torch_type;
+    long byte_offset; // Offset in bytes from start of row
 };
 
 class TableReader {
@@ -493,7 +117,6 @@ public:
         }
         
         analyze_table();
-
     }
 
     TableReader(fitsfile* fptr, int hdu_num = 1) : fptr_(fptr), hdu_num_(hdu_num) {
@@ -525,9 +148,15 @@ public:
         }
         
         // Debug output
-        #ifdef DEBUG_TABLE
-        printf("analyze_table: nrows=%ld, ncols=%d\n", nrows_, ncols_);
-        #endif
+        // #ifdef DEBUG_TABLE
+        FILE* f = fopen("/tmp/debug_torchfits_cpp.txt", "a");
+        if (f) {
+            fprintf(f, "analyze_table: nrows=%ld, ncols=%d\n", nrows_, ncols_);
+            fclose(f);
+        }
+        // fprintf(stderr, "analyze_table: nrows=%ld, ncols=%d\n", nrows_, ncols_);
+        // fflush(stderr);
+        // #endif
         
         // Analyze columns
         columns_.clear();
@@ -556,7 +185,7 @@ public:
                 #ifdef DEBUG_TABLE
                 char err_msg[81];
                 fits_get_errstatus(col_status, err_msg);
-                printf("Warning: Failed to get column %d info: %s\n", i, err_msg);
+                fprintf(stderr, "Warning: Failed to get column %d info: %s\n", i, err_msg);
                 #endif
                 continue;
             }
@@ -565,15 +194,17 @@ public:
             col.name = std::string(ttype);
             col.width = 1;  // Will be set based on type
             
+            col.width = 1;  // Will be set based on type
+            
             #ifdef DEBUG_TABLE
-            printf("Column %d: name='%s', tform='%s', repeat=%d\n", i, ttype, tform, col.repeat);
+            fprintf(stderr, "Column %d: name='%s', tform='%s', repeat=%d\n", i, ttype, tform, col.repeat);
             #endif
             
             // Parse TFORM to get data type
             size_t tform_len = strlen(tform);
             if (tform_len == 0) {
                 #ifdef DEBUG_TABLE
-                printf("Warning: Empty TFORM for column %d\n", i);
+                fprintf(stderr, "Warning: Empty TFORM for column %d\n", i);
                 #endif
                 continue;
             }
@@ -626,8 +257,14 @@ public:
                         break;
                     case 'A':
                         col.type = FITSColumnType::STRING;
-                        col.torch_type = torch::kInt64; // Will be converted to categorical
-                        col.width = col.repeat;  // String width from repeat count
+                        col.torch_type = torch::kUInt8; // Changed from kInt64 to kUInt8 to avoid buffer overflow
+                        // For strings, TFORM is like "20A". repeat is 20.
+                        // We want a tensor of shape (rows, 20).
+                        // So width should be 1 (byte), repeat should be 20.
+                        // But wait, analyze_table loop parses tform and sets col.repeat.
+                        // If tform is "20A", col.repeat is 20.
+                        col.width = 1; 
+                        // col.repeat is already set correctly by the parser loop above
                         break;
                     default:
                         col.type = FITSColumnType::FLOAT;
@@ -640,7 +277,7 @@ public:
         }
         
         #ifdef DEBUG_TABLE
-        printf("analyze_table complete: found %zu columns out of %d expected\n", columns_.size(), ncols_);
+        fprintf(stderr, "analyze_table complete: found %zu columns out of %d expected\n", columns_.size(), ncols_);
         #endif
         
         // Verify we have the expected number of columns
@@ -649,141 +286,436 @@ public:
             throw std::runtime_error("Column count mismatch: expected " + std::to_string(ncols_) + 
                                     ", found " + std::to_string(columns_.size()));
         }
+        
+        // Calculate offsets
+        long current_offset = 0;
+        for (auto& col : columns_) {
+            col.byte_offset = current_offset;
+            current_offset += col.width * col.repeat;
+        }
+        row_width_bytes_ = current_offset;
     }
     
-    std::unordered_map<std::string, nb::object> read_columns(
+    // Helper struct to hold column data (either fixed or VLA)
+    struct ColumnData {
+        bool is_vla;
+        torch::Tensor fixed_data;
+        std::vector<torch::Tensor> vla_data;
+        
+        ColumnData() : is_vla(false) {}
+        ColumnData(torch::Tensor t) : is_vla(false), fixed_data(t) {}
+        ColumnData(std::vector<torch::Tensor> v) : is_vla(true), vla_data(v) {}
+    };
+
+    // Read columns from the table
+    // Returns a map of column name to ColumnData
+    std::unordered_map<std::string, ColumnData> read_columns(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1) {
-        
-        int status = 0;
-        std::unordered_map<std::string, nb::object> result;
-        
-        // Check if we have any data
-        if (nrows_ == 0 || ncols_ == 0) {
-            // Return empty result for empty tables
-            return result;
-        }
         
         if (num_rows == -1) {
             num_rows = nrows_;
         }
         
-        // Determine which columns to read
+        // Handle empty table
+        if (nrows_ == 0) {
+            return {};
+        }
+
+        // Validate rows
+        if (start_row < 1 || start_row > nrows_) {
+            std::cerr << "Invalid start row: " << start_row << ", nrows: " << nrows_ << std::endl;
+            throw std::runtime_error("Invalid start row");
+        }
+        if (start_row + num_rows - 1 > nrows_) {
+            num_rows = nrows_ - start_row + 1;
+        }
+        
         std::vector<int> col_indices;
         if (column_names.empty()) {
+            // Read all columns
             for (int i = 0; i < ncols_; i++) {
                 col_indices.push_back(i);
             }
         } else {
+            // Read specified columns
             for (const auto& name : column_names) {
+                bool found = false;
                 for (int i = 0; i < ncols_; i++) {
                     if (columns_[i].name == name) {
                         col_indices.push_back(i);
+                        found = true;
                         break;
                     }
                 }
+                if (!found) {
+                    std::cerr << "Column not found: " << name << ". Available columns: ";
+                    for(int k=0; k<ncols_; k++) std::cerr << columns_[k].name << ", ";
+                    std::cerr << std::endl;
+                    throw std::runtime_error("Column not found: " + name);
+                }
             }
         }
         
-        // If no valid columns found, return empty result
-        if (col_indices.empty()) {
-            return result;
+        int status = 0;
+        std::unordered_map<std::string, ColumnData> result;
+        
+        
+        // Check if we have any data
+        if (nrows_ == 0 || ncols_ == 0) {
+             return result;
         }
         
-        // Read each column using zero-copy direct tensor allocation
+        // Allocate tensors for all requested columns (except VLA)
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
             
-            // Create properly shaped tensor based on repeat count
-            torch::Tensor tensor;
-            if (col.repeat > 1 && col.type != FITSColumnType::STRING) {
-                tensor = torch::empty({num_rows, col.repeat}, torch::TensorOptions().dtype(col.torch_type));
+            
+            if (col.type == FITSColumnType::VARIABLE) {
+                // VLA columns will be handled separately
+                continue;
+            }
+            
+            std::vector<int64_t> shape;
+            shape.push_back(num_rows);
+            // Handle multi-dimensional columns AND strings
+            if (col.repeat > 1 || col.type == FITSColumnType::STRING) {
+                 shape.push_back(col.repeat);
+            }
+            
+            // Create tensor
+            torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
+            
+            // Store in result map as ColumnData
+            
+            result[col.name] = ColumnData(tensor);
+        }
+        
+        // Heuristic: Use buffered reading if we are reading a significant portion of the row
+        // or if we are reading many columns.
+        // Threshold: > 25% of row bytes OR > 50% of columns
+        // Note: Buffered reading currently does NOT support VLA.
+        long requested_bytes = 0;
+        bool has_vla = false;
+        for (int col_idx : col_indices) {
+            const auto& col = columns_[col_idx];
+            if (col.type == FITSColumnType::VARIABLE) {
+                has_vla = true;
             } else {
-                tensor = torch::empty({num_rows}, torch::TensorOptions().dtype(col.torch_type));
+                requested_bytes += col.width * col.repeat;
             }
+        }
+        
+        bool use_buffered = false;
+        if (!has_vla && row_width_bytes_ > 0) {
+            double byte_fraction = (double)requested_bytes / row_width_bytes_;
+            double col_fraction = (double)col_indices.size() / ncols_;
             
-            // Read column data directly into tensor memory (zero-copy)
-            int anynul;
-            switch (col.type) {
-                case FITSColumnType::VARIABLE: {
-                    // Skip variable length arrays for now - they need special handling
-                    continue;
-                }
-                case FITSColumnType::FLOAT: {
-                    fits_read_col(fptr_, TFLOAT, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<float>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::DOUBLE: {
-                    fits_read_col(fptr_, TDOUBLE, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<double>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::INT: {
-                    fits_read_col(fptr_, TINT, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<int32_t>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::LONG: {
-                    fits_read_col(fptr_, TLONGLONG, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<int64_t>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::SHORT: {
-                    fits_read_col(fptr_, TSHORT, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<int16_t>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::BYTE: {
-                    fits_read_col(fptr_, TBYTE, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<uint8_t>(), &anynul, &status);
-                    break;
-                }
-                case FITSColumnType::LOGICAL: {
-                    // CFITSIO uses char for logical, convert to bool tensor
-                    std::vector<char> temp_data(num_rows * col.repeat);
-                    fits_read_col(fptr_, TLOGICAL, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, temp_data.data(), &anynul, &status);
+            if (byte_fraction > 0.25 || col_fraction > 0.5) {
+                use_buffered = true;
+            }
+        }
+        
+        if (use_buffered) {
+            
+            read_columns_buffered(col_indices, start_row, num_rows, result);
+        } else {
+            // Read column by column
+            for (int col_idx : col_indices) {
+                const auto& col = columns_[col_idx];
+                
+                if (col.type == FITSColumnType::VARIABLE) {
+                    // Read VLA column
+                    result[col.name] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
+                } else {
+                    // Read fixed width column
+                    torch::Tensor tensor = result[col.name].fixed_data;
                     
-                    auto bool_ptr = tensor.data_ptr<bool>();
-                    for (long i = 0; i < num_rows * col.repeat; i++) {
-                        bool_ptr[i] = (temp_data[i] != 0);
-                    }
-                    break;
-                }
-                case FITSColumnType::STRING: {
-                    // Read strings as fixed-width character arrays
-                    std::vector<char> string_buffer(num_rows * col.width);
-                    fits_read_col(fptr_, TSTRING, col_idx + 1, start_row, 1, num_rows,
-                                 nullptr, string_buffer.data(), &anynul, &status);
+                    int status = 0;
+                    // Use fits_read_col to read directly into tensor memory
+                    // Note: fits_read_col handles byte swapping automatically!
                     
-                    // For now, convert to categorical indices (simple hash-based)
-                    auto cat_ptr = tensor.data_ptr<int64_t>();
-                    for (long i = 0; i < num_rows; i++) {
-                        // Simple hash of the string for categorical encoding
-                        std::string str(&string_buffer[i * col.width], col.width);
-                        str.erase(str.find_last_not_of(" \0") + 1); // trim
-                        cat_ptr[i] = std::hash<std::string>{}(str) % 1000000; // Simple categorical
+                    int datatype;
+                    switch (col.type) {
+                        case FITSColumnType::LOGICAL: datatype = TLOGICAL; break;
+                        case FITSColumnType::BYTE: datatype = TBYTE; break;
+                        case FITSColumnType::SHORT: datatype = TSHORT; break;
+                        case FITSColumnType::INT: datatype = TINT; break;
+                        case FITSColumnType::LONG: datatype = TLONGLONG; break;
+                        case FITSColumnType::FLOAT: datatype = TFLOAT; break;
+                        case FITSColumnType::DOUBLE: datatype = TDOUBLE; break;
+                        case FITSColumnType::STRING: datatype = TBYTE; break; // Read strings as bytes
+                        default: datatype = TFLOAT;
                     }
-                    break;
+                    
+                    long firstelem = 1;
+                    long nelements = num_rows * col.repeat;
+                    
+                    if (col.type == FITSColumnType::STRING) {
+                         // For strings, we read as bytes. 
+                         // fits_read_col with TBYTE will read the bytes directly.
+                         fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
+                                      nullptr, tensor.data_ptr(), nullptr, &status);
+                    } else if (col.type == FITSColumnType::LOGICAL) {
+                         // For logical, fits_read_col with TLOGICAL expects char array (T/F) or int array?
+                         // CFITSIO TLOGICAL returns char 'T'/'F' if type is TBYTE/TSTRING, or 1/0 if type is TLOGICAL?
+                         // Actually TLOGICAL in cfitsio maps to 'char'.
+                         // But our tensor is kBool (1 byte).
+                         // We can read as TBYTE (char) and then convert?
+                         // Or just read as TLOGICAL.
+                         // Let's read as TBYTE to get raw 'T'/'F' and then convert in place?
+                         // Or rely on cfitsio to convert to 1/0?
+                         // If we pass TLOGICAL to fits_read_col, it expects an array of 'char'.
+                         // 'T' -> 1, 'F' -> 0? No, usually it returns 'T'/'F'.
+                         // Let's read as TBYTE (raw chars) and convert.
+                         fits_read_col(fptr_, TBYTE, col_idx + 1, start_row, firstelem, nelements,
+                                      nullptr, tensor.data_ptr(), nullptr, &status);
+                         
+                         // Convert 'T'/'F' to 1/0
+                         // The tensor is kBool, so its data_ptr is bool*.
+                         // We read into it as uint8_t* (char), then convert.
+                         uint8_t* data = (uint8_t*)tensor.data_ptr();
+                         for (long i = 0; i < nelements; i++) {
+                             data[i] = (data[i] == 'T') ? 1 : 0;
+                         }
+                    } else {
+                        fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
+                                      nullptr, tensor.data_ptr(), nullptr, &status);
+                    }
+                    
+                    if (status != 0) {
+                         char err_msg[81];
+                         fits_get_errstatus(status, err_msg);
+                         throw std::runtime_error("Failed to read column " + col.name + ": " + std::string(err_msg));
+                    }
                 }
-                default:
-                    // Default to float
-                    fits_read_col(fptr_, TFLOAT, col_idx + 1, start_row, 1, num_rows * col.repeat,
-                                 nullptr, tensor.data_ptr<float>(), &anynul, &status);
             }
-            
-            if (status != 0) {
-                char err_msg[81];
-                fits_get_errstatus(status, err_msg);
-                throw std::runtime_error("Failed to read column '" + col.name + "': " + std::string(err_msg));
-            }
-            
-            result[col.name] = nb::cast(tensor);
         }
         
         return result;
 
+    }
+
+    // Memory-mapped column reading
+    // Returns a dict of column name to torch::Tensor (or numpy array for strings)
+    nb::dict read_columns_mmap(
+        const std::vector<std::string>& column_names = {},
+        long start_row = 1, long num_rows = -1) {
+        
+        if (num_rows == -1) {
+            num_rows = nrows_;
+        }
+        
+        // Validate rows
+        if (start_row < 1 || start_row > nrows_) {
+            throw std::runtime_error("Invalid start row");
+        }
+        if (start_row + num_rows - 1 > nrows_) {
+            num_rows = nrows_ - start_row + 1;
+        }
+        
+        std::vector<int> col_indices;
+        if (column_names.empty()) {
+            for (int i = 0; i < ncols_; i++) col_indices.push_back(i);
+        } else {
+            for (const auto& name : column_names) {
+                bool found = false;
+                for (int i = 0; i < ncols_; i++) {
+                    if (columns_[i].name == name) {
+                        col_indices.push_back(i);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) throw std::runtime_error("Column not found: " + name);
+            }
+        }
+        
+        // Get offset to the start of the table data
+        LONGLONG headstart, data_offset, dataend;
+        int status = 0;
+        fits_get_hduaddrll(fptr_, &headstart, &data_offset, &dataend, &status);
+        if (status != 0) {
+             char err_msg[81];
+             fits_get_errstatus(status, err_msg);
+             throw std::runtime_error("Failed to get HDU data offset: " + std::string(err_msg));
+        }
+        
+        // Open file with mmap
+        int fd = open(filename_.c_str(), O_RDONLY);
+        if (fd == -1) {
+            throw std::runtime_error("Failed to open file for mmap");
+        }
+        
+        // Get file size
+        struct stat sb;
+        if (fstat(fd, &sb) == -1) {
+            close(fd);
+            throw std::runtime_error("Failed to stat file");
+        }
+        
+        // Map the whole file
+        void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+        if (map_ptr == MAP_FAILED) {
+            close(fd);
+            throw std::runtime_error("Failed to mmap file");
+        }
+        
+        // Create MMapHandle to manage lifetime
+        auto handle = new MMapHandle();
+        handle->ptr = map_ptr;
+        handle->size = sb.st_size;
+        handle->fd = fd;
+        handle->owner = true;
+        
+        // Create a capsule to manage the handle lifetime
+        nb::capsule handle_capsule(handle, [](void* p) noexcept {
+            auto* h = static_cast<MMapHandle*>(p);
+            delete h; // Destructor calls cleanup()
+        });
+        
+        nb::dict result;
+        const uint8_t* base_ptr = static_cast<const uint8_t*>(map_ptr) + data_offset;
+        
+        // Calculate start offset based on start_row (0-based offset)
+        size_t row_start_offset = (start_row - 1) * row_width_bytes_;
+        
+        for (int col_idx : col_indices) {
+            const auto& col = columns_[col_idx];
+            
+            if (col.type == FITSColumnType::VARIABLE) {
+                continue; 
+            }
+            
+            // Pointer to start of column data for the first requested row
+            const uint8_t* col_ptr = base_ptr + row_start_offset + col.byte_offset;
+            
+            // Determine shape
+            std::vector<int64_t> shape;
+            shape.push_back(num_rows);
+            
+            if (col.type == FITSColumnType::STRING) {
+                // For strings, we return a ByteTensor of shape (num_rows, width)
+                // width is the string length (col.width)
+                shape.push_back(col.width);
+            } else if (col.repeat > 1) {
+                shape.push_back(col.repeat);
+            }
+            
+            try {
+                // Create Torch Tensor and copy/swap
+                torch::ScalarType dtype;
+                switch (col.type) {
+                    case FITSColumnType::FLOAT: dtype = torch::kFloat32; break;
+                    case FITSColumnType::DOUBLE: dtype = torch::kFloat64; break;
+                    case FITSColumnType::INT: dtype = torch::kInt32; break;
+                    case FITSColumnType::SHORT: dtype = torch::kInt16; break;
+                    case FITSColumnType::LONG: dtype = torch::kInt64; break;
+                    case FITSColumnType::BYTE: dtype = torch::kUInt8; break;
+                    case FITSColumnType::LOGICAL: dtype = torch::kBool; break;
+                    case FITSColumnType::STRING: dtype = torch::kUInt8; break;
+                    default: dtype = torch::kFloat32;
+                }
+                
+                auto options = torch::TensorOptions().dtype(dtype);
+                torch::Tensor tensor = torch::empty(shape, options);
+                
+                // Parallel copy and swap
+                long repeat = (col.repeat > 1) ? col.repeat : 1;
+                if (col.type == FITSColumnType::STRING) repeat = col.width; // String length
+                
+                if (col.type == FITSColumnType::FLOAT) {
+                    float* out = tensor.data_ptr<float>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                            float* row_out = out + i * repeat;
+                            for (long j = 0; j < repeat; j++) {
+                                int32_t val = bswap_32(in[j]);
+                                memcpy(&row_out[j], &val, sizeof(float));
+                            }
+                        }
+                    });
+                } else if (col.type == FITSColumnType::DOUBLE) {
+                    double* out = tensor.data_ptr<double>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                            double* row_out = out + i * repeat;
+                            for (long j = 0; j < repeat; j++) {
+                                int64_t val = bswap_64(in[j]);
+                                memcpy(&row_out[j], &val, sizeof(double));
+                            }
+                        }
+                    });
+                } else if (col.type == FITSColumnType::INT) {
+                    int32_t* out = tensor.data_ptr<int32_t>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                            int32_t* row_out = out + i * repeat;
+                            for (long j = 0; j < repeat; j++) {
+                                row_out[j] = bswap_32(in[j]);
+                            }
+                        }
+                    });
+                } else if (col.type == FITSColumnType::SHORT) {
+                    int16_t* out = tensor.data_ptr<int16_t>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
+                            int16_t* row_out = out + i * repeat;
+                            for (long j = 0; j < repeat; j++) {
+                                row_out[j] = bswap_16(in[j]);
+                            }
+                        }
+                    });
+                } else if (col.type == FITSColumnType::LONG) {
+                    int64_t* out = tensor.data_ptr<int64_t>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                            int64_t* row_out = out + i * repeat;
+                            for (long j = 0; j < repeat; j++) {
+                                row_out[j] = bswap_64(in[j]);
+                            }
+                        }
+                    });
+                } else if (col.type == FITSColumnType::BYTE || col.type == FITSColumnType::STRING) {
+                    uint8_t* out = tensor.data_ptr<uint8_t>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const uint8_t* in = (const uint8_t*)(col_ptr + i * row_width_bytes_);
+                            uint8_t* row_out = out + i * repeat;
+                            memcpy(row_out, in, repeat);
+                        }
+                    });
+                } else if (col.type == FITSColumnType::LOGICAL) {
+                    bool* out = tensor.data_ptr<bool>();
+                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                        for (long i = start; i < end; i++) {
+                            const char* in = (const char*)(col_ptr + i * row_width_bytes_);
+                            bool* row_out = out + i * repeat; // repeat is usually 1 for logical
+                            for (long j = 0; j < repeat; j++) {
+                                row_out[j] = (in[j] == 'T');
+                            }
+                        }
+                    });
+                }
+                
+                result[col.name.c_str()] = tensor_to_python(tensor);
+                
+            } catch (const std::exception& e) {
+                 #ifdef DEBUG_TABLE
+                 fprintf(stderr, "Failed to mmap column %s: %s\n", col.name.c_str(), e.what());
+                 #endif
+            }
+        }
+        
+        // No need to store handle anymore as we copy everything
+        // result["__mmap_handle__"] = handle_capsule;
+        
+        return result;
     }
     
     std::vector<std::string> get_column_names() const {
@@ -794,6 +726,210 @@ public:
         return names;
     }
     
+    // Read a Variable Length Array column
+    // Returns a list of tensors (one per row)
+    std::vector<torch::Tensor> read_vla_column(int col_idx, long start_row, long num_rows, const ColumnInfo& col) {
+        std::vector<torch::Tensor> column_data;
+        column_data.reserve(num_rows);
+        
+        for (long i = 0; i < num_rows; i++) {
+            long row = start_row + i;
+            
+            // Get descriptor (repeat count and offset)
+            long repeat = 0;
+            long offset = 0;
+            int status = 0;
+            
+            // Note: cfitsio uses 1-based column indices
+            fits_read_descript(fptr_, col_idx + 1, row, &repeat, &offset, &status);
+            
+            if (status != 0) {
+                 char err_msg[81];
+                 fits_get_errstatus(status, err_msg);
+                 throw std::runtime_error("Failed to read VLA descriptor: " + std::string(err_msg));
+            }
+            
+            // Allocate tensor for this row
+            std::vector<int64_t> shape;
+            if (col.width > 1 && col.type != FITSColumnType::STRING) {
+                 // If elements themselves are multi-dimensional? 
+                 // FITS VLA is usually 1D array of elements.
+                 // But if TFORM has repeat count?
+                 // For VLA, repeat count from descriptor is the number of elements.
+                 shape.push_back(repeat);
+            } else {
+                 shape.push_back(repeat);
+            }
+            
+            torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
+            
+            // Read data from heap
+            int anynul;
+            status = 0;
+            
+            // Determine type code for cfitsio
+            int type_code = 0;
+            switch (col.torch_type) {
+                case torch::kFloat32: type_code = TFLOAT; break;
+                case torch::kFloat64: type_code = TDOUBLE; break;
+                case torch::kInt32: type_code = TINT; break;
+                case torch::kInt16: type_code = TSHORT; break;
+                case torch::kInt64: type_code = TLONGLONG; break;
+                case torch::kUInt8: type_code = TBYTE; break;
+                case torch::kBool: type_code = TLOGICAL; break;
+                default: type_code = TFLOAT;
+            }
+            
+            fits_read_col(fptr_, type_code, col_idx + 1, row, 1, repeat, nullptr, 
+                          tensor.data_ptr(), &anynul, &status);
+                          
+            if (status != 0) {
+                 char err_msg[81];
+                 fits_get_errstatus(status, err_msg);
+                 throw std::runtime_error("Failed to read VLA data: " + std::string(err_msg));
+            }
+            
+            column_data.push_back(tensor);
+        }
+        
+        return column_data;
+    }
+
+    // Forward declaration of helper function
+    // nb::object tensor_to_python(const torch::Tensor& tensor); // Cannot declare inside class
+    // torch::Tensor python_to_tensor(nb::object obj);
+    
+    // We need to call tensor_to_python which is defined in bindings.cpp
+    // But we are in a header-only file included by bindings.cpp
+    // So we can just declare it extern?
+    // No, bindings.cpp includes table.cpp.
+    // So if we declare it at top of table.cpp, it should work.
+    
+    // Let's remove the duplicate get_column_names first.
+    
+    // Buffered reading implementation
+    void read_columns_buffered(
+        const std::vector<int>& col_indices,
+        long start_row, long num_rows,
+        std::unordered_map<std::string, ColumnData>& result) {
+        
+        // 16MB chunk size
+        const size_t TARGET_CHUNK_SIZE = 16 * 1024 * 1024; 
+        long rows_per_chunk = std::max(1L, (long)(TARGET_CHUNK_SIZE / row_width_bytes_));
+        
+        std::vector<uint8_t> buffer(rows_per_chunk * row_width_bytes_);
+        
+        long rows_read = 0;
+        while (rows_read < num_rows) {
+            long current_chunk_rows = std::min(rows_per_chunk, num_rows - rows_read);
+            
+            int status = 0;
+            // Read raw bytes for the chunk of rows
+            fits_read_tblbytes(fptr_, start_row + rows_read, 1, current_chunk_rows * row_width_bytes_,
+                             buffer.data(), &status);
+            
+            if (status != 0) {
+                 char err_msg[81];
+                 fits_get_errstatus(status, err_msg);
+                 throw std::runtime_error("Failed to read table bytes: " + std::string(err_msg));
+            }
+            
+            // De-interleave data for each column
+            for (int col_idx : col_indices) {
+                const auto& col = columns_[col_idx];
+                // Get tensor from ColumnData
+                torch::Tensor tensor = result[col.name].fixed_data;
+                
+                // Get pointer to tensor data at current offset
+                uint8_t* dest_ptr = (uint8_t*)get_tensor_data_ptr(tensor, rows_read * col.repeat);
+                
+                // Extract and swap bytes
+                extract_column_data(buffer.data(), current_chunk_rows, col, dest_ptr);
+            }
+            
+            rows_read += current_chunk_rows;
+        }
+    }
+    
+    void* get_tensor_data_ptr(torch::Tensor& tensor, long offset) {
+        switch (tensor.scalar_type()) {
+            case torch::kBool: return tensor.data_ptr<bool>() + offset;
+            case torch::kUInt8: return tensor.data_ptr<uint8_t>() + offset;
+            case torch::kInt16: return tensor.data_ptr<int16_t>() + offset;
+            case torch::kInt32: return tensor.data_ptr<int32_t>() + offset;
+            case torch::kInt64: return tensor.data_ptr<int64_t>() + offset;
+            case torch::kFloat32: return tensor.data_ptr<float>() + offset;
+            case torch::kFloat64: return tensor.data_ptr<double>() + offset;
+            default: throw std::runtime_error("Unsupported tensor type");
+        }
+    }
+
+    void extract_column_data(const uint8_t* buffer, long num_rows, const ColumnInfo& col, uint8_t* dest) {
+        size_t col_width = col.width; // bytes per element
+        size_t total_width = col.width * col.repeat; // bytes per cell
+        size_t row_stride = row_width_bytes_;
+        size_t col_offset = col.byte_offset;
+        
+        // Optimized loops for common types
+        // Note: FITS is Big Endian, we need to swap if host is Little Endian
+        // Assuming Little Endian host (x86/ARM)
+        
+        if (col.type == FITSColumnType::STRING || col.type == FITSColumnType::BYTE || col.type == FITSColumnType::LOGICAL) {
+             // No swapping needed for bytes/strings
+             for (long i = 0; i < num_rows; i++) {
+                 std::memcpy(dest + i * total_width, buffer + i * row_stride + col_offset, total_width);
+             }
+        } else if (col_width == 2) {
+            // Int16
+            uint16_t* d = (uint16_t*)dest;
+            for (long i = 0; i < num_rows * col.repeat; i++) {
+                // Need to handle repeat stride if repeat > 1
+                // Actually, buffer layout is: [Row1][Row2]...
+                // Row1: ... [ColData] ...
+                // ColData: [Elem1][Elem2]...
+                // So we can just copy the block if we handle stride correctly.
+                // But wait, we need to iterate rows.
+            }
+            
+            for (long i = 0; i < num_rows; i++) {
+                const uint8_t* src_cell = buffer + i * row_stride + col_offset;
+                uint16_t* dest_cell = (uint16_t*)(dest + i * total_width);
+                for (int j = 0; j < col.repeat; j++) {
+                    uint16_t val;
+                    std::memcpy(&val, src_cell + j * 2, 2);
+                    dest_cell[j] = __builtin_bswap16(val);
+                }
+            }
+        } else if (col_width == 4) {
+            // Int32, Float32
+            for (long i = 0; i < num_rows; i++) {
+                const uint8_t* src_cell = buffer + i * row_stride + col_offset;
+                uint32_t* dest_cell = (uint32_t*)(dest + i * total_width);
+                for (int j = 0; j < col.repeat; j++) {
+                    uint32_t val;
+                    std::memcpy(&val, src_cell + j * 4, 4);
+                    dest_cell[j] = __builtin_bswap32(val);
+                }
+            }
+        } else if (col_width == 8) {
+            // Int64, Double
+            for (long i = 0; i < num_rows; i++) {
+                const uint8_t* src_cell = buffer + i * row_stride + col_offset;
+                uint64_t* dest_cell = (uint64_t*)(dest + i * total_width);
+                for (int j = 0; j < col.repeat; j++) {
+                    uint64_t val;
+                    std::memcpy(&val, src_cell + j * 8, 8);
+                    dest_cell[j] = __builtin_bswap64(val);
+                }
+            }
+        } else {
+            // Fallback memcpy (should not happen for standard types needing swap)
+             for (long i = 0; i < num_rows; i++) {
+                 std::memcpy(dest + i * total_width, buffer + i * row_stride + col_offset, total_width);
+             }
+        }
+    }
+    
     long get_num_rows() const { return nrows_; }
     int get_num_cols() const { return ncols_; }
 
@@ -801,8 +937,9 @@ private:
     fitsfile* fptr_ = nullptr;
     std::string filename_;
     int hdu_num_;
-    long nrows_ = 0;
-    int ncols_ = 0;
+    long nrows_;
+    int ncols_;
+    long row_width_bytes_ = 0;
     std::vector<ColumnInfo> columns_;
 };
 
@@ -889,8 +1026,8 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     int num_cols = tensor_dict.size();
     long num_rows = 0;
     if (num_cols > 0) {
-        auto first_col = nb::cast<torch::Tensor>((*tensor_dict.begin()).second);
-        num_rows = first_col.size(0);
+        auto first_col = nb::cast<nb::ndarray<>>((*tensor_dict.begin()).second);
+        num_rows = first_col.shape(0);
     }
 
     char** ttype = new char*[num_cols];
@@ -900,25 +1037,32 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     int i = 0;
     for (auto item : tensor_dict) {
         std::string col_name = nb::cast<std::string>(item.first);
-        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
+        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
 
         ttype[i] = new char[col_name.length() + 1];
         strncpy(ttype[i], col_name.c_str(), col_name.length());
         ttype[i][col_name.length()] = '\0';
 
         std::string form;
-        if (tensor.dtype() == torch::kUInt8) {
+        nb::dlpack::dtype dt = tensor.dtype();
+        
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
             form = "B";
-        } else if (tensor.dtype() == torch::kInt16) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
             form = "I";
-        } else if (tensor.dtype() == torch::kInt32) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
             form = "J";
-        } else if (tensor.dtype() == torch::kFloat32) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
             form = "E";
-        } else if (tensor.dtype() == torch::kFloat64) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
             form = "D";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
+             // FITS 'K' is 64-bit int
+             form = "K";
         } else {
-            throw std::runtime_error("Unsupported tensor data type");
+            // Check for boolean (often uint8 in numpy/torch but might be distinct)
+            // For now assume unsupported if not matched above
+            throw std::runtime_error("Unsupported tensor data type code=" + std::to_string(dt.code) + " bits=" + std::to_string(dt.bits));
         }
 
         tform[i] = new char[form.length() + 1];
@@ -935,19 +1079,23 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
 
     i = 0;
     for (auto item : tensor_dict) {
-        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
-        void* data_ptr = tensor.data_ptr();
+        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
+        void* data_ptr = tensor.data();
         int fits_type;
-        if (tensor.dtype() == torch::kUInt8) {
+        nb::dlpack::dtype dt = tensor.dtype();
+        
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
             fits_type = TBYTE;
-        } else if (tensor.dtype() == torch::kInt16) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
             fits_type = TSHORT;
-        } else if (tensor.dtype() == torch::kInt32) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
             fits_type = TINT;
-        } else if (tensor.dtype() == torch::kFloat32) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
             fits_type = TFLOAT;
-        } else if (tensor.dtype() == torch::kFloat64) {
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
             fits_type = TDOUBLE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
+            fits_type = TLONGLONG;
         }
 
         fits_write_col(fptr, fits_type, i + 1, 1, 1, num_rows, data_ptr, &status);

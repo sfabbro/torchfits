@@ -39,13 +39,14 @@ class ExhaustiveBenchmarkSuite:
     """
     Exhaustive benchmark suite for torchfits covering all use cases.
     """
-    def __init__(self, output_dir: Optional[Path] = None):
+    def __init__(self, output_dir: Optional[Path] = None, use_mmap: bool = False):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="torchfits_exhaustive_"))
         self.output_dir = output_dir or Path("benchmark_results")
         self.output_dir.mkdir(exist_ok=True)
         self.results = {}
         self.csv_file = self.output_dir / "exhaustive_results.csv"
         self.summary_file = self.output_dir / "exhaustive_summary.md"
+        self.use_mmap = use_mmap
         
         # Test configurations
         self.data_types = {
@@ -166,14 +167,14 @@ class ExhaustiveBenchmarkSuite:
         # Comprehensive table configurations matching benchmark_table_comprehensive.py
         table_configs = [
             # Basic configurations
-            {'nrows': 1000, 'ncols': 5, 'types': ['f4'] * 5, 'name': 'basic_float'},
-            {'nrows': 10000, 'ncols': 10, 'types': ['f4'] * 5 + ['i4'] * 5, 'name': 'mixed_basic'},
-            {'nrows': 100000, 'ncols': 20, 'types': ['f4'] * 10 + ['i4'] * 5 + ['f8'] * 5, 'name': 'mixed_medium'},
+            {'nrows': 1000, 'ncols': 7, 'types': ['f4'] * 5 + ['S10', 'bool'], 'name': 'basic_mixed'},
+            {'nrows': 10000, 'ncols': 12, 'types': ['f4'] * 5 + ['i4'] * 5 + ['S8', 'bool'], 'name': 'mixed_basic'},
+            {'nrows': 100000, 'ncols': 22, 'types': ['f4'] * 10 + ['i4'] * 5 + ['f8'] * 5 + ['S16', 'bool'], 'name': 'mixed_medium'},
             
             # Astronomical catalog configurations
-            {'nrows': 10000, 'ncols': 15, 'types': ['f8'] * 6 + ['f4'] * 6 + ['i4'] * 3, 'name': 'astrometry_catalog'},
-            {'nrows': 50000, 'ncols': 25, 'types': ['f8'] * 10 + ['f4'] * 10 + ['i4'] * 5, 'name': 'photometry_catalog'},
-            {'nrows': 100000, 'ncols': 50, 'types': ['f4'] * 30 + ['f8'] * 10 + ['i4'] * 10, 'name': 'survey_catalog'},
+            {'nrows': 10000, 'ncols': 17, 'types': ['f8'] * 6 + ['f4'] * 6 + ['i4'] * 3 + ['S12', 'bool'], 'name': 'astrometry_catalog'},
+            {'nrows': 50000, 'ncols': 27, 'types': ['f8'] * 10 + ['f4'] * 10 + ['i4'] * 5 + ['S20', 'bool'], 'name': 'photometry_catalog'},
+            {'nrows': 100000, 'ncols': 52, 'types': ['f4'] * 30 + ['f8'] * 10 + ['i4'] * 10 + ['S32', 'bool'], 'name': 'survey_catalog'},
         ]
         
         for config in table_configs:
@@ -199,9 +200,10 @@ class ExhaustiveBenchmarkSuite:
                         data[col_name] = np.random.randint(-1000000, 1000000, nrows, dtype=np.int64)
                 elif dtype == 'bool':
                     data[col_name] = np.random.choice([True, False], nrows)
-                elif dtype.startswith('U'):  # string types
+                elif dtype.startswith('U') or dtype.startswith('S'):  # string types
                     str_len = int(dtype[1:]) if len(dtype) > 1 else 10
-                    data[col_name] = [f'str_{j:0{min(str_len-4, 6)}d}' for j in range(nrows)]
+                    # Create fixed length strings
+                    data[col_name] = np.array([f's{j:0{min(str_len-1, 6)}d}'[:str_len] for j in range(nrows)], dtype=f'S{str_len}')
             
             # Create FITS table using astropy
             from astropy.table import Table
@@ -327,6 +329,7 @@ class ExhaustiveBenchmarkSuite:
         csv_headers = [
             'filename', 'file_type', 'size_mb', 'data_type', 'dimensions', 'compression',
             'torchfits_mean', 'torchfits_std', 'torchfits_memory', 'torchfits_peak_memory',
+            'torchfits_mmap_mean', 'torchfits_mmap_std', 'torchfits_mmap_memory', 'torchfits_mmap_peak_memory',
             'astropy_mean', 'astropy_std', 'astropy_memory', 'astropy_peak_memory',
             'fitsio_mean', 'fitsio_std', 'fitsio_memory', 'fitsio_peak_memory',
             'astropy_torch_mean', 'astropy_torch_std', 'astropy_torch_memory', 'astropy_torch_peak_memory',
@@ -336,10 +339,15 @@ class ExhaustiveBenchmarkSuite:
         
         detailed_results = []
         
-        for name, filepath in sorted(files.items()):
-            result = self._benchmark_single_file(name, filepath)
-            if result:
-                detailed_results.append(result)
+        for name, filepath in files.items():
+            try:
+                result = self._benchmark_single_file(name, filepath)
+                if result:
+                    detailed_results.append(result)
+            except Exception as e:
+                print(f"❌ Benchmark failed for {name}: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Write CSV results
         with open(self.csv_file, 'w', newline='') as f:
@@ -376,14 +384,18 @@ class ExhaustiveBenchmarkSuite:
         methods = {}
         
         # Always test torchfits
-        methods['torchfits'] = lambda: torchfits.read(str(filepath), hdu=hdu_num)
+        methods['torchfits'] = lambda: torchfits.read(str(filepath), hdu=hdu_num, mmap=self.use_mmap)
+        
+        # Test torchfits mmap explicitly for tables
+        if file_type == 'table':
+            methods['torchfits_mmap'] = lambda: torchfits.read(str(filepath), hdu=hdu_num, mmap=True)
         
         # Test astropy if available
         methods['astropy'] = lambda: self._astropy_read(filepath, hdu_num)
         methods['astropy_torch'] = lambda: self._astropy_to_torch(filepath, hdu_num)
         
         # Test fitsio if available  
-        methods['fitsio'] = lambda: fitsio.read(str(filepath), ext=hdu_num)
+        methods['fitsio'] = lambda: fitsio.read(str(filepath), ext=hdu_num) # fitsio uses mmap by default usually? Or we can't control it easily here.
         methods['fitsio_torch'] = lambda: self._fitsio_to_torch(filepath, hdu_num)
         
         # Run benchmarks
@@ -531,7 +543,7 @@ class ExhaustiveBenchmarkSuite:
     
     def _astropy_read(self, filepath: Path, hdu_num: int):
         """Pure astropy read - handles both images and tables."""
-        with astropy_fits.open(filepath, memmap=False) as hdul:
+        with astropy_fits.open(filepath, memmap=self.use_mmap) as hdul:
             hdu = hdul[hdu_num]
             if hasattr(hdu, 'data') and hdu.data is not None:
                 if isinstance(hdu, astropy_fits.BinTableHDU):
@@ -545,7 +557,7 @@ class ExhaustiveBenchmarkSuite:
     
     def _astropy_to_torch(self, filepath: Path, hdu_num: int):
         """Astropy read + torch conversion - handles both images and tables."""
-        with astropy_fits.open(filepath, memmap=False) as hdul:
+        with astropy_fits.open(filepath, memmap=self.use_mmap) as hdul:
             hdu = hdul[hdu_num]
             if hasattr(hdu, 'data') and hdu.data is not None:
                 if isinstance(hdu, astropy_fits.BinTableHDU):
@@ -557,9 +569,23 @@ class ExhaustiveBenchmarkSuite:
                         if col_data.dtype.byteorder not in ('=', '|'):
                             col_data = col_data.astype(col_data.dtype.newbyteorder('='))
                         try:
-                            result[col] = torch.from_numpy(col_data)
+                            if col_data.dtype.kind in ('S', 'U'):
+                                # Convert strings to uint8 tensor
+                                if col_data.dtype.kind == 'U':
+                                    col_data = np.char.encode(col_data, 'ascii')
+                                # View as uint8
+                                # Need to ensure contiguous
+                                col_data = np.ascontiguousarray(col_data)
+                                # View as uint8 (shape will be (rows, len))
+                                col_data = col_data.view('uint8').reshape(len(col_data), -1)
+                                result[col] = torch.from_numpy(col_data)
+                            elif col_data.dtype.kind == 'b':
+                                # Boolean
+                                result[col] = torch.from_numpy(col_data.astype(bool))
+                            else:
+                                result[col] = torch.from_numpy(col_data)
                         except:
-                            # Skip problematic columns (e.g., strings)
+                            # Skip problematic columns
                             continue
                     return result
                 else:
@@ -572,8 +598,13 @@ class ExhaustiveBenchmarkSuite:
     
     def _fitsio_to_torch(self, filepath: Path, hdu_num: int):
         """Fitsio read + torch conversion."""
-        np_data = fitsio.read(str(filepath), ext=hdu_num)
-        return torch.from_numpy(np_data)
+        try:
+            np_data = fitsio.read(str(filepath), ext=hdu_num)
+            if np_data is None:
+                return None
+            return torch.from_numpy(np_data)
+        except Exception:
+            return None
     
     def generate_plots(self, results: List[Dict]):
         """Generate comprehensive plots from benchmark results."""
@@ -788,6 +819,43 @@ class ExhaustiveBenchmarkSuite:
             f.write(f"- Total test files: {len(results)}\n")
             f.write(f"- File types tested: {', '.join(sorted(df['file_type'].unique()))}\n")
             f.write(f"- Data types tested: {', '.join(sorted(df['data_type'].unique()))}\n")
+            f.write(f"- MMap enabled: {self.use_mmap}\n\n")
+            
+            # Performance Summary Table
+            f.write("## Performance Summary (Ratio vs TorchFits)\n\n")
+            f.write("| File | Type | Size (MB) | TorchFits (s) | Astropy (x) | Fitsio (x) | Best |\n")
+            f.write("|---|---|---|---|---|---|---|\n")
+            
+            for r in results:
+                name = r['filename']
+                ftype = r['file_type']
+                size = f"{r['size_mb']:.2f}"
+                
+                tf_mean = r.get('torchfits_mean')
+                if tf_mean is None:
+                    tf_str = "FAIL"
+                    astro_ratio = "-"
+                    fitsio_ratio = "-"
+                else:
+                    tf_str = f"{tf_mean:.4f}"
+                    
+                    astro_mean = r.get('astropy_mean')
+                    if astro_mean:
+                        astro_ratio = f"{astro_mean / tf_mean:.2f}x"
+                    else:
+                        astro_ratio = "-"
+                        
+                    fitsio_mean = r.get('fitsio_mean')
+                    if fitsio_mean:
+                        fitsio_ratio = f"{fitsio_mean / tf_mean:.2f}x"
+                    else:
+                        fitsio_ratio = "-"
+                
+                best = r.get('best_method', '-')
+                
+                f.write(f"| {name} | {ftype} | {size} | {tf_str} | {astro_ratio} | {fitsio_ratio} | {best} |\n")
+            
+            f.write("\n")
             f.write(f"- Dimensions tested: {', '.join(sorted(df['dimensions'].unique()))}\n")
             f.write(f"- Compression types: {', '.join(sorted(df['compression'].unique()))}\n")
             f.write("\n")
@@ -958,6 +1026,50 @@ class ExhaustiveBenchmarkSuite:
                 print(f"⚠️  Cache benchmarks failed: {result.stderr}")
         except Exception as e:
             print(f"⚠️  Cache benchmarks not available: {e}")
+
+    def run_phase3_benchmarks(self):
+        """Run Phase 3 benchmarks (Scaled Data & Parallel I/O)."""
+        print("\n🚀 Running Phase 3 Benchmarks (Scaled & Parallel)...")
+        import subprocess
+        
+        # Scaled Data
+        try:
+            print("  Running Scaled Data Benchmark...")
+            result = subprocess.run([sys.executable, "benchmark_scaled.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("  ✅ Scaled Data Benchmark Passed")
+                print(result.stdout)
+            else:
+                print(f"  ⚠️  Scaled Data Benchmark Failed: {result.stderr}")
+        except Exception as e:
+            print(f"  ⚠️  Scaled Data Benchmark Error: {e}")
+            
+        # Parallel I/O
+        try:
+            print("  Running Parallel I/O Benchmark...")
+            result = subprocess.run([sys.executable, "benchmark_parallel.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("  ✅ Parallel I/O Benchmark Passed")
+                print(result.stdout)
+            else:
+                print(f"  ⚠️  Parallel I/O Benchmark Failed: {result.stderr}")
+        except Exception as e:
+            print(f"  ⚠️  Parallel I/O Benchmark Error: {e}")
+
+        # MMap & Safety
+        try:
+            print("  Running MMap & Safety Benchmark...")
+            result = subprocess.run([sys.executable, "benchmark_mmap.py"], 
+                                  capture_output=True, text=True, cwd=Path(__file__).parent)
+            if result.returncode == 0:
+                print("  ✅ MMap & Safety Benchmark Passed")
+                print(result.stdout)
+            else:
+                print(f"  ⚠️  MMap & Safety Benchmark Failed: {result.stderr}")
+        except Exception as e:
+            print(f"  ⚠️  MMap & Safety Benchmark Error: {e}")
     
     def run_full_suite(self):
         """Run the complete exhaustive benchmark suite."""
@@ -973,6 +1085,9 @@ class ExhaustiveBenchmarkSuite:
             
             # Run additional feature benchmarks
             self.run_additional_benchmarks()
+            
+            # Run Phase 3 benchmarks
+            self.run_phase3_benchmarks()
             
             # Generate visualizations
             self.generate_plots(results)
@@ -993,23 +1108,19 @@ class ExhaustiveBenchmarkSuite:
 
 
 def main():
-    """Main entry point."""
     import argparse
-
-    parser = argparse.ArgumentParser(description='Exhaustive torchfits benchmark suite')
-    parser.add_argument('--output-dir', type=Path, default=Path('benchmark_results'),
-                        help='Output directory for results')
-    parser.add_argument('--no-cleanup', action='store_true',
-                        help='Keep temporary files for debugging')
-
+    parser = argparse.ArgumentParser(description="Run exhaustive torchfits benchmarks")
+    parser.add_argument("--output-dir", type=Path, default=Path("benchmark_results"), help="Output directory")
+    parser.add_argument("--mmap", action="store_true", help="Enable memory mapping")
+    parser.add_argument("--no-cleanup", action="store_true", help="Keep temporary files")
     args = parser.parse_args()
-
-    suite = ExhaustiveBenchmarkSuite(output_dir=args.output_dir)
-
+    
+    suite = ExhaustiveBenchmarkSuite(output_dir=args.output_dir, use_mmap=args.mmap)
+    
     if args.no_cleanup:
-        # Override cleanup method
+        # Override cleanup method (monkey patch)
         suite.cleanup = lambda: print(f"Temporary files kept in: {suite.temp_dir}")
-
+        
     suite.run_full_suite()
 
 if __name__ == "__main__":

@@ -96,7 +96,7 @@ class TestPerformance:
             
             # Test batch reading performance
             start_time = time.time()
-            results = torchfits.read_batch(files, max_workers=4)
+            results = torchfits.read_batch(files) # Removed max_workers
             batch_time = time.time() - start_time
             
             assert len(results) == 5
@@ -191,7 +191,8 @@ class TestPerformance:
             subset, _ = torchfits.read(filepath + "[0][1000:2000,1000:2000]")
             subset_time = time.time() - start_time
             
-            assert subset.shape == (1000, 1000)
+            # FITS slicing is 1-based inclusive, so 1000:2000 is 1001 elements
+            assert subset.shape == (1001, 1001) 
             # Subset should be much faster than full image
             assert subset_time < 5.0  # 5 seconds max for 1k x 1k subset
             

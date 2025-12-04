@@ -29,6 +29,7 @@ from .transforms import (
 from .buffer import configure_buffers, get_buffer_stats, clear_buffers
 from .core import FITSCore, CompressionType
 from .header_parser import fast_parse_header
+from .frame import to_tensor_frame, read_tensor_frame, write_tensor_frame
 
 
 
@@ -47,6 +48,7 @@ __all__ = [
     "read_batch", "get_batch_info", "get_cache_performance", "clear_file_cache", "read_large_table",
     # HDU classes
     "HDUList", "TensorHDU", "TableHDU", "Header",
+    "HDU", "PrimaryHDU", "ImageHDU", "BinTableHDU",
     # WCS functionality
     "WCS",
     # Dataset classes
@@ -63,8 +65,25 @@ __all__ = [
     "fast_parse_header",
     # Utility functions
     "configure_for_environment", "get_cache_stats", "clear_cache",
-    "configure_buffers", "get_buffer_stats", "clear_buffers"
+    "configure_buffers", "get_buffer_stats", "clear_buffers",
+    # Vertical Slice
+    "read_image_fast_int16",
+    # Phase 2
+    "read_image_fast_new",
+    # Integration
+    "to_tensor_frame", "read_tensor_frame", "write_tensor_frame",
+    "to_pandas",
+    "to_arrow"
 ]
+
+# Import C++ extension functions
+try:
+    from .cpp import read_image_fast_int16, read_image_fast_new
+except ImportError:
+    def read_image_fast_int16(*args, **kwargs):
+        raise ImportError("C++ extension not loaded correctly")
+    def read_image_fast_new(*args, **kwargs):
+        raise ImportError("C++ extension not loaded correctly")
 
 def _read_header_fast(file_handle, hdu_index: int, fast_header: bool = True):
     """Read header using fast bulk parsing or fallback to slow method."""
@@ -135,12 +154,24 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     _cache_stats['total_requests'] += 1
 
     # Use tuple for cache key (faster than f-string)
-    cache_key = (path, hdu, device, fp16, bf16, columns, start_row, num_rows)
+    cache_key = (path, hdu, device, fp16, bf16, tuple(columns) if columns else None, start_row, num_rows)
     if cache_key in _file_cache:
         _cache_stats['hits'] += 1
         cached_data, cached_header = _file_cache[cache_key]
-        if isinstance(cached_data, torch.Tensor) and device != 'cpu':
-            cached_data = cached_data.to(device)
+        
+        if device != 'cpu':
+            if isinstance(cached_data, torch.Tensor):
+                cached_data = cached_data.to(device)
+            elif isinstance(cached_data, dict):
+                # Move tensors in dict to device
+                new_data = {}
+                for k, v in cached_data.items():
+                    if isinstance(v, torch.Tensor):
+                        new_data[k] = v.to(device)
+                    else:
+                        new_data[k] = v
+                cached_data = new_data
+                
         return cached_data, cached_header
     else:
         _cache_stats['misses'] += 1
@@ -172,7 +203,7 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
 
             # Try reading as IMAGE first (for slow path)
             try:
-                data = cpp.read_full(file_handle, hdu_num)
+                data = cpp.read_full(file_handle, hdu_num, mmap)
 
                 # Apply precision conversion
                 if fp16:
@@ -191,44 +222,51 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                 return data, header
 
             except (RuntimeError, TypeError):
-                # Not an image, read as table using astropy
-                from astropy.io import fits as astropy_fits
-                with astropy_fits.open(path) as hdul:
-                    table_data = {}
-                    column_names = columns if columns else [col.name for col in hdul[hdu_num].columns]
+                # Not an image, read as table using C++ backend
+                try:
+                    # table_result = cpp.read_fits_table_from_handle(file_handle, hdu_num)
+                    # Pass columns and mmap flag to C++ reader
+                    col_list = columns if columns else []
+                    table_result = cpp.read_fits_table(path, hdu_num, col_list, mmap)
+                    
+                    # table_result is the dictionary of tensors directly
+                    table_data = table_result
+                    
+                    # If columns were passed to C++, filtering is already done.
+                    # But if columns was None, we got all columns.
+                    # If columns was not None, we got only requested columns.
+                    
+                    # Handle row slicing if needed (though C++ reader reads all by default for now)
+                    # Ideally C++ reader should support slicing, but for now we slice after reading
+                    if start_row > 1 or num_rows != -1:
+                        for k, v in table_data.items():
+                            end_row = start_row + num_rows - 1 if num_rows != -1 else len(v)
+                            # Adjust for 1-based indexing
+                            table_data[k] = v[start_row-1:end_row]
 
-                    for col_name in column_names:
-                        try:
-                            col_data = hdul[hdu_num].data[col_name]
-                            if start_row > 1 or num_rows != -1:
-                                end_row = start_row + num_rows - 1 if num_rows != -1 else len(col_data)
-                                col_data = col_data[start_row-1:end_row]
-
-                            if col_data.dtype.kind in ['U', 'S']:
-                                continue
-
-                            if col_data.dtype.kind in ['i', 'u']:
-                                if col_data.dtype.itemsize <= 1:
-                                    numpy_dtype = np.int8 if col_data.dtype.kind == 'i' else np.uint8
-                                elif col_data.dtype.itemsize <= 2:
-                                    numpy_dtype = np.int16
-                                elif col_data.dtype.itemsize <= 4:
-                                    numpy_dtype = np.int32
-                                else:
-                                    numpy_dtype = np.int64
-                                table_data[col_name] = torch.from_numpy(col_data.astype(numpy_dtype))
-                            else:
-                                if col_data.dtype == np.float64:
-                                    table_data[col_name] = torch.from_numpy(col_data)
-                                else:
-                                    table_data[col_name] = torch.from_numpy(col_data.astype(np.float32))
-                        except Exception as e:
-                            print(f'Warning: Failed to read column {col_name}: {e}')
-                            continue
-
+                    # Cache result (move to CPU for storage)
+                    if device != 'cpu':
+                        # Should already be on CPU from C++ reader, but just in case
+                        # Actually C++ reader returns CPU tensors.
+                        # We store them as is.
+                        pass
+                        
                     _file_cache[cache_key] = (table_data, header)
                     _cache_stats['cache_size'] = len(_file_cache)
+                    
+                    # Move to device if requested (for initial return)
+                    if device != 'cpu':
+                        new_data = {}
+                        for k, v in table_data.items():
+                            if isinstance(v, torch.Tensor):
+                                new_data[k] = v.to(device)
+                            else:
+                                new_data[k] = v
+                        table_data = new_data
+                        
                     return table_data, header
+                except Exception as e:
+                    raise RuntimeError(f"Failed to read table extension: {e}")
 
         finally:
             try:
@@ -255,105 +293,52 @@ def write(path: str, data, header: Header = None, overwrite: bool = False, compr
         raise FileExistsError(f"File '{path}' already exists. Use overwrite=True to overwrite.")
     
     try:
-        # Remove existing file if overwriting
-        if overwrite and os.path.exists(path):
-            os.remove(path)
+        # Import C++ backend
+        import torchfits.cpp as cpp
         
-        # Use astropy for writing until C++ tensor conversion is fixed
-        from astropy.io import fits
+        hdus_to_write = []
+        
+        # Check for table dictionary (col_name -> tensor)
+        if isinstance(data, dict) and 'data' not in data:
+             # Assume table if values are tensors
+             is_table = True
+             for k, v in data.items():
+                 if not isinstance(v, (torch.Tensor, np.ndarray)):
+                     is_table = False
+                     break
+             
+             if is_table:
+                 cpp.write_fits_table(path, data, header if header else {}, overwrite)
+                 return
         
         if isinstance(data, Tensor):
-            # Convert tensor to numpy array
-            numpy_data = data.detach().cpu().numpy()
-            
-            # Create primary HDU
-            hdu = fits.PrimaryHDU(numpy_data)
-            
-            # Add header if provided
+            # Single image HDU
+            hdu_dict = {'data': data}
             if header:
-                for key, value in header.items():
-                    if key not in ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'EXTEND']:
-                        try:
-                            hdu.header[key] = value
-                        except Exception:
-                            pass  # Skip problematic header entries
-            
-            # Write to file
-            hdu.writeto(path, overwrite=overwrite)
+                hdu_dict['header'] = header
+            hdus_to_write.append(hdu_dict)
             
         elif hasattr(data, '__iter__') and not isinstance(data, (str, Tensor)):
-            # Write multiple HDUs
-            hdu_list = []
-            
-            for i, item in enumerate(data):
-                if isinstance(item, dict) and 'data' in item:
-                    item_data = item['data']
-                    item_header = item.get('header', {})
+            # List of HDUs
+            for item in data:
+                if isinstance(item, dict):
+                    # Already a dict (e.g. from previous read)
+                    # Ensure 'data' is present
+                    if 'data' in item:
+                        hdus_to_write.append(item)
                 elif isinstance(item, Tensor):
-                    item_data = item
-                    item_header = {}
-                else:
-                    item_data = item
-                    item_header = {}
-                
-                # Convert to numpy if needed
-                if isinstance(item_data, Tensor):
-                    numpy_data = item_data.detach().cpu().numpy()
-                else:
-                    numpy_data = item_data
-                
-                # Create HDU
-                if i == 0:
-                    hdu = fits.PrimaryHDU(numpy_data)
-                else:
-                    hdu = fits.ImageHDU(numpy_data)
-                
-                # Add header
-                for key, value in item_header.items():
-                    if key not in ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'EXTEND']:
-                        try:
-                            hdu.header[key] = value
-                        except Exception:
-                            pass
-                
-                hdu_list.append(hdu)
-            
-            # Write HDU list
-            hdul = fits.HDUList(hdu_list)
-            hdul.writeto(path, overwrite=overwrite)
-            
+                    hdus_to_write.append({'data': item})
+                # Handle objects with .data attribute (like TensorHDU)
+                elif hasattr(item, 'data') and isinstance(item.data, Tensor):
+                     hdu_dict = {'data': item.data}
+                     if hasattr(item, 'header'):
+                         hdu_dict['header'] = item.header
+                     hdus_to_write.append(hdu_dict)
         else:
             raise ValueError(f"Unsupported data type for FITS writing: {type(data)}")
             
-    except ImportError:
-        # astropy not available, create minimal file
-        if isinstance(data, Tensor):
-            # Create a minimal FITS file
-            with open(path, 'wb') as f:
-                # Write minimal FITS header
-                header_cards = [
-                    'SIMPLE  =                    T / file does conform to FITS standard             ',
-                    'BITPIX  =                  -32 / number of bits per data pixel                  ',
-                    'NAXIS   =                    2 / number of data axes                            ',
-                    f'NAXIS1  =         {data.shape[-1]:>11} / length of data axis 1                         ',
-                    f'NAXIS2  =         {data.shape[-2]:>11} / length of data axis 2                         ',
-                    'END' + ' ' * 77
-                ]
-                
-                # Pad to 2880 bytes (FITS block size)
-                header_str = ''.join(header_cards)
-                header_bytes = header_str.encode('ascii')
-                padding = 2880 - (len(header_bytes) % 2880)
-                if padding < 2880:
-                    header_bytes += b' ' * padding
-                
-                f.write(header_bytes)
-                
-                # Write data (simplified - just write zeros)
-                data_size = data.numel() * 4  # 4 bytes per float32
-                f.write(b'\x00' * data_size)
-        else:
-            raise ValueError(f"Cannot write {type(data)} without astropy")
+        # Call C++ writer
+        cpp.write_fits_file(path, hdus_to_write, overwrite)
             
     except Exception as e:
         # Clean up partial file on error
@@ -464,35 +449,15 @@ def read_large_table(file_path: str, hdu: int = 1, max_memory_mb: int = 100,
         Dictionary with table data
     """
     try:
-        # Use astropy to read table data
-        from astropy.io import fits
+        import torchfits.cpp as cpp
         import os
         
         if not os.path.exists(file_path):
             return {}
         
-        with fits.open(file_path) as hdul:
-            if hdu >= len(hdul):
-                return {}
+        # Use C++ table reader
+        return cpp.read_fits_table(file_path, hdu)
             
-            table_hdu = hdul[hdu]
-            if not hasattr(table_hdu, 'columns') or not hasattr(table_hdu, 'data'):
-                return {}
-            
-            result = {}
-            for col in table_hdu.columns:
-                try:
-                    col_data = table_hdu.data[col.name]
-                    if col_data.dtype.kind not in ['U', 'S']:  # Skip string columns
-                        result[col.name] = col_data.tolist()  # Convert to list for compatibility
-                except Exception:
-                    continue
-            
-            return result
-            
-    except ImportError:
-        # astropy not available
-        return {}
     except Exception:
         return {}
 

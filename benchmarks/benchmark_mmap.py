@@ -1,194 +1,67 @@
-#!/usr/bin/env python3
-"""
-Memory mapping benchmarks comparing torchfits, astropy, and fitsio.
-"""
-
-
-import sys
-import time
-import tempfile
-from pathlib import Path
-import numpy as np
-import torch
-
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 import torchfits
-from astropy.io import fits as astropy_fits
 import fitsio
+import numpy as np
+import timeit
+import os
+import torch
+import psutil
+import gc
 
-def create_test_files():
-    """Create test files of different sizes."""
-    sizes = [
-        (1000, 1000),    # 4MB
-        (2000, 2000),    # 16MB  
-        (4000, 4000),    # 64MB
-        (8000, 8000),    # 256MB
-    ]
+def get_open_fds():
+    process = psutil.Process()
+    return process.num_fds()
+
+def benchmark_mmap():
+    filename = "large_mmap.fits"
+    shape = (4096, 4096) # 16M pixels * 4 bytes = 64MB (not huge but enough to test)
+    dtype = np.float32
     
-    files = {}
-    temp_dir = Path(tempfile.mkdtemp())
+    if not os.path.exists(filename):
+        print(f"Creating {filename} with shape {shape}...")
+        data = np.random.randn(*shape).astype(dtype)
+        fitsio.write(filename, data, clobber=True)
+            
+    print("Benchmarking mmap read...")
     
-    for shape in sizes:
-        data = np.random.randn(*shape).astype(np.float32)
-        filename = temp_dir / f"mmap_test_{shape[0]}x{shape[1]}.fits"
+    initial_fds = get_open_fds()
+    print(f"Initial open FDs: {initial_fds}")
+    
+    def read_torchfits():
+        # Force mmap usage (it's default now for read_image)
+        return torchfits.open(filename)[0].to_tensor()
         
+    def read_fitsio():
+        return fitsio.read(filename)
         
-        astropy_fits.writeto(filename, data, overwrite=True)
-        files[shape] = filename
-        print(f"Created {shape[0]}x{shape[1]} ({data.nbytes/1024**2:.1f}MB): {filename}")
+    # Warmup
+    read_torchfits()
     
-    return files
-
-
-def benchmark_memory_mapping(files):
-    """Benchmark memory mapping vs regular reading."""
-    print("\n" + "="*60)
-    print("MEMORY MAPPING BENCHMARKS")
-    print("="*60)
-
-    for shape, filename in files.items():
-        size_mb = shape[0] * shape[1] * 4 / 1024**2
-        print(f"\n{shape[0]}x{shape[1]} ({size_mb:.1f}MB):")
-
-        results = {}
-
-        # torchfits regular
-        times = []
-        for i in range(3):
-            start = time.perf_counter()
-            tensor = torchfits.read(str(filename))
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-        results['torchfits_regular'] = sum(times) / len(times)
-        print(f"  torchfits (regular): {results['torchfits_regular']:.4f}s")
-
-        # torchfits mmap
-        times = []
-        for i in range(3):
-            start = time.perf_counter()
-            tensor = torchfits.read(str(filename), mmap=True)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-        results['torchfits_mmap'] = sum(times) / len(times)
-        print(f"  torchfits (mmap):    {results['torchfits_mmap']:.4f}s")
-
-        # astropy memmap=False
-        times = []
-        for i in range(3):
-            start = time.perf_counter()
-            with astropy_fits.open(filename, memmap=False) as hdul:
-                data = hdul[0].data.copy()
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-        results['astropy_regular'] = sum(times) / len(times)
-        print(f"  astropy (regular):   {results['astropy_regular']:.4f}s")
-
-        # astropy memmap=True
-        times = []
-        for i in range(3):
-            start = time.perf_counter()
-            with astropy_fits.open(filename, memmap=True) as hdul:
-                data = hdul[0].data[:]  # Force read
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-        results['astropy_mmap'] = sum(times) / len(times)
-        print(f"  astropy (mmap):      {results['astropy_mmap']:.4f}s")
-
-        # astropy mmap -> torch
-        times = []
-        for i in range(3):
-            start = time.perf_counter()
-            with astropy_fits.open(filename, memmap=True) as hdul:
-                np_data = hdul[0].data[:]
-                if np_data.dtype.byteorder not in ('=', '|'):
-                    np_data = np_data.astype(np_data.dtype.newbyteorder('='))
-                tensor = torch.from_numpy(np_data)
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
-        results['astropy_mmap_torch'] = sum(times) / len(times)
-        print(f"  astropy mmap->torch: {results['astropy_mmap_torch']:.4f}s")
-
-        # fitsio regular vs torch (paired timing)
-        import gc
-        fitsio_times = []
-        fitsio_torch_times = []
-
-        for i in range(3):
-            gc.collect()
-
-            # Time fitsio read
-            start = time.perf_counter()
-            np_data = fitsio.read(str(filename))
-            fitsio_time = time.perf_counter() - start
-            fitsio_times.append(fitsio_time)
-
-            # Time conversion (same data)
-            start = time.perf_counter()
-            tensor = torch.from_numpy(np_data)
-            conv_time = time.perf_counter() - start
-
-            fitsio_torch_times.append(fitsio_time + conv_time)
-
-        results['fitsio_regular'] = sum(fitsio_times) / len(fitsio_times)
-        results['fitsio_torch'] = sum(fitsio_torch_times) / len(fitsio_torch_times)
-
-        print(f"  fitsio (regular):    {results['fitsio_regular']:.4f}s")
-        print(f"  fitsio->torch:       {results['fitsio_torch']:.4f}s")
-
-        # Note: fitsio does not support memory mapping
-        # All data is always copied (OWNDATA=True)
-
-        # Calculate speedups
-        speedup = results['astropy_regular'] / results['torchfits_regular']
-        print(f"  torchfits vs astropy: {speedup:.2f}x speedup")
-
-        if 'astropy_mmap' in results:
-            mmap_speedup = results['astropy_mmap'] / results['torchfits_mmap']
-            print(f"  torchfits mmap vs astropy mmap: {mmap_speedup:.2f}x speedup")
-
-def benchmark_memory_usage():
-    """Test memory usage patterns."""
-    print("\n" + "="*60)
-    print("MEMORY USAGE COMPARISON")
-    print("="*60)
-
-    # Create large test file
-    shape = (4000, 4000)
-    data = np.random.randn(*shape).astype(np.float32)
-    filename = "memory_test.fits"
-
-    astropy_fits.writeto(filename, data, overwrite=True)
-
-    print(f"\nFile size: {data.nbytes/1024**2:.1f}MB")
-
-    # Test memory usage (simplified - would need psutil for real measurement)
-    print("\nMemory usage patterns:")
-    print("  torchfits (regular): Allocates full tensor")
-    print("  torchfits (mmap):    Fallback to regular (CFITSIO limitation)")
-    print("  astropy (memmap):    Memory-mapped view")
-    print("  astropy (regular):   Allocates full array")
-
-    import os
-    os.remove(filename)
-
-def main():
-    print("Memory Mapping Benchmark Suite")
-    print("Testing torchfits vs astropy vs fitsio")
-
-    # Create test files
-    files = create_test_files()
-
-    if files:
-        # Run benchmarks
-        benchmark_memory_mapping(files)
-        benchmark_memory_usage()
-
-        # Cleanup
-        for filename in files.values():
-            filename.unlink()
-        filename.parent.rmdir()
+    n_iter = 10
+    t_tf = timeit.timeit(read_torchfits, number=n_iter) / n_iter
+    t_fitsio = timeit.timeit(read_fitsio, number=n_iter) / n_iter
+    
+    print(f"TorchFits (mmap): {t_tf*1000:.2f} ms")
+    print(f"Fitsio:           {t_fitsio*1000:.2f} ms")
+    print(f"Speedup:          {t_fitsio/t_tf:.2f}x")
+    
+    # Check for FD leaks
+    gc.collect()
+    final_fds = get_open_fds()
+    print(f"Final open FDs: {final_fds}")
+    
+    if final_fds > initial_fds:
+        print(f"⚠️  WARNING: Potential FD leak! {final_fds - initial_fds} extra FDs.")
     else:
-        print("No test files created (astropy required)")
+        print("✅ No FD leak detected.")
+
+    # Test Error Handling
+    print("\nTesting Error Handling...")
+    try:
+        torchfits.open("non_existent_file.fits")
+    except FileNotFoundError:
+        print("✅ Correctly caught FileNotFoundError")
+    except Exception as e:
+        print(f"⚠️  Unexpected error for missing file: {type(e).__name__}: {e}")
 
 if __name__ == "__main__":
-    main()
+    benchmark_mmap()

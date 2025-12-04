@@ -1,0 +1,51 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.9, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/fabbros/src/torchfits
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collected 138 items
+
+tests/test_api.py .........                                              [  6%]
+tests/test_buffer.py ...............................                     [ 28%]
+tests/test_cache.py ...                                                  [ 31%]
+tests/test_compression.py FFF...F                                        [ 36%]
+tests/test_core.py .....                                                 [ 39%]
+tests/test_dataloader.py ..F.............                                [ 51%]
+tests/test_dlpack_roundtrip.py F                                         [ 52%]
+tests/test_hdu.py Fatal Python error: Segmentation fault
+
+Current thread 0x00000001f4cf4f80 (most recent call first):
+  File "/Users/fabbros/src/torchfits/src/torchfits/hdu.py", line 319 in from_fits
+  File "/Users/fabbros/src/torchfits/tests/test_hdu.py", line 36 in test_tablehdu_from_fits
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 157 in pytest_pyfunc_call
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 1671 in runtest
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 178 in pytest_runtest_call
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 246 in <lambda>
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 344 in from_call
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 245 in call_and_report
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 136 in runtestprotocol
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 117 in pytest_runtest_protocol
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 367 in pytest_runtestloop
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 343 in _main
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 289 in wrap_session
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 336 in pytest_cmdline_main
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 175 in main
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 201 in console_main
+  File "/Users/fabbros/src/torchfits/.pixi/envs/default/bin/pytest", line 10 in <module>
+
+Extension modules: numpy._core._multiarray_umath, numpy.linalg._umath_linalg, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, pyarrow.lib, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._mt19937, numpy.random._generator, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.properties, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pyarrow._compute, pandas._libs.ops, bottleneck.move, bottleneck.nonreduce, bottleneck.nonreduce_axis, bottleneck.reduce, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing, PIL._imaging, psutil._psutil_osx, astropy.io.fits._utils, astropy.io.fits.hdu.compressed._compression, astropy.table._column_mixins, astropy.table._np_utils, yaml._yaml, astropy.io.ascii.cparser, astropy.utils.xml._iterparser, erfa.ufunc, astropy.time._parse_times, astropy.io.votable.tablewriter (total: 80)

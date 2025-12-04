@@ -37,8 +37,9 @@ def test_tablehdu_from_fits(fits_file):
     
     # Check that the table has the correct number of rows and columns
     assert table_hdu.num_rows == 3
-    # The "comments" column is skipped for now, so there are 5 columns
-    assert len(table_hdu.col_names) == 5
+    # The "comments" column is now included as a byte tensor
+    assert len(table_hdu.col_names) == 6
+    assert 'comments' in table_hdu.col_names
     
     # Check that the column names are correct
     assert "ra" in table_hdu.col_names

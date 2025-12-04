@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 from .hdu import Header
-import torchfits.cpp as cpp
+# import torchfits.cpp as cpp  <-- Removed to avoid circular import
 
 
 class WCS:
@@ -34,6 +34,7 @@ class WCS:
         }
         # Update with provided header values
         wcs_header.update({str(k): str(v) for k, v in header.items()})
+        import torchfits.cpp as cpp
         self._wcs = cpp.WCS(wcs_header)
     
     def pixel_to_world(self, pixels: Tensor, batch_size: Optional[int] = None) -> Tensor:
