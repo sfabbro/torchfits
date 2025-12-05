@@ -1,6 +1,7 @@
-import torch
-import torchfits
 import numpy as np
+import torch
+
+import torchfits
 
 
 def test_wcs_spectral():

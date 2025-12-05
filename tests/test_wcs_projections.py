@@ -1,9 +1,10 @@
-import torch
-import torchfits
 import numpy as np
+import pytest
+import torch
 from astropy.io import fits
 from astropy.wcs import WCS as AstropyWCS
-import pytest
+
+import torchfits
 
 
 def create_header(projection="TAN"):

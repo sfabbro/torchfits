@@ -1,8 +1,10 @@
-import torchfits
-from astropy.io import fits
 import os
-import torch
+
 import numpy as np
+import torch
+from astropy.io import fits
+
+import torchfits
 
 
 def test_writing():

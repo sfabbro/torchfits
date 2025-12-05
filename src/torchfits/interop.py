@@ -1,6 +1,7 @@
-import torch
+from typing import Any, Dict, Optional
+
 import numpy as np
-from typing import Dict, Any, Optional
+import torch
 
 
 def to_pandas(data: Dict[str, Any]) -> "pd.DataFrame":

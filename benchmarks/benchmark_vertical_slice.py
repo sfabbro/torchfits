@@ -1,9 +1,11 @@
+import os
 import time
+
+import fitsio
 import numpy as np
 import torch
-import fitsio
+
 import torchfits
-import os
 
 
 def create_test_file(filename, size=(4096, 4096)):

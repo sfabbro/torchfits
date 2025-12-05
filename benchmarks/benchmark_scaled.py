@@ -1,9 +1,11 @@
-import torchfits
+import os
+import timeit
+
 import fitsio
 import numpy as np
-import timeit
-import os
 import torch
+
+import torchfits
 
 
 def benchmark_scaled():

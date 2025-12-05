@@ -1,7 +1,8 @@
-import torch
-import torchfits.transforms as T
 import numpy as np
 import pytest
+import torch
+
+import torchfits.transforms as T
 
 
 def test_poisson_noise():

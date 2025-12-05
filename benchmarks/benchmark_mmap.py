@@ -1,11 +1,13 @@
-import torchfits
+import gc
+import os
+import timeit
+
 import fitsio
 import numpy as np
-import timeit
-import os
-import torch
 import psutil
-import gc
+import torch
+
+import torchfits
 
 
 def get_open_fds():

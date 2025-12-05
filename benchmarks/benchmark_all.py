@@ -10,29 +10,31 @@ Produces comprehensive tables, plots, and summaries.
 """
 
 
-import sys
-import time
-import tempfile
-import gc
-import tracemalloc
 import csv
+import gc
+import sys
+import tempfile
+import time
+import tracemalloc
 from pathlib import Path
-from typing import Dict, List, Optional
 from statistics import mean, stdev
+from typing import Dict, List, Optional
+
 import numpy as np
 import torch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import torchfits
-from astropy.io import fits as astropy_fits
-from astropy.io.fits import CompImageHDU
 import fitsio
 import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 import psutil
+import seaborn as sns
+from astropy.io import fits as astropy_fits
+from astropy.io.fits import CompImageHDU
+
+import torchfits
 
 
 class ExhaustiveBenchmarkSuite:

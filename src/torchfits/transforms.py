@@ -5,9 +5,10 @@ This module provides GPU-accelerated transformations for common
 astronomical data preparation tasks (Phase 4 of implementation).
 """
 
+from typing import Optional, Tuple, Union
+
 import torch
 from torch import Tensor
-from typing import Optional, Tuple, Union
 
 
 class AsinhStretch:

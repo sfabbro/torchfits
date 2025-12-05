@@ -5,13 +5,14 @@ Focused benchmark to identify and fix C++ backend performance issues.
 Compares current implementation against astropy/fitsio to find bottlenecks.
 """
 
+import os
+import sys
+import tempfile
 import time
+from pathlib import Path
+
 import numpy as np
 import torch
-import tempfile
-import os
-from pathlib import Path
-import sys
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))

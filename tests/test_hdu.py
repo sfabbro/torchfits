@@ -1,9 +1,11 @@
-import pytest
-from torchfits.hdu import TableHDU
 import os
+
+import numpy as np
+import pytest
 from astropy.io import fits
 from astropy.table import Table
-import numpy as np
+
+from torchfits.hdu import TableHDU
 
 
 def create_test_file(filename):

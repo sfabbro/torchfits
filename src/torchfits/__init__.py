@@ -5,47 +5,31 @@ This module provides efficient FITS file reading and writing capabilities
 optimized for PyTorch tensors and pytorch-frame TensorFrames.
 """
 
-from typing import Union, Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional, Union
 
-import torch
 import numpy as np
+import torch
 from torch import Tensor
-
 from torch_frame import TensorFrame
 
 # Force torch symbols to load
 _ = torch.empty(1)
 
-from .hdu import HDUList, TensorHDU, TableHDU, Header
-from .wcs import WCS
-from .cache import configure_for_environment, get_cache_stats, clear_cache
-from .dataloader import (
-    create_dataloader,
-    create_fits_dataloader,
-    create_streaming_dataloader,
-)
+from .buffer import clear_buffers, configure_buffers, get_buffer_stats
+from .cache import clear_cache, configure_for_environment, get_cache_stats
+from .core import CompressionType, FITSCore
+from .dataloader import (create_dataloader, create_fits_dataloader,
+                         create_streaming_dataloader)
 from .datasets import FITSDataset, IterableFITSDataset
-from .transforms import (
-    ZScale,
-    AsinhStretch,
-    LogStretch,
-    PowerStretch,
-    Normalize,
-    RandomCrop,
-    CenterCrop,
-    RandomFlip,
-    GaussianNoise,
-    ToDevice,
-    Compose,
-    create_training_transform,
-    create_validation_transform,
-    create_inference_transform,
-)
-from .buffer import configure_buffers, get_buffer_stats, clear_buffers
-from .core import FITSCore, CompressionType
+from .frame import read_tensor_frame, to_tensor_frame, write_tensor_frame
+from .hdu import HDUList, Header, TableHDU, TensorHDU
 from .header_parser import fast_parse_header
-from .frame import to_tensor_frame, read_tensor_frame, write_tensor_frame
-
+from .transforms import (AsinhStretch, CenterCrop, Compose, GaussianNoise,
+                         LogStretch, Normalize, PowerStretch, RandomCrop,
+                         RandomFlip, ToDevice, ZScale,
+                         create_inference_transform, create_training_transform,
+                         create_validation_transform)
+from .wcs import WCS
 
 # Simple cache tracking for tests
 _cache_stats = {"total_requests": 0, "hits": 0, "misses": 0, "cache_size": 0}
@@ -576,8 +560,9 @@ def read_large_table(
         Dictionary with table data
     """
     try:
-        import torchfits.cpp as cpp
         import os
+
+        import torchfits.cpp as cpp
 
         if not os.path.exists(file_path):
             return {}

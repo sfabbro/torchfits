@@ -3,15 +3,15 @@ Integration tests with real astronomy datasets.
 Tests core functionality with realistic data sizes and formats.
 """
 
-import pytest
-import torch
-import numpy as np
-import tempfile
 import os
-from pathlib import Path
-
 # Add src to path for testing
 import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -45,6 +45,7 @@ class TestRealDataIntegration:
     def create_test_table(self, nrows, ncols=10):
         """Create a realistic test table with mixed data types."""
         import tempfile
+
         from astropy.io import fits
         from astropy.table import Table
 
@@ -265,8 +266,9 @@ class TestPerformanceIntegration:
 
     def test_memory_efficiency_large_file(self):
         """Test memory efficiency with large files."""
-        import psutil
         import gc
+
+        import psutil
 
         shape = (5000, 5000)  # 100MB file
         data = np.random.normal(0, 1, shape).astype(np.float32)

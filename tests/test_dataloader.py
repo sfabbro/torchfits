@@ -2,20 +2,19 @@
 Tests for torchfits dataloader module.
 """
 
+import os
+import tempfile
+from unittest.mock import Mock, patch
+
 import pytest
 import torch
-import tempfile
-import os
-from unittest.mock import Mock, patch
 from torch.utils.data import RandomSampler, SequentialSampler
-from torchfits.dataloader import (
-    create_dataloader,
-    create_fits_dataloader,
-    create_streaming_dataloader,
-    create_distributed_dataloader,
-    create_ml_dataloader,
-    get_optimal_dataloader_config,
-)
+
+from torchfits.dataloader import (create_dataloader,
+                                  create_distributed_dataloader,
+                                  create_fits_dataloader, create_ml_dataloader,
+                                  create_streaming_dataloader,
+                                  get_optimal_dataloader_config)
 from torchfits.datasets import FITSDataset, IterableFITSDataset
 
 

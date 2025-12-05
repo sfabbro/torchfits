@@ -3,15 +3,17 @@
 Benchmark script to compare torchfits performance on CPU vs MPS.
 """
 
-import sys
-import time
-import tempfile
 import gc
+import sys
+import tempfile
+import time
 from pathlib import Path
+
 import numpy as np
 import torch
-import torchfits
 from astropy.io import fits as astropy_fits
+
+import torchfits
 
 
 def benchmark_mps_vs_cpu():

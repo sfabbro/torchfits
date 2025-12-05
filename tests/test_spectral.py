@@ -2,19 +2,20 @@
 Tests for spectral and data cube functionality.
 """
 
-import pytest
-import torch
-import numpy as np
-import tempfile
 import os
-from pathlib import Path
-
 # Add src to path for testing
 import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from torchfits.spectral import SpectralAxis, Spectrum1D, DataCube, SpectralReader
+from torchfits.spectral import (DataCube, SpectralAxis, SpectralReader,
+                                Spectrum1D)
 
 
 class TestSpectralAxis:

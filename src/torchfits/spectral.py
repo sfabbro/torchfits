@@ -5,9 +5,10 @@ Implements 1D spectra with inverse variance/mask arrays and 3D data cubes
 for IFU instruments and radio astronomy.
 """
 
-from typing import Optional, Dict, Any, Tuple
-import torch
 from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
+
+import torch
 
 from .wcs import WCS
 

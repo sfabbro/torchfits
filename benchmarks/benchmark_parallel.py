@@ -1,11 +1,13 @@
-import torchfits.cpp as cpp
-import torchfits
+import concurrent.futures
+import os
+import timeit
+
 import fitsio
 import numpy as np
-import timeit
-import os
 import torch
-import concurrent.futures
+
+import torchfits
+import torchfits.cpp as cpp
 
 
 def benchmark_parallel():

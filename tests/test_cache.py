@@ -2,14 +2,14 @@
 Test caching functionality.
 """
 
-import pytest
-import torch
-import numpy as np
-import tempfile
 import os
+import sys
+import tempfile
 from pathlib import Path
 
-import sys
+import numpy as np
+import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 

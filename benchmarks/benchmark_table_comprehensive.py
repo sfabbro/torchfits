@@ -10,17 +10,18 @@ Tests table reading performance against astropy and fitsio across various scenar
 - Memory efficiency and zero-copy validation
 """
 
-import time
-import sys
-import os
-from pathlib import Path
-import numpy as np
-import torch
-import tempfile
 import gc
-import psutil
-from typing import Dict, List, Any, Tuple
+import os
+import sys
+import tempfile
+import time
 import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import psutil
+import torch
 
 warnings.filterwarnings("ignore")
 

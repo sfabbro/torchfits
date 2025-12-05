@@ -1,9 +1,11 @@
-import torch
-import torchfits
+import os
+
 import numpy as np
+import torch
 from astropy.io import fits
 from astropy.table import Table
-import os
+
+import torchfits
 
 
 def create_ascii_table(filename):

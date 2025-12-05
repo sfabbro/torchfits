@@ -6,8 +6,8 @@ Demonstrates zero-copy operations, tile-aware compression, streaming tables, and
 
 import os
 import sys
-import time
 import tempfile
+import time
 from pathlib import Path
 
 # Add src to path for examples

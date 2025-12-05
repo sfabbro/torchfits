@@ -2,31 +2,22 @@
 Tests for torchfits transforms module.
 """
 
-import pytest
-import torch
-import numpy as np
 import sys
 from pathlib import Path
 
+import numpy as np
+import pytest
+import torch
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from torchfits.transforms import (
-    ZScale,
-    AsinhStretch,
-    LogStretch,
-    PowerStretch,
-    Normalize,
-    MinMaxScale,
-    RandomCrop,
-    CenterCrop,
-    RandomFlip,
-    GaussianNoise,
-    ToDevice,
-    Compose,
-    create_training_transform,
-    create_validation_transform,
-    create_inference_transform,
-)
+from torchfits.transforms import (AsinhStretch, CenterCrop, Compose,
+                                  GaussianNoise, LogStretch, MinMaxScale,
+                                  Normalize, PowerStretch, RandomCrop,
+                                  RandomFlip, ToDevice, ZScale,
+                                  create_inference_transform,
+                                  create_training_transform,
+                                  create_validation_transform)
 
 
 class TestBasicTransforms:

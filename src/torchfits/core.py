@@ -5,11 +5,11 @@ Implements support for all standard FITS data types, compression formats,
 and checksum verification as specified in Phase 1.
 """
 
-from typing import Dict, Any, Optional, Tuple
 from enum import Enum
+from typing import Any, Dict, Optional, Tuple
 
-import torch
 import numpy as np
+import torch
 
 # Fast direct lookup tables - no enum overhead
 _BITPIX_TO_TORCH = {

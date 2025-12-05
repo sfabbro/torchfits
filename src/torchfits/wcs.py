@@ -6,6 +6,7 @@ with batch processing capabilities optimized for PyTorch tensors.
 """
 
 from typing import Optional
+
 import torch
 from torch import Tensor
 

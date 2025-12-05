@@ -19,17 +19,12 @@ import torch.optim as optim
 from astropy.io import fits
 
 import torchfits
-from torchfits.transforms import (
-    ZScale,
-    RandomCrop,
-    RandomFlip,
-    GaussianNoise,
-    Compose,
-    create_training_transform,
-    create_validation_transform,
-)
-from torchfits.datasets import FITSDataset
 from torchfits.dataloader import create_fits_dataloader
+from torchfits.datasets import FITSDataset
+from torchfits.transforms import (Compose, GaussianNoise, RandomCrop,
+                                  RandomFlip, ZScale,
+                                  create_training_transform,
+                                  create_validation_transform)
 
 
 def create_synthetic_dataset(num_files=100, image_size=(128, 128)):

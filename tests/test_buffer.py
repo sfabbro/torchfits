@@ -2,28 +2,22 @@
 Tests for torchfits buffer management module.
 """
 
-import pytest
-import torch
+import sys
 import threading
 import time
-from unittest.mock import patch, Mock
-import sys
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from torchfits.buffer import (
-    MemoryPool,
-    StreamingBuffer,
-    BufferManager,
-    get_buffer_manager,
-    configure_buffers,
-    get_buffer_stats,
-    clear_buffers,
-    optimize_for_workload,
-    create_streaming_buffer,
-    get_optimal_buffer_config,
-)
+from torchfits.buffer import (BufferManager, MemoryPool, StreamingBuffer,
+                              clear_buffers, configure_buffers,
+                              create_streaming_buffer, get_buffer_manager,
+                              get_buffer_stats, get_optimal_buffer_config,
+                              optimize_for_workload)
 
 
 class TestMemoryPool:

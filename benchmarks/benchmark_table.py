@@ -5,21 +5,23 @@ Benchmarks table reading, filtering, and pytorch-frame integration
 across different table sizes and column types.
 """
 
-import time
-import sys
 import os
-from pathlib import Path
-import numpy as np
-import torch
+import sys
 import tempfile
+import time
+from pathlib import Path
+
+import numpy as np
 import pytest
+import torch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-import torchfits
+import fitsio
 from astropy.io import fits as astropy_fits
 from astropy.table import Table
-import fitsio
+
+import torchfits
 
 # Table test configurations
 TABLE_SIZES = [1000, 10000, 100000, 1000000]

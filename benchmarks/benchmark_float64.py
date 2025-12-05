@@ -1,9 +1,11 @@
-import time
-import torch
-import numpy as np
-import fitsio
-import torchfits
 import os
+import time
+
+import fitsio
+import numpy as np
+import torch
+
+import torchfits
 
 
 def create_float64_fits(filename, shape=(4096, 4096)):

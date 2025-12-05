@@ -4,13 +4,14 @@ GPU Memory Usage Validation Benchmark
 Tests GPU memory efficiency and validates direct GPU loading capabilities.
 """
 
-import torch
-import numpy as np
-import tempfile
-import os
 import gc
-from pathlib import Path
+import os
 import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import torch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -217,7 +218,7 @@ class GPUMemoryBenchmark:
         print("\\n🎨 Testing GPU Transforms")
 
         try:
-            from torchfits.transforms import ZScale, Compose, RandomFlip
+            from torchfits.transforms import Compose, RandomFlip, ZScale
         except ImportError:
             print("⚠️  Transforms not available")
             return

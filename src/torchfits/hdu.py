@@ -8,12 +8,13 @@ This module implements the main data structures for FITS HDUs:
 - Header: FITS header management
 """
 
-from typing import Union, List, Dict, Any, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+
+import numpy as np
+import torch
 from torch import Tensor
 from torch_frame import TensorFrame
 from torch_frame.data import StatType
-import torch
-import numpy as np
 
 # Import torch first
 _ = torch.empty(1)  # Force torch C++ symbols to load

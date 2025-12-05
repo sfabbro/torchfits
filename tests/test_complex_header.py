@@ -1,6 +1,8 @@
-import torchfits
-from astropy.io import fits
 import os
+
+from astropy.io import fits
+
+import torchfits
 
 
 def create_complex_header(filename):
