@@ -155,6 +155,37 @@ data, _ = torchfits.read("image.fits", device='cuda') # NVIDIA GPU
 data, _ = torchfits.read("image.fits", device='cpu')  # CPU
 ```
 
+For more examples, see the `examples/` directory.
+
+## PyTorch-Frame Integration
+
+Seamlessly convert FITS tables to [pytorch-frame](https://pytorch-frame.readthedocs.io/) `TensorFrame` objects for tabular deep learning:
+
+```python
+import torchfits
+
+# Read FITS table directly as TensorFrame
+tf = torchfits.read_tensor_frame("catalog.fits", hdu=1)
+
+# Or convert from dict
+data, header = torchfits.read("catalog.fits", hdu=1)
+tf = torchfits.to_tensor_frame(data)
+
+# Use with pytorch-frame models
+print(tf.feat_dict)  # {stype.numerical: tensor, stype.categorical: tensor}
+print(tf.col_names_dict)  # Column names grouped by semantic type
+
+# Write TensorFrame back to FITS
+torchfits.write_tensor_frame("output.fits", tf, overwrite=True)
+```
+
+Automatic semantic type inference:
+- `float32/float64` → numerical features
+- `int32/int16/uint8` → numerical features  
+- `int64/bool` → categorical features
+
+See `examples/example_frame.py` for a complete workflow.
+
 ## Documentation
 
 - [API Reference](API.md) - Complete API documentation

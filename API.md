@@ -389,6 +389,103 @@ with torchfits.open("image.fits") as hdul:
 
 ---
 
+## PyTorch-Frame Integration
+
+Convert FITS tables to [pytorch-frame](https://pytorch-frame.readthedocs.io/) TensorFrame objects for tabular deep learning.
+
+### `read_tensor_frame()`
+
+Read a FITS table directly as a TensorFrame.
+
+```python
+torchfits.read_tensor_frame(path, hdu=1, columns=None)
+```
+
+**Parameters:**
+- `path` (str): Path to FITS file
+- `hdu` (int): HDU index (default: 1 for first table extension)
+- `columns` (list[str] | None): Optional list of columns to read
+
+**Returns:**
+- `TensorFrame`: pytorch-frame TensorFrame object with automatic semantic type inference
+
+**Example:**
+
+```python
+import torchfits
+from torch_frame import stype
+
+# Read catalog as TensorFrame  
+tf = torchfits.read_tensor_frame("catalog.fits", hdu=1)
+
+# Access features by semantic type
+print(tf.feat_dict[stype.numerical])    # Numerical features
+print(tf.feat_dict[stype.categorical])  # Categorical features
+print(tf.col_names_dict)  # Column names grouped by type
+```
+
+**Semantic Type Inference:**
+- `float32`, `float64`, `int32`, `int16`, `uint8` → numerical
+- `int64`, `bool` → categorical
+- String columns currently skipped
+
+### `to_tensor_frame()`
+
+Convert a dictionary of tensors (from `read()`) to TensorFrame.
+
+```python
+torchfits.to_tensor_frame(data)
+```
+
+**Parameters:**
+- `data` (dict[str, torch.Tensor]): Dictionary of column tensors
+
+**Returns:**
+- `TensorFrame`: pytorch-frame TensorFrame object
+
+**Example:**
+
+```python
+# Read table first
+data, header = torchfits.read("catalog.fits", hdu=1)
+
+# Convert to TensorFrame
+tf = torchfits.to_tensor_frame(data)
+
+# Use with pytorch-frame models
+from torch_frame.nn import LinearEncoder
+encoder = LinearEncoder(tf.num_features)
+```
+
+### `write_tensor_frame()`
+
+Write a TensorFrame back to a FITS file.
+
+```python
+torchfits.write_tensor_frame(path, tf, overwrite=False)
+```
+
+**Parameters:**
+- `path` (str): Output file path
+- `tf` (TensorFrame): TensorFrame object to write
+- `overwrite` (bool): Whether to overwrite existing files
+
+**Example:**
+
+```python
+# Read, process, and write back
+tf = torchfits.read_tensor_frame("input.fits", hdu=1)
+# ... process tf ...
+torchfits.write_tensor_frame("output.fits", tf, overwrite=True)
+```
+
+**Notes:**
+- Automatically converts numerical and categorical features back to appropriate FITS column types
+- Preserves column names and data types
+- Useful for saving preprocessed features or model predictions
+
+---
+
 ## Datasets
 
 ### `FITSDataset`

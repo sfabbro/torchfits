@@ -31,6 +31,8 @@ python example_basic_reading.py
 
 **`example_dataset.py`** - PyTorch Dataset integration for FITS data loading
 
+**`example_frame.py`** - PyTorch-Frame integration: convert FITS tables to TensorFrame for tabular ML
+
 **`example_mnist.py`** - Complete ML pipeline: MNIST digits stored as FITS, CNN training workflow
 
 **`example_sdss_classification.py`** - Astronomical spectral classification (stars/galaxies/quasars) with real SDSS data
