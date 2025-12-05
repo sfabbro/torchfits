@@ -85,6 +85,9 @@ if(EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
     set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
     set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
     
+    # Force position-independent code for static library to be linked into shared library
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    
     add_subdirectory("${CFITSIO_SOURCE_DIR}" cfitsio_build)
     
     # CFITSIO target is named 'cfitsio'

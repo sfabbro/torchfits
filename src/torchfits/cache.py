@@ -115,27 +115,28 @@ class CacheManager:
         """Get comprehensive cache statistics."""
         try:
             import torchfits.cpp as cpp
-            cpp_size = cpp.get_cache_size() if hasattr(cpp, 'get_cache_size') else 0
+            cpp_size = cpp.get_cache_size() if hasattr(cpp, "get_cache_size") else 0
         except (ImportError, AttributeError):
             cpp_size = 0
         
         return {
             **self._stats,
-            'cpp_cache_size': cpp_size,
-            'config': {
-                'max_files': self.config.max_files,
-                'max_memory_mb': self.config.max_memory_mb,
-                'disk_cache_gb': self.config.disk_cache_gb,
-                'prefetch_enabled': self.config.prefetch_enabled
+            "cpp_cache_size": cpp_size,
+            "config": {
+                "max_files": self.config.max_files,
+                "max_memory_mb": self.config.max_memory_mb,
+                "disk_cache_gb": self.config.disk_cache_gb,
+                "prefetch_enabled": self.config.prefetch_enabled,
             },
-            'hit_rate': self._stats['hits'] / max(1, self._stats['hits'] + self._stats['misses'])
+            "hit_rate": self._stats["hits"]
+            / max(1, self._stats["hits"] + self._stats["misses"]),
         }
     
     def clear(self):
         """Clear all caches."""
         try:
             import torchfits.cpp as cpp
-            if hasattr(cpp, 'clear_file_cache'):
+            if hasattr(cpp, "clear_file_cache"):
                 cpp.clear_file_cache()
         except (ImportError, AttributeError):
             pass
