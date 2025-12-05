@@ -48,7 +48,7 @@ _file_cache = {}
 # Auto-configure cache and buffers on import
 configure_for_environment()
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     # Core I/O functions
     "read",
