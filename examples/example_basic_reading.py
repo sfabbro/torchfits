@@ -41,7 +41,7 @@ def main():
     # Get header using get_header()
     try:
         header = torchfits.get_header(test_file, hdu=0)
-        object_name = header.get('OBJECT')
+        object_name = header.get("OBJECT")
         print(f"\nObject Name: {object_name}")
         print(f"Dimensions: {header.get('NAXIS1')} x {header.get('NAXIS2')}")
     except RuntimeError as e:

@@ -10,14 +10,14 @@ from typing import Optional, Any
 from functools import wraps
 
 # Configure torchfits logger
-logger = logging.getLogger('torchfits')
+logger = logging.getLogger("torchfits")
 logger.setLevel(logging.INFO)
 
 # Create console handler if none exists
 if not logger.handlers:
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -25,6 +25,7 @@ if not logger.handlers:
 
 def log_errors(func):
     """Decorator to log exceptions before re-raising."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -32,35 +33,43 @@ def log_errors(func):
         except Exception as e:
             logger.error(f"Error in {func.__name__}: {str(e)}")
             raise
+
     return wrapper
 
 
 def log_performance(func):
     """Decorator to log performance metrics."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         import time
+
         start_time = time.perf_counter()
         try:
             result = func(*args, **kwargs)
             end_time = time.perf_counter()
-            logger.debug(f"{func.__name__} completed in {(end_time - start_time)*1000:.2f}ms")
+            logger.debug(
+                f"{func.__name__} completed in {(end_time - start_time)*1000:.2f}ms"
+            )
             return result
         except Exception as e:
             end_time = time.perf_counter()
-            logger.error(f"{func.__name__} failed after {(end_time - start_time)*1000:.2f}ms: {str(e)}")
+            logger.error(
+                f"{func.__name__} failed after {(end_time - start_time)*1000:.2f}ms: {str(e)}"
+            )
             raise
+
     return wrapper
 
 
 def set_log_level(level: str):
     """Set logging level for torchfits."""
     level_map = {
-        'DEBUG': logging.DEBUG,
-        'INFO': logging.INFO,
-        'WARNING': logging.WARNING,
-        'ERROR': logging.ERROR,
-        'CRITICAL': logging.CRITICAL
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
     }
     logger.setLevel(level_map.get(level.upper(), logging.INFO))
 
@@ -81,4 +90,6 @@ def log_memory_usage(context: str, size_mb: float):
 def log_performance_warning(operation: str, time_ms: float, threshold_ms: float = 1000):
     """Log performance warnings for slow operations."""
     if time_ms > threshold_ms:
-        logger.warning(f"Slow operation detected: {operation} took {time_ms:.2f}ms (threshold: {threshold_ms}ms)")
+        logger.warning(
+            f"Slow operation detected: {operation} took {time_ms:.2f}ms (threshold: {threshold_ms}ms)"
+        )

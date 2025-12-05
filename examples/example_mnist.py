@@ -17,26 +17,26 @@ import torchfits
 
 def create_mnist_fits(data_dir, max_samples=1000):
     """Converts a subset of MNIST dataset to FITS images using torchfits.write().
-    
+
     Args:
         data_dir: Directory to save FITS files
         max_samples: Maximum number of samples per split (train/test) to convert
     """
     os.makedirs(data_dir, exist_ok=True)
-    
+
     # Download MNIST using torchvision
     print("Downloading MNIST dataset...")
     train_dataset = datasets.MNIST(
-        root=os.path.join(data_dir, "mnist_raw"), 
-        train=True, 
-        download=True, 
-        transform=transforms.ToTensor()
+        root=os.path.join(data_dir, "mnist_raw"),
+        train=True,
+        download=True,
+        transform=transforms.ToTensor(),
     )
     test_dataset = datasets.MNIST(
         root=os.path.join(data_dir, "mnist_raw"),
         train=False,
         download=True,
-        transform=transforms.ToTensor()
+        transform=transforms.ToTensor(),
     )
 
     # Convert training samples to FITS using torchfits.write()
@@ -44,14 +44,14 @@ def create_mnist_fits(data_dir, max_samples=1000):
     for i in tqdm(range(min(max_samples, len(train_dataset))), desc="Training FITS"):
         image, label = train_dataset[i]
         filename = os.path.join(data_dir, f"train_{i:05d}_{label}.fits")
-        
+
         # Use torchfits.write() directly with the tensor
         # Remove channel dimension: [1, 28, 28] -> [28, 28]
         image_2d = image.squeeze(0)
-        
+
         # Create header with label
         header = {"LABEL": int(label), "SPLIT": "TRAIN"}
-        
+
         # Write using torchfits - showcases direct tensor-to-FITS conversion
         torchfits.write(filename, image_2d, header=header, overwrite=True)
 
@@ -60,12 +60,12 @@ def create_mnist_fits(data_dir, max_samples=1000):
     for i in tqdm(range(min(max_samples, len(test_dataset))), desc="Testing FITS"):
         image, label = test_dataset[i]
         filename = os.path.join(data_dir, f"test_{i:05d}_{label}.fits")
-        
+
         image_2d = image.squeeze(0)
         header = {"LABEL": int(label), "SPLIT": "TEST"}
-        
+
         torchfits.write(filename, image_2d, header=header, overwrite=True)
-    
+
     print(f"Created {2 * max_samples} FITS files in {data_dir}")
 
 
@@ -155,7 +155,7 @@ def collate_fn(batch):
 
 def main():
     data_dir = "data_mnist_fits"
-    
+
     # Use a subset for faster demonstration (1000 train, 200 test)
     max_train = 1000
     max_test = 200
@@ -179,10 +179,10 @@ def main():
     test_dataset = MNIST_FITS_Dataset(
         data_dir, train=False, cache_capacity=100, device=str(device)
     )
-    
+
     print(f"Training samples: {len(train_dataset)}")
     print(f"Test samples: {len(test_dataset)}")
-    
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=32,
@@ -214,11 +214,11 @@ def main():
         running_loss = 0.0
         correct = 0
         total = 0
-        
+
         for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
             if inputs.numel() == 0:
                 continue
-                
+
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -227,7 +227,7 @@ def main():
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            
+
             running_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -260,7 +260,7 @@ def main():
     print(f"\n{'='*50}")
     print(f"Final Test Accuracy: {test_acc:.2f}%")
     print(f"{'='*50}")
-    
+
     # Show some predictions
     print("\nSample predictions:")
     model.eval()
@@ -271,9 +271,11 @@ def main():
             sample_labels = sample_labels[:5]
             outputs = model(sample_inputs)
             _, predicted = torch.max(outputs, 1)
-            
+
             for i in range(len(sample_labels)):
-                print(f"  True: {sample_labels[i].item()}, Predicted: {predicted[i].item()}")
+                print(
+                    f"  True: {sample_labels[i].item()}, Predicted: {predicted[i].item()}"
+                )
 
 
 if __name__ == "__main__":

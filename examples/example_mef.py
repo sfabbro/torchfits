@@ -39,11 +39,11 @@ def main():
                 print(f"\n--- HDU {i} ---")
                 try:
                     # Check if it's an image or table
-                    if hasattr(hdu, 'data') and isinstance(hdu.data, torch.Tensor):
+                    if hasattr(hdu, "data") and isinstance(hdu.data, torch.Tensor):
                         print(f"  Type: IMAGE")
                         print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
                         print(f"  Data shape: {hdu.data.shape}")
-                    elif hasattr(hdu, 'data') and isinstance(hdu.data, dict):
+                    elif hasattr(hdu, "data") and isinstance(hdu.data, dict):
                         print(f"  Type: TABLE")
                         print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
                         print(f"  Table columns: {list(hdu.data.keys())}")

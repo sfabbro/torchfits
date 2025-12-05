@@ -77,7 +77,7 @@ def main():
         try:
             # Note: read_subset returns tensor on CPU, move to GPU after
             data = torchfits.read_subset(test_file, hdu=0, x1=5, y1=5, x2=15, y2=15)
-            data = data.to('cuda')
+            data = data.to("cuda")
             print(f"  Data device: {data.device}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

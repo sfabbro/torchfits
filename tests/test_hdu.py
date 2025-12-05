@@ -5,6 +5,7 @@ from astropy.io import fits
 from astropy.table import Table
 import numpy as np
 
+
 def create_test_file(filename):
     if not os.path.exists(filename):
         names = ["ra", "dec", "flux", "id", "comments", "flag"]
@@ -23,24 +24,26 @@ def create_test_file(filename):
         hdu = fits.BinTableHDU(table, name="MY_TABLE")
         hdu.writeto(filename, overwrite=True)
 
+
 @pytest.fixture(scope="module")
 def fits_file():
     # Get the absolute path to the example file
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(current_dir, 'table_example.fits')
+    file_path = os.path.join(current_dir, "table_example.fits")
     create_test_file(file_path)
     return file_path
+
 
 def test_tablehdu_from_fits(fits_file):
     # Read the table from the FITS file
     table_hdu = TableHDU.from_fits(fits_file, hdu_index=1)
-    
+
     # Check that the table has the correct number of rows and columns
     assert table_hdu.num_rows == 3
     # The "comments" column is now included as a byte tensor
     assert len(table_hdu.col_names) == 6
-    assert 'comments' in table_hdu.col_names
-    
+    assert "comments" in table_hdu.col_names
+
     # Check that the column names are correct
     assert "ra" in table_hdu.col_names
     assert "dec" in table_hdu.col_names
