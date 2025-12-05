@@ -6,9 +6,8 @@ memory-mapped file access, and optimized data loading pipelines.
 """
 
 import threading
-import weakref
 from collections import OrderedDict
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 import psutil
 import torch

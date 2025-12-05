@@ -10,25 +10,35 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 from torch import Tensor
-from torch_frame import TensorFrame
-
-# Force torch symbols to load
-_ = torch.empty(1)
 
 from .buffer import clear_buffers, configure_buffers, get_buffer_stats
 from .cache import clear_cache, configure_for_environment, get_cache_stats
 from .core import CompressionType, FITSCore
-from .dataloader import (create_dataloader, create_fits_dataloader,
-                         create_streaming_dataloader)
+from .dataloader import (
+    create_dataloader,
+    create_fits_dataloader,
+    create_streaming_dataloader,
+)
 from .datasets import FITSDataset, IterableFITSDataset
 from .frame import read_tensor_frame, to_tensor_frame, write_tensor_frame
 from .hdu import HDUList, Header, TableHDU, TensorHDU
 from .header_parser import fast_parse_header
-from .transforms import (AsinhStretch, CenterCrop, Compose, GaussianNoise,
-                         LogStretch, Normalize, PowerStretch, RandomCrop,
-                         RandomFlip, ToDevice, ZScale,
-                         create_inference_transform, create_training_transform,
-                         create_validation_transform)
+from .transforms import (
+    AsinhStretch,
+    CenterCrop,
+    Compose,
+    GaussianNoise,
+    LogStretch,
+    Normalize,
+    PowerStretch,
+    RandomCrop,
+    RandomFlip,
+    ToDevice,
+    ZScale,
+    create_inference_transform,
+    create_training_transform,
+    create_validation_transform,
+)
 from .wcs import WCS
 
 # Simple cache tracking for tests
@@ -252,7 +262,7 @@ def read(
                         if hdr.get("EXTNAME") == hdu:
                             hdu_num = i
                             break
-                    except:
+                    except Exception:
                         continue
                 if hdu_num is None:
                     raise ValueError(f"HDU '{hdu}' not found in file")
@@ -338,7 +348,7 @@ def read(
         finally:
             try:
                 cpp.close_fits_file(file_handle)
-            except:
+            except Exception:
                 pass
 
     except Exception as e:
@@ -450,7 +460,7 @@ def write(
         if os.path.exists(path):
             try:
                 os.remove(path)
-            except:
+            except Exception:
                 pass
         raise RuntimeError(f"Failed to write FITS file '{path}': {e}") from e
 
@@ -624,7 +634,7 @@ def get_header(path: str, hdu: Union[int, str] = 0) -> Header:
                 h = Header(h_list)
                 if h.get("EXTNAME") == hdu:
                     return h
-            except:
+            except Exception:
                 break
         raise ValueError(f"HDU '{hdu}' not found")
 

@@ -4,6 +4,7 @@ Tests core functionality with realistic data sizes and formats.
 """
 
 import os
+
 # Add src to path for testing
 import sys
 import tempfile
@@ -16,7 +17,6 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import torchfits
-from torchfits.core import FITSCore, FITSDataTypeHandler
 
 
 class TestRealDataIntegration:
@@ -46,7 +46,6 @@ class TestRealDataIntegration:
         """Create a realistic test table with mixed data types."""
         import tempfile
 
-        from astropy.io import fits
         from astropy.table import Table
 
         # Create realistic astronomical catalog data

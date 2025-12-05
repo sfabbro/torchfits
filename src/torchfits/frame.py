@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 import torch
 
 try:
-    import torch_frame
     from torch_frame import TensorFrame, stype
 
     HAS_TORCH_FRAME = True

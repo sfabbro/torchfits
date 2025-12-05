@@ -9,7 +9,7 @@ measuring performance across different image sizes and transform types.
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -79,7 +79,7 @@ class TransformBenchmark:
                 for _ in range(10):  # Multiple runs for accuracy
                     start_time = time.time()
                     try:
-                        result = transform(data)
+                        transform(data)
                         end_time = time.time()
                         times.append(end_time - start_time)
                     except Exception as e:

@@ -6,22 +6,15 @@ major torchfits features including data loading, transforms, caching,
 buffer management, and distributed training support.
 """
 
-import os
-import tempfile
 import time
-from pathlib import Path
-from typing import Any, Dict, List
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 
 # Import torchfits components
-import torchfits
 from torchfits import buffer, cache, dataloader, transforms
-from torchfits.datasets import FITSDataset
 
 
 class AstronomicalCNN(nn.Module):
@@ -341,7 +334,7 @@ def demonstrate_advanced_features():
     for name, transform in transform_configs.items():
         start_time = time.time()
         for _ in range(10):
-            result = transform(test_image)
+            transform(test_image)
         avg_time = (time.time() - start_time) / 10
         print(f"  {name:12s}: {avg_time*1000:.2f}ms per transform")
 
@@ -382,7 +375,7 @@ def demonstrate_advanced_features():
         if i < 20:
             stream_buf.put(data)
         else:
-            retrieved = stream_buf.get()
+            stream_buf.get()
             stream_buf.put(data)
 
     streaming_time = time.time() - start_time

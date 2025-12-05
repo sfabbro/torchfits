@@ -168,7 +168,7 @@ def demo_streaming_tables():
         streaming_time = time.time() - start_time
 
         print(f"  Streaming read: {streaming_time:.3f}s")
-        print(f"  Memory limit: 5 MB")
+        print("  Memory limit: 5 MB")
 
         if isinstance(streaming_result, dict):
             print(f"  Columns: {list(streaming_result.keys())}")
@@ -212,7 +212,7 @@ def demo_enhanced_caching():
             torchfits.read(filepath)
         first_pass_time = time.time() - start_time
 
-        stats_after_first = torchfits.get_cache_performance()
+        torchfits.get_cache_performance()
 
         # Second pass (cache hits)
         start_time = time.time()
@@ -261,7 +261,7 @@ def demo_batch_operations():
 
         # Batch reading
         start_time = time.time()
-        batch_results = torchfits.read_batch(files, max_workers=4)
+        torchfits.read_batch(files, max_workers=4)
         batch_time = time.time() - start_time
 
         print(f"  Files: {len(files)}")

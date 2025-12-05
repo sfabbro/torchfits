@@ -6,7 +6,6 @@ including local development, HPC clusters, and cloud platforms.
 """
 
 import os
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import psutil

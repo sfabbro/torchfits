@@ -40,15 +40,15 @@ def main():
                 try:
                     # Check if it's an image or table
                     if hasattr(hdu, "data") and isinstance(hdu.data, torch.Tensor):
-                        print(f"  Type: IMAGE")
+                        print("  Type: IMAGE")
                         print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
                         print(f"  Data shape: {hdu.data.shape}")
                     elif hasattr(hdu, "data") and isinstance(hdu.data, dict):
-                        print(f"  Type: TABLE")
+                        print("  Type: TABLE")
                         print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
                         print(f"  Table columns: {list(hdu.data.keys())}")
                     else:
-                        print(f"  Type: EMPTY/PRIMARY")
+                        print("  Type: EMPTY/PRIMARY")
                         print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
 
                 except Exception as e:

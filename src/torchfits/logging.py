@@ -7,7 +7,7 @@ Provides consistent logging and error handling across the library.
 import logging
 import sys
 from functools import wraps
-from typing import Any, Optional
+from typing import Optional
 
 # Configure torchfits logger
 logger = logging.getLogger("torchfits")

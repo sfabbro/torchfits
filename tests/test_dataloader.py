@@ -2,19 +2,20 @@
 Tests for torchfits dataloader module.
 """
 
-import os
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from torch.utils.data import RandomSampler, SequentialSampler
+from torch.utils.data import RandomSampler
 
-from torchfits.dataloader import (create_dataloader,
-                                  create_distributed_dataloader,
-                                  create_fits_dataloader, create_ml_dataloader,
-                                  create_streaming_dataloader,
-                                  get_optimal_dataloader_config)
+from torchfits.dataloader import (
+    create_dataloader,
+    create_distributed_dataloader,
+    create_fits_dataloader,
+    create_ml_dataloader,
+    create_streaming_dataloader,
+    get_optimal_dataloader_config,
+)
 from torchfits.datasets import FITSDataset, IterableFITSDataset
 
 
@@ -47,7 +48,7 @@ class TestDataLoaderCreation:
             mock_dataset.__len__ = Mock(return_value=3)
             mock_dataset_class.return_value = mock_dataset
 
-            dataloader = create_dataloader(file_paths, batch_size=2, num_workers=0)
+            create_dataloader(file_paths, batch_size=2, num_workers=0)
             # Should have created FITSDataset
             mock_dataset_class.assert_called_once_with(file_paths)
 
@@ -76,9 +77,7 @@ class TestDataLoaderCreation:
             mock_dataset.__len__ = Mock(return_value=2)
             mock_dataset_class.return_value = mock_dataset
 
-            dataloader = create_fits_dataloader(
-                file_paths, hdu=1, batch_size=4, num_workers=0
-            )
+            create_fits_dataloader(file_paths, hdu=1, batch_size=4, num_workers=0)
 
             mock_dataset_class.assert_called_once_with(
                 file_paths=file_paths, hdu=1, transform=None, device="cpu"
@@ -90,7 +89,7 @@ class TestDataLoaderCreation:
             mock_dataset = Mock(spec=IterableFITSDataset)
             mock_dataset_class.return_value = mock_dataset
 
-            dataloader = create_streaming_dataloader(
+            create_streaming_dataloader(
                 index_url="http://example.com/index.json",
                 hdu=0,
                 batch_size=16,
@@ -125,7 +124,7 @@ class TestDistributedDataLoader:
             mock_sampler = Mock()
             mock_sampler_class.return_value = mock_sampler
 
-            dataloader = create_distributed_dataloader(
+            create_distributed_dataloader(
                 file_paths,
                 batch_size=2,
                 num_replicas=2,
@@ -222,7 +221,7 @@ class TestOptimalConfiguration:
         # Small dataset should have conservative settings
         assert config["num_workers"] <= 2
         assert config["batch_size"] <= 16
-        assert config["pin_memory"] == False  # No GPU
+        assert not config["pin_memory"]  # No GPU
 
     def test_optimal_config_large_dataset(self):
         """Test configuration for large datasets."""
@@ -232,8 +231,8 @@ class TestOptimalConfiguration:
 
         # Large dataset with GPUs should have aggressive settings
         assert config["num_workers"] > 2
-        assert config["pin_memory"] == True  # Has GPUs
-        assert config["persistent_workers"] == True
+        assert config["pin_memory"]  # Has GPUs
+        assert config["persistent_workers"]
 
 
 class TestDataLoaderParameters:
@@ -254,7 +253,7 @@ class TestDataLoaderParameters:
 
             dataloader = create_dataloader(file_paths, pin_memory=True, num_workers=0)
 
-            assert dataloader.pin_memory == True
+            assert dataloader.pin_memory
 
     def test_pin_memory_without_cuda(self):
         """Test pin_memory setting without CUDA."""
@@ -273,7 +272,7 @@ class TestDataLoaderParameters:
                 file_paths, pin_memory=True, num_workers=0  # Requested True
             )
 
-            assert dataloader.pin_memory == False  # Should be False without CUDA
+            assert not dataloader.pin_memory  # Should be False without CUDA
 
     def test_prefetch_factor_with_workers(self):
         """Test prefetch_factor with multiple workers."""

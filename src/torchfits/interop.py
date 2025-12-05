@@ -1,10 +1,15 @@
-from typing import Any, Dict, Optional
+from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING, Any, Dict
+
 import torch
 
+if TYPE_CHECKING:
+    import pandas as pd
+    import pyarrow as pa
 
-def to_pandas(data: Dict[str, Any]) -> "pd.DataFrame":
+
+def to_pandas(data: Dict[str, Any]) -> pd.DataFrame:
     """
     Convert a dictionary of PyTorch tensors to a Pandas DataFrame.
     Attempts to use zero-copy conversion where possible (via numpy).
@@ -41,7 +46,7 @@ def to_pandas(data: Dict[str, Any]) -> "pd.DataFrame":
     return pd.DataFrame(processed_data)
 
 
-def to_arrow(data: Dict[str, Any]) -> "pa.Table":
+def to_arrow(data: Dict[str, Any]) -> pa.Table:
     """
     Convert a dictionary of PyTorch tensors to a PyArrow Table.
     Attempts to use zero-copy conversion where possible.

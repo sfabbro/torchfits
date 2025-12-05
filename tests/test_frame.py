@@ -1,12 +1,9 @@
 import os
-import shutil
 
 import torch
 from torch_frame import stype
 
-import torchfits
-from torchfits.frame import (read_tensor_frame, to_tensor_frame,
-                             write_tensor_frame)
+from torchfits.frame import read_tensor_frame, to_tensor_frame, write_tensor_frame
 
 
 def test_frame_integration():

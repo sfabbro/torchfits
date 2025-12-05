@@ -15,7 +15,6 @@ import gc
 import sys
 import tempfile
 import time
-import tracemalloc
 from pathlib import Path
 from statistics import mean, stdev
 from typing import Dict, List, Optional
@@ -785,7 +784,7 @@ class ExhaustiveBenchmarkSuite:
                                 result[col] = torch.from_numpy(col_data.astype(bool))
                             else:
                                 result[col] = torch.from_numpy(col_data)
-                        except:
+                        except Exception:
                             # Skip problematic columns
                             continue
                     return result
@@ -1045,8 +1044,8 @@ class ExhaustiveBenchmarkSuite:
             f.write(f"- CUDA available: {torch.cuda.is_available()}\n")
             if torch.cuda.is_available():
                 f.write(f"- CUDA device: {torch.cuda.get_device_name()}\n")
-            f.write(f"- astropy available: True\n")
-            f.write(f"- fitsio available: True\n")
+            f.write("- astropy available: True\n")
+            f.write("- fitsio available: True\n")
             f.write(
                 f"- System memory: {psutil.virtual_memory().total / (1024**3):.1f} GB\n"
             )
@@ -1243,7 +1242,7 @@ class ExhaustiveBenchmarkSuite:
             f.write("\n")
             f.write("## Files Generated\n\n")
             f.write(f"- Detailed results: `{self.csv_file.name}`\n")
-            f.write(f"- Performance plots: `*.png` files\n")
+            f.write("- Performance plots: `*.png` files\n")
             f.write(f"- This summary: `{self.summary_file.name}`\n")
             f.write("\n")
             f.write("## Next Steps\n\n")
@@ -1275,7 +1274,7 @@ class ExhaustiveBenchmarkSuite:
             from benchmark_cpp_backend import CPPBackendBenchmark
 
             cpp_benchmark = CPPBackendBenchmark()
-            cpp_results = cpp_benchmark.run_comprehensive_benchmark()
+            cpp_benchmark.run_comprehensive_benchmark()
             print("✅ C++ backend benchmark completed")
         except Exception as e:
             print(f"⚠️  C++ backend benchmark failed: {e}")

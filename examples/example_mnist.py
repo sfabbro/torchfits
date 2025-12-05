@@ -1,11 +1,9 @@
 import os
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from astropy.io import fits
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms  # Use torchvision for MNIST
 from tqdm import tqdm
@@ -158,7 +156,6 @@ def main():
 
     # Use a subset for faster demonstration (1000 train, 200 test)
     max_train = 1000
-    max_test = 200
 
     # --- Create FITS files (if they don't exist) ---
     if not os.path.exists(os.path.join(data_dir, "train_00000_5.fits")):

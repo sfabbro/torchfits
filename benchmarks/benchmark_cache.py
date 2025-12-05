@@ -9,10 +9,9 @@ including environment detection, configuration optimization, and cache operation
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -53,7 +52,7 @@ class CacheBenchmark:
             # Test stats access performance
             start_time = time.time()
             for _ in range(100):
-                stats = cache.get_cache_stats()
+                cache.get_cache_stats()
             stats_time = time.time() - start_time
 
             # Test cache clearing
@@ -121,7 +120,7 @@ class CacheBenchmark:
         for num_iter in iterations:
             start_time = time.time()
             for _ in range(num_iter):
-                stats = cache.get_cache_stats()
+                cache.get_cache_stats()
             total_time = time.time() - start_time
 
             results[f"stats_access_{num_iter}"] = {

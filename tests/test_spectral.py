@@ -3,6 +3,7 @@ Tests for spectral and data cube functionality.
 """
 
 import os
+
 # Add src to path for testing
 import sys
 import tempfile
@@ -14,8 +15,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from torchfits.spectral import (DataCube, SpectralAxis, SpectralReader,
-                                Spectrum1D)
+from torchfits.spectral import DataCube, SpectralAxis, SpectralReader, Spectrum1D
 
 
 class TestSpectralAxis:
@@ -227,7 +227,7 @@ class TestSpectralReader:
     def create_test_spectrum_file(self):
         """Create test spectrum FITS file."""
         try:
-            from astropy.io import fits
+            from astropy.io import fits  # noqa: F401
             from astropy.table import Table
         except ImportError:
             pytest.skip("astropy required for test file creation")

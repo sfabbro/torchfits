@@ -4,7 +4,6 @@ Benchmark script to compare torchfits performance on CPU vs MPS.
 """
 
 import gc
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -93,7 +92,7 @@ def benchmark_mps_vs_cpu():
         gc.collect()
         torch.mps.empty_cache()
         start = time.perf_counter()
-        res_mps = transform(mps_data)
+        transform(mps_data)
         torch.mps.synchronize()
         mps_trans_time = time.perf_counter() - start
         print(f"  MPS Transform: {mps_trans_time:.4f}s")
@@ -122,10 +121,10 @@ def benchmark_mps_vs_cpu():
         cpu_table_time = time.perf_counter() - start
         print(f"  CPU Table Read: {cpu_table_time:.4f}s")
 
-        # MPS
         gc.collect()
         torch.mps.empty_cache()
         start = time.perf_counter()
+        mps_table, _ = torchfits.read(str(table_path), device="mps")
         # Synchronize all tensors
         if isinstance(mps_table, dict):
             for v in mps_table.values():

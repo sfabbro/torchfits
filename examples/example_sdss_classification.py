@@ -2,7 +2,6 @@ import os
 
 import fsspec  # Import fsspec
 import numpy as np
-import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -54,7 +53,7 @@ class SDSSDataset(Dataset):
                         cache_capacity=self.cache_capacity,
                         device=self.device,
                     )
-            except:
+            except Exception:
                 # Fall back to HDU 1 as image data
                 flux, _ = torchfits.read(
                     filename,
@@ -67,7 +66,7 @@ class SDSSDataset(Dataset):
             try:
                 header = torchfits.get_header(filename, hdu=0)
                 obj_class = header.get("CLASS", "UNKNOWN")
-            except:
+            except Exception:
                 # Fallback using astropy fits
                 obj_class = fits.getval(filename, "CLASS", ext=0)
 

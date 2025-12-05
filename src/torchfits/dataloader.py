@@ -8,7 +8,7 @@ for FITS datasets with appropriate defaults for astronomical data.
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 import torchfits

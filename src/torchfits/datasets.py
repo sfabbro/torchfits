@@ -6,7 +6,6 @@ This module provides Dataset implementations for machine learning workflows:
 - IterableFITSDataset: Streaming dataset for large-scale data
 """
 
-from pathlib import Path
 from typing import Any, Callable, Iterator, List, Optional
 
 import torch

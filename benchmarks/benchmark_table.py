@@ -5,15 +5,12 @@ Benchmarks table reading, filtering, and pytorch-frame integration
 across different table sizes and column types.
 """
 
-import os
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 import numpy as np
-import pytest
-import torch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -120,19 +117,19 @@ class TableBenchmarkSuite:
 
                 # Selection benchmark
                 start_time = time.perf_counter()
-                selected = table.select(["col_0", "col_1", "col_2"])
+                table.select(["col_0", "col_1", "col_2"])
                 select_time = time.perf_counter() - start_time
                 print(f"  Column selection: {select_time:.6f}s (lazy)")
 
                 # Filter benchmark
                 start_time = time.perf_counter()
-                filtered = table.filter("col_0 > 0")
+                table.filter("col_0 > 0")
                 filter_time = time.perf_counter() - start_time
                 print(f"  Row filtering: {filter_time:.6f}s (lazy)")
 
                 # Head benchmark
                 start_time = time.perf_counter()
-                limited = table.head(1000)
+                table.head(1000)
                 head_time = time.perf_counter() - start_time
                 print(f"  Head operation: {head_time:.6f}s (lazy)")
 
@@ -146,7 +143,7 @@ class TableBenchmarkSuite:
 
                 # Materialization benchmark
                 start_time = time.perf_counter()
-                result = chained.materialize()
+                chained.materialize()
                 materialize_time = time.perf_counter() - start_time
                 print(f"  Materialization: {materialize_time:.4f}s")
 
@@ -180,13 +177,13 @@ class TableBenchmarkSuite:
                         # Single column access using first available column
                         first_col = available_cols[0]
                         start_time = time.perf_counter()
-                        col_data = table[first_col]
+                        table[first_col]
                         single_time = time.perf_counter() - start_time
                         print(f"  Single column: {single_time:.4f}s")
 
                         # Multiple column access
                         start_time = time.perf_counter()
-                        tensor_dict = table.to_tensor_dict()
+                        table.to_tensor_dict()
                         multi_time = time.perf_counter() - start_time
                         print(f"  All columns: {multi_time:.4f}s")
                     else:
@@ -271,7 +268,7 @@ class TableBenchmarkSuite:
         try:
             start_time = time.perf_counter()
             with astropy_fits.open(filename) as hdul:
-                data = hdul[1].data
+                hdul[1].data
             astropy_time = time.perf_counter() - start_time
             results["astropy"] = astropy_time
             print(f"  astropy: {astropy_time:.4f}s")
@@ -281,7 +278,7 @@ class TableBenchmarkSuite:
         # fitsio
         try:
             start_time = time.perf_counter()
-            data = fitsio.read(str(filename), ext=1)
+            fitsio.read(str(filename), ext=1)
             fitsio_time = time.perf_counter() - start_time
             results["fitsio"] = fitsio_time
             print(f"  fitsio: {fitsio_time:.4f}s")

@@ -5,7 +5,6 @@ import timeit
 import fitsio
 import numpy as np
 import psutil
-import torch
 
 import torchfits
 

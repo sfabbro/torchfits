@@ -26,7 +26,7 @@ def create_test_files(data_dir):
 
     # --- 1D Spectrum (Wavelength) ---
     spectrum_file = os.path.join(data_dir, "test_spectrum_1d.fits")
-    wavelengths = np.linspace(4000, 7000, 1000)  # Angstroms
+    np.linspace(4000, 7000, 1000)  # Angstroms
     flux = np.random.rand(1000).astype(np.float32)
     hdu = fits.PrimaryHDU(flux)
     hdu.header["CTYPE1"] = "WAVE"  # Wavelength

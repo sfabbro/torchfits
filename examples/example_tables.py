@@ -10,8 +10,6 @@ import torchfits
 
 def create_test_file(filename):
     if not os.path.exists(filename):
-        names = ["ra", "dec", "flux", "id", "comments", "flag"]
-        formats = ["D", "D", "E", "J", "20A", "B"]  # Added a boolean column
         data = {
             "ra": np.array([200.0, 201.0, 202.0], dtype=np.float64),
             "dec": np.array([45.0, 46.0, 47.0], dtype=np.float64),
@@ -40,7 +38,7 @@ def main():
             if hasattr(table_data[col_name], "dtype"):
                 print(f"    Data Type: {table_data[col_name].dtype}")
             else:
-                print(f"    Data Type: string list")
+                print("    Data Type: string list")
     except RuntimeError as e:
         print(f"  Error: {e}")
 

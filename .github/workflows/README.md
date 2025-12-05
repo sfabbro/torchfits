@@ -1,52 +1,48 @@
 # GitHub Workflows
 
-This directory contains the GitHub Actions CI/CD workflows for TorchFits.
+This directory contains the GitHub Actions CI/CD workflows for torchfits.
 
 ## Active Workflows
 
-### `ci.yml` - Main CI Pipeline
-**Triggers:** Push to main/develop, Pull Requests
-**Purpose:** Complete build, test, and quality pipeline
+### `ci.yml` - Comprehensive CI Pipeline
+**Triggers:** Push to main/develop branches, Pull Requests, Releases  
+**Purpose:** Complete build, test, quality assurance, and deployment pipeline
 
 **Jobs:**
-1. **Code Quality** - Black, isort, mypy, pre-commit checks (Python 3.12)
-2. **Build & Test** - Multi-platform builds and tests
-   - **OS:** Ubuntu, macOS, Windows  
-   - **Python:** 3.10, 3.11, 3.12, 3.13
-   - **System deps:** cfitsio, wcslib via package managers
-   - **Tests:** Import verification, basic functionality, full test suite, examples
-3. **Memory Safety** - Valgrind memory leak detection with stress testing
-4. **Performance** - Benchmark suite execution and reporting
-5. **Documentation** - Documentation build verification  
+1. **Code Quality** - Code formatting and linting (Python 3.12)
+   - black (formatting)
+   - ruff (linting)
+   
+2. **Build & Test** - Multi-version builds and tests
+   - **OS:** Ubuntu
+   - **Python:** 3.11, 3.12
+   - **System deps:** cfitsio, wcslib
+   - **Tests:** Full pytest suite
+   
+3. **Memory Safety** - Memory leak detection (placeholder for valgrind)
+
+4. **Performance Benchmarks** - Performance regression testing (placeholder)
+
+5. **Documentation** - Documentation build verification (placeholder)
+
 6. **Publish** - Automated PyPI publishing on GitHub releases
 
 **Key Features:**
-- Cross-platform C++ extension compilation
-- Memory leak detection with valgrind
-- Performance regression testing
-- Automated PyPI releases
+- C++ extension compilation with cfitsio/wcslib
+- Cross-Python version testing
 - Code quality enforcement
+- Automated PyPI releases
 
-## Backup Workflows
+## CI Configuration
 
-### `memory_tests.yml.backup` - Original Memory Tests
-**Status:** Archived (replaced by comprehensive CI)
-**Purpose:** Basic memory leak testing with valgrind
+- **Python Versions:** 3.11, 3.12
+- **Code Quality Tools:** black, ruff
+- **Build Dependencies:** cfitsio, wcslib (installed via apt)
+- **PyPI Publishing:** Requires `PYPI_API_TOKEN` repository secret
 
-The original simple memory testing workflow, kept for reference. The memory testing functionality has been integrated into the main CI pipeline with enhanced stress testing.
+## Setup for PyPI Publishing
 
-## CI Configuration Notes
+Add the following secret to your GitHub repository settings:
+- `PYPI_API_TOKEN`: Your PyPI API token
 
-- **Default Python Version:** 3.12 (for tooling and single-version jobs)
-- **Supported Python:** 3.10, 3.11, 3.12, 3.13
-- **Build Dependencies:** Automatic installation of cfitsio, wcslib system libraries
-- **PyPI Publishing:** Requires `PYPI_API_TOKEN` secret to be configured
-- **Memory Testing:** Comprehensive stress testing with 100+ file operations
-- **Performance:** Automated benchmark execution with regression detection
-
-## Setup Requirements
-
-To enable PyPI publishing, add the following secret to your GitHub repository:
-- `PYPI_API_TOKEN`: Your PyPI API token for automated package publishing
-
-The workflow will automatically publish to PyPI when you create a GitHub release.
+The workflow automatically publishes to PyPI when you create a GitHub release.

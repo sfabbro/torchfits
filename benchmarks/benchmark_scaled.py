@@ -3,7 +3,6 @@ import timeit
 
 import fitsio
 import numpy as np
-import torch
 
 import torchfits
 

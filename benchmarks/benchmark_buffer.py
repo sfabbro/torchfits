@@ -9,10 +9,9 @@ including memory pools, streaming buffers, and allocation patterns.
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import torch
 

@@ -84,7 +84,7 @@ class WCS:
         # Wait, center of 100 pixels is 50.5 (1-based).
         # 50.5 - 1 = 49.5 (0-based).
 
-        center_pix = torch.tensor([[naxis1 / 2.0, naxis2 / 2.0]], dtype=torch.float64)
+        torch.tensor([[naxis1 / 2.0, naxis2 / 2.0]], dtype=torch.float64)
         # Wait, if I use 1-based pixels for WCS (as I did in verification), I should pass 1-based center.
         # In verification I used `pixels + 1.0`.
         # If `torchfits.WCS` wraps `wcslib` directly, it expects 1-based pixels (unless I change it).
@@ -232,7 +232,6 @@ class WCS:
         Returns:
             Processed tensor
         """
-        device = tensor.device
         total_coords = tensor.shape[0]
 
         # Pre-allocate result tensor
@@ -306,7 +305,7 @@ class WCS:
 
         if world_coords is not None:
             for _ in range(10):
-                pixel_coords = self.world_to_pixel(world_coords)
+                self.world_to_pixel(world_coords)
 
         if device == "cuda":
             torch.cuda.synchronize()

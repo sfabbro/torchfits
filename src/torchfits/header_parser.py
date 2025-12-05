@@ -6,7 +6,7 @@ bulk C++ read_header_to_string() function, avoiding Python/C++ round trips.
 """
 
 import re
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict
 
 
 class FastHeaderParser:

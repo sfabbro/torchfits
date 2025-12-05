@@ -14,7 +14,6 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch_frame import TensorFrame
-from torch_frame.data import StatType
 
 # Import torch first
 _ = torch.empty(1)  # Force torch C++ symbols to load
@@ -511,7 +510,7 @@ class HDUList:
                                 pass
 
                         hdu = TableHDU(tensor_dict, {}, header)
-                    except Exception as e:
+                    except Exception:
                         # Fallback to empty table if read fails
                         # import sys
                         # sys.stderr.write(f"DEBUG: Failed to create TableHDU: {e}\n")
@@ -529,7 +528,7 @@ class HDUList:
             if hdul._file_handle:
                 try:
                     hdul._file_handle.close()
-                except:
+                except Exception:
                     pass
             raise RuntimeError(f"Failed to open FITS file '{path}': {str(e)}") from e
 

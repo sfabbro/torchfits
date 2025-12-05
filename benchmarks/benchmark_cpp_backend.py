@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     import torchfits
-    from torchfits.core import FITSCore
+    from torchfits.core import FITSCore  # noqa: F401
 except ImportError as e:
     print(f"⚠️  torchfits import failed: {e}")
     torchfits = None
@@ -209,7 +209,7 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         full_data = hdul[0].data
                         subset = full_data[1000:2000, 1000:2000]
-                        tensor = torch.from_numpy(subset.copy())
+                        torch.from_numpy(subset.copy())
                     end = time.perf_counter()
                     times.append(end - start)
 
@@ -284,7 +284,7 @@ class CPPBackendBenchmark:
                 [r.get("vs_fitsio", 1.0) for r in self.results if "vs_fitsio" in r]
             )
 
-            print(f"\\n📈 Overall Performance:")
+            print("\\n📈 Overall Performance:")
             print(f"  Average vs astropy: {avg_vs_astropy:.2f}x")
             print(f"  Average vs fitsio:  {avg_vs_fitsio:.2f}x")
 

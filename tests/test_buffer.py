@@ -6,18 +6,25 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from torchfits.buffer import (BufferManager, MemoryPool, StreamingBuffer,
-                              clear_buffers, configure_buffers,
-                              create_streaming_buffer, get_buffer_manager,
-                              get_buffer_stats, get_optimal_buffer_config,
-                              optimize_for_workload)
+from torchfits.buffer import (
+    BufferManager,
+    MemoryPool,
+    StreamingBuffer,
+    clear_buffers,
+    configure_buffers,
+    create_streaming_buffer,
+    get_buffer_manager,
+    get_buffer_stats,
+    get_optimal_buffer_config,
+    optimize_for_workload,
+)
 
 
 class TestMemoryPool:
@@ -63,11 +70,11 @@ class TestMemoryPool:
         pool = MemoryPool(max_size_mb=1)  # Very small
 
         # Create first buffer
-        buffer1 = pool.get_buffer((100, 100), torch.float32, "cpu")
-        initial_size = len(pool._pool)
+        pool.get_buffer((100, 100), torch.float32, "cpu")
+        len(pool._pool)
 
         # Create second buffer that should cause eviction
-        buffer2 = pool.get_buffer((200, 200), torch.float32, "cpu")
+        pool.get_buffer((200, 200), torch.float32, "cpu")
 
         # Pool should still exist but may have evicted old buffer
         assert len(pool._pool) >= 1
@@ -126,10 +133,10 @@ class TestStreamingBuffer:
         item1 = torch.ones(2, 2)
         item2 = torch.ones(2, 2) * 2
 
-        assert buffer.put(item1) == True
+        assert buffer.put(item1)
         assert buffer.size() == 1
 
-        assert buffer.put(item2) == True
+        assert buffer.put(item2)
         assert buffer.size() == 2
 
         # Get items
@@ -149,12 +156,12 @@ class TestStreamingBuffer:
         item = torch.ones(3, 3)
 
         # Fill buffer
-        assert buffer.put(item) == True
-        assert buffer.put(item) == True
+        assert buffer.put(item)
+        assert buffer.put(item)
         assert buffer.is_full()
 
         # Should reject additional items
-        assert buffer.put(item) == False
+        assert not buffer.put(item)
         assert buffer.size() == 2
 
     def test_circular_behavior(self):
@@ -164,7 +171,7 @@ class TestStreamingBuffer:
         # Fill and empty multiple times
         for i in range(5):
             item = torch.tensor([float(i)])
-            assert buffer.put(item) == True
+            assert buffer.put(item)
             retrieved = buffer.get()
             assert torch.equal(retrieved, item)
 
@@ -187,7 +194,7 @@ class TestBufferManager:
 
         assert manager.buffer_size_mb == 128
         assert manager.num_buffers == 4
-        assert manager.enable_memory_pool == True
+        assert manager.enable_memory_pool
         assert manager.memory_pool is not None
 
     def test_buffer_manager_without_pool(self):
@@ -233,7 +240,7 @@ class TestBufferManager:
         manager = BufferManager(enable_memory_pool=False)
 
         # Get buffer
-        buffer = manager.get_buffer("test", (10, 10), torch.float32, "cpu")
+        manager.get_buffer("test", (10, 10), torch.float32, "cpu")
         assert len(manager._buffers) == 1
 
         # Release buffer
@@ -309,7 +316,7 @@ class TestGlobalFunctions:
         manager = get_buffer_manager()
         assert manager.buffer_size_mb == 256
         assert manager.num_buffers == 8
-        assert manager.enable_memory_pool == True
+        assert manager.enable_memory_pool
 
     def test_get_buffer_stats(self):
         """Test getting global buffer stats."""

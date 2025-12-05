@@ -413,7 +413,7 @@ class SpectralReader:
             spatial_wcs = None
             try:
                 spatial_wcs = WCS.from_header(header)
-            except:
+            except Exception:
                 pass  # WCS creation failed, continue without it
 
             return DataCube(

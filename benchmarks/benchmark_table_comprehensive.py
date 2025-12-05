@@ -17,17 +17,16 @@ import tempfile
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 import numpy as np
 import psutil
-import torch
 
 warnings.filterwarnings("ignore")
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-import torchfits
+import torchfits  # noqa: E402
 
 # Optional dependencies
 try:
@@ -161,7 +160,7 @@ class TableBenchmarkSuite:
         # Warmup
         try:
             _ = torchfits.read(filepath, hdu=1)
-        except:
+        except Exception:
             pass
 
         # Benchmark full table read
@@ -244,7 +243,7 @@ class TableBenchmarkSuite:
         try:
             with astropy_fits.open(filepath) as hdul:
                 _ = hdul[1].data
-        except:
+        except Exception:
             pass
 
         # Benchmark
@@ -292,7 +291,7 @@ class TableBenchmarkSuite:
         try:
             with fitsio.FITS(filepath) as fits:
                 _ = fits[1].read()
-        except:
+        except Exception:
             pass
 
         # Benchmark

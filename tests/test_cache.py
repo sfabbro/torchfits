@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -65,7 +64,7 @@ class TestCaching:
             torchfits.clear_file_cache()
 
             # Verify cache is cleared
-            stats = torchfits.get_cache_performance()
+            torchfits.get_cache_performance()
             # After clearing, stats should be reset or show no cached entries
 
         finally:

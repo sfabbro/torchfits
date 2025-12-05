@@ -522,7 +522,7 @@ class RedshiftShift:
 
         orig_len = tensor.shape[-1]
         # Create grid [-1, 1]
-        grid = torch.linspace(-1, 1, orig_len, device=tensor.device)
+        torch.linspace(-1, 1, orig_len, device=tensor.device)
 
         # Shifted grid positions in original frame
         # We want to sample at x_new.
