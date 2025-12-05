@@ -20,7 +20,7 @@
 #include <functional>
 #include <cstring>  // for memset
 
-#define DEBUG_TABLE 1
+// #define DEBUG_TABLE 1
 
 #include <fitsio.h>
 #include "hardware.h"
@@ -139,6 +139,11 @@ public:
     void analyze_table() {
         int status = 0;
         
+        // Check HDU type
+        int hdutype;
+        fits_get_hdu_type(fptr_, &hdutype, &status);
+        is_ascii_ = (hdutype == ASCII_TBL);
+        
         // Get table dimensions
         fits_get_num_rows(fptr_, &nrows_, &status);
         fits_get_num_cols(fptr_, &ncols_, &status);
@@ -172,13 +177,40 @@ public:
             memset(tform, 0, FLEN_VALUE);
             memset(tunit, 0, FLEN_VALUE);
             
-            // Get column parameters using fits_get_bcolparms with correct parameter types
-            long repeat_long = 0;
-            double tscal = 0.0, tzero = 0.0;
-            long tnull = 0;
-            char tdisp[FLEN_VALUE];
+            // Get column name
             int col_status = 0;
-            fits_get_bcolparms(fptr_, i, ttype, tunit, tform, &repeat_long, &tscal, &tzero, &tnull, tdisp, &col_status);
+            
+            // We use fits_read_key to read TTYPEn.
+            char keyname[FLEN_KEYWORD];
+            snprintf(keyname, FLEN_KEYWORD, "TTYPE%d", i);
+            fits_read_key(fptr_, TSTRING, keyname, ttype, nullptr, &col_status);
+            
+            if (col_status != 0) {
+                // TTYPE is optional? If missing, use default name?
+                col_status = 0; // Reset status
+                snprintf(ttype, FLEN_VALUE, "COL%d", i);
+            }
+            
+            int typecode;
+            long repeat_long, width_long;
+            fits_get_coltype(fptr_, i, &typecode, &repeat_long, &width_long, &col_status);
+            
+            if (col_status != 0) {
+                 #ifdef DEBUG_TABLE
+                 char err_msg[81];
+                 fits_get_errstatus(col_status, err_msg);
+                 fprintf(stderr, "Warning: Failed to get column %d info: %s\n", i, err_msg);
+                 #endif
+                 continue;
+            }
+            
+            // Map typecode to FITSColumnType
+            // ... (rest of logic needs to be updated to use typecode)
+            
+            // Wait, I need to replace the existing logic block.
+            // The existing logic uses tform from fits_get_bcolparms.
+            // I should rewrite the loop body to use fits_get_coltype.
+
             
             if (col_status != 0) {
                 // Skip problematic columns but log the issue
@@ -194,84 +226,117 @@ public:
             col.name = std::string(ttype);
             col.width = 1;  // Will be set based on type
             
-            col.width = 1;  // Will be set based on type
-            
             #ifdef DEBUG_TABLE
-            fprintf(stderr, "Column %d: name='%s', tform='%s', repeat=%d\n", i, ttype, tform, col.repeat);
+            fprintf(stderr, "Column %d: name='%s', typecode=%d, repeat=%d\n", i, ttype, typecode, col.repeat);
             #endif
             
-            // Parse TFORM to get data type
-            size_t tform_len = strlen(tform);
-            if (tform_len == 0) {
-                #ifdef DEBUG_TABLE
-                fprintf(stderr, "Warning: Empty TFORM for column %d\n", i);
-                #endif
-                continue;
-            }
-            
-            char type_char = tform[tform_len - 1];
-            
-            // Handle variable length arrays
-            bool is_variable = (strchr(tform, 'P') != nullptr || strchr(tform, 'Q') != nullptr);
-            
-            if (is_variable) {
+            if (typecode < 0) {
+                // Variable length array
                 col.type = FITSColumnType::VARIABLE;
-                col.torch_type = (type_char == 'Q') ? torch::kFloat64 : torch::kFloat32;
-                col.width = 8;  // Pointer size
+                int abs_type = -typecode;
+                switch (abs_type) {
+                    case TLOGICAL: col.torch_type = torch::kBool; break;
+                    case TBYTE: col.torch_type = torch::kUInt8; break;
+                    case TSHORT: col.torch_type = torch::kInt16; break;
+                    case TINT: col.torch_type = torch::kInt32; break;
+                    case TLONG: col.torch_type = (sizeof(long) == 8) ? torch::kInt64 : torch::kInt32; break;
+                    case TLONGLONG: col.torch_type = torch::kInt64; break;
+                    case TFLOAT: col.torch_type = torch::kFloat32; break;
+                    case TDOUBLE: col.torch_type = torch::kFloat64; break;
+                    default: col.torch_type = torch::kFloat32;
+                }
+                col.width = 8;
             } else {
-                switch (type_char) {
-                    case 'L': 
+                switch (typecode) {
+                    case TLOGICAL: 
                         col.type = FITSColumnType::LOGICAL;
                         col.torch_type = torch::kBool;
                         col.width = 1;
                         break;
-                    case 'B':
+                    case TBYTE:
+                    case TSBYTE:
                         col.type = FITSColumnType::BYTE;
                         col.torch_type = torch::kUInt8;
                         col.width = 1;
                         break;
-                    case 'I':
+                    case TSHORT:
+                    case TUSHORT:
                         col.type = FITSColumnType::SHORT;
                         col.torch_type = torch::kInt16;
                         col.width = 2;
                         break;
-                    case 'J':
+                    case TINT:
+                    case TUINT:
                         col.type = FITSColumnType::INT;
                         col.torch_type = torch::kInt32;
                         col.width = 4;
                         break;
-                    case 'K':
+                    case TSTRING:
+                        col.type = FITSColumnType::STRING;
+                        col.torch_type = torch::kUInt8;
+                        if (is_ascii_) {
+                             col.repeat = 1; // One string per row
+                             col.width = (int)width_long;
+                        } else {
+                             // Binary table
+                             col.width = 1;
+                             // col.repeat is already set to repeat_long
+                        }
+                        break;
+                    case TLONG:
+                        if (is_ascii_) {
+                             // For ASCII, TLONG usually means it fits in standard integer.
+                             // Prefer Int32 to match typical usage and avoid issues with TLONGLONG on ASCII?
+                             col.type = FITSColumnType::INT;
+                             col.torch_type = torch::kInt32;
+                             col.width = 4;
+                        } else {
+                            if (sizeof(long) == 8) {
+                                col.type = FITSColumnType::LONG;
+                                col.torch_type = torch::kInt64;
+                                col.width = 8;
+                            } else {
+                                col.type = FITSColumnType::INT;
+                                col.torch_type = torch::kInt32;
+                                col.width = 4;
+                            }
+                        }
+
+                        break;
+                    case TULONG:
+                        if (sizeof(long) == 8) {
+                            col.type = FITSColumnType::LONG;
+                            col.torch_type = torch::kInt64;
+                            col.width = 8;
+                        } else {
+                            col.type = FITSColumnType::INT;
+                            col.torch_type = torch::kInt32;
+                            col.width = 4;
+                        }
+                        break;
+                    case TLONGLONG:
                         col.type = FITSColumnType::LONG;
                         col.torch_type = torch::kInt64;
                         col.width = 8;
                         break;
-                    case 'E':
+                    case TFLOAT:
                         col.type = FITSColumnType::FLOAT;
                         col.torch_type = torch::kFloat32;
                         col.width = 4;
                         break;
-                    case 'D':
+                    case TDOUBLE:
                         col.type = FITSColumnType::DOUBLE;
                         col.torch_type = torch::kFloat64;
                         col.width = 8;
                         break;
-                    case 'A':
-                        col.type = FITSColumnType::STRING;
-                        col.torch_type = torch::kUInt8; // Changed from kInt64 to kUInt8 to avoid buffer overflow
-                        // For strings, TFORM is like "20A". repeat is 20.
-                        // We want a tensor of shape (rows, 20).
-                        // So width should be 1 (byte), repeat should be 20.
-                        // But wait, analyze_table loop parses tform and sets col.repeat.
-                        // If tform is "20A", col.repeat is 20.
-                        col.width = 1; 
-                        // col.repeat is already set correctly by the parser loop above
-                        break;
                     default:
-                        col.type = FITSColumnType::FLOAT;
-                        col.torch_type = torch::kFloat32;
-                        col.width = 4;
+                        #ifdef DEBUG_TABLE
+                        fprintf(stderr, "Warning: Unknown typecode %d for column %d\n", typecode, i);
+                        #endif
+                        continue;
                 }
             }
+
             
             columns_.push_back(col);
         }
@@ -379,7 +444,13 @@ public:
             std::vector<int64_t> shape;
             shape.push_back(num_rows);
             // Handle multi-dimensional columns AND strings
-            if (col.repeat > 1 || col.type == FITSColumnType::STRING) {
+            if (col.type == FITSColumnType::STRING) {
+                if (is_ascii_) {
+                    shape.push_back(col.width);
+                } else {
+                    shape.push_back(col.repeat);
+                }
+            } else if (col.repeat > 1) {
                  shape.push_back(col.repeat);
             }
             
@@ -407,12 +478,13 @@ public:
         }
         
         bool use_buffered = false;
-        if (!has_vla && row_width_bytes_ > 0) {
+        if (!is_ascii_ && !has_vla && row_width_bytes_ > 0) {
             double byte_fraction = (double)requested_bytes / row_width_bytes_;
             double col_fraction = (double)col_indices.size() / ncols_;
             
             if (byte_fraction > 0.25 || col_fraction > 0.5) {
-                use_buffered = true;
+                // use_buffered = true; // Disable buffered reading for now as it causes issues
+                use_buffered = false;
             }
         }
         
@@ -452,22 +524,41 @@ public:
                     long nelements = num_rows * col.repeat;
                     
                     if (col.type == FITSColumnType::STRING) {
-                         // For strings, we read as bytes. 
-                         // fits_read_col with TBYTE will read the bytes directly.
-                         fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
-                                      nullptr, tensor.data_ptr(), nullptr, &status);
+                         if (is_ascii_) {
+                             // ASCII table: read as strings
+                             std::vector<char*> pointers(nelements);
+                             std::vector<char> buffer(nelements * (col.width + 1));
+                             
+                             for (long i = 0; i < nelements; i++) {
+                                 pointers[i] = &buffer[i * (col.width + 1)];
+                             }
+                             
+                             fits_read_col(fptr_, TSTRING, col_idx + 1, start_row, firstelem, nelements,
+                                          nullptr, pointers.data(), nullptr, &status);
+                                          
+                             // Copy to tensor (row-major)
+                             uint8_t* tensor_data = (uint8_t*)tensor.data_ptr();
+                             for (long i = 0; i < nelements; i++) {
+                                 // Copy string to tensor, padding with spaces or nulls?
+                                 // TorchFits convention: raw bytes.
+                                 // cfitsio returns null-terminated string.
+                                 // We copy up to col.width.
+                                 const char* src = pointers[i];
+                                 size_t len = strlen(src);
+                                 for (int j = 0; j < col.width; j++) {
+                                     if (j < len) {
+                                         tensor_data[i * col.width + j] = (uint8_t)src[j];
+                                     } else {
+                                         tensor_data[i * col.width + j] = ' '; // Pad with spaces for ASCII?
+                                     }
+                                 }
+                             }
+                         } else {
+                             // Binary table: read as raw bytes
+                             fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
+                                          nullptr, tensor.data_ptr(), nullptr, &status);
+                         }
                     } else if (col.type == FITSColumnType::LOGICAL) {
-                         // For logical, fits_read_col with TLOGICAL expects char array (T/F) or int array?
-                         // CFITSIO TLOGICAL returns char 'T'/'F' if type is TBYTE/TSTRING, or 1/0 if type is TLOGICAL?
-                         // Actually TLOGICAL in cfitsio maps to 'char'.
-                         // But our tensor is kBool (1 byte).
-                         // We can read as TBYTE (char) and then convert?
-                         // Or just read as TLOGICAL.
-                         // Let's read as TBYTE to get raw 'T'/'F' and then convert in place?
-                         // Or rely on cfitsio to convert to 1/0?
-                         // If we pass TLOGICAL to fits_read_col, it expects an array of 'char'.
-                         // 'T' -> 1, 'F' -> 0? No, usually it returns 'T'/'F'.
-                         // Let's read as TBYTE (raw chars) and convert.
                          fits_read_col(fptr_, TBYTE, col_idx + 1, start_row, firstelem, nelements,
                                       nullptr, tensor.data_ptr(), nullptr, &status);
                          
@@ -479,6 +570,10 @@ public:
                              data[i] = (data[i] == 'T') ? 1 : 0;
                          }
                     } else {
+                        #ifdef DEBUG_TABLE
+                        fprintf(stderr, "Reading col %d (%s), type %d, datatype %d, rows %ld\n", 
+                                col_idx+1, col.name.c_str(), (int)col.type, datatype, num_rows);
+                        #endif
                         fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
                                       nullptr, tensor.data_ptr(), nullptr, &status);
                     }
@@ -941,6 +1036,7 @@ private:
     int ncols_;
     long row_width_bytes_ = 0;
     std::vector<ColumnInfo> columns_;
+    bool is_ascii_ = false;
 };
 
 // Memory pool for table operations
@@ -1009,6 +1105,8 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
     }
 }
 
+
+
 void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
     fitsfile* fptr;
     int status = 0;
@@ -1022,101 +1120,17 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     if (status != 0) {
         throw std::runtime_error("Failed to open FITS file for writing");
     }
-
-    int num_cols = tensor_dict.size();
-    long num_rows = 0;
-    if (num_cols > 0) {
-        auto first_col = nb::cast<nb::ndarray<>>((*tensor_dict.begin()).second);
-        num_rows = first_col.shape(0);
+    
+    try {
+        torchfits::write_table_hdu(fptr, tensor_dict, header);
+    } catch (...) {
+        fits_close_file(fptr, &status);
+        throw;
     }
-
-    char** ttype = new char*[num_cols];
-    char** tform = new char*[num_cols];
-    char** tunit = new char*[num_cols];
-
-    int i = 0;
-    for (auto item : tensor_dict) {
-        std::string col_name = nb::cast<std::string>(item.first);
-        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
-
-        ttype[i] = new char[col_name.length() + 1];
-        strncpy(ttype[i], col_name.c_str(), col_name.length());
-        ttype[i][col_name.length()] = '\0';
-
-        std::string form;
-        nb::dlpack::dtype dt = tensor.dtype();
-        
-        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-            form = "B";
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
-            form = "I";
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
-            form = "J";
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
-            form = "E";
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
-            form = "D";
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
-             // FITS 'K' is 64-bit int
-             form = "K";
-        } else {
-            // Check for boolean (often uint8 in numpy/torch but might be distinct)
-            // For now assume unsupported if not matched above
-            throw std::runtime_error("Unsupported tensor data type code=" + std::to_string(dt.code) + " bits=" + std::to_string(dt.bits));
-        }
-
-        tform[i] = new char[form.length() + 1];
-        strncpy(tform[i], form.c_str(), form.length());
-        tform[i][form.length()] = '\0';
-
-        tunit[i] = new char[1];
-        tunit[i][0] = '\0';
-
-        i++;
-    }
-
-    fits_create_tbl(fptr, BINARY_TBL, num_rows, num_cols, ttype, tform, tunit, "", &status);
-
-    i = 0;
-    for (auto item : tensor_dict) {
-        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
-        void* data_ptr = tensor.data();
-        int fits_type;
-        nb::dlpack::dtype dt = tensor.dtype();
-        
-        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-            fits_type = TBYTE;
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
-            fits_type = TSHORT;
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
-            fits_type = TINT;
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
-            fits_type = TFLOAT;
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
-            fits_type = TDOUBLE;
-        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
-            fits_type = TLONGLONG;
-        }
-
-        fits_write_col(fptr, fits_type, i + 1, 1, 1, num_rows, data_ptr, &status);
-        i++;
-    }
-
-    for (i = 0; i < num_cols; i++) {
-        delete[] ttype[i];
-        delete[] tform[i];
-        delete[] tunit[i];
-    }
-    delete[] ttype;
-    delete[] tform;
-    delete[] tunit;
-
+    
     fits_close_file(fptr, &status);
-
-    if (status != 0) {
-        throw std::runtime_error("Failed to write table to FITS file");
-    }
 }
+
 
 void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
     fitsfile* fptr;

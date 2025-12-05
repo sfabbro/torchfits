@@ -98,6 +98,17 @@ public:
         // Use the first wcs struct
         wcs_ = wcs_array;
 
+        // Shift CRPIX by -1.0 to support 0-based indexing (PyTorch/Python convention)
+        // FITS uses 1-based indexing, so CRPIX is 1-based.
+        // We want: world = f(pixel_0based)
+        // wcslib computes: world = f(pixel_input - (crpix - 1) + 1 - 1) ... ?
+        // wcslib computes: intermediate = (pixel_input - crpix)
+        // We want intermediate = (pixel_0based - (crpix_1based - 1))
+        // So we set wcs->crpix = crpix_1based - 1.
+        for (int i = 0; i < wcs_->naxis; i++) {
+            wcs_->crpix[i] -= 1.0;
+        }
+
         status = wcsset(wcs_);
         if (status != 0) {
             // Clean up and throw error
@@ -126,10 +137,11 @@ public:
     torch::Tensor pixel_to_world(const torch::Tensor& pixels) {
         auto device = pixels.device();
         auto dtype = pixels.dtype();
+        int naxis = wcs_->naxis;
         
-        // GPU-optimized path for CUDA tensors
+        // GPU-optimized path for CUDA tensors (only for 2D for now)
 #ifdef TORCH_CUDA_AVAILABLE
-        if (device.is_cuda() && is_simple_projection()) {
+        if (device.is_cuda() && is_simple_projection() && naxis == 2) {
             return pixel_to_world_gpu(pixels);
         }
 #endif
@@ -138,6 +150,12 @@ public:
         auto cpu_pixels = pixels.contiguous().cpu().to(torch::kFloat64);
         auto shape = cpu_pixels.sizes();
         int ncoord = shape[0];
+        
+        // Ensure input has correct shape (N, naxis)
+        if (shape.size() < 2 || shape[1] != naxis) {
+            throw std::runtime_error("Input pixels must have shape (N, " + std::to_string(naxis) + ")");
+        }
+        
         auto world = torch::empty_like(cpu_pixels);
         
         double* pixcrd = cpu_pixels.data_ptr<double>();
@@ -151,7 +169,7 @@ public:
         // #endif
         
         // Standard wcslib transformation
-        double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
+        double* imgcrd = (double*)malloc(ncoord * naxis * sizeof(double));
         if (!imgcrd) throw std::runtime_error("Failed to allocate memory for imgcrd");
         
         double* phi = (double*)malloc(ncoord * sizeof(double));
@@ -163,7 +181,7 @@ public:
         int* stat = (int*)malloc(ncoord * sizeof(int));
         if (!stat) { free(imgcrd); free(phi); free(theta); throw std::runtime_error("Failed to allocate memory for stat"); }
         
-        int wcs_status = wcsp2s(wcs_, ncoord, 2, pixcrd, imgcrd, phi, theta, worldcrd, stat);
+        int wcs_status = wcsp2s(wcs_, ncoord, naxis, pixcrd, imgcrd, phi, theta, worldcrd, stat);
         if (wcs_status != 0) {
             free(imgcrd); free(phi); free(theta); free(stat);
             throw std::runtime_error("WCS transformation failed");
@@ -180,10 +198,11 @@ public:
     torch::Tensor world_to_pixel(const torch::Tensor& world) {
         auto device = world.device();
         auto dtype = world.dtype();
+        int naxis = wcs_->naxis;
         
-        // GPU-optimized path for CUDA tensors
+        // GPU-optimized path for CUDA tensors (only for 2D for now)
 #ifdef TORCH_CUDA_AVAILABLE
-        if (device.is_cuda() && is_simple_projection()) {
+        if (device.is_cuda() && is_simple_projection() && naxis == 2) {
             return world_to_pixel_gpu(world);
         }
 #endif
@@ -192,6 +211,12 @@ public:
         auto cpu_world = world.contiguous().cpu().to(torch::kFloat64);
         auto shape = cpu_world.sizes();
         int ncoord = shape[0];
+        
+        // Ensure input has correct shape (N, naxis)
+        if (shape.size() < 2 || shape[1] != naxis) {
+            throw std::runtime_error("Input world coordinates must have shape (N, " + std::to_string(naxis) + ")");
+        }
+        
         auto pixels = torch::empty_like(cpu_world);
         
         double* worldcrd = cpu_world.data_ptr<double>();
@@ -205,7 +230,7 @@ public:
         // #endif
         
         // Standard wcslib transformation
-        double* imgcrd = (double*)malloc(ncoord * 2 * sizeof(double));
+        double* imgcrd = (double*)malloc(ncoord * naxis * sizeof(double));
         if (!imgcrd) throw std::runtime_error("Failed to allocate memory for imgcrd");
         
         double* phi = (double*)malloc(ncoord * sizeof(double));
@@ -217,7 +242,7 @@ public:
         int* stat = (int*)malloc(ncoord * sizeof(int));
         if (!stat) { free(imgcrd); free(phi); free(theta); throw std::runtime_error("Failed to allocate memory for stat"); }
         
-        int wcs_status = wcss2p(wcs_, ncoord, 2, worldcrd, phi, theta, imgcrd, pixcrd, stat);
+        int wcs_status = wcss2p(wcs_, ncoord, naxis, worldcrd, phi, theta, imgcrd, pixcrd, stat);
         if (wcs_status != 0) {
             free(imgcrd); free(phi); free(theta); free(stat);
             throw std::runtime_error("WCS transformation failed");
@@ -232,6 +257,10 @@ public:
     }
     
     torch::Tensor get_footprint() {
+        int naxis = wcs_->naxis;
+        if (naxis != 2) {
+            throw std::runtime_error("get_footprint only supported for 2D WCS");
+        }
         auto corners = torch::empty({4, 2}, torch::kFloat64);
         double* data = corners.data_ptr<double>();
         
@@ -246,21 +275,18 @@ public:
     int naxis() const { return wcs_->naxis; }
     int test_method() const { return 42; }
     torch::Tensor crpix() const { 
-        auto tensor = torch::empty({2}, torch::kFloat64);
-        tensor[0] = wcs_->crpix[0];
-        tensor[1] = wcs_->crpix[1];
+        auto tensor = torch::empty({wcs_->naxis}, torch::kFloat64);
+        for(int i=0; i<wcs_->naxis; i++) tensor[i] = wcs_->crpix[i];
         return tensor;
     }
     torch::Tensor crval() const { 
-        auto tensor = torch::empty({2}, torch::kFloat64);
-        tensor[0] = wcs_->crval[0];
-        tensor[1] = wcs_->crval[1];
+        auto tensor = torch::empty({wcs_->naxis}, torch::kFloat64);
+        for(int i=0; i<wcs_->naxis; i++) tensor[i] = wcs_->crval[i];
         return tensor;
     }
     torch::Tensor cdelt() const { 
-        auto tensor = torch::empty({2}, torch::kFloat64);
-        tensor[0] = wcs_->cdelt[0];
-        tensor[1] = wcs_->cdelt[1];
+        auto tensor = torch::empty({wcs_->naxis}, torch::kFloat64);
+        for(int i=0; i<wcs_->naxis; i++) tensor[i] = wcs_->cdelt[i];
         return tensor;
     }
 
@@ -271,8 +297,14 @@ private:
     bool is_linear_wcs_ = false;
     
     void precompute_matrices() {
+        // Only for 2D
+        if (wcs_->naxis != 2) return;
+        
         // Check if this is a simple linear WCS (TAN projection)
-        if (wcs_->ctype[0][4] == '-' && wcs_->ctype[0][5] == 'T' && 
+        // FIXME: TAN projection is NOT linear in RA/DEC. 
+        // The current implementation treats it as Cartesian which is wrong.
+        // Disabling optimization for now to ensure correctness via wcslib.
+        if (false && wcs_->ctype[0][4] == '-' && wcs_->ctype[0][5] == 'T' && 
             wcs_->ctype[0][6] == 'A' && wcs_->ctype[0][7] == 'N') {
             
             // Extract CD matrix or compute from CDELT/CROTA
@@ -374,20 +406,21 @@ private:
     torch::Tensor pixel_to_world_parallel(const torch::Tensor& cpu_pixels, torch::Tensor& world, int ncoord) {
         double* pixcrd = cpu_pixels.data_ptr<double>();
         double* worldcrd = world.data_ptr<double>();
+        int naxis = wcs_->naxis;
         
         // Parallel processing using OpenMP
         #pragma omp parallel
         {
             // Thread-local storage for wcslib workspace
             // Each thread processes a subset of coordinates
-            double* imgcrd = (double*)malloc(2 * sizeof(double));
+            double* imgcrd = (double*)malloc(naxis * sizeof(double));
             double* phi = (double*)malloc(sizeof(double));
             double* theta = (double*)malloc(sizeof(double));
             int* stat = (int*)malloc(sizeof(int));
             
             #pragma omp for
             for (int i = 0; i < ncoord; i++) {
-                wcsp2s(wcs_, 1, 2, &pixcrd[i*2], imgcrd, phi, theta, &worldcrd[i*2], stat);
+                wcsp2s(wcs_, 1, naxis, &pixcrd[i*naxis], imgcrd, phi, theta, &worldcrd[i*naxis], stat);
             }
             
             free(imgcrd);
@@ -402,20 +435,21 @@ private:
     torch::Tensor world_to_pixel_parallel(const torch::Tensor& cpu_world, torch::Tensor& pixels, int ncoord) {
         double* worldcrd = cpu_world.data_ptr<double>();
         double* pixcrd = pixels.data_ptr<double>();
+        int naxis = wcs_->naxis;
         
         // Parallel processing using OpenMP
         #pragma omp parallel
         {
             // Thread-local storage for wcslib workspace
             // Each thread processes a subset of coordinates
-            double* imgcrd = (double*)malloc(2 * sizeof(double));
+            double* imgcrd = (double*)malloc(naxis * sizeof(double));
             double* phi = (double*)malloc(sizeof(double));
             double* theta = (double*)malloc(sizeof(double));
             int* stat = (int*)malloc(sizeof(int));
             
             #pragma omp for
             for (int i = 0; i < ncoord; i++) {
-                wcss2p(wcs_, 1, 2, &worldcrd[i*2], phi, theta, imgcrd, &pixcrd[i*2], stat);
+                wcss2p(wcs_, 1, naxis, &worldcrd[i*naxis], phi, theta, imgcrd, &pixcrd[i*naxis], stat);
             }
             
             free(imgcrd);

@@ -327,7 +327,7 @@ class ExhaustiveBenchmarkSuite:
         print("=" * 100)
         
         csv_headers = [
-            'filename', 'file_type', 'size_mb', 'data_type', 'dimensions', 'compression',
+            'filename', 'file_type', 'operation', 'size_mb', 'data_type', 'dimensions', 'compression',
             'torchfits_mean', 'torchfits_std', 'torchfits_memory', 'torchfits_peak_memory',
             'torchfits_mmap_mean', 'torchfits_mmap_std', 'torchfits_mmap_memory', 'torchfits_mmap_peak_memory',
             'astropy_mean', 'astropy_std', 'astropy_memory', 'astropy_peak_memory',
@@ -348,6 +348,10 @@ class ExhaustiveBenchmarkSuite:
                 print(f"❌ Benchmark failed for {name}: {e}")
                 import traceback
                 traceback.print_exc()
+        
+        # Run cutout benchmark
+        cutout_results = self._benchmark_cutouts(files)
+        detailed_results.extend(cutout_results)
         
         # Write CSV results
         with open(self.csv_file, 'w', newline='') as f:
@@ -469,6 +473,10 @@ class ExhaustiveBenchmarkSuite:
                 for _ in range(3):  # Extra cleanup
                     gc.collect()
                 
+                # Clear torchfits cache if applicable
+                if 'torchfits' in method_name:
+                    torchfits.clear_file_cache()
+                
                 # Get initial memory usage
                 if memory_available:
                     initial_memory = process.memory_info().rss / 1024 / 1024  # MB
@@ -514,6 +522,90 @@ class ExhaustiveBenchmarkSuite:
                 'peak_memory': mean(peak_memory_usage)
             }
         return None
+
+    def _benchmark_cutouts(self, files: Dict[str, Path]) -> List[Dict]:
+        """Benchmark random access cutouts on large files."""
+        print("\n" + "=" * 100)
+        print("CUTOUT BENCHMARK")
+        print("=" * 100)
+        
+        results = []
+        
+        # Find a suitable large file (MEF or large image)
+        target_file = None
+        target_name = None
+        
+        # Prefer multi_mef, then mef, then large single
+        for name, path in files.items():
+            if 'multi_mef' in name:
+                target_file = path
+                target_name = name
+                break
+        
+        if not target_file:
+            for name, path in files.items():
+                if 'mef' in name and 'large' in name:
+                    target_file = path
+                    target_name = name
+                    break
+                    
+        if not target_file:
+            print("No suitable file found for cutout benchmark.")
+            return []
+            
+        print(f"Benchmarking cutouts on {target_name}...")
+        
+        # Define cutout parameters
+        cutout_size = (100, 100)
+        n_iter = 50
+        
+        # Random position
+        x1, y1 = 100, 100
+        x2 = x1 + cutout_size[1]
+        y2 = y1 + cutout_size[0]
+        
+        # Target a middle extension
+        hdu_idx = 5 if 'multi_mef' in target_name else 1
+        
+        # Define methods
+        methods = {}
+        
+        methods['torchfits'] = lambda: torchfits.read_subset(str(target_file), hdu_idx, x1, y1, x2, y2)
+        
+        methods['astropy'] = lambda: self._astropy_cutout(target_file, hdu_idx, x1, y1, x2, y2)
+        
+        methods['fitsio'] = lambda: self._fitsio_cutout(target_file, hdu_idx, x1, y1, x2, y2)
+        
+        # Run benchmark
+        row = {
+            'filename': target_name, 
+            'operation': 'cutout_100x100',
+            'file_type': self._get_file_type(target_name),
+            'size_mb': target_file.stat().st_size / 1024 / 1024,
+            'data_type': 'mixed',
+            'dimensions': '2d',
+            'compression': 'uncompressed'
+        }
+        
+        for name, func in methods.items():
+            res = self._time_method(func, name, runs=n_iter)
+            if res:
+                row[f'{name}_mean'] = res['mean']
+                row[f'{name}_std'] = res['std']
+                print(f"{name:15s}: {res['mean']*1e6:.2f}us ± {res['std']*1e6:.2f}us")
+            else:
+                row[f'{name}_mean'] = None
+        
+        results.append(row)
+        return results
+
+    def _astropy_cutout(self, path, hdu, x1, y1, x2, y2):
+        with astropy_fits.open(path, memmap=True) as hdul:
+            return hdul[hdu].section[y1:y2, x1:x2]
+
+    def _fitsio_cutout(self, path, hdu, x1, y1, x2, y2):
+        with fitsio.FITS(str(path)) as f:
+            return f[hdu][y1:y2, x1:x2]
     
     def _get_file_type(self, name: str) -> str:
         """Determine file type from name."""

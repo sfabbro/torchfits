@@ -102,7 +102,8 @@ class TestCompression:
             
             assert isinstance(result, torch.Tensor)
             # Header should contain compression info
-            assert isinstance(header, dict)
+            # assert isinstance(header, dict) # Header is now a custom object
+            assert 'ZIMAGE' in header or 'ZCMPTYPE' in header
             
         finally:
             os.unlink(filepath)

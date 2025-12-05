@@ -22,7 +22,55 @@ _ = torch.empty(1)  # Force torch C++ symbols to load
 
 class Header(dict):
     """FITS header as dict."""
-    pass
+    
+    def __init__(self, cards=None):
+        super().__init__()
+        self._cards = [] # List of (key, value, comment)
+        if cards:
+            if isinstance(cards, dict):
+                # Legacy support or if passed a dict
+                for k, v in cards.items():
+                    self[k] = v
+                    self._cards.append((k, v, ""))
+            elif isinstance(cards, list):
+                # List of tuples (key, value, comment)
+                for card in cards:
+                    if len(card) == 3:
+                        k, v, c = card
+                    elif len(card) == 2:
+                        k, v = card
+                        c = ""
+                    else:
+                        continue
+                    
+                    self._cards.append((k, v, c))
+                    
+                    # Handle special keys
+                    if k == 'HISTORY' or k == 'COMMENT':
+                        # For dict access, we might want to append?
+                        # Standard dict behavior overwrites.
+                        # We keep dict behavior for compatibility, but _cards has everything.
+                        # Maybe store as list in dict? No, that breaks expectation of string value.
+                        # Just store the last one in dict, or join them?
+                        # Astropy stores them in a special way.
+                        # For now, we just let dict overwrite, so last one wins.
+                        # But we provide methods to access all.
+                        pass
+                    else:
+                        self[k] = v
+
+    def add_history(self, value):
+        self._cards.append(('HISTORY', value, ""))
+        # Update dict?
+        
+    def add_comment(self, value):
+        self._cards.append(('COMMENT', value, ""))
+        
+    def get_history(self):
+        return [c[1] for c in self._cards if c[0] == 'HISTORY']
+        
+    def get_comment(self):
+        return [c[1] for c in self._cards if c[0] == 'COMMENT']
 
 
 class DataView:
@@ -424,8 +472,8 @@ class HDUList:
                         hdu = TableHDU(tensor_dict, {}, header)
                     except Exception as e:
                         # Fallback to empty table if read fails
-                        with open("/tmp/debug_torchfits_py.txt", "a") as f:
-                            f.write(f"DEBUG: Failed to create TableHDU: {e}\n")
+                        # import sys
+                        # sys.stderr.write(f"DEBUG: Failed to create TableHDU: {e}\n")
                         hdu = TableHDU({}, {}, header)
                 else:
                     # Unknown type, treat as empty image
@@ -472,6 +520,34 @@ class HDUList:
     
     def append(self, hdu: Union[TensorHDU, TableHDU]):
         self._hdus.append(hdu)
+        
+    def validate(self) -> bool:
+        """Validate the FITS file structure and contents.
+        
+        Returns:
+            bool: True if valid, False otherwise.
+        """
+        try:
+            # Iterate over HDUs
+            for i, hdu in enumerate(self._hdus):
+                # Check header
+                if not hdu.header:
+                    return False
+                
+                # Check data access
+                if isinstance(hdu, TensorHDU):
+                    if hdu._file_handle:
+                         # Try reading shape/dtype
+                         _ = hdu.data.shape
+                         _ = hdu.data.dtype
+                elif isinstance(hdu, TableHDU):
+                     # Check columns
+                     _ = hdu.columns
+                     _ = hdu.num_rows
+            
+            return True
+        except Exception:
+            return False
     
     def __repr__(self):
         return f"HDUList({len(self._hdus)} HDUs)"

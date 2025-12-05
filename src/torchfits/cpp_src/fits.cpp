@@ -20,6 +20,7 @@ torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, in
 torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero);
 torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero);
 torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero);
+void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header);
 
 class FITSFileV2 {
 public:
@@ -235,7 +236,7 @@ public:
 
     // ...
 
-    std::unordered_map<std::string, std::string> get_header(int hdu_num) {
+    std::vector<std::tuple<std::string, std::string, std::string>> get_header(int hdu_num) {
         int status = 0;
         int target_hdu = hdu_num + start_hdu_;
         
@@ -251,7 +252,9 @@ public:
         int morekeys = 0;
         fits_get_hdrspace(fptr_, &nkeys, &morekeys, &status);
         
-        std::unordered_map<std::string, std::string> header;
+        std::vector<std::tuple<std::string, std::string, std::string>> header;
+        header.reserve(nkeys);
+        
         char keyname[FLEN_KEYWORD];
         char value[FLEN_VALUE];
         char comment[FLEN_COMMENT];
@@ -260,35 +263,56 @@ public:
         for (int i = 1; i <= nkeys; i++) {
             fits_read_keyn(fptr_, i, keyname, value, comment, &status);
             if (status == 0) {
+                std::string key_str(keyname);
                 std::string val_str(value);
-            // Sanitize string (keep only ASCII printable)
-            val_str.erase(std::remove_if(val_str.begin(), val_str.end(), [](unsigned char c) {
-                return c < 32 || c > 126;
-            }), val_str.end());
+                std::string com_str(comment);
+                
+                // Sanitize string (keep only ASCII printable)
+                val_str.erase(std::remove_if(val_str.begin(), val_str.end(), [](unsigned char c) {
+                    return c < 32 || c > 126;
+                }), val_str.end());
 
-            // Parse string values: remove quotes and trim
-            if (val_str.length() >= 2 && val_str.front() == '\'') {
-                // Find the last quote (ignoring trailing comments if any, but fits_read_keyn separates comment)
-                // value contains the value string. For strings it is 'TEXT'.
-                size_t last_quote = val_str.rfind('\'');
-                if (last_quote != std::string::npos && last_quote > 0) {
-                    val_str = val_str.substr(1, last_quote - 1);
-                    // Trim trailing spaces
-                    size_t last_char = val_str.find_last_not_of(' ');
-                    if (last_char != std::string::npos) {
-                        val_str = val_str.substr(0, last_char + 1);
-                    } else {
-                        val_str = "";
-                    }
-                    // Handle escaped quotes '' -> '
-                    size_t pos = 0;
-                    while ((pos = val_str.find("''", pos)) != std::string::npos) {
-                        val_str.replace(pos, 2, "'");
-                        pos += 1;
+                // Parse string values: remove quotes and trim
+                if (val_str.length() >= 2 && val_str.front() == '\'') {
+                    // Find the last quote (ignoring trailing comments if any, but fits_read_keyn separates comment)
+                    // value contains the value string. For strings it is 'TEXT'.
+                    size_t last_quote = val_str.rfind('\'');
+                    if (last_quote != std::string::npos && last_quote > 0) {
+                        val_str = val_str.substr(1, last_quote - 1);
+                        // Trim trailing spaces
+                        size_t last_char = val_str.find_last_not_of(' ');
+                        if (last_char != std::string::npos) {
+                            val_str = val_str.substr(0, last_char + 1);
+                        } else {
+                            val_str = "";
+                        }
+                        // Handle escaped quotes '' -> '
+                        size_t pos = 0;
+                        while ((pos = val_str.find("''", pos)) != std::string::npos) {
+                            val_str.replace(pos, 2, "'");
+                            pos += 1;
+                        }
                     }
                 }
-            }
-            header[keyname] = val_str;
+                
+                // For HISTORY and COMMENT, value is often empty and content is in comment?
+                // Or fits_read_keyn puts the text in comment?
+                // Let's check if key is HISTORY or COMMENT
+                if (key_str == "HISTORY" || key_str == "COMMENT") {
+                     // For these, the "value" is the comment string.
+                     // But fits_read_keyn might put it in comment arg?
+                     // Actually, for HISTORY, there is no value field. The text starts at col 9.
+                     // fits_read_keyn docs say: "returns the comment string".
+                     // It seems for HISTORY, value is empty string, and comment contains the text.
+                     // But we want the text as the "value" in our tuple?
+                     // Astropy treats it as a list of values.
+                     if (val_str.empty() && !com_str.empty()) {
+                         val_str = com_str;
+                         com_str = "";
+                     }
+                }
+                
+                header.emplace_back(key_str, val_str, com_str);
             } else {
                 status = 0; // Ignore error for single key
             }
@@ -380,23 +404,48 @@ public:
         return "UNKNOWN";
     }
 
+
+
     bool write_hdus(nb::list hdus, bool overwrite) {
         int status = 0;
         int hdu_count = 0;
         
         for (auto handle : hdus) {
-            nb::dict hdu_dict;
-            try {
-                hdu_dict = nb::cast<nb::dict>(handle);
-            } catch (const std::exception& e) {
+            nb::object hdu_obj = nb::cast<nb::object>(handle);
+            
+            // Check for TableHDU (has feat_dict)
+            if (nb::hasattr(hdu_obj, "feat_dict")) {
+                nb::dict data_dict = nb::cast<nb::dict>(hdu_obj.attr("feat_dict"));
+                nb::dict header_dict;
+                if (nb::hasattr(hdu_obj, "header")) {
+                     header_dict = nb::cast<nb::dict>(hdu_obj.attr("header"));
+                }
+                write_table_hdu(fptr_, data_dict, header_dict);
+                hdu_count++;
                 continue;
             }
             
+            // Assume TensorHDU or Image
             nb::object data_obj;
             bool has_data = false;
-            if (hdu_dict.contains("data")) {
-                data_obj = hdu_dict["data"];
+            
+            if (nb::hasattr(hdu_obj, "to_tensor")) {
+                 // Use to_tensor() to get data
+                 try {
+                     data_obj = hdu_obj.attr("to_tensor")();
+                     has_data = true;
+                 } catch (...) {}
+            }
+            
+            if (!has_data && nb::hasattr(hdu_obj, "data")) {
+                data_obj = hdu_obj.attr("data");
                 has_data = true;
+            } else if (!has_data && nb::isinstance<nb::dict>(hdu_obj)) {
+                nb::dict d = nb::cast<nb::dict>(hdu_obj);
+                if (d.contains("data")) {
+                    data_obj = d["data"];
+                    has_data = true;
+                }
             }
             
             if (has_data) {
@@ -404,16 +453,29 @@ public:
                     nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(data_obj);
                     write_image(tensor, hdu_count, 1.0, 0.0);
                 } catch (...) {
-                    // Ignore if data cannot be cast to ndarray (e.g. TableHDU data)
+                    // If data is not a tensor (e.g. None or empty), write empty image
+                    long naxes[1] = {0};
+                    fits_create_img(fptr_, BYTE_IMG, 0, naxes, &status);
                 }
             } else {
                 long naxes[1] = {0};
                 fits_create_img(fptr_, BYTE_IMG, 0, naxes, &status);
             }
             
-            if (hdu_dict.contains("header")) {
+            // Write header
+            nb::object header_obj;
+            if (nb::hasattr(hdu_obj, "header")) {
+                header_obj = hdu_obj.attr("header");
+            } else if (nb::isinstance<nb::dict>(hdu_obj)) {
+                nb::dict d = nb::cast<nb::dict>(hdu_obj);
+                if (d.contains("header")) {
+                    header_obj = d["header"];
+                }
+            }
+            
+            if (header_obj.is_valid()) {
                 try {
-                    nb::dict header = nb::cast<nb::dict>(hdu_dict["header"]);
+                    nb::dict header = nb::cast<nb::dict>(header_obj);
                     for (auto item : header) {
                         std::string key = nb::cast<std::string>(item.first);
                         
@@ -425,16 +487,16 @@ public:
                                 int val = nb::cast<int>(item.second);
                                 fits_update_key(fptr_, TINT, key.c_str(), &val, nullptr, &status);
                             } else if (nb::isinstance<float>(item.second)) {
+                                float val = nb::cast<float>(item.second);
+                                fits_update_key(fptr_, TFLOAT, key.c_str(), &val, nullptr, &status);
+                            } else if (nb::isinstance<double>(item.second)) {
                                 double val = nb::cast<double>(item.second);
                                 fits_update_key(fptr_, TDOUBLE, key.c_str(), &val, nullptr, &status);
                             } else if (nb::isinstance<bool>(item.second)) {
                                 int val = nb::cast<bool>(item.second) ? 1 : 0;
                                 fits_update_key(fptr_, TLOGICAL, key.c_str(), &val, nullptr, &status);
                             }
-                        } catch (...) {
-                            status = 0;
-                        }
-                        if (status != 0) status = 0;
+                        } catch (...) {}
                     }
                 } catch (...) {}
             }
@@ -443,6 +505,7 @@ public:
         }
         return true;
     }
+
 
     fitsfile* get_fptr() { return fptr_; }
 
@@ -472,7 +535,7 @@ private:
 struct HDUInfo {
     int index;
     std::string type;
-    std::unordered_map<std::string, std::string> header;
+    std::vector<std::tuple<std::string, std::string, std::string>> header;
 };
 
 // Batch open function to reduce FFI overhead
@@ -530,6 +593,145 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
     }
     
     return results;
+}
+
+void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header) {
+    int status = 0;
+    int num_cols = tensor_dict.size();
+    long num_rows = 0;
+    if (num_cols > 0) {
+        for (auto item : tensor_dict) {
+             try {
+                 nb::ndarray<> col = nb::cast<nb::ndarray<>>(item.second);
+                 num_rows = col.shape(0);
+                 break;
+             } catch (...) {
+                 continue;
+             }
+        }
+    }
+
+    char** ttype = new char*[num_cols];
+    char** tform = new char*[num_cols];
+    char** tunit = new char*[num_cols];
+
+    int i = 0;
+    std::vector<std::string> col_names;
+    std::vector<std::string> forms;
+    
+    for (auto item : tensor_dict) {
+        std::string col_name = nb::cast<std::string>(item.first);
+        col_names.push_back(col_name);
+        
+        nb::ndarray<> tensor;
+        try {
+            tensor = nb::cast<nb::ndarray<>>(item.second);
+        } catch (...) {
+            continue;
+        }
+
+        ttype[i] = new char[col_name.length() + 1];
+        strncpy(ttype[i], col_name.c_str(), col_name.length());
+        ttype[i][col_name.length()] = '\0';
+
+        std::string form;
+        nb::dlpack::dtype dt = tensor.dtype();
+        
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+            form = "B";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
+            form = "I";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
+            form = "J";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
+            form = "E";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
+            form = "D";
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
+            form = "K";
+        } else {
+            form = "E"; 
+        }
+        
+        if (tensor.ndim() > 1) {
+             long width = tensor.shape(1);
+             form = std::to_string(width) + form;
+        } else {
+             form = "1" + form;
+        }
+        
+        forms.push_back(form);
+        tform[i] = new char[form.length() + 1];
+        strncpy(tform[i], form.c_str(), form.length());
+        tform[i][form.length()] = '\0';
+        
+        tunit[i] = new char[1];
+        tunit[i][0] = '\0';
+        
+        i++;
+    }
+    
+    num_cols = i;
+    
+    fits_create_tbl(fptr, BINARY_TBL, num_rows, num_cols, ttype, tform, tunit, "Table", &status);
+    
+    if (status != 0) {
+        for(int j=0; j<num_cols; j++) { delete[] ttype[j]; delete[] tform[j]; delete[] tunit[j]; }
+        delete[] ttype; delete[] tform; delete[] tunit;
+        throw std::runtime_error("Failed to create table");
+    }
+    
+    i = 0;
+    for (auto item : tensor_dict) {
+        nb::ndarray<> tensor;
+        try {
+            tensor = nb::cast<nb::ndarray<>>(item.second);
+        } catch (...) { continue; }
+        
+        nb::dlpack::dtype dt = tensor.dtype();
+        int datatype = TFLOAT;
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) datatype = TBYTE;
+        else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) datatype = TSHORT;
+        else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) datatype = TINT;
+        else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) datatype = TFLOAT;
+        else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) datatype = TDOUBLE;
+        else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) datatype = TLONGLONG;
+        
+        long nelements = num_rows;
+        if (tensor.ndim() > 1) nelements *= tensor.shape(1);
+        
+        fits_write_col(fptr, datatype, i + 1, 1, 1, nelements, tensor.data(), &status);
+        i++;
+    }
+    
+    for (auto item : header) {
+        std::string key = nb::cast<std::string>(item.first);
+        try {
+            if (nb::isinstance<nb::str>(item.second)) {
+                std::string val = nb::cast<std::string>(item.second);
+                fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
+            } else if (nb::isinstance<int>(item.second)) {
+                int val = nb::cast<int>(item.second);
+                fits_update_key(fptr, TINT, key.c_str(), &val, nullptr, &status);
+            } else if (nb::isinstance<float>(item.second)) {
+                float val = nb::cast<float>(item.second);
+                fits_update_key(fptr, TFLOAT, key.c_str(), &val, nullptr, &status);
+            } else if (nb::isinstance<double>(item.second)) {
+                double val = nb::cast<double>(item.second);
+                fits_update_key(fptr, TDOUBLE, key.c_str(), &val, nullptr, &status);
+            } else if (nb::isinstance<bool>(item.second)) {
+                int val = nb::cast<bool>(item.second) ? 1 : 0;
+                fits_update_key(fptr, TLOGICAL, key.c_str(), &val, nullptr, &status);
+            }
+        } catch (...) {}
+    }
+    
+    for(int j=0; j<num_cols; j++) { delete[] ttype[j]; delete[] tform[j]; delete[] tunit[j]; }
+    delete[] ttype; delete[] tform; delete[] tunit;
+    
+    if (status != 0) {
+        throw std::runtime_error("Failed to write table data");
+    }
 }
 
 }

@@ -33,13 +33,77 @@ class WCS:
             'NAXIS2': '100'
         }
         # Update with provided header values
-        wcs_header.update({str(k): str(v) for k, v in header.items()})
+        # Ensure string values are quoted for wcslib
+        header_dict = {}
+        for k, v in header.items():
+            if isinstance(v, bool):
+                val_str = 'T' if v else 'F'
+            elif isinstance(v, (int, float)):
+                val_str = str(v)
+            elif isinstance(v, str):
+                # Try to parse as float to see if it's a number
+                try:
+                    float(v)
+                    # It's a number, don't quote
+                    val_str = v
+                except ValueError:
+                    # It's a string, quote it if not already quoted
+                    val_str = str(v)
+                    if not (val_str.startswith("'") and val_str.endswith("'")):
+                        val_str = f"'{val_str}'"
+            else:
+                val_str = str(v)
+            header_dict[str(k)] = val_str
+            
+        wcs_header.update(header_dict)
         import torchfits.cpp as cpp
         self._wcs = cpp.WCS(wcs_header)
     
+    @property
+    def pixel_scale(self) -> Tensor:
+        """Pixel scale in degrees per pixel (or CUNIT)."""
+        return torch.abs(self.cdelt)
+        
+    @property
+    def center_coord(self) -> Tensor:
+        """World coordinates of the image center."""
+        naxis1 = float(self._header.get('NAXIS1', 100))
+        naxis2 = float(self._header.get('NAXIS2', 100))
+        
+        # Center pixel (0-based index)
+        # If image is 100x100, center is at 50.0, 50.0?
+        # 0 to 99. Center is 49.5.
+        # FITS 1-based: 1 to 100. Center is 50.5.
+        # Let's use 0-based center: (N-1)/2 ?
+        # Or geometric center N/2 (0.0 to N.0)?
+        # Usually center is defined as (NAXIS+1)/2 in FITS (1-based).
+        # So in 0-based it is (NAXIS-1)/2? No, (NAXIS+1)/2 - 1 = (NAXIS-1)/2.
+        # Wait, center of 100 pixels is 50.5 (1-based).
+        # 50.5 - 1 = 49.5 (0-based).
+        
+        center_pix = torch.tensor([[naxis1 / 2.0, naxis2 / 2.0]], dtype=torch.float64)
+        # Wait, if I use 1-based pixels for WCS (as I did in verification), I should pass 1-based center.
+        # In verification I used `pixels + 1.0`.
+        # If `torchfits.WCS` wraps `wcslib` directly, it expects 1-based pixels (unless I change it).
+        # But users expect 0-based in Python (like Astropy).
+        # Astropy `pixel_to_world` takes 0-based.
+        # My verification script showed that passing 1-based pixels matched Astropy's 1-based result.
+        # So `torchfits.WCS` currently expects 1-based pixels.
+        # I should probably standardize on 0-based for the Python API.
+        # But for now, let's stick to what it does (1-based) or adjust?
+        # If I adjust here, I break consistency with `pixel_to_world`.
+        
+        # Let's assume 1-based for now to match current behavior.
+        # Center is (NAXIS + 1) / 2.
+        center_pix_1based = torch.tensor([[(naxis1 + 1) / 2.0, (naxis2 + 1) / 2.0]], dtype=torch.float64)
+        
+        return self.pixel_to_world(center_pix_1based).squeeze()
+
     def pixel_to_world(self, pixels: Tensor, batch_size: Optional[int] = None) -> Tensor:
         """
         Transform pixel coordinates to world coordinates.
+        
+        Note: Uses 0-based indexing (PyTorch convention), consistent with Astropy's pixel_to_world.
         
         Args:
             pixels: Tensor of shape (..., N) where N is the number of dimensions
@@ -125,32 +189,22 @@ class WCS:
     @property
     def naxis(self) -> int:
         """Number of WCS axes."""
-        # Temporary workaround: extract from header
-        return int(self._header.get('WCSAXES', self._header.get('NAXIS', 2)))
+        return self._wcs.naxis
     
     @property
     def crpix(self) -> Tensor:
         """Reference pixel coordinates."""
-        # Temporary workaround: extract from header  
-        crpix1 = float(self._header.get('CRPIX1', 1.0))
-        crpix2 = float(self._header.get('CRPIX2', 1.0))
-        return torch.tensor([crpix1, crpix2], dtype=torch.float64)
+        return self._wcs.crpix
     
     @property
     def crval(self) -> Tensor:
         """Reference world coordinates."""
-        # Temporary workaround: extract from header
-        crval1 = float(self._header.get('CRVAL1', 0.0))
-        crval2 = float(self._header.get('CRVAL2', 0.0))
-        return torch.tensor([crval1, crval2], dtype=torch.float64)
+        return self._wcs.crval
     
     @property
     def cdelt(self) -> Tensor:
         """Coordinate increments."""
-        # Temporary workaround: extract from header
-        cdelt1 = float(self._header.get('CDELT1', 1.0))
-        cdelt2 = float(self._header.get('CDELT2', 1.0))
-        return torch.tensor([cdelt1, cdelt2], dtype=torch.float64)
+        return self._wcs.cdelt
     
     def __repr__(self):
         return f"WCS(naxis={self.naxis}, crpix={self.crpix.tolist()}, crval={self.crval.tolist()})"

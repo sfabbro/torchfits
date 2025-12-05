@@ -4,6 +4,7 @@
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/pair.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/ndarray.h>
 
 #include <Python.h>
@@ -155,20 +156,20 @@ NB_MODULE(cpp, m) {
         // }
     });
 
-    m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::dict {
+    m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::list {
         try {
             nb::gil_scoped_release release;
             // READONLY is usually 0 in cfitsio
             torchfits::FITSFileV2 file(filename.c_str(), 0);
             auto header = file.get_header(hdu_num);
             nb::gil_scoped_acquire acquire;
-            nb::dict result;
-            for (const auto& [key, value] : header) {
-                result[key.c_str()] = value.c_str();
+            nb::list result;
+            for (const auto& item : header) {
+                result.append(nb::make_tuple(std::get<0>(item), std::get<1>(item), std::get<2>(item)));
             }
             return result;
         } catch (const std::exception& e) {
-            return nb::dict();
+            return nb::list();
         }
     });
 
@@ -207,7 +208,7 @@ NB_MODULE(cpp, m) {
     nb::class_<torchfits::HDUInfo>(m, "HDUInfo")
         .def_prop_rw("index", [](torchfits::HDUInfo& t) { return t.index; }, [](torchfits::HDUInfo& t, int v) { t.index = v; })
         .def_prop_rw("type", [](torchfits::HDUInfo& t) { return t.type; }, [](torchfits::HDUInfo& t, std::string v) { t.type = v; })
-        .def_prop_rw("header", [](torchfits::HDUInfo& t) { return t.header; }, [](torchfits::HDUInfo& t, std::unordered_map<std::string, std::string> v) { t.header = v; });
+        .def_prop_rw("header", [](torchfits::HDUInfo& t) { return t.header; }, [](torchfits::HDUInfo& t, std::vector<std::tuple<std::string, std::string, std::string>> v) { t.header = v; });
 
     m.def("open_and_read_headers", [](const std::string& path, int mode) {
         nb::gil_scoped_release release;
@@ -220,6 +221,47 @@ NB_MODULE(cpp, m) {
         
         return nb::make_tuple(file_obj, infos_obj);
     });
+
+
+
+    nb::class_<torchfits::WCS>(m, "WCS")
+        .def(nb::init<const std::unordered_map<std::string, std::string>&>())
+        .def("pixel_to_world", [](torchfits::WCS& self, nb::ndarray<> pixels) {
+            // Convert nb::ndarray to torch::Tensor
+            auto tensor = torch::from_blob(pixels.data(), {static_cast<long long>(pixels.shape(0)), static_cast<long long>(pixels.shape(1))}, 
+                                         torch::TensorOptions().dtype(torch::kFloat64));
+            
+            // Check dimensions
+            if (pixels.ndim() != 2) throw std::runtime_error("Input must be 2D array (N x naxis)");
+            // if (pixels.shape(1) != 2) throw std::runtime_error("Last dimension must be 2"); // Removed check
+            
+            // Create tensor from ndarray (zero copy if possible)
+            auto options = torch::TensorOptions().dtype(torch::kFloat64);
+            
+            torch::Tensor input_tensor;
+            if (pixels.dtype() == nb::dtype<double>()) {
+                input_tensor = torch::from_blob(pixels.data(), {static_cast<long long>(pixels.shape(0)), static_cast<long long>(pixels.shape(1))}, options);
+            } else {
+                // Copy and cast
+                input_tensor = torch::from_blob(pixels.data(), {static_cast<long long>(pixels.shape(0)), static_cast<long long>(pixels.shape(1))}, options).clone(); 
+            }
+            
+            torch::Tensor output = self.pixel_to_world(input_tensor);
+            return tensor_to_python(output);
+        })
+        .def("world_to_pixel", [](torchfits::WCS& self, nb::ndarray<> coords) {
+             auto options = torch::TensorOptions().dtype(torch::kFloat64);
+             torch::Tensor input_tensor = torch::from_blob(coords.data(), {static_cast<long long>(coords.shape(0)), static_cast<long long>(coords.shape(1))}, options);
+             torch::Tensor output = self.world_to_pixel(input_tensor);
+             return tensor_to_python(output);
+        })
+        .def("get_footprint", [](torchfits::WCS& self) {
+            return tensor_to_python(self.get_footprint());
+        })
+        .def_prop_ro("naxis", &torchfits::WCS::naxis)
+        .def_prop_ro("crpix", [](torchfits::WCS& self) { return tensor_to_python(self.crpix()); })
+        .def_prop_ro("crval", [](torchfits::WCS& self) { return tensor_to_python(self.crval()); })
+        .def_prop_ro("cdelt", [](torchfits::WCS& self) { return tensor_to_python(self.cdelt()); });
 
     // Fast I/O bindings
     m.def("read_image_fast", &torchfits::read_image_fast, 

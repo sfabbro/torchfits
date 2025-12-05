@@ -43,7 +43,7 @@ configure_for_environment()
 __version__ = "0.1.0"
 __all__ = [
     # Core I/O functions
-    "read", "write", "open", "writeto",
+    "read", "write", "open", "writeto", "get_header", "read_subset",
     # Batch operations
     "read_batch", "get_batch_info", "get_cache_performance", "clear_file_cache", "read_large_table",
     # HDU classes
@@ -56,8 +56,9 @@ __all__ = [
     # DataLoader factories
     "create_dataloader", "create_fits_dataloader", "create_streaming_dataloader",
     # Transforms
-    "ZScale", "AsinhStretch", "LogStretch", "PowerStretch", "Normalize",
-    "RandomCrop", "CenterCrop", "RandomFlip", "GaussianNoise", "ToDevice", "Compose",
+    "ZScale", "AsinhStretch", "LogStretch", "PowerStretch", "Normalize", "MinMaxScale", "RobustScale",
+    "RandomCrop", "CenterCrop", "RandomFlip", "GaussianNoise", "PoissonNoise", "RandomRotation", "RedshiftShift", "PerturbByError",
+    "ToDevice", "Compose",
     "create_training_transform", "create_validation_transform", "create_inference_transform",
     # Core types
     "FITSCore", "CompressionType",
@@ -143,8 +144,8 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
     if num_rows < -1 or num_rows == 0:
         raise ValueError("num_rows must be > 0 or -1 for all rows")
     
-    if device not in ['cpu', 'cuda'] and not device.startswith('cuda:'):
-        raise ValueError("device must be 'cpu' or 'cuda' or 'cuda:N'")
+    if device not in ['cpu', 'cuda', 'mps'] and not device.startswith('cuda:'):
+        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
 
     # Use C++ backend for high-performance I/O
     import torchfits.cpp as cpp
@@ -199,7 +200,8 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
                 hdu_num = hdu
 
             # Get header
-            header = cpp.read_header(file_handle, hdu_num)
+            header_data = cpp.read_header(file_handle, hdu_num)
+            header = Header(header_data)
 
             # Try reading as IMAGE first (for slow path)
             try:
@@ -274,9 +276,38 @@ def read(path: str, hdu: Union[int, str] = 0, device: str = 'cpu',
             except:
                 pass
 
+
     except Exception as e:
         raise RuntimeError(f"Failed to read FITS file '{path}': {e}") from e
 
+
+def read_subset(path: str, hdu: int, x1: int, y1: int, x2: int, y2: int) -> Tensor:
+    """Read a rectangular subset of an image HDU.
+    
+    Args:
+        path: Path to FITS file
+        hdu: HDU index
+        x1, y1: Start coordinates (0-based, inclusive)
+        x2, y2: End coordinates (0-based, exclusive)
+        
+    Returns:
+        Tensor containing the subset
+    """
+    import torchfits.cpp as cpp
+    
+    # Check cache first (optional, but consistent)
+    # For now, no caching for subsets to avoid complexity
+    
+    try:
+        file_handle = cpp.open_fits_file(path, "r")
+        try:
+            return file_handle.read_subset(hdu, x1, y1, x2, y2)
+        finally:
+            # Explicitly close to release resources
+            # cpp.close_fits_file(file_handle) # FITSFileV2 has close method, but let's rely on destructor or explicit close if exposed
+            file_handle.close()
+    except Exception as e:
+        raise RuntimeError(f"Failed to read subset from '{path}': {e}") from e
 
 def write(path: str, data, header: Header = None, overwrite: bool = False, compress: bool = False):
     """Write data to FITS file.
@@ -488,3 +519,31 @@ def open(path: str, mode: str = 'r') -> HDUList:
         raise PermissionError(f"Permission denied accessing file: {path}")
     except Exception as e:
         raise RuntimeError(f"Failed to open FITS file '{path}': {e}") from e
+
+
+def get_header(path: str, hdu: Union[int, str] = 0) -> Header:
+    """Get the header of a FITS file.
+    
+    Args:
+        path: Path to the FITS file.
+        hdu: HDU index or name (default: 0).
+        
+    Returns:
+        Header object.
+    """
+    import torchfits.cpp as cpp
+    
+    # Resolve HDU index if string
+    if isinstance(hdu, str):
+        for i in range(100): # Arbitrary limit
+            try:
+                h_list = cpp.read_header_dict(path, i)
+                if not h_list: break
+                h = Header(h_list)
+                if h.get('EXTNAME') == hdu:
+                    return h
+            except:
+                break
+        raise ValueError(f"HDU '{hdu}' not found")
+    
+    return Header(cpp.read_header_dict(path, hdu))

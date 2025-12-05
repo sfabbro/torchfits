@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from torchfits.transforms import (
-    ZScale, AsinhStretch, LogStretch, PowerStretch, Normalize,
+    ZScale, AsinhStretch, LogStretch, PowerStretch, Normalize, MinMaxScale,
     RandomCrop, CenterCrop, RandomFlip, GaussianNoise, ToDevice, Compose,
     create_training_transform, create_validation_transform, create_inference_transform
 )
@@ -73,6 +73,16 @@ class TestBasicTransforms:
         assert result.shape == data.shape
         assert abs(result.mean().item()) < 0.1  # Should be close to 0
         assert abs(result.std().item() - 1.0) < 0.1  # Should be close to 1
+
+    def test_minmax_scale(self):
+        """Test min-max scaling."""
+        data = torch.tensor([10.0, 20.0, 30.0])
+        transform = MinMaxScale(min_val=0.0, max_val=1.0)
+        
+        result = transform(data)
+        
+        assert torch.allclose(result, torch.tensor([0.0, 0.5, 1.0]))
+
 
 
 class TestGeometricTransforms:

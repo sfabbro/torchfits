@@ -150,6 +150,38 @@ class Normalize:
         return f"Normalize(mean={self.mean}, std={self.std})"
 
 
+class MinMaxScale:
+    """
+    Min-max scaling to [min_val, max_val].
+    """
+    
+    def __init__(self, min_val: float = 0.0, max_val: float = 1.0):
+        """
+        Initialize MinMaxScale.
+        
+        Args:
+            min_val: Minimum value of output range
+            max_val: Maximum value of output range
+        """
+        self.min_val = min_val
+        self.max_val = max_val
+        
+    def __call__(self, tensor: Tensor) -> Tensor:
+        """Apply min-max scaling."""
+        t_min = tensor.min()
+        t_max = tensor.max()
+        
+        # Prevent division by zero
+        if torch.abs(t_max - t_min) < 1e-8:
+            return torch.zeros_like(tensor)
+            
+        normalized = (tensor - t_min) / (t_max - t_min)
+        return normalized * (self.max_val - self.min_val) + self.min_val
+        
+    def __repr__(self):
+        return f"MinMaxScale(min_val={self.min_val}, max_val={self.max_val})"
+
+
 class RandomCrop:
     """
     Random crop transformation for data augmentation.
@@ -386,8 +418,192 @@ def create_inference_transform(normalize: bool = True):
         Composed transformation
     """
     transforms = []
-    
     if normalize:
         transforms.append(ZScale())
-    
     return Compose(transforms)
+
+
+class PoissonNoise:
+    """
+    Add Poisson (shot) noise.
+    
+    Useful for simulating raw detector counts.
+    """
+    def __init__(self, lam: float = 1.0):
+        """
+        Args:
+            lam: Scaling factor (gain). If input is flux, this converts to counts.
+                 Output is converted back to original scale.
+        """
+        self.lam = lam
+        
+    def __call__(self, tensor: Tensor) -> Tensor:
+        # Convert to counts (rate parameter)
+        counts = torch.relu(tensor) * self.lam
+        # Sample Poisson
+        noisy_counts = torch.poisson(counts)
+        # Convert back
+        return noisy_counts / self.lam
+        
+    def __repr__(self):
+        return f"PoissonNoise(lam={self.lam})"
+
+
+class RandomRotation:
+    """
+    Random rotation for astronomical images (0-360 degrees).
+    """
+    def __init__(self, interpolation: str = 'bilinear'):
+        self.interpolation = interpolation
+        
+    def __call__(self, tensor: Tensor) -> Tensor:
+        import math
+        angle = torch.rand(1).item() * 360.0
+        theta = math.radians(angle)
+        
+        # Create rotation matrix
+        c, s = math.cos(theta), math.sin(theta)
+        # PyTorch affine grid expects 2x3 matrix for 2D
+        # [[cos, -sin, 0], [sin, cos, 0]]
+        rot_mat = torch.tensor([[c, -s, 0], [s, c, 0]], device=tensor.device, dtype=tensor.dtype)
+        rot_mat = rot_mat.unsqueeze(0) # Batch dim
+        
+        # Grid sample expects (N, C, H, W)
+        if tensor.dim() == 3:
+            x = tensor.unsqueeze(0)
+        elif tensor.dim() == 2:
+            x = tensor.unsqueeze(0).unsqueeze(0)
+        else:
+            x = tensor
+            
+        grid = torch.nn.functional.affine_grid(rot_mat.expand(x.size(0), -1, -1), x.size(), align_corners=False)
+        x_rot = torch.nn.functional.grid_sample(x, grid, mode=self.interpolation, align_corners=False)
+        
+        if tensor.dim() == 3:
+            return x_rot.squeeze(0)
+        elif tensor.dim() == 2:
+            return x_rot.squeeze(0).squeeze(0)
+        return x_rot
+
+    def __repr__(self):
+        return f"RandomRotation(interpolation={self.interpolation})"
+
+
+class RedshiftShift:
+    """
+    Simulate redshift effect on 1D spectra.
+    
+    Shifts the spectrum by (1+z).
+    """
+    def __init__(self, z_min: float = 0.0, z_max: float = 0.5):
+        self.z_min = z_min
+        self.z_max = z_max
+        
+    def __call__(self, tensor: Tensor) -> Tensor:
+        # tensor shape: (C, L) or (L,)
+        z = torch.rand(1).item() * (self.z_max - self.z_min) + self.z_min
+        factor = 1.0 + z
+        
+        # We need to resample. 
+        # New grid corresponds to old grid * factor.
+        # If we want to keep the same wavelength grid, we need to interpolate
+        # from the shifted values back to the original grid.
+        # f_obs(lambda) = f_rest(lambda / (1+z))
+        
+        orig_len = tensor.shape[-1]
+        # Create grid [-1, 1]
+        grid = torch.linspace(-1, 1, orig_len, device=tensor.device)
+        
+        # Shifted grid positions in original frame
+        # We want to sample at x_new. 
+        # The value at x_new comes from x_old = x_new / (1+z) ?
+        # No, lambda_obs = lambda_rest * (1+z)
+        # So at lambda_obs, we see the flux from lambda_rest = lambda_obs / (1+z)
+        
+        # In grid coordinates [-1, 1]:
+        # We effectively zoom in (if z > 0, features move to red/right).
+        # So we sample from "left" (smaller indices).
+        # grid_sample samples at (x, y). 
+        # We want to sample at grid / (1+z).
+        # But grid is centered at 0. Wavelengths are usually positive.
+        # This simple grid_sample assumes spatial [-1, 1]. 
+        # For spectra, we usually want 1D interpolation on indices.
+        
+        # Let's use simple linear interpolation on indices
+        indices = torch.arange(orig_len, device=tensor.device, dtype=tensor.dtype)
+        # We want value at index i to come from index i / (1+z)
+        # (Assuming linear wavelength spacing)
+        # If log-linear, it's a constant shift.
+        # Let's assume linear spacing for generic tensor.
+        
+        sample_indices = indices / factor
+        
+        # Clamp to valid range
+        sample_indices = torch.clamp(sample_indices, 0, orig_len - 1)
+        
+        # Linear interpolation
+        idx_floor = sample_indices.floor().long()
+        idx_ceil = idx_floor + 1
+        idx_ceil = torch.clamp(idx_ceil, 0, orig_len - 1)
+        
+        weight = sample_indices - idx_floor.float()
+        
+        if tensor.dim() == 1:
+            val_floor = tensor[idx_floor]
+            val_ceil = tensor[idx_ceil]
+            return val_floor * (1 - weight) + val_ceil * weight
+        else:
+            # Handle (C, L)
+            val_floor = tensor[:, idx_floor]
+            val_ceil = tensor[:, idx_ceil]
+            return val_floor * (1 - weight) + val_ceil * weight
+
+    def __repr__(self):
+        return f"RedshiftShift(z_min={self.z_min}, z_max={self.z_max})"
+
+
+class PerturbByError:
+    """
+    Perturb data by its associated error.
+    
+    Useful for Monte Carlo error propagation or robust training.
+    Expects input to be a tuple (data, error).
+    """
+    def __init__(self, scale: float = 1.0):
+        self.scale = scale
+        
+    def __call__(self, inputs: Tuple[Tensor, Tensor]) -> Tensor:
+        data, error = inputs
+        noise = torch.randn_like(data) * error * self.scale
+        return data + noise
+
+    def __repr__(self):
+        return f"PerturbByError(scale={self.scale})"
+
+
+class RobustScale:
+    """
+    Robust scaling using Median and Interquartile Range (IQR).
+    
+    (X - Median) / (Q75 - Q25)
+    """
+    def __init__(self, center: bool = True, scale: bool = True):
+        self.center = center
+        self.scale = scale
+        
+    def __call__(self, tensor: Tensor) -> Tensor:
+        if self.center:
+            median = torch.median(tensor)
+            tensor = tensor - median
+            
+        if self.scale:
+            q75 = torch.quantile(tensor, 0.75)
+            q25 = torch.quantile(tensor, 0.25)
+            iqr = q75 - q25
+            if iqr > 1e-8:
+                tensor = tensor / iqr
+                
+        return tensor
+
+    def __repr__(self):
+        return f"RobustScale(center={self.center}, scale={self.scale})"
