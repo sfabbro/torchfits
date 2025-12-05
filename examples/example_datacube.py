@@ -31,70 +31,48 @@ def main():
     test_file = "cube_example.fits"
     create_test_file(test_file)
 
-    # Read a 2D slice (RA-DEC plane) using start/shape
+    # Read the full 3D cube
     try:
-        start = [0, 0, 1]  # Select the 2nd plane (index 1) along the 3rd axis
-        shape = [-1, -1, 1]  # Read the entire RA and DEC dimensions, and a single plane
-        slice_2d, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
-        print("2D Slice (Start/Shape):")
-        print(f"  Shape: {slice_2d.shape}")  # Expected: (2, 3, 1)
+        cube, header = torchfits.read(test_file, hdu=0)
+        print("Full 3D Cube:")
+        print(f"  Shape: {cube.shape}")  # Expected: (2, 3, 4) - (z, y, x) in FITS order
+        print(f"  CTYPE1: {header.get('CTYPE1')}")
+        print(f"  CTYPE2: {header.get('CTYPE2')}")
         print(f"  CTYPE3: {header.get('CTYPE3')}")
-
     except RuntimeError as e:
         print(f"  Error: {e}")
 
-    # Read a 2D slice using CFITSIO string
+    # Read a 2D slice using CFITSIO string syntax
     try:
-        slice_2d_cfitsio, header = torchfits.read(
-            f"{test_file}[1][*,*,2]"
-        )  # 1-based indexing for CFITSIO
-        print("\n2D Slice (CFITSIO String):")
-        print(f"  Shape: {slice_2d_cfitsio.shape}")
-        print(f"  CTYPE3: {header.get('CTYPE3')}")
-        # Verify that the results are the same
-        assert np.allclose(
-            slice_2d.squeeze().numpy(), slice_2d_cfitsio.squeeze().numpy()
-        )
-
-    except RuntimeError as e:
-        print(f"  Error: {e}")
-
-    # Read a 1D spectrum (velocity profile) using start/shape
-    try:
-        start = [1, 2, 0]  # x, y, z coordinates
-        shape = [1, 1, -1]  # Read the entire spectral axis
-        spectrum_1d, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
-        print("\n1D Spectrum (Start/Shape):")
-        print(f"  Shape: {spectrum_1d.shape}")  # Expected: (1, 1, 2)
-        print(f"  CTYPE3: {header.get('CTYPE3')}")
-
+        # Select 2nd plane along 3rd axis (1-based indexing)
+        slice_2d, header = torchfits.read(f"{test_file}[0][*,*,2]")
+        print("\n2D Slice (CFITSIO String [*,*,2]):")
+        print(f"  Shape: {slice_2d.shape}")  # Expected: (3, 4) - collapsed z dimension
+        print(f"  Equivalent to cube[1,:,:] = {cube[1,:,:].shape}")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
     # Read a 1D spectrum using CFITSIO string
     try:
-        spectrum_1d_cfitsio, header = torchfits.read(
-            f"{test_file}[1][2,3,*]"
-        )  # 1-based indexing
-        print("\n1D Spectrum (CFITSIO string):")
-        print(f"  Shape: {spectrum_1d_cfitsio.shape}")
-        # Verify that the results are the same
-        assert np.allclose(
-            spectrum_1d.squeeze().numpy(), spectrum_1d_cfitsio.squeeze().numpy()
-        )
-
+        # Extract spectrum at position (x=2, y=3) - 1-based indexing
+        spectrum_1d, header = torchfits.read(f"{test_file}[0][2,3,*]")
+        print("\n1D Spectrum (CFITSIO String [2,3,*]):")
+        print(f"  Shape: {spectrum_1d.shape}")  # Expected: (2,) - spectral axis only
+        print(f"  Equivalent to cube[:,2,1] = {cube[:,2,1].shape}")
     except RuntimeError as e:
-        print(f" Error: {e}")
+        print(f"  Error: {e}")
+
+    # Manual slicing of the full cube
+    print("\n--- Manual Slicing of Full Cube ---")
+    print(f"  Single plane: cube[0,:,:] shape = {cube[0,:,:].shape}")
+    print(f"  Spectrum at (1,2): cube[:,1,2] shape = {cube[:,1,2].shape}")
+    print(f"  Sub-cube: cube[:,1:3,2:4] shape = {cube[:,1:3,2:4].shape}")
 
     # --- Test different cache capacities ---
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 10]:
         try:
-            start = [0, 1, 0]
-            shape = [2, 1, -1]
-            data, _ = torchfits.read(
-                test_file, hdu=1, start=start, shape=shape, cache_capacity=capacity
-            )
+            data, _ = torchfits.read(test_file, hdu=0, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
@@ -104,12 +82,9 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            start = [0, 1, 0]
-            shape = [2, 1, -1]
-            data, _ = torchfits.read(
-                test_file, hdu=1, start=start, shape=shape, device="cuda"
-            )
+            data, _ = torchfits.read(test_file, hdu=0, device="cuda")
             print(f"  Data device: {data.device}")
+            print(f"  Can slice on GPU: data[0,:,:].shape = {data[0,:,:].shape}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")
     else:

@@ -67,6 +67,11 @@ test = [
     "pytest-cov>=2.0", 
     "pytest-benchmark>=3.0",
 ]
+examples = [
+    "torchvision>=0.15.0",  # For MNIST example
+    "requests>=2.28.0",     # For SDSS download example
+    "matplotlib>=3.0",      # For visualization in examples
+]
 
 # Configuration for the scikit-build-core build system.
 [tool.scikit-build]

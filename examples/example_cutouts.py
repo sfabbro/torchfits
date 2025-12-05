@@ -26,16 +26,14 @@ def main():
     test_file = "cutout_example.fits"
     create_test_file(test_file)
 
-    # Read a cutout using start and shape
+    # Read a cutout using read_subset (x1, y1, x2, y2 are 0-based, exclusive end)
     try:
-        start = [10, 15]  # 0-based
-        shape = [5, 8]
-        data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
-        print("Cutout (Start/Shape):")
+        # Cutout from [10:15, 15:23] (y, x order for FITS)
+        x1, y1 = 15, 10
+        x2, y2 = 23, 15
+        data = torchfits.read_subset(test_file, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)
+        print("Cutout (read_subset):")
         print(f"  Data shape: {data.shape}")  # Expected: (5, 8)
-        # Check CRPIX update
-        print(f"  Updated CRPIX1: {header['CRPIX1']}")
-        print(f"  Updated CRPIX2: {header['CRPIX2']}")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
@@ -53,28 +51,21 @@ def main():
     except RuntimeError as e:
         print(f"  Error: {e}")
 
-    # Read to end of dimension
+    # Read another cutout
     try:
-        start = [10, 15]
-        shape = [5, -1]  # Read to the end of the second dimension
-        data, header = torchfits.read(test_file, hdu=1, start=start, shape=shape)
-        print("\nCutout (Read to end):")
+        x1, y1 = 15, 10
+        x2, y2 = 32, 15  # Read to end of x dimension
+        data = torchfits.read_subset(test_file, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)
+        print("\nCutout (read to end):")
         print(f"  Data shape: {data.shape}")
-        print(f" Updated CRPIX1: {header['CRPIX1']}")
-        print(f" Updated CRPIX2: {header['CRPIX2']}")
-
     except RuntimeError as e:
         print(f" Error: {e}")
 
-    # --- Test different cache capacities ---
-    print("\n--- Testing with different cache capacities ---")
+    # --- Test different cache capacities (not applicable to read_subset) ---
+    print("\n--- Testing cache with full read ---")
     for capacity in [0, 10]:
         try:
-            start = [5, 5]
-            shape = [10, 10]
-            data, _ = torchfits.read(
-                test_file, hdu=1, start=start, shape=shape, cache_capacity=capacity
-            )
+            data, _ = torchfits.read(test_file, hdu=0, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
@@ -84,11 +75,9 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            start = [5, 5]
-            shape = [10, 10]
-            data, _ = torchfits.read(
-                test_file, hdu=1, start=start, shape=shape, device="cuda"
-            )
+            # Note: read_subset returns tensor on CPU, move to GPU after
+            data = torchfits.read_subset(test_file, hdu=0, x1=5, y1=5, x2=15, y2=15)
+            data = data.to('cuda')
             print(f"  Data device: {data.device}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

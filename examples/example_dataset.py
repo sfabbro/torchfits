@@ -41,9 +41,7 @@ class SimpleFitsDataset(Dataset):
                 self.file_list.append(filepath)
                 # Get label from header (more robust than filename parsing)
                 try:
-                    header = torchfits.get_header(
-                        filepath, 1
-                    )  # Get header of primary HDU
+                    header = torchfits.get_header(filepath, hdu=0)  # Primary HDU is 0
                     label = int(header["LABEL"])
                     self.labels.append(label)
                 except (RuntimeError, KeyError) as e:  # Catch errors

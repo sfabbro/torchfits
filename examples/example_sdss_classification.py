@@ -36,36 +36,36 @@ class SDSSDataset(Dataset):
         filename = self.file_list[idx]
         try:
             # Read the spectrum data (flux) from the table HDU
-            # Try HDU 3 first (our table), then fall back to HDU 2
+            # Try HDU 2 first (our table), then fall back to HDU 1
             try:
                 data, header = torchfits.read(
                     filename,
-                    hdu=3,
+                    hdu=2,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
                 )
                 if hasattr(data, "keys") and "flux" in data:
                     flux = data["flux"]
                 else:
-                    # Fall back to HDU 2 as image data
+                    # Fall back to HDU 1 as image data
                     flux, _ = torchfits.read(
                         filename,
-                        hdu=2,
+                        hdu=1,
                         cache_capacity=self.cache_capacity,
                         device=self.device,
                     )
             except:
-                # Fall back to HDU 2 as image data
+                # Fall back to HDU 1 as image data
                 flux, _ = torchfits.read(
                     filename,
-                    hdu=2,
+                    hdu=1,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
                 )
 
             # Get the class from header
             try:
-                header = torchfits.get_header(filename, 1)
+                header = torchfits.get_header(filename, hdu=0)
                 obj_class = header.get("CLASS", "UNKNOWN")
             except:
                 # Fallback using astropy fits
@@ -97,7 +97,7 @@ class SDSSDataset(Dataset):
         try:
             # Try to read the table HDU with wavelength data
             data, header = torchfits.read(
-                filename, hdu=3, cache_capacity=self.cache_capacity, device=self.device
+                filename, hdu=2, cache_capacity=self.cache_capacity, device=self.device
             )
             # For table data, torchfits returns a dictionary-like object
             if hasattr(data, "keys") and "loglam" in data:
@@ -106,7 +106,7 @@ class SDSSDataset(Dataset):
                 # Fallback: create synthetic wavelength array
                 flux_data, _ = torchfits.read(
                     filename,
-                    hdu=2,
+                    hdu=1,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
                 )
@@ -239,8 +239,7 @@ def main():
             table_data = Table()
             table_data["flux"] = flux
             table_data["loglam"] = loglam
-            table_hdu = fits.table_to_hdu(table_data)
-            table_hdu.name = "COADD_TABLE"
+            table_hdu = fits.BinTableHDU(table_data, name="COADD_TABLE")
 
             # Create HDU list and save
             hdul = fits.HDUList([primary_hdu, data_hdu, table_hdu])
@@ -288,7 +287,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # --- Training Loop (Simplified) ---
-    num_epochs = 10
+    num_epochs = 3  # Reduced for faster demonstration
     for epoch in range(num_epochs):
         model.train()  # Set the model to training mode
         running_loss = 0.0
@@ -367,7 +366,7 @@ def main():
         dataset_no_cache,
         batch_size=2,
         shuffle=True,
-        num_workers=2,
+        num_workers=0,  # Use 0 to avoid multiprocessing issues
         collate_fn=collate_fn,
         pin_memory=(device.type == "cuda"),
     )

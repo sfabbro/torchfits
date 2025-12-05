@@ -127,3 +127,13 @@ Makefile
 !.pixi/config.toml
 
 benchmark_results/
+
+# Example-generated files
+examples/*.fits
+examples/data_*/
+examples/mnist_data/
+examples/sdss_data/
+examples/test_examples.py
+examples/*.png
+examples/*.jpg
+examples/*.pdf

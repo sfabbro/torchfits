@@ -27,9 +27,9 @@ def main():
     test_file = "basic_example.fits"
     create_test_file(test_file)
 
-    # Read the entire primary HDU
+    # Read the entire primary HDU (HDU 0)
     try:
-        data, header = torchfits.read(test_file)  # Defaults to HDU=1 (primary)
+        data, header = torchfits.read(test_file, hdu=0)  # Primary HDU is 0
         print("Full Image (Primary HDU):")
         print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         print(f"  CRVAL1: {header.get('CRVAL1')}")
@@ -38,25 +38,12 @@ def main():
     except RuntimeError as e:
         print(f"  Error: {e}")
 
-    # Read using HDU number
+    # Get header using get_header()
     try:
-        data, header = torchfits.read(test_file, hdu=1)  # Primary HDU is 1
-        print("\nFull Image (HDU=1):")
-        print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
-    except RuntimeError as e:
-        print(f"  Error: {e}")
-
-    # Get Header Value
-    try:
-        object_name = torchfits.get_header_value(test_file, 1, "OBJECT")
+        header = torchfits.get_header(test_file, hdu=0)
+        object_name = header.get('OBJECT')
         print(f"\nObject Name: {object_name}")
-    except RuntimeError as e:
-        print(f" Error: {e}")
-
-    # Get dimensions
-    try:
-        dims = torchfits.get_dims(test_file, 1)
-        print(f"Dimensions: {dims}")
+        print(f"Dimensions: {header.get('NAXIS1')} x {header.get('NAXIS2')}")
     except RuntimeError as e:
         print(f" Error: {e}")
 
@@ -64,7 +51,7 @@ def main():
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 10, 100]:  # Test no cache, small cache, larger cache
         try:
-            data, header = torchfits.read(test_file, cache_capacity=capacity)
+            data, header = torchfits.read(test_file, hdu=0, cache_capacity=capacity)
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
@@ -74,7 +61,7 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            data, header = torchfits.read(test_file, device="cuda")
+            data, header = torchfits.read(test_file, hdu=0, device="cuda")
             print(f"  Data device: {data.device}")  # Should print 'cuda:0'
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

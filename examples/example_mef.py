@@ -30,37 +30,29 @@ def main():
     test_file = "mef_example.fits"
     create_test_file(test_file)
 
-    # Iterate through HDUs
+    # Iterate through HDUs using torchfits.open()
     try:
-        num_hdus = torchfits.get_num_hdus(test_file)
-        print(f"Number of HDUs: {num_hdus}")
+        with torchfits.open(test_file) as hdul:
+            print(f"Number of HDUs: {len(hdul)}")
 
-        for i in range(1, num_hdus + 1):  # Iterate through HDUs (1-based)
-            print(f"\n--- HDU {i} ---")
-            try:
-                hdu_type = torchfits.get_hdu_type(test_file, i)
-                print(f"  Type: {hdu_type}")
-
-                header = torchfits.get_header(test_file, i)
-                print(
-                    f"  EXTNAME: {header.get('EXTNAME', 'N/A')}"
-                )  # Get EXTNAME, default to 'N/A'
-
-                if hdu_type == "IMAGE":
-                    data, _ = torchfits.read(test_file, hdu=i)  # Read by index
-                    if data is not None:
-                        print(f"  Data shape: {data.shape}")
+            for i, hdu in enumerate(hdul):
+                print(f"\n--- HDU {i} ---")
+                try:
+                    # Check if it's an image or table
+                    if hasattr(hdu, 'data') and isinstance(hdu.data, torch.Tensor):
+                        print(f"  Type: IMAGE")
+                        print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
+                        print(f"  Data shape: {hdu.data.shape}")
+                    elif hasattr(hdu, 'data') and isinstance(hdu.data, dict):
+                        print(f"  Type: TABLE")
+                        print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
+                        print(f"  Table columns: {list(hdu.data.keys())}")
                     else:
-                        print("  No image data")
-                elif hdu_type in ["BINARY_TBL", "ASCII_TBL"]:
-                    table, _ = torchfits.read(test_file, hdu=i)  # Read by index
-                    if table is not None:
-                        print(f"  Table columns: {list(table.keys())}")
-                    else:
-                        print("  No table data")
+                        print(f"  Type: EMPTY/PRIMARY")
+                        print(f"  EXTNAME: {hdu.header.get('EXTNAME', 'N/A')}")
 
-            except RuntimeError as e:
-                print(f"  Error reading HDU {i}: {e}")
+                except Exception as e:
+                    print(f"  Error reading HDU {i}: {e}")
 
         # Access by name:
         print("\n--- Accessing HDU by Name ---")

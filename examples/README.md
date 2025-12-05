@@ -1,4 +1,4 @@
-# torchfits Examples
+# Examples
 
 This directory contains comprehensive examples demonstrating the `torchfits` library.
 

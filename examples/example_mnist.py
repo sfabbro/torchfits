@@ -15,33 +15,58 @@ import torchfits
 # --- FITS File Generation (Run Once) ---
 
 
-def create_mnist_fits(data_dir):
-    """Converts the MNIST dataset to FITS images."""
+def create_mnist_fits(data_dir, max_samples=1000):
+    """Converts a subset of MNIST dataset to FITS images using torchfits.write().
+    
+    Args:
+        data_dir: Directory to save FITS files
+        max_samples: Maximum number of samples per split (train/test) to convert
+    """
     os.makedirs(data_dir, exist_ok=True)
+    
+    # Download MNIST using torchvision
+    print("Downloading MNIST dataset...")
     train_dataset = datasets.MNIST(
-        root=data_dir, train=True, download=True, transform=transforms.ToTensor()
+        root=os.path.join(data_dir, "mnist_raw"), 
+        train=True, 
+        download=True, 
+        transform=transforms.ToTensor()
     )
     test_dataset = datasets.MNIST(
-        root=data_dir, train=False, download=True, transform=transforms.ToTensor()
+        root=os.path.join(data_dir, "mnist_raw"),
+        train=False,
+        download=True,
+        transform=transforms.ToTensor()
     )
 
-    for i, (image, label) in enumerate(
-        tqdm(train_dataset, desc="Generating Training FITS")
-    ):
+    # Convert training samples to FITS using torchfits.write()
+    print(f"Converting {max_samples} training samples to FITS...")
+    for i in tqdm(range(min(max_samples, len(train_dataset))), desc="Training FITS"):
+        image, label = train_dataset[i]
         filename = os.path.join(data_dir, f"train_{i:05d}_{label}.fits")
-        hdu = fits.PrimaryHDU(
-            image.squeeze().numpy()
-        )  # Remove channel dim, convert to NumPy
-        hdu.header["LABEL"] = int(label)  # Store label in header
-        hdu.writeto(filename, overwrite=True)
+        
+        # Use torchfits.write() directly with the tensor
+        # Remove channel dimension: [1, 28, 28] -> [28, 28]
+        image_2d = image.squeeze(0)
+        
+        # Create header with label
+        header = {"LABEL": int(label), "SPLIT": "TRAIN"}
+        
+        # Write using torchfits - showcases direct tensor-to-FITS conversion
+        torchfits.write(filename, image_2d, header=header, overwrite=True)
 
-    for i, (image, label) in enumerate(
-        tqdm(test_dataset, desc="Generating Testing FITS")
-    ):
+    # Convert test samples to FITS
+    print(f"Converting {max_samples} test samples to FITS...")
+    for i in tqdm(range(min(max_samples, len(test_dataset))), desc="Testing FITS"):
+        image, label = test_dataset[i]
         filename = os.path.join(data_dir, f"test_{i:05d}_{label}.fits")
-        hdu = fits.PrimaryHDU(image.squeeze().numpy())
-        hdu.header["LABEL"] = int(label)
-        hdu.writeto(filename, overwrite=True)
+        
+        image_2d = image.squeeze(0)
+        header = {"LABEL": int(label), "SPLIT": "TEST"}
+        
+        torchfits.write(filename, image_2d, header=header, overwrite=True)
+    
+    print(f"Created {2 * max_samples} FITS files in {data_dir}")
 
 
 # --- PyTorch Dataset ---
@@ -130,58 +155,70 @@ def collate_fn(batch):
 
 def main():
     data_dir = "data_mnist_fits"
+    
+    # Use a subset for faster demonstration (1000 train, 200 test)
+    max_train = 1000
+    max_test = 200
 
     # --- Create FITS files (if they don't exist) ---
-    if not os.path.exists(
-        os.path.join(data_dir, "train_00000_0.fits")
-    ):  # Check for one file
-        create_mnist_fits(data_dir)
+    if not os.path.exists(os.path.join(data_dir, "train_00000_5.fits")):
+        print("Creating MNIST FITS dataset (subset for demo)...")
+        create_mnist_fits(data_dir, max_samples=max_train)
+    else:
+        print(f"Using existing FITS files in {data_dir}")
 
     # --- Device Selection ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"\nUsing device: {device}")
 
     # --- Create Datasets and DataLoaders ---
-    # Demonstrate with and without cache, and with/without GPU
+    print("\nCreating datasets...")
     train_dataset = MNIST_FITS_Dataset(
         data_dir, train=True, cache_capacity=100, device=str(device)
     )
     test_dataset = MNIST_FITS_Dataset(
         data_dir, train=False, cache_capacity=100, device=str(device)
-    )  # Use cache
+    )
+    
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Test samples: {len(test_dataset)}")
+    
     train_loader = DataLoader(
         train_dataset,
-        batch_size=64,
+        batch_size=32,
         shuffle=True,
-        num_workers=4,
+        num_workers=0,  # Use 0 for compatibility
         collate_fn=collate_fn,
         pin_memory=(device.type == "cuda"),
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=64,
+        batch_size=32,
         shuffle=False,
-        num_workers=4,
+        num_workers=0,
         collate_fn=collate_fn,
         pin_memory=(device.type == "cuda"),
     )
 
     # --- Initialize Model, Loss, and Optimizer ---
-    model = MNIST_Classifier().to(device)  # Move model to device
+    print("\nInitializing model...")
+    model = MNIST_Classifier().to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # --- Training Loop ---
-    num_epochs = 3  # Keep it short for the example
+    num_epochs = 5
+    print(f"\nTraining for {num_epochs} epochs...")
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for i, (inputs, labels) in enumerate(
-            tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
-        ):
-            if inputs.numel() == 0:  # Handle empty batch
+        correct = 0
+        total = 0
+        
+        for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+            if inputs.numel() == 0:
                 continue
-            # Move data to the device
+                
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -190,22 +227,28 @@ def main():
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+            
             running_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
 
-        print(f"Epoch {epoch+1}, Loss: {running_loss / len(train_loader):.4f}")
+        epoch_loss = running_loss / len(train_loader)
+        epoch_acc = 100 * correct / total
+        print(f"Epoch {epoch+1}: Loss = {epoch_loss:.4f}, Train Acc = {epoch_acc:.2f}%")
 
-    print("Training finished!")
+    print("\nTraining finished!")
 
     # --- Evaluation ---
+    print("\nEvaluating on test set...")
     model.eval()
     correct = 0
     total = 0
     with torch.no_grad():
-        for inputs, labels in test_loader:
-            if inputs.numel() == 0:  # Handle empty batch
+        for inputs, labels in tqdm(test_loader, desc="Testing"):
+            if inputs.numel() == 0:
                 continue
 
-            # Move data to the device
             inputs = inputs.to(device)
             labels = labels.to(device)
             outputs = model(inputs)
@@ -213,7 +256,24 @@ def main():
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    print(f"Accuracy on the test set: {100 * correct / total:.2f}%")
+    test_acc = 100 * correct / total
+    print(f"\n{'='*50}")
+    print(f"Final Test Accuracy: {test_acc:.2f}%")
+    print(f"{'='*50}")
+    
+    # Show some predictions
+    print("\nSample predictions:")
+    model.eval()
+    with torch.no_grad():
+        sample_inputs, sample_labels = next(iter(test_loader))
+        if sample_inputs.numel() > 0:
+            sample_inputs = sample_inputs[:5].to(device)
+            sample_labels = sample_labels[:5]
+            outputs = model(sample_inputs)
+            _, predicted = torch.max(outputs, 1)
+            
+            for i in range(len(sample_labels)):
+                print(f"  True: {sample_labels[i].item()}, Predicted: {predicted[i].item()}")
 
 
 if __name__ == "__main__":
