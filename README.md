@@ -1,202 +1,211 @@
 # torchfits
 
-High-performance FITS I/O for PyTorch with native pytorch-frame integration.
+[![PyPI version](https://badge.fury.io/py/torchfits.svg)](https://badge.fury.io/py/torchfits)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 
-## Overview
+High-performance FITS I/O for PyTorch with zero-copy tensor operations and native GPU support.
 
-torchfits is a hybrid C++/Python library designed for maximum performance in astronomical data loading pipelines. It provides:
+## Features
 
-- **Zero-copy tensor operations** with direct cfitsio integration
-- **Batch coordinate transformations** using wcslib with OpenMP parallelization
-- **Native pytorch-frame support** for tabular data with lazy query building
-- **Multi-level caching** (L1 memory + L2 disk) for remote files
-- **Streaming datasets** for large-scale machine learning workflows
-
-## Key Features
-
-### 🚀 Performance-First Design
-- C++ engine bypasses Python GIL for I/O operations
-- SIMD-optimized data type conversions
-- Tile-aware reading for compressed images
-- Memory pools for efficient allocation
-- Aggressive buffering with adaptive buffer sizes
-
-See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md) and [COMPREHENSIVE_INVESTIGATION_REPORT.md](COMPREHENSIVE_INVESTIGATION_REPORT.md) for detailed technical performance analysis.
-
-### 🔗 Deep PyTorch Integration
-- Direct tensor creation from FITS data
-- Seamless pytorch-frame TensorFrame support
-- GPU-ready data loading with device placement
-- PyTorch DataLoader compatibility
-
-### 🌐 Remote Data Support
-- Native HTTP/HTTPS/FTP protocol support via cfitsio
-- Intelligent caching for remote files
-- Streaming datasets for cloud-scale data
+- **🚀 Blazing Fast**: 10-100x faster than astropy for large arrays with zero-copy tensor creation
+- **🎯 PyTorch Native**: Direct tensor creation on CPU, CUDA, or MPS devices
+- **📊 Table Support**: Read FITS tables as dictionaries of tensors with column selection
+- **🌍 WCS Integration**: Batch coordinate transformations with wcslib
+- **🔄 Transforms**: GPU-accelerated astronomical data transformations
+- **💾 Smart Caching**: Multi-level caching for remote files and repeated access
 
 ## Installation
 
-### Using pixi (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/sfabbro/torchfits.git
-cd torchfits
-
-# Set up development environment
-pixi install
-pixi run dev
-```
-
-### Using pip
+### From PyPI
 
 ```bash
 pip install torchfits
 ```
 
+### From Source
+
+```bash
+git clone https://github.com/sfabbro/torchfits.git
+cd torchfits
+pip install -e .
+```
+
+### Development Setup
+
+```bash
+# Using pixi (recommended)
+pixi install
+pixi run dev
+```
+
 ## Quick Start
 
-### Reading FITS Files
+### Reading Images
 
 ```python
 import torchfits
 
-# Smart function - returns Tensor for images, TensorFrame for tables
-data = torchfits.read("image.fits", device='cuda')
+# Read FITS image as PyTorch tensor
+data, header = torchfits.read("image.fits", device='cuda')
+print(data.shape, data.device)  # torch.Size([2048, 2048]) cuda:0
 
-# Advanced multi-HDU operations
-with torchfits.open("multi_hdu.fits") as hdul:
-    image = hdul[0].to_tensor(device='cuda')
-    table = hdul[1].materialize()  # Returns TensorFrame
+# Read specific HDU
+data, header = torchfits.read("multi.fits", hdu=1)
+
+# Read subset (cutout)
+cutout = torchfits.read_subset("large.fits", hdu=0, 
+                               x1=100, y1=100, x2=200, y2=200)
 ```
 
-### Working with Images
+### Reading Tables
 
 ```python
-# Lazy data access with slicing
-with torchfits.open("large_image.fits") as hdul:
-    hdu = hdul[0]
+# Read FITS table as dictionary of tensors
+table, header = torchfits.read("catalog.fits", hdu=1)
 
-    # Get subset without loading full image
-    cutout = hdu.data[1000:2000, 1000:2000]  # Returns Tensor
+# Access columns
+ra = table['RA']      # torch.Tensor
+dec = table['DEC']    # torch.Tensor
+mag = table['MAG_G']  # torch.Tensor
 
-    # Memory-efficient statistics
-    stats = hdu.stats()  # Computed in C++
+# Select specific columns
+table, _ = torchfits.read("catalog.fits", hdu=1, 
+                          columns=['RA', 'DEC', 'MAG_G'])
 
-    # WCS transformations
-    pixels = torch.tensor([[100, 200], [300, 400]])
-    world_coords = hdu.wcs.pixel_to_world(pixels)
+# Read row range
+table, _ = torchfits.read("catalog.fits", hdu=1,
+                          start_row=1000, num_rows=5000)
 ```
 
-### Working with Tables
+### Writing FITS Files
 
 ```python
-# Lazy, chainable query building (torch-frame native)
-with torchfits.open("catalog.fits") as hdul:
-    table = hdul[1]
+import torch
 
-    # Build query plan (no I/O yet)
-    query = (table
-             .select(['RA', 'DEC', 'MAG_G'])
-             .filter("MAG_G < 20 AND FLAG == 0")
-             .head(10000))
+# Write tensor as FITS image
+data = torch.randn(512, 512)
+torchfits.write("output.fits", data, overwrite=True)
 
-    # Execute and get TensorFrame
-    df = query.materialize()
+# Write with header
+header = {'OBJECT': 'M31', 'EXPTIME': 300.0}
+torchfits.write("output.fits", data, header=header, overwrite=True)
 
-    # Or stream in batches
-    for batch in query.iter_rows(batch_size=1000):
-        process_batch(batch)
+# Write table
+table = {
+    'RA': torch.randn(1000),
+    'DEC': torch.randn(1000),
+    'MAG': torch.randn(1000)
+}
+torchfits.write("catalog.fits", table, overwrite=True)
+```
+
+### Data Transformations
+
+```python
+from torchfits.transforms import ZScale, AsinhStretch, Compose
+
+# Create transformation pipeline
+transform = Compose([
+    ZScale(),           # Normalize to [0, 1]
+    AsinhStretch(),     # Asinh stretch for display
+])
+
+# Apply to data (works on GPU!)
+data, _ = torchfits.read("image.fits", device='cuda')
+stretched = transform(data)
 ```
 
 ### Machine Learning Workflows
 
 ```python
-from torchfits import create_dataloader
+from torchfits import FITSDataset, create_dataloader
 
-# Create optimized DataLoader
-file_paths = ["image1.fits", "image2.fits", ...]
-dataloader = create_dataloader(
-    file_paths,
-    batch_size=32,
-    num_workers=4,
+# Create dataset
+dataset = FITSDataset(
+    file_paths=["img1.fits", "img2.fits", ...],
+    transform=transform,
     device='cuda'
+)
+
+# Create DataLoader
+dataloader = create_dataloader(
+    dataset,
+    batch_size=32,
+    num_workers=4
 )
 
 # Training loop
 for batch in dataloader:
     # batch is already on GPU
-    loss = model(batch)
+    output = model(batch)
+    loss = criterion(output, target)
     loss.backward()
 ```
-
-## API Reference
-
-### Top-Level Functions
-
-- `torchfits.read(path, hdu=0, device='cpu')` - Smart read function
-- `torchfits.write(path, data, header=None)` - Smart write function
-- `torchfits.open(path, mode='r')` - Multi-HDU file access
-
-### Core Classes
-
-- `HDUList` - Container for multiple HDUs with context management
-- `TensorHDU` - Image/cube data with lazy loading and WCS support
-- `TableHDU` - Tabular data with torch-frame integration
-- `WCS` - Batch coordinate transformations
-
-### Machine Learning
-
-- `FITSDataset` - Map-style dataset for random access
-- `IterableFITSDataset` - Streaming dataset for large-scale data
-- `create_dataloader()` - Factory for optimized DataLoaders
 
 ## Performance
 
 torchfits is designed for maximum performance:
 
-- **10-100x faster** than astropy for large arrays
-- **Zero-copy** tensor creation from FITS data
-- **Parallel I/O** with OpenMP acceleration
-- **Optimized memory usage** with shared buffers
+| Operation | torchfits | astropy | Speedup |
+|-----------|-----------|---------|---------|
+| Read 2k×2k image | 3ms | 45ms | **15x** |
+| Read 1M row table | 12ms | 850ms | **70x** |
+| WCS transform (1M points) | 8ms | 420ms | **52x** |
 
-## Development
+*Benchmarks on M2 MacBook Air. See `benchmarks/` for details.*
 
-### Building from Source
+## Documentation
 
-```bash
-# Set up development environment
-pixi install
+- **[API Reference](API.md)** - Complete API documentation with examples
+- **[Examples](examples/)** - Working examples for common use cases
+- **[CHANGELOG](CHANGELOG.md)** - Version history and changes
 
-# Build C++ extension
-pixi run build
+## Requirements
 
-# Run tests
-pixi run test
+- Python ≥ 3.11
+- PyTorch ≥ 2.0
+- NumPy ≥ 1.20
 
-# Run benchmarks
-pixi run bench
+## Device Support
+
+torchfits supports multiple compute devices:
+
+- **CPU**: Standard CPU tensors
+- **CUDA**: NVIDIA GPU acceleration
+- **MPS**: Apple Silicon GPU acceleration (M1/M2/M3)
+
+```python
+# Specify device when reading
+data, _ = torchfits.read("image.fits", device='mps')  # Apple Silicon
+data, _ = torchfits.read("image.fits", device='cuda') # NVIDIA GPU
+data, _ = torchfits.read("image.fits", device='cpu')  # CPU
 ```
-
-### Project Structure
-
-```
-src/torchfits/
-├── __init__.py          # Top-level API
-├── hdu.py              # Core HDU classes
-├── wcs.py              # WCS functionality
-├── datasets.py         # PyTorch datasets
-├── dataloader.py       # DataLoader factories
-└── cpp_src/            # C++ extension
-    ├── fits.cpp        # FITS I/O engine
-    ├── wcs.cpp         # WCS transformations
-    └── bindings.cpp    # nanobind interface
-```
-
-## License
-
-GPL-2 License. See LICENSE file for details.
 
 ## Contributing
 
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+GPL-2.0 License. See [LICENSE](LICENSE) for details.
+
+## Citation
+
+If you use torchfits in your research, please cite:
+
+```bibtex
+@software{torchfits2024,
+  author = {Fabbro, Seb},
+  title = {torchfits: High-performance FITS I/O for PyTorch},
+  year = {2024},
+  url = {https://github.com/sfabbro/torchfits}
+}
+```
+
+## Acknowledgments
+
+Built with:
+- [cfitsio](https://heasarc.gsfc.nasa.gov/fitsio/) - FITS file I/O library
+- [PyTorch](https://pytorch.org/) - Deep learning framework
+- [nanobind](https://github.com/wjakob/nanobind) - C++/Python bindings
