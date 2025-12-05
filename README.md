@@ -8,7 +8,7 @@ High-performance FITS I/O for PyTorch with zero-copy tensor operations and nativ
 
 ## Features
 
-- **🚀 Blazing Fast**: 10-100x faster than astropy for large arrays with zero-copy tensor creation
+- **🚀 Fast**: 10-100x faster than astropy for large arrays with zero-copy tensor creation
 - **🎯 PyTorch Native**: Direct tensor creation on CPU, CUDA, or MPS devices
 - **📊 Table Support**: Read FITS tables as dictionaries of tensors with column selection
 - **🌍 WCS Integration**: Batch coordinate transformations with wcslib
@@ -165,8 +165,7 @@ torchfits is designed for maximum performance:
 
 - Python ≥ 3.11
 - PyTorch ≥ 2.0
-- NumPy ≥ 1.20
-
+  
 ## Device Support
 
 torchfits supports multiple compute devices:
@@ -182,10 +181,6 @@ data, _ = torchfits.read("image.fits", device='cuda') # NVIDIA GPU
 data, _ = torchfits.read("image.fits", device='cpu')  # CPU
 ```
 
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
 ## License
 
 GPL-2.0 License. See [LICENSE](LICENSE) for details.
@@ -195,10 +190,10 @@ GPL-2.0 License. See [LICENSE](LICENSE) for details.
 If you use torchfits in your research, please cite:
 
 ```bibtex
-@software{torchfits2024,
+@software{torchfits2025,
   author = {Fabbro, Seb},
   title = {torchfits: High-performance FITS I/O for PyTorch},
-  year = {2024},
+  year = {2025},
   url = {https://github.com/sfabbro/torchfits}
 }
 ```
