@@ -1,6 +1,6 @@
 # torchfits API Reference
 
-Complete API documentation for torchfits v0.1.0.
+Complete API documentation for torchfits.
 
 ## Table of Contents
 
@@ -30,13 +30,13 @@ torchfits.read(path, hdu=0, device='cpu', mmap=False, fp16=False, bf16=False,
 - `path` (str): Path to FITS file or URL
 - `hdu` (int | str): HDU index or name (default: 0)
 - `device` (str): Target device - 'cpu', 'cuda', 'mps', or 'cuda:N' (default: 'cpu')
-- `mmap` (bool): Use memory mapping for large files (default: False)
-- `fp16` (bool): Convert to half precision (default: False)
-- `bf16` (bool): Convert to bfloat16 (default: False)
+- `mmap` (bool): Use memory mapping for large files (default: False). Useful for files larger than available RAM.
+- `fp16` (bool): Convert to half precision (default: False). Not recommended for photometry or astrometry.
+- `bf16` (bool): Convert to bfloat16 (default: False). Better for ML than fp16 but still lossy.
 - `columns` (list[str] | None): Column names for table reading (default: None = all)
-- `start_row` (int): Starting row for tables, 1-based (default: 1)
+- `start_row` (int): Starting row for tables, 1-based FITS indexing (default: 1)
 - `num_rows` (int): Number of rows to read, -1 = all (default: -1)
-- `cache_capacity` (int): File cache capacity (default: 10)
+- `cache_capacity` (int): File cache capacity in MB (default: 10)
 - `fast_header` (bool): Use fast bulk header parsing (default: True)
 
 **Returns:**
@@ -48,19 +48,25 @@ torchfits.read(path, hdu=0, device='cpu', mmap=False, fp16=False, bf16=False,
 ```python
 import torchfits
 
-# Read image
+# Read image - preserves original dtype by default
 data, header = torchfits.read("image.fits", device='cuda')
 print(data.shape, data.device)  # torch.Size([2048, 2048]) cuda:0
 
-# Read table with column selection
+# Read table with column selection for catalogs
 table, header = torchfits.read("catalog.fits", hdu=1, 
                                columns=['RA', 'DEC', 'MAG'])
 print(table['RA'].shape)  # torch.Size([100000])
 
-# Read table row range
+# Read table row range for processing subsets
 table, header = torchfits.read("catalog.fits", hdu=1,
                                start_row=1000, num_rows=5000)
 ```
+
+**Notes:**
+- Data types are preserved from FITS by default for numerical accuracy
+- Use `mmap=True` for files larger than available RAM (slight performance cost)
+- Avoid `fp16`/`bf16` for astrometry or photometry requiring full precision
+- URLs supported via cfitsio (http://, https://, ftp://)
 
 ---
 
@@ -110,7 +116,7 @@ torchfits.write("catalog.fits", table, overwrite=True)
 
 ### `read_subset()`
 
-Read a rectangular cutout from an image HDU without loading the full image.
+Read a rectangular cutout from an image HDU without loading the full image. Memory-efficient for extracting postage stamps or regions of interest from large survey mosaics.
 
 ```python
 torchfits.read_subset(path, hdu, x1, y1, x2, y2)
@@ -119,20 +125,25 @@ torchfits.read_subset(path, hdu, x1, y1, x2, y2)
 **Parameters:**
 - `path` (str): Path to FITS file
 - `hdu` (int): HDU index
-- `x1, y1` (int): Start coordinates (0-based, inclusive)
-- `x2, y2` (int): End coordinates (0-based, exclusive)
+- `x1, y1` (int): Start coordinates (0-based Python indexing, inclusive)
+- `x2, y2` (int): End coordinates (0-based Python indexing, exclusive)
 
 **Returns:**
-- `torch.Tensor`: Cutout data
+- `torch.Tensor`: Cutout data `[y2-y1, x2-x1]`
 
 **Example:**
 
 ```python
-# Read 100x100 cutout from large image
+# Read 100x100 cutout from large mosaic
 cutout = torchfits.read_subset("large.fits", hdu=0,
                                x1=1000, y1=1000, x2=1100, y2=1100)
 print(cutout.shape)  # torch.Size([100, 100])
 ```
+
+**Notes:**
+- Uses 0-based Python indexing, not 1-based FITS indexing
+- Only loads the requested region into memory
+- Coordinates are (x, y) but returned tensor is [height, width]
 
 ---
 
@@ -338,7 +349,7 @@ torchfits.write("output.fits", data, header=header, overwrite=True)
 
 ### `WCS`
 
-World Coordinate System transformations with batch processing.
+World Coordinate System transformations with batch processing. Supports standard projections (TAN, SIN, etc.) via wcslib.
 
 **Methods:**
 
@@ -356,19 +367,25 @@ with torchfits.open("image.fits") as hdul:
     wcs = hdul[0].wcs
     
     if wcs:
-        # Transform pixel coordinates to world (RA, DEC)
+        # Transform pixel coordinates to world (RA, DEC in degrees)
         pixels = torch.tensor([[100.0, 200.0],
                                [300.0, 400.0]])
         world = wcs.pixel_to_world(pixels)
-        print(world)  # [[ra1, dec1], [ra2, dec2]]
+        print(world)  # [[ra1, dec1], [ra2, dec2]] in degrees
         
-        # Transform back
+        # Transform back to pixels
         pixels_back = wcs.world_to_pixel(world)
         
-        # Batch processing for large arrays
+        # Batch processing for catalogs or large coordinate lists
         large_pixels = torch.randn(1000000, 2)
         world_coords = wcs.pixel_to_world(large_pixels, batch_size=10000)
 ```
+
+**Notes:**
+- WCS automatically detected from header keywords (CTYPE, CRVAL, CRPIX, CD/CDELT)
+- Batch processing uses OpenMP parallelization
+- Coordinates use FITS 1-based convention internally but accept 0-based Python coordinates
+- Returns sky coordinates in degrees
 
 ---
 
@@ -482,11 +499,15 @@ All transforms work on GPU and can be composed.
 
 ### `ZScale`
 
-Automatic normalization using ZScale algorithm.
+Automatic image normalization using the IRAF ZScale algorithm. Determines display range based on image statistics while rejecting outliers.
 
 ```python
 torchfits.transforms.ZScale(contrast=0.25, max_reject=0.5)
 ```
+
+**Parameters:**
+- `contrast` (float): Contrast parameter (default: 0.25)
+- `max_reject` (float): Maximum fraction of pixels to reject (default: 0.5)
 
 **Example:**
 
@@ -498,15 +519,24 @@ data, _ = torchfits.read("image.fits", device='cuda')
 normalized = transform(data)  # Normalized to [0, 1]
 ```
 
+**Notes:**
+- Implements the IRAF/DS9 ZScale algorithm
+- Automatically determines appropriate display range rejecting cosmic rays and bad pixels
+- Output range is [0, 1]
+
 ---
 
 ### `AsinhStretch`
 
-Asinh stretch for high dynamic range images.
+Asinh (inverse hyperbolic sine) stretch for high dynamic range images. Commonly used for displaying images with bright cores (e.g., galaxies, star clusters) while preserving faint features.
 
 ```python
 torchfits.transforms.AsinhStretch(a=0.1, Q=8.0)
 ```
+
+**Parameters:**
+- `a` (float): Softening parameter (default: 0.1)
+- `Q` (float): Stretch parameter controlling contrast (default: 8.0)
 
 **Example:**
 
@@ -516,6 +546,11 @@ from torchfits.transforms import AsinhStretch
 stretch = AsinhStretch(Q=10.0)
 stretched = stretch(data)
 ```
+
+**Notes:**
+- Linear for faint pixels, logarithmic for bright pixels
+- Higher Q = more contrast in faint regions
+- Commonly used in survey imaging (SDSS, HST, etc.)
 
 ---
 
@@ -776,8 +811,8 @@ for epoch in range(10):
 
 ---
 
-## Version
+## See Also
 
-torchfits v0.1.0
-
-For updates and changelog, see [CHANGELOG.md](CHANGELOG.md).
+- [README](README.md) - Quick start and overview
+- [CHANGELOG](CHANGELOG.md) - Version history and changes
+- [Examples](examples/) - Working code examples

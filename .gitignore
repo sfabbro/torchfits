@@ -126,14 +126,17 @@ Makefile
 .pixi/*
 !.pixi/config.toml
 
+# Benchmark outputs
 benchmark_results/
+torchfits_exhaustive_*/
+*.csv
+*.png
+*.pdf
+*.json
+*.fits
 
 # Example-generated files
-examples/*.fits
 examples/data_*/
 examples/mnist_data/
 examples/sdss_data/
 examples/test_examples.py
-examples/*.png
-examples/*.jpg
-examples/*.pdf

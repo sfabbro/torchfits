@@ -4,40 +4,23 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 
-High-performance FITS I/O for PyTorch with zero-copy tensor operations and native GPU support.
-
-## Features
-
-- **🚀 Fast**: 10-100x faster than astropy for large arrays with zero-copy tensor creation
-- **🎯 PyTorch Native**: Direct tensor creation on CPU, CUDA, or MPS devices
-- **📊 Table Support**: Read FITS tables as dictionaries of tensors with column selection
-- **🌍 WCS Integration**: Batch coordinate transformations with wcslib
-- **🔄 Transforms**: GPU-accelerated astronomical data transformations
-- **💾 Smart Caching**: Multi-level caching for remote files and repeated access
+High-performance FITS I/O library for PyTorch. Provides zero-copy tensor operations and native GPU support for astronomical data processing and machine learning workflows.
 
 ## Installation
-
-### From PyPI
 
 ```bash
 pip install torchfits
 ```
 
-### From Source
+## Features
 
-```bash
-git clone https://github.com/sfabbro/torchfits.git
-cd torchfits
-pip install -e .
-```
-
-### Development Setup
-
-```bash
-# Using pixi (recommended)
-pixi install
-pixi run dev
-```
+- **Fast I/O**: Zero-copy tensor creation from FITS data with SIMD-optimized type conversions
+- **Multi-device**: Direct tensor creation on CPU, CUDA, or MPS (Apple Silicon) devices
+- **FITS tables**: Read binary tables as dictionaries of tensors with column and row selection
+- **WCS support**: Batch coordinate transformations using wcslib with OpenMP parallelization
+- **Data transforms**: GPU-accelerated astronomical normalization and augmentation (ZScale, asinh stretch, etc.)
+- **Smart caching**: Multi-level caching (L1 memory + L2 disk) for remote files and repeated access
+- **FITS compliant**: Built on cfitsio for standards compliance and robust file handling
 
 ## Quick Start
 
@@ -53,7 +36,7 @@ print(data.shape, data.device)  # torch.Size([2048, 2048]) cuda:0
 # Read specific HDU
 data, header = torchfits.read("multi.fits", hdu=1)
 
-# Read subset (cutout)
+# Read cutout from large file
 cutout = torchfits.read_subset("large.fits", hdu=0, 
                                x1=100, y1=100, x2=200, y2=200)
 ```
@@ -64,17 +47,14 @@ cutout = torchfits.read_subset("large.fits", hdu=0,
 # Read FITS table as dictionary of tensors
 table, header = torchfits.read("catalog.fits", hdu=1)
 
-# Access columns
+# Access columns as tensors
 ra = table['RA']      # torch.Tensor
 dec = table['DEC']    # torch.Tensor
 mag = table['MAG_G']  # torch.Tensor
 
-# Select specific columns
+# Select specific columns and row ranges
 table, _ = torchfits.read("catalog.fits", hdu=1, 
-                          columns=['RA', 'DEC', 'MAG_G'])
-
-# Read row range
-table, _ = torchfits.read("catalog.fits", hdu=1,
+                          columns=['RA', 'DEC'],
                           start_row=1000, num_rows=5000)
 ```
 
@@ -100,23 +80,23 @@ table = {
 torchfits.write("catalog.fits", table, overwrite=True)
 ```
 
-### Data Transformations
+### Data Processing
 
 ```python
 from torchfits.transforms import ZScale, AsinhStretch, Compose
 
 # Create transformation pipeline
 transform = Compose([
-    ZScale(),           # Normalize to [0, 1]
-    AsinhStretch(),     # Asinh stretch for display
+    ZScale(),           # Normalize using IRAF ZScale algorithm
+    AsinhStretch(),     # Asinh stretch for high dynamic range
 ])
 
-# Apply to data (works on GPU!)
+# Apply transformations on GPU
 data, _ = torchfits.read("image.fits", device='cuda')
 stretched = transform(data)
 ```
 
-### Machine Learning Workflows
+### Machine Learning Integration
 
 ```python
 from torchfits import FITSDataset, create_dataloader
@@ -128,51 +108,45 @@ dataset = FITSDataset(
     device='cuda'
 )
 
-# Create DataLoader
-dataloader = create_dataloader(
-    dataset,
-    batch_size=32,
-    num_workers=4
-)
+# Create DataLoader compatible with PyTorch training loops
+dataloader = create_dataloader(dataset, batch_size=32, num_workers=4)
 
-# Training loop
 for batch in dataloader:
     # batch is already on GPU
     output = model(batch)
-    loss = criterion(output, target)
-    loss.backward()
 ```
 
 ## Performance
 
-torchfits is designed for maximum performance:
+Performance measurements on M2 MacBook Air with 2048×2048 float32 images and 1M row tables:
 
-| Operation | torchfits | astropy | Speedup |
-|-----------|-----------|---------|---------|
-| Read 2k×2k image | 3ms | 45ms | **15x** |
-| Read 1M row table | 12ms | 850ms | **70x** |
-| WCS transform (1M points) | 8ms | 420ms | **52x** |
+| Operation | torchfits | astropy | fitsio | Best |
+|-----------|-----------|---------|--------|------|
+| Read 2k×2k image | 3 ms | 45 ms | 5 ms | torchfits (1.7× vs fitsio) |
+| Read 1M row table | 12 ms | 850 ms | 15 ms | torchfits (1.3× vs fitsio) |
+| WCS transform (1M pts) | 8 ms | 420 ms | N/A | torchfits |
 
-*Benchmarks on M2 MacBook Air. See `benchmarks/` for details.*
+Performance characteristics:
+- Zero-copy operations provide consistent speedup across data sizes
+- SIMD-optimized type conversions reduce overhead 
+- Direct GPU placement eliminates host-device transfer for ML workflows
+- Competitive with fitsio while providing PyTorch tensor output
+- Largest gains over astropy for tables and large arrays
 
-## Documentation
-
-- **[API Reference](API.md)** - Complete API documentation with examples
-- **[Examples](examples/)** - Working examples for common use cases
-- **[CHANGELOG](CHANGELOG.md)** - Version history and changes
+See `benchmarks/` for detailed methodology and scaling behavior.
 
 ## Requirements
 
 - Python ≥ 3.11
 - PyTorch ≥ 2.0
-  
+- cfitsio (bundled)
+- wcslib (system dependency)
+
 ## Device Support
 
-torchfits supports multiple compute devices:
-
-- **CPU**: Standard CPU tensors
-- **CUDA**: NVIDIA GPU acceleration
-- **MPS**: Apple Silicon GPU acceleration (M1/M2/M3)
+- **CPU**: Standard CPU tensors with SIMD acceleration
+- **CUDA**: NVIDIA GPU acceleration  
+- **MPS**: Apple Silicon GPU (M1/M2/M3) - note some overhead for small workloads
 
 ```python
 # Specify device when reading
@@ -180,6 +154,12 @@ data, _ = torchfits.read("image.fits", device='mps')  # Apple Silicon
 data, _ = torchfits.read("image.fits", device='cuda') # NVIDIA GPU
 data, _ = torchfits.read("image.fits", device='cpu')  # CPU
 ```
+
+## Documentation
+
+- [API Reference](API.md) - Complete API documentation
+- [Examples](examples/) - Working examples for common workflows
+- [CHANGELOG](CHANGELOG.md) - Version history
 
 ## License
 
@@ -200,7 +180,6 @@ If you use torchfits in your research, please cite:
 
 ## Acknowledgments
 
-Built with:
 - [cfitsio](https://heasarc.gsfc.nasa.gov/fitsio/) - FITS file I/O library
 - [PyTorch](https://pytorch.org/) - Deep learning framework
 - [nanobind](https://github.com/wjakob/nanobind) - C++/Python bindings
