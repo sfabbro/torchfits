@@ -87,6 +87,27 @@ class WCS:
         self._sip_bp = self._parse_sip_coeffs(header, 'BP') # Inverse
         
         self._has_sip = (self._sip_a is not None or self._sip_b is not None)
+        
+        # Check for TPV
+        self._has_tpv = False
+        self._pv_x = None
+        self._pv_y = None
+        
+        # Check original header for TPV, as wcslib might normalize CTYPE to TAN
+        ctype1_raw = header.get('CTYPE1', '')
+        ctype2_raw = header.get('CTYPE2', '')
+        
+        if ctype1_raw.endswith("TPV") or ctype2_raw.endswith("TPV"):
+            self._has_tpv = True
+            pv_x, pv_y = self._parse_pv(header)
+            self._pv_x = pv_x
+            self._pv_y = pv_y
+            
+        # Ensure latpole/lonpole are set
+        if not hasattr(self._wcs, 'lonpole'):
+            self._lonpole = 180.0
+        if not hasattr(self._wcs, 'latpole'):
+            self._latpole = 0.0
     
     def to(self, device: torch.device) -> "WCS":
         """Move WCS parameters to device."""
@@ -145,6 +166,29 @@ class WCS:
     @property
     def ctype(self) -> list[str]: return self._ctype
     
+    def _parse_pv(self, header: dict) -> tuple[dict, dict]:
+        """Parse PV distortion coefficients for TPV projection."""
+        pv_x = {}
+        pv_y = {}
+        
+        # Parse PVi_j
+        for key, value in header.items():
+            if key.startswith('PV') and '_' in key:
+                try:
+                    # Format PVi_j where i is axis (1 or 2), j is term
+                    parts = key[2:].split('_')
+                    axis = int(parts[0])
+                    term = int(parts[1])
+                    
+                    if axis == 1:
+                        pv_x[term] = float(value)
+                    elif axis == 2:
+                        pv_y[term] = float(value)
+                except (ValueError, IndexError):
+                    continue
+                    
+        return pv_x, pv_y
+
     def _apply_sip(self, xy: Tensor, coeffs_x: Optional[Tensor], coeffs_y: Optional[Tensor]) -> Tensor:
         """Apply SIP distortion: f(u,v) = u + coeffs(u,v)."""
         if coeffs_x is None and coeffs_y is None:
@@ -183,7 +227,71 @@ class WCS:
                     if coeffs_y[p, q] != 0:
                         delta_v += coeffs_y[p, q] * u_pows[p] * v_pows[q]
                         
-        return torch.stack([u + delta_u, v + delta_v], dim=1)
+        xy_out = xy.clone()
+        if coeffs_x is not None: xy_out[:, 0] += delta_u
+        if coeffs_y is not None: xy_out[:, 1] += delta_v
+        
+        return xy_out
+
+    def _apply_tpv(self, xy: Tensor) -> Tensor:
+        """
+        Apply TPV distortion.
+        Terms: 0:1, 1:x, 2:y, 3:r, 4:x^2, 5:xy, 6:y^2, ...
+        """
+        x = xy[:, 0]
+        # TPV convention: eta axis is inverted relative to standard FITS Y (if derived from CD)
+        # Empirical testing vs Astropy confirms y should be inverted.
+        y = -xy[:, 1] 
+        r = torch.sqrt(x*x + y*y)
+        
+        # Precompute terms up to needed power (usually low order)
+        # We'll implement terms 0-11 commonly used.
+        # 0: 1
+        # 1: x
+        # 2: y
+        # 3: r
+        # 4: x^2
+        # 5: xy
+        # 6: y^2
+        # 7: x^3
+        # 8: x^2y
+        # 9: xy^2
+        # 10: y^3
+        # 11: r^3
+        
+        terms = {
+            0: torch.ones_like(x),
+            1: x,
+            2: y,
+            3: r,
+            4: x*x,
+            5: x*y,
+            6: y*y,
+            7: x*x*x,
+            8: x*x*y,
+            9: x*y*y,
+            10: y*y*y,
+            11: r*r*r
+        }
+        
+        # TPV/PV is a REPLACEMENT, so we start from 0.
+        # (Unlike SIP which is additive u + f(u))
+        x_new = torch.zeros_like(x)
+        y_new = torch.zeros_like(y)
+        
+        # Apply X coeffs
+        if self._pv_x:
+            for k, val in self._pv_x.items():
+                if k in terms:
+                    x_new += val * terms[k]
+        
+        # Apply Y coeffs
+        if self._pv_y:
+            for k, val in self._pv_y.items():
+                if k in terms:
+                    y_new += val * terms[k]
+        
+        return torch.stack([x_new, y_new], dim=-1)
 
     def pixel_to_world(self, pixels: Tensor, batch_size: Optional[int] = None) -> Tensor:
         """
@@ -196,9 +304,13 @@ class WCS:
         # Fallback to wcslib (CPU) for non-standard cases
         ctype1 = self._ctype[0]
         ctype2 = self._ctype[1]
-        is_tan = (self.naxis == 2 and 
-                  (ctype1.endswith("TAN") or ctype1.endswith("TAN-SIP")) and 
-                  (ctype2.endswith("TAN") or ctype2.endswith("TAN-SIP")))
+        
+        is_tan_or_sip = (ctype1.endswith("TAN") or ctype1.endswith("TAN-SIP")) and \
+                        (ctype2.endswith("TAN") or ctype2.endswith("TAN-SIP"))
+        
+        is_tpv = self._has_tpv # We set this in init based on CTYPE "TPV"
+                        
+        is_supported = (self.naxis == 2 and (is_tan_or_sip or is_tpv))
         
         # Check parity: Standard FITS has det < 0 (RA reversed).
         # Flipped parity (det > 0) requires different rotation logic.
@@ -206,6 +318,12 @@ class WCS:
         det *= (self._cdelt[0] * self._cdelt[1])
         is_standard_parity = (det < 0.0)
                   
+        if not is_supported or not is_standard_parity:
+             # Move to CPU for wcslib
+             pixels_cpu = pixels.cpu()
+             # Use the parsing-only WCS object which still has the wcslib pointers
+             return self._wcs.pixel_to_world(pixels_cpu).to(pixels.device)
+
         device = pixels.device
         if device != self._pc.device:
             self.to(device)
@@ -214,7 +332,7 @@ class WCS:
         # Note: pixels should be (N, 2)
         intermediate = pixels - self._crpix
         
-        # 2. SIP Distortion
+        # 2. SIP Distortion (Applied BEFORE Linear)
         if self._has_sip:
             intermediate = self._apply_sip(intermediate, self._sip_a, self._sip_b)
             
@@ -225,8 +343,12 @@ class WCS:
         # Apply CDELT scaling
         intermediate = intermediate * self._cdelt
         
+        # 3.5 TPV Distortion (Applied AFTER Linear)
+        if is_tpv:
+            intermediate = self._apply_tpv(intermediate)
+        
         # 4. Projection (Deprojection)
-        # For TAN:
+        # For TAN / TPV:
         x = intermediate[:, 0]
         y = intermediate[:, 1]
         

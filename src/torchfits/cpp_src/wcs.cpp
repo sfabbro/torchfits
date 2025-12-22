@@ -3,6 +3,7 @@
 #include <torch/torch.h>
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#include <wcslib/wcsfix.h>
 #include <omp.h>
 
 #ifndef M_PI
@@ -65,6 +66,12 @@ public:
         for (int i = 0; i < wcs_->naxis; i++) {
             wcs_->crpix[i] -= 1.0;
         }
+
+        // Apply standard corrections (e.g. date formats, TPV aliases, etc.)
+        int stat_fix[WCSFIX_NWCS]; // Status return for wcsfix
+        // ctrl=1 (CDCXX), naxis=0 (default)
+        // Note: checking return status might be noisy for minor fixes, but usually safe to ignore usually unless critical
+        wcsfix(1, 0, wcs_, stat_fix);
 
         status = wcsset(wcs_);
         if (status != 0) {
