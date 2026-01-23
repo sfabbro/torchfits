@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef HAS_WCSLIB
+
 // Forward declarations
 namespace torch {
     class Tensor;
@@ -87,3 +89,4 @@ struct WcsHandle {
     
     WcsHandle() : wcsprm(nullptr), naxis(0), is_initialized(false) {}
 };
+#endif

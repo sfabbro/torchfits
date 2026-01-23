@@ -99,7 +99,7 @@ class CPPBackendBenchmark:
                 times = []
                 for _ in range(3):
                     start = time.perf_counter()
-                    tensor = torchfits.read(filepath)
+                    tensor, _ = torchfits.read(filepath)
                     end = time.perf_counter()
                     times.append(end - start)
 
@@ -116,6 +116,9 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         array = hdul[0].data
                         if array is not None:
+                            # Handle byte order for torch conversion
+                            if array.dtype.byteorder not in ('=', '|'):
+                                array = array.astype(array.dtype.newbyteorder('='))
                             tensor = torch.from_numpy(array.copy())
                     end = time.perf_counter()
                     times.append(end - start)
@@ -129,6 +132,9 @@ class CPPBackendBenchmark:
                 for _ in range(3):
                     start = time.perf_counter()
                     array = fitsio.read(filepath)
+                    # Handle byte order for torch conversion
+                    if array.dtype.byteorder not in ('=', '|'):
+                        array = array.astype(array.dtype.newbyteorder('='))
                     tensor = torch.from_numpy(array)
                     end = time.perf_counter()
                     times.append(end - start)
@@ -192,7 +198,7 @@ class CPPBackendBenchmark:
                 times = []
                 for _ in range(5):
                     start = time.perf_counter()
-                    subset = torchfits.read(cutout_spec)
+                    subset = torchfits.read_subset(filepath, 0, 1000, 1000, 2000, 2000)
                     end = time.perf_counter()
                     times.append(end - start)
 
@@ -209,6 +215,8 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         full_data = hdul[0].data
                         subset = full_data[1000:2000, 1000:2000]
+                        if subset.dtype.byteorder not in ('=', '|'):
+                            subset = subset.astype(subset.dtype.newbyteorder('='))
                         torch.from_numpy(subset.copy())
                     end = time.perf_counter()
                     times.append(end - start)
@@ -309,6 +317,7 @@ class CPPBackendBenchmark:
             # Large files
             ((2000, 2000), np.float32, False),
             ((2000, 2000), np.int16, False),
+            ((4000, 4000), np.float32, False),
             # Compressed files
             ((1000, 1000), np.float32, True),
             ((1000, 1000), np.int16, True),

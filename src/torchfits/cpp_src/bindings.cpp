@@ -19,8 +19,10 @@
 #include "torch_compat.h"
 
 #include <fitsio.h>
+#ifdef HAS_WCSLIB
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#endif
 #include <vector>
 #include <unordered_map>
 
@@ -224,6 +226,7 @@ NB_MODULE(cpp, m) {
 
 
 
+#ifdef HAS_WCSLIB
     nb::class_<torchfits::WCS>(m, "WCS")
         .def(nb::init<const std::unordered_map<std::string, std::string>&>())
         .def("pixel_to_world", [](torchfits::WCS& self, nb::ndarray<> pixels) {
@@ -262,6 +265,7 @@ NB_MODULE(cpp, m) {
         .def_prop_ro("crpix", [](torchfits::WCS& self) { return tensor_to_python(self.crpix()); })
         .def_prop_ro("crval", [](torchfits::WCS& self) { return tensor_to_python(self.crval()); })
         .def_prop_ro("cdelt", [](torchfits::WCS& self) { return tensor_to_python(self.cdelt()); });
+#endif
 
     // Fast I/O bindings
     m.def("read_image_fast", &torchfits::read_image_fast, 

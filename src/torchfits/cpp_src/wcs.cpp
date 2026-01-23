@@ -1,8 +1,10 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <torch/torch.h>
+#ifdef HAS_WCSLIB
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#endif
 #include <omp.h>
 
 #ifndef M_PI
@@ -58,6 +60,7 @@ __global__ void world_to_pixel_kernel(
 }
 #endif
 
+#ifdef HAS_WCSLIB
 class WCS {
 private:
     struct wcsprm* wcs_;
@@ -462,5 +465,6 @@ private:
     }
 #endif
 };
+#endif
 
 }

@@ -11,7 +11,7 @@
 #include <cstring>
 #include "hardware.h"
 
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(__AVX2__)
 #include <immintrin.h>
 #elif defined(__aarch64__)
 #include <arm_neon.h>
@@ -64,7 +64,7 @@ torch::Tensor read_image_mmap_impl(const std::string& filename, int naxis, long*
 torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int16_t, float>(filename, naxis, naxes, datastart, [&](const int16_t* in, float* out, long n) {
         #ifdef __aarch64__
-        // SIMD implementation
+        // SIMD implementation for ARM64
         long i = 0;
         float32x4_t vscale = vdupq_n_f32((float)bscale);
         float32x4_t vzero = vdupq_n_f32((float)bzero);
@@ -82,6 +82,29 @@ torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, in
             fhigh = vmlaq_f32(vzero, fhigh, vscale);
             vst1q_f32(out + i, flow);
             vst1q_f32(out + i + 4, fhigh);
+        }
+        for (; i < n; ++i) {
+            int16_t val = bswap_16(in[i]);
+            out[i] = val * bscale + bzero;
+        }
+        #elif defined(__x86_64__) && defined(__AVX2__)
+        // SIMD implementation for x86_64 (AVX2)
+        long i = 0;
+        __m256 vscale = _mm256_set1_ps((float)bscale);
+        __m256 vzero = _mm256_set1_ps((float)bzero);
+        __m128i swap_mask16 = _mm_setr_epi8(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14);
+
+        for (; i <= n - 8; i += 8) {
+            __m128i raw = _mm_loadu_si128((const __m128i*)(in + i));
+            __m128i swapped = _mm_shuffle_epi8(raw, swap_mask16);
+            __m256i int32s = _mm256_cvtepi16_epi32(swapped);
+            __m256 floats = _mm256_cvtepi32_ps(int32s);
+            #ifdef __FMA__
+            __m256 result = _mm256_fmadd_ps(floats, vscale, vzero);
+            #else
+            __m256 result = _mm256_add_ps(_mm256_mul_ps(floats, vscale), vzero);
+            #endif
+            _mm256_storeu_ps(out + i, result);
         }
         for (; i < n; ++i) {
             int16_t val = bswap_16(in[i]);
@@ -113,6 +136,28 @@ torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, in
             int32_t val = bswap_32(in[i]);
             out[i] = val * bscale + bzero;
         }
+        #elif defined(__x86_64__) && defined(__AVX2__)
+        long i = 0;
+        __m256 vscale = _mm256_set1_ps((float)bscale);
+        __m256 vzero = _mm256_set1_ps((float)bzero);
+        __m256i swap_mask32 = _mm256_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
+                                               3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+
+        for (; i <= n - 8; i += 8) {
+            __m256i raw = _mm256_loadu_si256((const __m256i*)(in + i));
+            __m256i swapped = _mm256_shuffle_epi8(raw, swap_mask32);
+            __m256 floats = _mm256_cvtepi32_ps(swapped);
+            #ifdef __FMA__
+            __m256 result = _mm256_fmadd_ps(floats, vscale, vzero);
+            #else
+            __m256 result = _mm256_add_ps(_mm256_mul_ps(floats, vscale), vzero);
+            #endif
+            _mm256_storeu_ps(out + i, result);
+        }
+        for (; i < n; ++i) {
+            int32_t val = bswap_32(in[i]);
+            out[i] = val * bscale + bzero;
+        }
         #else
         for (long i = 0; i < n; ++i) {
             int32_t val = bswap_32(in[i]);
@@ -135,6 +180,30 @@ torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, 
             float32x4_t fval = vreinterpretq_f32_s32(swapped);
             fval = vmlaq_f32(vzero, fval, vscale);
             vst1q_f32(out + i, fval);
+        }
+        for (; i < n; ++i) {
+            int32_t val = bswap_32(in[i]);
+            float fval;
+            std::memcpy(&fval, &val, 4);
+            out[i] = fval * bscale + bzero;
+        }
+        #elif defined(__x86_64__) && defined(__AVX2__)
+        long i = 0;
+        __m256 vscale = _mm256_set1_ps((float)bscale);
+        __m256 vzero = _mm256_set1_ps((float)bzero);
+        __m256i swap_mask32 = _mm256_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
+                                               3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+
+        for (; i <= n - 8; i += 8) {
+            __m256i raw = _mm256_loadu_si256((const __m256i*)(in + i));
+            __m256i swapped = _mm256_shuffle_epi8(raw, swap_mask32);
+            __m256 floats = _mm256_castsi256_ps(swapped);
+            #ifdef __FMA__
+            __m256 result = _mm256_fmadd_ps(floats, vscale, vzero);
+            #else
+            __m256 result = _mm256_add_ps(_mm256_mul_ps(floats, vscale), vzero);
+            #endif
+            _mm256_storeu_ps(out + i, result);
         }
         for (; i < n; ++i) {
             int32_t val = bswap_32(in[i]);
