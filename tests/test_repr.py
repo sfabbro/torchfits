@@ -1,6 +1,14 @@
 
+import sys
+from unittest.mock import MagicMock
 import pytest
 import torch
+
+# Mock torchfits.cpp
+mock_cpp = MagicMock()
+sys.modules["torchfits.cpp"] = mock_cpp
+
+# Now import the modules under test
 from torchfits.hdu import HDUList, TensorHDU, TableHDU, Header
 
 def test_hdu_list_repr():

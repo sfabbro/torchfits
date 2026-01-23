@@ -261,7 +261,12 @@ NB_MODULE(cpp, m) {
         .def_prop_ro("naxis", &torchfits::WCS::naxis)
         .def_prop_ro("crpix", [](torchfits::WCS& self) { return tensor_to_python(self.crpix()); })
         .def_prop_ro("crval", [](torchfits::WCS& self) { return tensor_to_python(self.crval()); })
-        .def_prop_ro("cdelt", [](torchfits::WCS& self) { return tensor_to_python(self.cdelt()); });
+        .def_prop_ro("cdelt", [](torchfits::WCS& self) { return tensor_to_python(self.cdelt()); })
+        .def_prop_ro("pc", [](torchfits::WCS& self) { return tensor_to_python(self.pc()); })
+        .def_prop_ro("ctype", &torchfits::WCS::ctype)
+        .def_prop_ro("cunit", &torchfits::WCS::cunit)
+        .def_prop_ro("lonpole", &torchfits::WCS::lonpole)
+        .def_prop_ro("latpole", &torchfits::WCS::latpole);
 
     // Fast I/O bindings
     m.def("read_image_fast", &torchfits::read_image_fast, 

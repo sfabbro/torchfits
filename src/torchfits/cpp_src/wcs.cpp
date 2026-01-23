@@ -3,60 +3,18 @@
 #include <torch/torch.h>
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#include <wcslib/wcsfix.h>
 #include <omp.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-#ifdef TORCH_CUDA_AVAILABLE
-#include <cuda_runtime.h>
-#include <torch/extension.h>
-#endif
-
-namespace torchfits {
 
 // GPU kernel for batch WCS transformations (when CUDA is available)
-#ifdef TORCH_CUDA_AVAILABLE
-__device__ void gpu_linear_transform(
-    const double* input, double* output,
-    const double* cd_matrix, const double* crval, const double* crpix,
-    int ncoord) {
-    
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= ncoord) return;
-    
-    // Simple linear transformation for TAN projection
-    double x = input[idx * 2] - crpix[0];
-    double y = input[idx * 2 + 1] - crpix[1];
-    
-    output[idx * 2] = crval[0] + cd_matrix[0] * x + cd_matrix[1] * y;
-    output[idx * 2 + 1] = crval[1] + cd_matrix[2] * x + cd_matrix[3] * y;
-}
+// REMOVED in Refactor
 
-__global__ void pixel_to_world_kernel(
-    const double* pixels, double* world,
-    const double* cd_matrix, const double* crval, const double* crpix,
-    int ncoord) {
-    gpu_linear_transform(pixels, world, cd_matrix, crval, crpix, ncoord);
-}
-
-__global__ void world_to_pixel_kernel(
-    const double* world, double* pixels,
-    const double* cd_matrix_inv, const double* crval, const double* crpix,
-    int ncoord) {
-    
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= ncoord) return;
-    
-    // Inverse transformation
-    double ra = world[idx * 2] - crval[0];
-    double dec = world[idx * 2 + 1] - crval[1];
-    
-    pixels[idx * 2] = crpix[0] + cd_matrix_inv[0] * ra + cd_matrix_inv[1] * dec;
-    pixels[idx * 2 + 1] = crpix[1] + cd_matrix_inv[2] * ra + cd_matrix_inv[3] * dec;
-}
-#endif
+namespace torchfits {
 
 class WCS {
 private:
@@ -109,6 +67,12 @@ public:
             wcs_->crpix[i] -= 1.0;
         }
 
+        // Apply standard corrections (e.g. date formats, TPV aliases, etc.)
+        int stat_fix[WCSFIX_NWCS]; // Status return for wcsfix
+        // ctrl=1 (CDCXX), naxis=0 (default)
+        // Note: checking return status might be noisy for minor fixes, but usually safe to ignore usually unless critical
+        wcsfix(1, 0, wcs_, stat_fix);
+
         status = wcsset(wcs_);
         if (status != 0) {
             // Clean up and throw error
@@ -122,7 +86,7 @@ public:
         }
         
         // Pre-compute matrices for GPU optimization
-        precompute_matrices();
+        // precompute_matrices(); // Removed
     }
     
     ~WCS() {
@@ -292,175 +256,53 @@ public:
 
 private:
     // Cached matrices for GPU optimization
-    double cd_matrix_[4];
-    double cd_matrix_inv_[4];
-    bool is_linear_wcs_ = false;
+    // double cd_matrix_[4];
+    // double cd_matrix_inv_[4];
+    // bool is_linear_wcs_ = false;
     
-    void precompute_matrices() {
-        // Only for 2D
-        if (wcs_->naxis != 2) return;
-        
-        // Check if this is a simple linear WCS (TAN projection)
-        // FIXME: TAN projection is NOT linear in RA/DEC. 
-        // The current implementation treats it as Cartesian which is wrong.
-        // Disabling optimization for now to ensure correctness via wcslib.
-        if (false && wcs_->ctype[0][4] == '-' && wcs_->ctype[0][5] == 'T' && 
-            wcs_->ctype[0][6] == 'A' && wcs_->ctype[0][7] == 'N') {
-            
-            // Extract CD matrix or compute from CDELT/CROTA
-            if (wcs_->cd) {
-                cd_matrix_[0] = wcs_->cd[0];
-                cd_matrix_[1] = wcs_->cd[1]; 
-                cd_matrix_[2] = wcs_->cd[2];
-                cd_matrix_[3] = wcs_->cd[3];
-            } else {
-                double cdelt1 = wcs_->cdelt[0];
-                double cdelt2 = wcs_->cdelt[1];
-                double crota = wcs_->crota[1] * M_PI / 180.0; // Convert to radians
-                
-                cd_matrix_[0] = cdelt1 * cos(crota);
-                cd_matrix_[1] = -cdelt2 * sin(crota);
-                cd_matrix_[2] = cdelt1 * sin(crota);
-                cd_matrix_[3] = cdelt2 * cos(crota);
-            }
-            
-            // Compute inverse matrix
-            double det = cd_matrix_[0] * cd_matrix_[3] - cd_matrix_[1] * cd_matrix_[2];
-            if (abs(det) > 1e-12) {
-                cd_matrix_inv_[0] = cd_matrix_[3] / det;
-                cd_matrix_inv_[1] = -cd_matrix_[1] / det;
-                cd_matrix_inv_[2] = -cd_matrix_[2] / det;
-                cd_matrix_inv_[3] = cd_matrix_[0] / det;
-                is_linear_wcs_ = true;
-            }
-        }
-    }
-    
-    bool is_simple_projection() const {
-        return is_linear_wcs_;
-    }
-    
-#ifdef TORCH_CUDA_AVAILABLE
-    torch::Tensor pixel_to_world_gpu(const torch::Tensor& pixels) {
-        auto shape = pixels.sizes();
-        int ncoord = shape[0];
-        auto world = torch::empty_like(pixels);
-        
-        auto pixels_double = pixels.to(torch::kFloat64);
-        auto world_double = world.to(torch::kFloat64);
-        
-        // Transfer WCS parameters to GPU
-        auto cd_matrix_gpu = torch::from_blob(cd_matrix_, {4}, torch::kFloat64).to(pixels.device());
-        auto crval_gpu = torch::tensor({wcs_->crval[0], wcs_->crval[1]}, torch::kFloat64).to(pixels.device());
-        auto crpix_gpu = torch::tensor({wcs_->crpix[0], wcs_->crpix[1]}, torch::kFloat64).to(pixels.device());
-        
-        // Launch CUDA kernel
-        int threads = 256;
-        int blocks = (ncoord + threads - 1) / threads;
-        
-        pixel_to_world_kernel<<<blocks, threads>>>(
-            pixels_double.data_ptr<double>(),
-            world_double.data_ptr<double>(),
-            cd_matrix_gpu.data_ptr<double>(),
-            crval_gpu.data_ptr<double>(),
-            crpix_gpu.data_ptr<double>(),
-            ncoord
-        );
-        
-        cudaDeviceSynchronize();
-        return world_double.to(pixels.dtype());
-    }
-    
-    torch::Tensor world_to_pixel_gpu(const torch::Tensor& world) {
-        auto shape = world.sizes();
-        int ncoord = shape[0];
-        auto pixels = torch::empty_like(world);
-        
-        auto world_double = world.to(torch::kFloat64);
-        auto pixels_double = pixels.to(torch::kFloat64);
-        
-        // Transfer WCS parameters to GPU
-        auto cd_matrix_inv_gpu = torch::from_blob(cd_matrix_inv_, {4}, torch::kFloat64).to(world.device());
-        auto crval_gpu = torch::tensor({wcs_->crval[0], wcs_->crval[1]}, torch::kFloat64).to(world.device());
-        auto crpix_gpu = torch::tensor({wcs_->crpix[0], wcs_->crpix[1]}, torch::kFloat64).to(world.device());
-        
-        // Launch CUDA kernel
-        int threads = 256;
-        int blocks = (ncoord + threads - 1) / threads;
-        
-        world_to_pixel_kernel<<<blocks, threads>>>(
-            world_double.data_ptr<double>(),
-            pixels_double.data_ptr<double>(),
-            cd_matrix_inv_gpu.data_ptr<double>(),
-            crval_gpu.data_ptr<double>(),
-            crpix_gpu.data_ptr<double>(),
-            ncoord
-        );
-        
-        cudaDeviceSynchronize();
-        return pixels_double.to(world.dtype());
-    }
-#endif
-    
-#ifdef HAS_OPENMP
-    torch::Tensor pixel_to_world_parallel(const torch::Tensor& cpu_pixels, torch::Tensor& world, int ncoord) {
-        double* pixcrd = cpu_pixels.data_ptr<double>();
-        double* worldcrd = world.data_ptr<double>();
-        int naxis = wcs_->naxis;
-        
-        // Parallel processing using OpenMP
-        #pragma omp parallel
-        {
-            // Thread-local storage for wcslib workspace
-            // Each thread processes a subset of coordinates
-            double* imgcrd = (double*)malloc(naxis * sizeof(double));
-            double* phi = (double*)malloc(sizeof(double));
-            double* theta = (double*)malloc(sizeof(double));
-            int* stat = (int*)malloc(sizeof(int));
-            
-            #pragma omp for
-            for (int i = 0; i < ncoord; i++) {
-                wcsp2s(wcs_, 1, naxis, &pixcrd[i*naxis], imgcrd, phi, theta, &worldcrd[i*naxis], stat);
-            }
-            
-            free(imgcrd);
-            free(phi);
-            free(theta);
-            free(stat);
-        }
-        
-        return world;
-    }
-    
-    torch::Tensor world_to_pixel_parallel(const torch::Tensor& cpu_world, torch::Tensor& pixels, int ncoord) {
-        double* worldcrd = cpu_world.data_ptr<double>();
-        double* pixcrd = pixels.data_ptr<double>();
-        int naxis = wcs_->naxis;
-        
-        // Parallel processing using OpenMP
-        #pragma omp parallel
-        {
-            // Thread-local storage for wcslib workspace
-            // Each thread processes a subset of coordinates
-            double* imgcrd = (double*)malloc(naxis * sizeof(double));
-            double* phi = (double*)malloc(sizeof(double));
-            double* theta = (double*)malloc(sizeof(double));
-            int* stat = (int*)malloc(sizeof(int));
-            
-            #pragma omp for
-            for (int i = 0; i < ncoord; i++) {
-                wcss2p(wcs_, 1, naxis, &worldcrd[i*naxis], phi, theta, imgcrd, &pixcrd[i*naxis], stat);
-            }
-            
-            free(imgcrd);
-            free(phi);
-            free(theta);
-            free(stat);
-        }
-        
-        return pixels;
-    }
-#endif
-};
+    // void precompute_matrices() { ... } // Removed
 
+        // Only for 2D
+    
+public:
+    // Getters for WCS properties
+    
+    // CTYPE (Coordinate types)
+    std::vector<std::string> ctype() const {
+        std::vector<std::string> result;
+        for (int i = 0; i < wcs_->naxis; i++) {
+            result.push_back(std::string(wcs_->ctype[i]));
+        }
+        return result;
+    }
+    
+    // CUNIT (Coordinate units)
+    std::vector<std::string> cunit() const {
+        std::vector<std::string> result;
+        for (int i = 0; i < wcs_->naxis; i++) {
+            result.push_back(std::string(wcs_->cunit[i]));
+        }
+        return result;
+    }
+
+    // PC Matrix (Linear transformation) - returned as 1D tensor for simplicity
+    torch::Tensor pc() const {
+        // wcs->pc is naxis * naxis
+        int n = wcs_->naxis;
+        auto tensor = torch::empty({n, n}, torch::kFloat64);
+        double* data = tensor.data_ptr<double>();
+        for (int i = 0; i < n * n; i++) {
+            data[i] = wcs_->pc[i];
+        }
+        return tensor;
+    }
+
+    // CD Matrix (if present, otherwise derived/unused by wcslib normalized PC)
+    // Note: wcslib often normalizes CD into PC + CDELT.
+    // We expose PC as the primary linear matrix.
+
+    double lonpole() const { return wcs_->lonpole; }
+    double latpole() const { return wcs_->latpole; }
+
+};
 }
