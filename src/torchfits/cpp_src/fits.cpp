@@ -272,6 +272,15 @@ public:
                     return c < 32 || c > 126;
                 }), val_str.end());
 
+                // Sanitize key and comment as well (prevent log forging/terminal injection)
+                key_str.erase(std::remove_if(key_str.begin(), key_str.end(), [](unsigned char c) {
+                    return c < 32 || c > 126;
+                }), key_str.end());
+
+                com_str.erase(std::remove_if(com_str.begin(), com_str.end(), [](unsigned char c) {
+                    return c < 32 || c > 126;
+                }), com_str.end());
+
                 // Parse string values: remove quotes and trim
                 if (val_str.length() >= 2 && val_str.front() == '\'') {
                     // Find the last quote (ignoring trailing comments if any, but fits_read_keyn separates comment)

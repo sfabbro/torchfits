@@ -224,6 +224,12 @@ public:
             
             col.repeat = (int)repeat_long;
             col.name = std::string(ttype);
+
+            // Sanitize column name
+            col.name.erase(std::remove_if(col.name.begin(), col.name.end(), [](unsigned char c) {
+                return c < 32 || c > 126;
+            }), col.name.end());
+
             col.width = 1;  // Will be set based on type
             
             #ifdef DEBUG_TABLE
