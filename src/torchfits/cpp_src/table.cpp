@@ -3,6 +3,7 @@
  * Phase 2 implementation supporting all FITS column types.
  */
 
+#include <algorithm>
 #include <torch/torch.h>
 #include <vector>
 #include <memory>

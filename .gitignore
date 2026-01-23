@@ -105,6 +105,11 @@ test_*.py  # Exclude ad-hoc test files (but not tests/ directory)
 
 # Log files
 *.log
+build_log*.txt
+
+# Packaging
+wheelhouse/
+*.conda
 
 # Backup files
 *~
