@@ -105,9 +105,18 @@ else()
     message(WARNING "DLPack headers not found - DLPack-based zero-copy will fail to compile until headers are available")
 endif()
 
-# Find WCSLIB (Keep system WCSLIB for now as per Vertical Slice plan focusing on CFITSIO first)
-find_path(WCSLIB_INCLUDE_DIR wcslib/wcs.h)
-find_library(WCSLIB_LIBRARY wcs)
+# Find WCSLIB
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(WCSLIB QUIET wcslib)
+endif()
+
+if(NOT WCSLIB_FOUND)
+    find_path(WCSLIB_INCLUDE_DIR wcslib/wcs.h)
+    find_library(WCSLIB_LIBRARY wcs)
+    if(WCSLIB_INCLUDE_DIR AND WCSLIB_LIBRARY)
+        set(WCSLIB_FOUND TRUE)
+    endif()
+endif()
 
 # Source files
 set(SOURCES
@@ -142,10 +151,14 @@ else()
     endif()
 endif()
 
-target_link_libraries(cpp PRIVATE cfitsio)
+if(TARGET cfitsio)
+    target_link_libraries(cpp PRIVATE cfitsio)
+    target_include_directories(cpp PRIVATE "${CFITSIO_INCLUDE_DIR}")
+else()
+    target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
+    target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
+endif()
 target_link_libraries(cpp PRIVATE ZLIB::ZLIB)
-# cfitsio target should provide include dirs, but we add source dir just in case for internal headers
-target_include_directories(cpp PRIVATE "${CFITSIO_SOURCE_DIR}")
 
 if(DLPACK_INCLUDE_DIR)
     target_include_directories(cpp PRIVATE ${DLPACK_INCLUDE_DIR})
