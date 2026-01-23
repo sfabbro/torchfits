@@ -164,6 +164,25 @@ class TensorHDU:
 
         return cpp.compute_stats(self._file_handle, self._hdu_index)
 
+    def __repr__(self) -> str:
+        name = self.header.get("EXTNAME", "PRIMARY")
+        info = []
+        if self._data is not None:
+            info.append(f"data={tuple(self._data.shape)}")
+            info.append(f"dtype={self._data.dtype}")
+            info.append(f"device={self._data.device}")
+        elif self._file_handle is not None and self._data_view is not None:
+            try:
+                info.append(f"data={self._data_view.shape}")
+                info.append(f"dtype={self._data_view.dtype}")
+                info.append("device=disk")
+            except Exception:
+                info.append("data=(error)")
+        else:
+            info.append("no data")
+
+        return f"<{self.__class__.__name__} {name} | {', '.join(info)}>"
+
 
 class TableDataAccessor:
     """Dictionary-like accessor for table data."""
@@ -422,6 +441,10 @@ class TableHDU(TensorFrame):
 
         cpp.write_fits_table(file_path, self, self.header, overwrite)
 
+    def __repr__(self) -> str:
+        name = self.header.get("EXTNAME", "TABLE")
+        return f"<{self.__class__.__name__} {name} | {self.num_rows} rows x {len(self.columns)} cols>"
+
 
 class HDUList:
     """HDU container."""
@@ -591,4 +614,46 @@ class HDUList:
             return False
 
     def __repr__(self):
-        return f"HDUList({len(self._hdus)} HDUs)"
+        summary = "Filename: (No file associated)\n"
+        summary += f"{'No.':>3}  {'Name':<10}  {'Ver':>3}  {'Type':<10}  {'Cards':>5}  {'Dimensions':<15}  {'Format':<10}\n"
+
+        for i, hdu in enumerate(self._hdus):
+            name = hdu.header.get("EXTNAME", "")
+            if i == 0 and not name:
+                name = "PRIMARY"
+
+            ver = hdu.header.get("EXTVER", 1)
+            type_name = hdu.__class__.__name__
+            # Use len(dict) which counts keys, which is roughly card count minus comments/history special handling
+            # If we want exact card count we'd need len(hdu.header._cards)
+            cards = (
+                len(hdu.header._cards)
+                if hasattr(hdu.header, "_cards")
+                else len(hdu.header)
+            )
+
+            dims = ""
+            fmt = ""
+
+            if isinstance(hdu, TensorHDU):
+                try:
+                    if hdu._data is not None:
+                        shape = tuple(hdu._data.shape)
+                        dtype = str(hdu._data.dtype).replace("torch.", "")
+                    elif hdu._file_handle is not None:
+                        # Access via DataView
+                        shape = hdu.data.shape
+                        dtype = str(hdu.data.dtype).replace("torch.", "")
+                    else:
+                        shape = ()
+                        dtype = ""
+                    dims = str(shape)
+                    fmt = dtype
+                except Exception:
+                    dims = "(error)"
+            elif isinstance(hdu, TableHDU):
+                dims = f"{hdu.num_rows}R x {len(hdu.columns)}C"
+
+            summary += f"{i:3d}  {str(name):<10}  {str(ver):>3}  {type_name:<10}  {cards:5d}  {dims:<15}  {fmt:<10}\n"
+
+        return summary
