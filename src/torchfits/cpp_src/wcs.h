@@ -42,6 +42,13 @@ public:
     torch::Tensor crval() const;
     torch::Tensor cdelt() const;
     
+    // New getters for WCS properties
+    std::vector<std::string> ctype() const;
+    std::vector<std::string> cunit() const;
+    torch::Tensor pc() const;
+    double lonpole() const;
+    double latpole() const;
+
 private:
     void precompute_matrices();
     bool is_simple_projection() const;
@@ -49,17 +56,7 @@ private:
     struct wcsprm* wcs_;
     int nwcs_;
     
-#ifdef TORCH_CUDA_AVAILABLE
-    torch::Tensor pixel_to_world_gpu(const torch::Tensor& pixels);
-    torch::Tensor world_to_pixel_gpu(const torch::Tensor& world);
-    double cd_matrix_[4];
-    double cd_matrix_inv_[4];
-#endif
-
-#ifdef HAS_OPENMP
-    torch::Tensor pixel_to_world_parallel(const torch::Tensor& cpu_pixels, torch::Tensor& world, int ncoord);
-    torch::Tensor world_to_pixel_parallel(const torch::Tensor& cpu_world, torch::Tensor& pixels, int ncoord);
-#endif
+    // Legacy GPU/OpenMP methods removed as logic moved to Python
     
     bool is_linear_wcs_;
     std::unordered_map<std::string, std::string> header_;
