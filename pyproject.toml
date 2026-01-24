@@ -87,25 +87,3 @@ wheel.packages = ["src/torchfits"]
 # CMake and Ninja will automatically detect which C++ files have changed and only
 # recompile those, leading to much faster iteration times.
 build-dir = "build/{wheel_tag}"
-
-[tool.cibuildwheel]
-# Build for 64-bit only, skip 32-bit and some old Python versions
-skip = ["cp36-*", "cp37-*", "cp38-*", "cp39-*", "cp310-*", "pp*", "*-manylinux_i686", "*-musllinux_*"]
-
-# Environment variables for build
-environment = { CMAKE_BUILD_TYPE="Release" }
-
-# Before build, install dependencies
-# Note: cfitsio is vendored, so we only need wcslib
-before-all = [
-    "if command -v yum; then yum install -y wcslib-devel; fi",
-    "if command -v apt-get; then apt-get update && apt-get install -y libwcs-dev; fi",
-    "if command -v brew; then brew install wcslib; fi"
-]
-
-[tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
-before-all = "brew install wcslib"
-
-[tool.cibuildwheel.linux]
-before-all = "yum install -y wcslib-devel || (apt-get update && apt-get install -y libwcs-dev)"

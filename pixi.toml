@@ -5,7 +5,7 @@ platforms = ["osx-arm64"]
 
 [package]
 name = "torchfits"
-version = "0.1.1"
+version = "0.1.0"
 description = "High-performance FITS I/O for PyTorch"
 authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 
@@ -39,8 +39,6 @@ nanobind = ">=2.8.0"
 pytorch = ">=2.0"
 pytorch-frame = ">=0.2.5"
 psutil = ">=5.0"  # For system resource monitoring
-cfitsio = ">=4"
-wcslib = ">=7.11"
 
 # Workspace dependencies - development environment
 [dependencies]
