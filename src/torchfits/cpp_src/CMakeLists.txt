@@ -71,30 +71,53 @@ else()
     message(FATAL_ERROR "ZLIB not found - required for compressed FITS support")
 endif()
 
-# Vendor CFITSIO
-get_filename_component(PROJECT_ROOT "${CMAKE_SOURCE_DIR}/../../.." ABSOLUTE)
-set(CFITSIO_SOURCE_DIR "${PROJECT_ROOT}/extern/cfitsio")
+# Find CFITSIO
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(CFITSIO QUIET cfitsio)
+endif()
 
-if(EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "Building vendored CFITSIO from ${CFITSIO_SOURCE_DIR}")
-    
-    # CFITSIO Build Options
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
-    set(USE_CURL OFF CACHE BOOL "Disable CURL for now" FORCE)
-    set(TESTS OFF CACHE BOOL "Disable tests" FORCE)
-    set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
-    set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
-    
-    # Force position-independent code for static library to be linked into shared library
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-    
-    add_subdirectory("${CFITSIO_SOURCE_DIR}" cfitsio_build)
-    
-    # CFITSIO target is named 'cfitsio'
-    set(CFITSIO_LIBRARY cfitsio)
-    set(CFITSIO_INCLUDE_DIR "${CFITSIO_SOURCE_DIR}") # For direct include if needed
+if(NOT CFITSIO_FOUND)
+    find_path(CFITSIO_INCLUDE_DIR fitsio.h)
+    find_library(CFITSIO_LIBRARY cfitsio)
+    if(CFITSIO_INCLUDE_DIR AND CFITSIO_LIBRARY)
+        set(CFITSIO_FOUND TRUE)
+    endif()
+endif()
+
+if(CFITSIO_FOUND)
+    message(STATUS "Found environment CFITSIO: ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_LIBRARIES}")
 else()
-    message(FATAL_ERROR "Vendored CFITSIO not found at ${CFITSIO_SOURCE_DIR}. Please run 'git submodule update --init --recursive'")
+    # Vendor CFITSIO as fallback
+    # Try to find extern/cfitsio relative to this CMakeLists.txt
+    set(CFITSIO_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/cfitsio")
+    if(NOT EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
+        # Try relative to CMAKE_SOURCE_DIR if different
+        set(CFITSIO_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../../../extern/cfitsio")
+    endif()
+
+    if(EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
+        message(STATUS "Building vendored CFITSIO from ${CFITSIO_SOURCE_DIR}")
+        
+        # CFITSIO Build Options
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
+        set(USE_CURL OFF CACHE BOOL "Disable CURL for now" FORCE)
+        set(TESTS OFF CACHE BOOL "Disable tests" FORCE)
+        set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
+        set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
+        
+        # Force position-independent code for static library to be linked into shared library
+        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        
+        add_subdirectory("${CFITSIO_SOURCE_DIR}" cfitsio_build)
+        
+        # CFITSIO target is named 'cfitsio'
+        set(CFITSIO_LIBRARY cfitsio)
+        set(CFITSIO_INCLUDE_DIR "${CFITSIO_SOURCE_DIR}")
+        set(CFITSIO_FOUND TRUE)
+    else()
+        message(FATAL_ERROR "CFITSIO not found in environment and vendored version not found at ${CFITSIO_SOURCE_DIR}. Please run 'git submodule update --init --recursive'")
+    endif()
 endif()
 
 # Find DLPack headers (used for zero-copy tensor exchange)
@@ -105,9 +128,18 @@ else()
     message(WARNING "DLPack headers not found - DLPack-based zero-copy will fail to compile until headers are available")
 endif()
 
-# Find WCSLIB (Keep system WCSLIB for now as per Vertical Slice plan focusing on CFITSIO first)
-find_path(WCSLIB_INCLUDE_DIR wcslib/wcs.h)
-find_library(WCSLIB_LIBRARY wcs)
+# Find WCSLIB
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(WCSLIB QUIET wcslib)
+endif()
+
+if(NOT WCSLIB_FOUND)
+    find_path(WCSLIB_INCLUDE_DIR wcslib/wcs.h)
+    find_library(WCSLIB_LIBRARY wcs)
+    if(WCSLIB_INCLUDE_DIR AND WCSLIB_LIBRARY)
+        set(WCSLIB_FOUND TRUE)
+    endif()
+endif()
 
 # Source files
 set(SOURCES
@@ -142,10 +174,14 @@ else()
     endif()
 endif()
 
-target_link_libraries(cpp PRIVATE cfitsio)
+if(TARGET cfitsio)
+    target_link_libraries(cpp PRIVATE cfitsio)
+    target_include_directories(cpp PRIVATE "${CFITSIO_INCLUDE_DIR}")
+else()
+    target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
+    target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
+endif()
 target_link_libraries(cpp PRIVATE ZLIB::ZLIB)
-# cfitsio target should provide include dirs, but we add source dir just in case for internal headers
-target_include_directories(cpp PRIVATE "${CFITSIO_SOURCE_DIR}")
 
 if(DLPACK_INCLUDE_DIR)
     target_include_directories(cpp PRIVATE ${DLPACK_INCLUDE_DIR})
