@@ -25,6 +25,18 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header);
 class FITSFileV2 {
 public:
     FITSFileV2(const char* filename, int mode) : filename_(filename) {
+        // Security check: Prevent command injection via cfitsio pipe syntax
+        if (!filename_.empty()) {
+            size_t first = filename_.find_first_not_of(" \t");
+            size_t last = filename_.find_last_not_of(" \t");
+
+            if (first != std::string::npos) {
+                if (filename_[first] == '|' || filename_[last] == '|') {
+                     throw std::runtime_error("Security Error: Filenames starting or ending with '|' are not allowed to prevent command execution.");
+                }
+            }
+        }
+
         int status = 0;
         if (mode == 0) {
             fits_open_file(&fptr_, filename, READONLY, &status);
