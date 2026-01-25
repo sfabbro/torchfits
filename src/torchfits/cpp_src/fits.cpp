@@ -1,4 +1,6 @@
 #include <string>
+#include <algorithm>
+#include <cctype>
 #include <vector>
 #include <unordered_map>
 #include <nanobind/nanobind.h>
@@ -21,6 +23,30 @@ torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, in
 torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero);
 torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero);
 void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header);
+
+// Helper to sanitize FITS strings (keep only printable ASCII)
+std::string sanitize_fits_string(const std::string& input) {
+    std::string output = input;
+    // Remove non-printable characters
+    output.erase(std::remove_if(output.begin(), output.end(), [](unsigned char c) {
+        return c < 32 || c > 126;
+    }), output.end());
+    return output;
+}
+
+// Helper to validate/sanitize FITS keyword/column names
+// FITS standard: uppercase, digits, underscore, hyphen.
+std::string sanitize_fits_key(const std::string& input) {
+    std::string output;
+    output.reserve(input.length());
+    for (char c : input) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+            output.push_back(std::toupper(static_cast<unsigned char>(c))); // Standard keys are uppercase
+        }
+    }
+    if (output.empty()) return "UNKNOWN";
+    return output;
+}
 
 class FITSFileV2 {
 public:
@@ -490,10 +516,12 @@ public:
                     nb::dict header = nb::cast<nb::dict>(header_obj);
                     for (auto item : header) {
                         std::string key = nb::cast<std::string>(item.first);
+                        key = sanitize_fits_key(key);
                         
                         try {
                             if (nb::isinstance<nb::str>(item.second)) {
                                 std::string val = nb::cast<std::string>(item.second);
+                                val = sanitize_fits_string(val);
                                 fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
                             } else if (nb::isinstance<int>(item.second)) {
                                 int val = nb::cast<int>(item.second);
@@ -633,6 +661,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header) {
     
     for (auto item : tensor_dict) {
         std::string col_name = nb::cast<std::string>(item.first);
+        col_name = sanitize_fits_string(col_name);
         col_names.push_back(col_name);
         
         nb::ndarray<> tensor;
@@ -718,9 +747,11 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header) {
     
     for (auto item : header) {
         std::string key = nb::cast<std::string>(item.first);
+        key = sanitize_fits_key(key);
         try {
             if (nb::isinstance<nb::str>(item.second)) {
                 std::string val = nb::cast<std::string>(item.second);
+                val = sanitize_fits_string(val);
                 fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
             } else if (nb::isinstance<int>(item.second)) {
                 int val = nb::cast<int>(item.second);
