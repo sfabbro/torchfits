@@ -695,5 +695,51 @@ class HDUList:
 
         return "\n".join(lines)
 
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        html = ["<table style='border-collapse: collapse; width: 100%;'><thead><tr>"]
+        headers = ["No.", "Name", "Type", "Cards", "Dimensions", "Format"]
+        styles = (
+            ["text-align: left;"] * 3
+            + ["text-align: right;"]
+            + ["text-align: left;"] * 2
+        )
+        for h, s in zip(headers, styles):
+            html.append(
+                f"<th style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
+            )
+        html.append("</tr></thead><tbody>")
+
+        for idx, hdu in enumerate(self._hdus):
+            name = str(hdu.header.get("EXTNAME", "PRIMARY"))
+            if isinstance(hdu, TableHDU):
+                hdu_type = "TableHDU"
+                dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
+                fmt = "Table"
+            elif isinstance(hdu, TensorHDU):
+                hdu_type = (
+                    "PrimaryHDU" if idx == 0 and name == "PRIMARY" else "ImageHDU"
+                )
+                dims, fmt = hdu._get_shape_str(), hdu._get_dtype_str()
+            else:
+                hdu_type, dims, fmt = "Unknown", "", ""
+
+            cards = (
+                len(hdu.header._cards)
+                if hasattr(hdu.header, "_cards")
+                else len(hdu.header)
+            )
+
+            row = [idx, name, hdu_type, cards, dims, fmt]
+            html.append("<tr>")
+            for val, s in zip(row, styles):
+                html.append(
+                    f"<td style='{s} padding: 4px; border-bottom: 1px solid #eee;'>{val}</td>"
+                )
+            html.append("</tr>")
+
+        html.append("</tbody></table>")
+        return "".join(html)
+
     def __repr__(self):
         return self._get_summary()
