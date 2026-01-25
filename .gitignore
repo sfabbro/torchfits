@@ -27,4 +27,3 @@ benchmark_full_output.txt
 benchmark_results/
 benchmarks/benchmark_results/
 benchmarks/debug_sip.py
-examples/test_examples.py

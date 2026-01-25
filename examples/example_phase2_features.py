@@ -112,7 +112,8 @@ def demo_tile_aware_compression():
         print(f"  Full read time: {full_time:.3f}s")
 
         # Read subset (should use tile optimization)
-        subset_spec = "[1][1000:2000,1000:2000]"
+        # Use FITS 1-based inclusive indexing to match Python [1000:2000]
+        subset_spec = "[1][1001:2000,1001:2000]"
         start_time = time.time()
         subset_result, _ = torchfits.read(filepath + subset_spec)
         subset_time = time.time() - start_time
@@ -181,7 +182,7 @@ def demo_streaming_tables():
                 for key in regular_result:
                     if key in streaming_result:
                         torch.testing.assert_close(
-                            regular_result[key], streaming_result[key], rtol=1e-5
+                            regular_result[key], streaming_result[key], rtol=1e-5, atol=1e-8
                         )
                 print("  ✅ Streaming verification passed")
 
@@ -261,12 +262,12 @@ def demo_batch_operations():
 
         # Batch reading
         start_time = time.time()
-        torchfits.read_batch(files, max_workers=4)
+        torchfits.read_batch(files)
         batch_time = time.time() - start_time
 
         print(f"  Files: {len(files)}")
         print(f"  Sequential: {sequential_time:.3f}s")
-        print(f"  Batch (4 workers): {batch_time:.3f}s")
+        print(f"  Batch: {batch_time:.3f}s")
         print(f"  Speedup: {sequential_time / batch_time:.1f}x")
 
         # Batch info
