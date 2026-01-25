@@ -1,4 +1,30 @@
 
-# User added
-temp_deps/
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.pixi/
+.claude/
+verify_fix.py
+
+# Editor
+.vscode/
+
+# Build
 build/
+dist/
+*.egg-info/
+_skbuild/
+*.whl
+
+# Data
+*.fits
+examples/data_*/
+
+# Logs/Temp
+benchmark_full_output.txt
+benchmark_results/
+benchmarks/benchmark_results/
+benchmarks/debug_sip.py
+examples/test_examples.py

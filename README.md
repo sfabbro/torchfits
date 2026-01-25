@@ -17,7 +17,7 @@ pip install torchfits
 - **Fast I/O**: Zero-copy tensor creation from FITS data with SIMD-optimized type conversions
 - **Multi-device**: Direct tensor creation on CPU, CUDA, or MPS (Apple Silicon) devices
 - **FITS tables**: Read binary tables as dictionaries of tensors with column and row selection
-- **WCS support**: Batch coordinate transformations using wcslib with OpenMP parallelization
+- **WCS support**: Batch coordinate transformations using wcslib with OpenMP parallelization (Optimized for 2D TAN/SIP/TPV)
 - **Data transforms**: GPU-accelerated astronomical normalization and augmentation (ZScale, asinh stretch, etc.)
 - **Smart caching**: Multi-level caching (L1 memory + L2 disk) for remote files and repeated access
 - **FITS compliant**: Built on cfitsio for standards compliance and robust file handling
@@ -128,7 +128,7 @@ Performance measurements on M2 MacBook Air with 2048×2048 float32 images and 1M
 
 Performance characteristics:
 - Zero-copy operations provide consistent speedup across data sizes
-- SIMD-optimized type conversions reduce overhead 
+- SIMD-optimized type conversions reduce overhead (Optimized for float32)
 - Direct GPU placement eliminates host-device transfer for ML workflows
 - Competitive with fitsio while providing PyTorch tensor output
 - Largest gains over astropy for tables and large arrays

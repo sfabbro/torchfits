@@ -135,16 +135,19 @@ jobs:
     
     - name: Run performance benchmarks
       run: |
-        echo "Performance benchmarks would run here"
-        echo "Skipping for now - benchmark files need to be verified"
+        python benchmarks/benchmark_cpp_backend.py
     
     - name: Generate performance report
       run: |
         python -c "
-        import torchfits
-        print('=== Performance Summary ===')
-        print('torchfits successfully built and tested')
-        print('See test output above for detailed benchmarks')
+        import json
+        import os
+        if os.path.exists('benchmark_results/cpp_backend_results.json'):
+            with open('benchmark_results/cpp_backend_results.json') as f:
+                 data = json.load(f)
+            print('Benchmark successfully ran.')
+        else:
+            print('Benchmark results not found.')
         "
 
   documentation:

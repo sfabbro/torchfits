@@ -4,6 +4,37 @@ project(torchfits_cpp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Compiler optimization
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Global optimizations (Release mode)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # Using only -O3 (avoid -funroll-loops as it may conflict with manual SIMD unrolling)
+    add_compile_options(-O3)
+endif()
+
+# Enable SIMD optimizations globally (propagates to cfitsio)
+# Note: For wheels, avoid -march=native. Using reasonable baselines.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    # Enable SSSE3 for Rice compression optimization (reasonable baseline for modern PyTorch)
+    add_compile_definitions(CFITSIO_HAVE_SSSE3)
+    add_compile_options(-mssse3) 
+    message(STATUS "Enabled x86_64 optimizations (SSSE3)")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    # ARM64 implies NEON, -O3 handles vectorization well.
+    # On Apple Silicon, -mcpu=native ensures correct scheduling for M-series.
+    # This assumes building on M1+ for M1+ target (standard for macOS wheels).
+    if(APPLE)
+       add_compile_options(-mcpu=native)
+       message(STATUS "Enabled Native Apple Silicon optimizations")
+    else()
+       message(STATUS "Enabled ARM64 optimizations")
+    endif()
+endif()
+
+
 # Add environment prefix to search path (important for pixi/conda)
 if(DEFINED ENV{PREFIX})
     list(APPEND CMAKE_PREFIX_PATH "$ENV{PREFIX}")
@@ -234,24 +265,6 @@ endif()
 target_compile_definitions(cpp PRIVATE VERSION_INFO="")
 target_compile_features(cpp PRIVATE cxx_std_17)
 
-# Compiler optimization
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -funroll-loops)
-endif()
-
-# Enable SIMD optimizations for hardware acceleration
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_compile_definitions(cpp PRIVATE CFITSIO_HAVE_SSSE3)
-    target_compile_options(cpp PRIVATE -march=native)
-    message(STATUS "Enabled Native x86_64 optimizations")
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-    target_compile_options(cpp PRIVATE -mcpu=native)
-    message(STATUS "Enabled Native ARM64 optimizations")
-endif()
 
 # Install the compiled module
 # For scikit-build-core, install to the package directory

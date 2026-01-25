@@ -301,6 +301,13 @@ class WCS:
         if batch_size is not None and pixels.shape[0] > batch_size:
             return self._wcs._batch_process(self.pixel_to_world, pixels, batch_size)
         
+        # Check basic support conditions first
+        if self.naxis != 2:
+             # Move to CPU for wcslib
+             pixels_cpu = pixels.cpu()
+             # Use the parsing-only WCS object which still has the wcslib pointers
+             return self._wcs.pixel_to_world(pixels_cpu).to(pixels.device)
+
         # Fallback to wcslib (CPU) for non-standard cases
         ctype1 = self._ctype[0]
         ctype2 = self._ctype[1]
@@ -310,7 +317,7 @@ class WCS:
         
         is_tpv = self._has_tpv # We set this in init based on CTYPE "TPV"
                         
-        is_supported = (self.naxis == 2 and (is_tan_or_sip or is_tpv))
+        is_supported = (is_tan_or_sip or is_tpv)
         
         # Check parity: Standard FITS has det < 0 (RA reversed).
         # Flipped parity (det > 0) requires different rotation logic.
@@ -349,7 +356,7 @@ class WCS:
         
         # 4. Projection (Deprojection)
         # For TAN / TPV:
-        x = intermediate[:, 0]
+        x = -intermediate[:, 0] # Flip X for standard parity
         y = intermediate[:, 1]
         
         rad_deg = 180.0 / math.pi
@@ -358,11 +365,11 @@ class WCS:
         r = torch.sqrt(x*x + y*y)
         
         # Check for singularity at r=0
-        # Use atan2(x, -y) to align coordinate system parity with Astropy
+        # Use atan2(x, -y) to retrieve phi
         phi = torch.rad2deg(torch.atan2(x, -y))
         
         # theta is latitude.
-        theta = torch.rad2deg(torch.atan2(torch.tensor(rad_deg, device=device), r))
+        theta = torch.rad2deg(torch.atan2(torch.tensor(rad_deg, device=device, dtype=pixels.dtype), r))
         
         # 5. Spherical Rotation coordinates to Celestial (RA, Dec)
         
@@ -380,6 +387,9 @@ class WCS:
         dc = torch.cos(crval2_rad)
         
         # Remove manual shift
+        # diff_phi = phi_rad - torch.deg2rad(torch.tensor(self._lonpole, device=device))
+        
+        # Remove manual shift
         diff_phi = phi_rad - torch.deg2rad(torch.tensor(self._lonpole, device=device))
         
         phi_minus_p = diff_phi
@@ -390,7 +400,7 @@ class WCS:
         x_term = sinthe * dc - costhe * ds * torch.cos(phi_minus_p)
         
         ra_minus_p = torch.atan2(y_term, x_term)
-        ra_rad = torch.deg2rad(self._crval[0]) - ra_minus_p
+        ra_rad = torch.deg2rad(self._crval[0]) + ra_minus_p
         
         # Normalize RA to [0, 360)
         ra = torch.rad2deg(ra_rad) % 360.0
@@ -407,6 +417,12 @@ class WCS:
         """Inverse transformation: World -> Pixel."""
         if batch_size is not None and coords.shape[0] > batch_size:
             return self._wcs._batch_process(self.world_to_pixel, coords, batch_size)
+
+        # Check basic support conditions first
+        if self.naxis != 2:
+             # Move to CPU for wcslib
+             coords_cpu = coords.cpu()
+             return self._wcs.world_to_pixel(coords_cpu).to(coords.device)
 
         # Fallback to wcslib (CPU) for non-standard cases
         is_tan = (self.naxis == 2 and 
@@ -446,14 +462,13 @@ class WCS:
         x_n = sin_dec * dc - cos_dec * ds * torch.cos(diff_ra)
         
         phi_minus_p = torch.atan2(y_n, x_n)
-        phi_rad = phi_minus_p + lonpole_rad
         
         # 2. Project Native -> Intermediate (x, y)
         rad_deg = 180.0 / math.pi
         r = rad_deg / torch.tan(theta_rad)
         
-        x = r * torch.sin(phi_rad)
-        y = -r * torch.cos(phi_rad)
+        x = r * torch.sin(phi_minus_p)
+        y = r * torch.cos(phi_minus_p)
         
         intermediate = torch.stack([x, y], dim=-1)
         
