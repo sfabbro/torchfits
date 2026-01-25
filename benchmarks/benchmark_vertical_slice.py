@@ -37,7 +37,7 @@ def benchmark():
         _ = torch.from_numpy(arr.astype(np.float32))
     end = time.time()
     fitsio_time = (end - start) / n_iters
-    print(f"fitsio (to float tensor): {fitsio_time*1000:.2f} ms")
+    print(f"fitsio (to float tensor): {fitsio_time * 1000:.2f} ms")
 
     # Benchmark torchfits fast
     start = time.time()
@@ -45,7 +45,7 @@ def benchmark():
         _ = torchfits.read_image_fast_int16(filename)
     end = time.time()
     torchfits_time = (end - start) / n_iters
-    print(f"torchfits (fast): {torchfits_time*1000:.2f} ms")
+    print(f"torchfits (fast): {torchfits_time * 1000:.2f} ms")
 
     speedup = fitsio_time / torchfits_time
     print(f"Speedup: {speedup:.2f}x")

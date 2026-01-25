@@ -30,7 +30,7 @@ def benchmark(filename):
     t_data, _ = torchfits.read(filename)
     end = time.time()
     tf_time = end - start
-    print(f"TorchFits: {tf_time*1000:.2f} ms")
+    print(f"TorchFits: {tf_time * 1000:.2f} ms")
     print(f"TorchFits dtype: {t_data.dtype}")
 
     # Fitsio
@@ -38,10 +38,10 @@ def benchmark(filename):
     f_data = fitsio.read(filename)
     end = time.time()
     f_time = end - start
-    print(f"Fitsio:    {f_time*1000:.2f} ms")
+    print(f"Fitsio:    {f_time * 1000:.2f} ms")
     print(f"Fitsio dtype: {f_data.dtype}")
 
-    print(f"Speedup:   {f_time/tf_time:.2f}x")
+    print(f"Speedup:   {f_time / tf_time:.2f}x")
 
 
 if __name__ == "__main__":

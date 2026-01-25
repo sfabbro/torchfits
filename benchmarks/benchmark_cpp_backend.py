@@ -163,15 +163,15 @@ class CPPBackendBenchmark:
             print(f"  File size: {results['file_size_mb']:.1f} MB")
             if "torchfits_time" in results:
                 print(
-                    f"  torchfits: {results['torchfits_time']*1000:.1f}ms ± {results['torchfits_std']*1000:.1f}ms"
+                    f"  torchfits: {results['torchfits_time'] * 1000:.1f}ms ± {results['torchfits_std'] * 1000:.1f}ms"
                 )
             if "astropy_time" in results:
                 print(
-                    f"  astropy:   {results['astropy_time']*1000:.1f}ms ± {results['astropy_std']*1000:.1f}ms"
+                    f"  astropy:   {results['astropy_time'] * 1000:.1f}ms ± {results['astropy_std'] * 1000:.1f}ms"
                 )
             if "fitsio_time" in results:
                 print(
-                    f"  fitsio:    {results['fitsio_time']*1000:.1f}ms ± {results['fitsio_std']*1000:.1f}ms"
+                    f"  fitsio:    {results['fitsio_time'] * 1000:.1f}ms ± {results['fitsio_std'] * 1000:.1f}ms"
                 )
 
             if "vs_astropy" in results:
@@ -214,7 +214,7 @@ class CPPBackendBenchmark:
                     times.append(end - start)
 
                 print(
-                    f"  torchfits cutout: {np.mean(times)*1000:.1f}ms ± {np.std(times)*1000:.1f}ms"
+                    f"  torchfits cutout: {np.mean(times) * 1000:.1f}ms ± {np.std(times) * 1000:.1f}ms"
                 )
                 if subset is not None:
                     print(f"  cutout shape: {subset.shape}")
@@ -234,7 +234,7 @@ class CPPBackendBenchmark:
                     times.append(end - start)
 
                 print(
-                    f"  astropy full+slice: {np.mean(times)*1000:.1f}ms ± {np.std(times)*1000:.1f}ms"
+                    f"  astropy full+slice: {np.mean(times) * 1000:.1f}ms ± {np.std(times) * 1000:.1f}ms"
                 )
 
         finally:

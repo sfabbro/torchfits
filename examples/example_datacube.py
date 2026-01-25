@@ -48,7 +48,7 @@ def main():
         slice_2d, header = torchfits.read(f"{test_file}[0][*,*,2]")
         print("\n2D Slice (CFITSIO String [*,*,2]):")
         print(f"  Shape: {slice_2d.shape}")  # Expected: (3, 4) - collapsed z dimension
-        print(f"  Equivalent to cube[1,:,:] = {cube[1,:,:].shape}")
+        print(f"  Equivalent to cube[1,:,:] = {cube[1, :, :].shape}")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
@@ -58,15 +58,15 @@ def main():
         spectrum_1d, header = torchfits.read(f"{test_file}[0][2,3,*]")
         print("\n1D Spectrum (CFITSIO String [2,3,*]):")
         print(f"  Shape: {spectrum_1d.shape}")  # Expected: (2,) - spectral axis only
-        print(f"  Equivalent to cube[:,2,1] = {cube[:,2,1].shape}")
+        print(f"  Equivalent to cube[:,2,1] = {cube[:, 2, 1].shape}")
     except RuntimeError as e:
         print(f"  Error: {e}")
 
     # Manual slicing of the full cube
     print("\n--- Manual Slicing of Full Cube ---")
-    print(f"  Single plane: cube[0,:,:] shape = {cube[0,:,:].shape}")
-    print(f"  Spectrum at (1,2): cube[:,1,2] shape = {cube[:,1,2].shape}")
-    print(f"  Sub-cube: cube[:,1:3,2:4] shape = {cube[:,1:3,2:4].shape}")
+    print(f"  Single plane: cube[0,:,:] shape = {cube[0, :, :].shape}")
+    print(f"  Spectrum at (1,2): cube[:,1,2] shape = {cube[:, 1, 2].shape}")
+    print(f"  Sub-cube: cube[:,1:3,2:4] shape = {cube[:, 1:3, 2:4].shape}")
 
     # --- Test different cache capacities ---
     print("\n--- Testing with different cache capacities ---")
@@ -84,7 +84,7 @@ def main():
         try:
             data, _ = torchfits.read(test_file, hdu=0, device="cuda")
             print(f"  Data device: {data.device}")
-            print(f"  Can slice on GPU: data[0,:,:].shape = {data[0,:,:].shape}")
+            print(f"  Can slice on GPU: data[0,:,:].shape = {data[0, :, :].shape}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")
     else:

@@ -214,12 +214,12 @@ class TestRealDataIntegration:
                 # The FITS standard applies scaling automatically during read
                 # Check that values are in the expected scaled range
                 # With int16 data and our scaling, expect range around 990-1010
-                assert (
-                    result.min() >= 990.0
-                ), f"Min value {result.min()} should be >= 990.0"
-                assert (
-                    result.max() <= 1010.0
-                ), f"Max value {result.max()} should be <= 1010.0"
+                assert result.min() >= 990.0, (
+                    f"Min value {result.min()} should be >= 990.0"
+                )
+                assert result.max() <= 1010.0, (
+                    f"Max value {result.max()} should be <= 1010.0"
+                )
 
                 # Verify the scaling was applied (data should be different from raw)
                 assert not torch.allclose(
@@ -292,9 +292,9 @@ class TestPerformanceIntegration:
 
                 # Should not use significantly more than 2x file size
                 file_size = os.path.getsize(f.name) / 1024 / 1024  # MB
-                assert (
-                    memory_increase < 3 * file_size
-                ), f"Memory usage {memory_increase:.1f}MB too high for {file_size:.1f}MB file"
+                assert memory_increase < 3 * file_size, (
+                    f"Memory usage {memory_increase:.1f}MB too high for {file_size:.1f}MB file"
+                )
 
                 # Cleanup
                 del result

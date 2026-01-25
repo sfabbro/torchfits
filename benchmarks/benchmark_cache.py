@@ -69,9 +69,9 @@ class CacheBenchmark:
 
             print(
                 f"    {config_name.title()} config: "
-                f"setup={config_time*1000:.2f}ms, "
-                f"stats={stats_time*1000:.2f}ms, "
-                f"clear={clear_time*1000:.2f}ms"
+                f"setup={config_time * 1000:.2f}ms, "
+                f"stats={stats_time * 1000:.2f}ms, "
+                f"clear={clear_time * 1000:.2f}ms"
             )
 
         return results
@@ -98,8 +98,8 @@ class CacheBenchmark:
             "detected_config": optimal_config,
         }
 
-        print(f"    Environment detection: {detection_time*1000:.2f}ms")
-        print(f"    Auto-configuration: {auto_config_time*1000:.2f}ms")
+        print(f"    Environment detection: {detection_time * 1000:.2f}ms")
+        print(f"    Auto-configuration: {auto_config_time * 1000:.2f}ms")
         print(
             f"    Detected environment: {optimal_config.get('environment', 'unknown')}"
         )

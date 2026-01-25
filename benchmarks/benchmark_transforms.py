@@ -95,7 +95,7 @@ class TransformBenchmark:
                         / avg_time,
                     }
                     print(
-                        f"    {transform_name:15s}: {avg_time*1000:.2f}ms, {(size[0] * size[1] / 1e6) / avg_time:.2f} MPix/s"
+                        f"    {transform_name:15s}: {avg_time * 1000:.2f}ms, {(size[0] * size[1] / 1e6) / avg_time:.2f} MPix/s"
                     )
 
         return results

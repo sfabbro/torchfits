@@ -6,7 +6,7 @@ This module provides efficient coordinate transformations using a hybrid approac
 2. Pure PyTorch for high-performance, GPU-accelerated coordinate transformations.
 """
 
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -406,7 +406,7 @@ class WCS:
         phi_rad = torch.deg2rad(phi)
         theta_rad = torch.deg2rad(theta)
 
-        crval1_rad = torch.deg2rad(self._crval[0])
+        # crval1_rad = torch.deg2rad(self._crval[0])
         crval2_rad = torch.deg2rad(self._crval[1])
 
         costhe = torch.cos(theta_rad)
@@ -474,7 +474,7 @@ class WCS:
         dec_rad = torch.deg2rad(dec)
         crval1_rad = torch.deg2rad(self._crval[0])
         crval2_rad = torch.deg2rad(self._crval[1])
-        lonpole_rad = torch.deg2rad(torch.tensor(self._lonpole, device=coords.device))
+        # lonpole_rad = torch.deg2rad(torch.tensor(self._lonpole, device=coords.device))
 
         # Inverse rotation (Paper II, Eq 5)
         diff_ra = ra_rad - crval1_rad

@@ -116,7 +116,6 @@ class TestDistributedDataLoader:
             patch("torchfits.dataloader.FITSDataset") as mock_dataset_class,
             patch("torchfits.dataloader.DistributedSampler") as mock_sampler_class,
         ):
-
             mock_dataset = Mock()
             mock_dataset.__len__ = Mock(return_value=4)
             mock_dataset_class.return_value = mock_dataset
@@ -246,7 +245,6 @@ class TestDataLoaderParameters:
             patch("torchfits.dataloader.FITSDataset") as mock_dataset_class,
             patch("torch.cuda.is_available", return_value=True),
         ):
-
             mock_dataset = Mock()
             mock_dataset.__len__ = Mock(return_value=1)
             mock_dataset_class.return_value = mock_dataset
@@ -263,13 +261,14 @@ class TestDataLoaderParameters:
             patch("torchfits.dataloader.FITSDataset") as mock_dataset_class,
             patch("torch.cuda.is_available", return_value=False),
         ):
-
             mock_dataset = Mock()
             mock_dataset.__len__ = Mock(return_value=1)
             mock_dataset_class.return_value = mock_dataset
 
             dataloader = create_dataloader(
-                file_paths, pin_memory=True, num_workers=0  # Requested True
+                file_paths,
+                pin_memory=True,
+                num_workers=0,  # Requested True
             )
 
             assert not dataloader.pin_memory  # Should be False without CUDA

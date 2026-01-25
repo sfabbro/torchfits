@@ -182,7 +182,10 @@ def demo_streaming_tables():
                 for key in regular_result:
                     if key in streaming_result:
                         torch.testing.assert_close(
-                            regular_result[key], streaming_result[key], rtol=1e-5, atol=1e-8
+                            regular_result[key],
+                            streaming_result[key],
+                            rtol=1e-5,
+                            atol=1e-8,
                         )
                 print("  ✅ Streaming verification passed")
 

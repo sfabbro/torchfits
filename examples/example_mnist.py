@@ -212,7 +212,9 @@ def main():
         correct = 0
         total = 0
 
-        for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+        for inputs, labels in tqdm(
+            train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}"
+        ):
             if inputs.numel() == 0:
                 continue
 
@@ -232,7 +234,9 @@ def main():
 
         epoch_loss = running_loss / len(train_loader)
         epoch_acc = 100 * correct / total
-        print(f"Epoch {epoch+1}: Loss = {epoch_loss:.4f}, Train Acc = {epoch_acc:.2f}%")
+        print(
+            f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}, Train Acc = {epoch_acc:.2f}%"
+        )
 
     print("\nTraining finished!")
 
@@ -254,9 +258,9 @@ def main():
             correct += (predicted == labels).sum().item()
 
     test_acc = 100 * correct / total
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Final Test Accuracy: {test_acc:.2f}%")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     # Show some predictions
     print("\nSample predictions:")

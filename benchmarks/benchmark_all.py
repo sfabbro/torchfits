@@ -9,7 +9,6 @@ multi-cutouts, multi-files, compression, WCS, scaling, all sizes.
 Produces comprehensive tables, plots, and summaries.
 """
 
-
 import csv
 import gc
 import sys
@@ -242,7 +241,10 @@ class ExhaustiveBenchmarkSuite:
                     str_len = int(dtype[1:]) if len(dtype) > 1 else 10
                     # Create fixed length strings
                     data[col_name] = np.array(
-                        [f"s{j:0{min(str_len-1, 6)}d}"[:str_len] for j in range(nrows)],
+                        [
+                            f"s{j:0{min(str_len - 1, 6)}d}"[:str_len]
+                            for j in range(nrows)
+                        ],
                         dtype=f"S{str_len}",
                     )
 
@@ -539,7 +541,7 @@ class ExhaustiveBenchmarkSuite:
                 print(f"torchfits rank: {torchfits_rank}/{len(valid_methods)}")
                 if best_method != "torchfits":
                     print(
-                        f"torchfits vs best: {tf_time/valid_methods[best_method]:.2f}x"
+                        f"torchfits vs best: {tf_time / valid_methods[best_method]:.2f}x"
                     )
             else:
                 result["speedup_vs_best"] = None
@@ -698,7 +700,9 @@ class ExhaustiveBenchmarkSuite:
             if res:
                 row[f"{name}_mean"] = res["mean"]
                 row[f"{name}_std"] = res["std"]
-                print(f"{name:15s}: {res['mean']*1e6:.2f}us ± {res['std']*1e6:.2f}us")
+                print(
+                    f"{name:15s}: {res['mean'] * 1e6:.2f}us ± {res['std'] * 1e6:.2f}us"
+                )
             else:
                 row[f"{name}_mean"] = None
 
@@ -850,7 +854,7 @@ class ExhaustiveBenchmarkSuite:
                 if not valid_df.empty:
                     ax = axes[i // 2, i % 2]
                     sns.boxplot(data=valid_df, x="file_type", y=method, ax=ax)
-                    ax.set_title(f'{method.replace("_mean", "").title()} Performance')
+                    ax.set_title(f"{method.replace('_mean', '').title()} Performance")
                     ax.set_ylabel("Time (seconds)")
                     plt.setp(ax.get_xticklabels(), rotation=45)
 
@@ -1146,13 +1150,13 @@ class ExhaustiveBenchmarkSuite:
                 total_valid = rank_counts.sum()
 
                 f.write(
-                    f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0)/total_valid*100:.1f}%)\n"
+                    f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0) / total_valid * 100:.1f}%)\n"
                 )
                 f.write(
-                    f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0)/total_valid*100:.1f}%)\n"
+                    f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0) / total_valid * 100:.1f}%)\n"
                 )
                 f.write(
-                    f"- Times torchfits ranked #3+: {sum(rank_counts[rank_counts.index >= 3])} ({sum(rank_counts[rank_counts.index >= 3])/total_valid*100:.1f}%)\n"
+                    f"- Times torchfits ranked #3+: {sum(rank_counts[rank_counts.index >= 3])} ({sum(rank_counts[rank_counts.index >= 3]) / total_valid * 100:.1f}%)\n"
                 )
                 f.write(f"- Average ranking: {df['torchfits_rank'].mean():.2f}\n")
                 f.write("\n")
@@ -1169,7 +1173,7 @@ class ExhaustiveBenchmarkSuite:
                         f"- Peak memory usage: {mem_df['torchfits_peak_memory'].mean():.1f} MB\n"
                     )
                     f.write(
-                        f"- Memory efficiency (data/peak): {(mem_df['torchfits_memory']/mem_df['torchfits_peak_memory']).mean():.2f}\n"
+                        f"- Memory efficiency (data/peak): {(mem_df['torchfits_memory'] / mem_df['torchfits_peak_memory']).mean():.2f}\n"
                     )
                 f.write("\n")
 

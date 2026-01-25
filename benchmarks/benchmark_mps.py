@@ -62,7 +62,7 @@ def benchmark_mps_vs_cpu():
         torch.mps.synchronize()  # Ensure operation is complete
         mps_time = time.perf_counter() - start
         print(f"  MPS Read: {mps_time:.4f}s")
-        print(f"  Speedup: {cpu_time/mps_time:.2f}x")
+        print(f"  Speedup: {cpu_time / mps_time:.2f}x")
 
         # Verify data
         print("  Verifying data match...", end="")
@@ -96,7 +96,7 @@ def benchmark_mps_vs_cpu():
         torch.mps.synchronize()
         mps_trans_time = time.perf_counter() - start
         print(f"  MPS Transform: {mps_trans_time:.4f}s")
-        print(f"  Speedup: {cpu_trans_time/mps_trans_time:.2f}x")
+        print(f"  Speedup: {cpu_trans_time / mps_trans_time:.2f}x")
 
         # 4. Benchmark Large Table Read (if applicable)
         print("\n4. Benchmarking Table Read (100k rows):")
@@ -135,7 +135,7 @@ def benchmark_mps_vs_cpu():
 
         mps_table_time = time.perf_counter() - start
         print(f"  MPS Table Read: {mps_table_time:.4f}s")
-        print(f"  Speedup: {cpu_table_time/mps_table_time:.2f}x")
+        print(f"  Speedup: {cpu_table_time / mps_table_time:.2f}x")
 
 
 if __name__ == "__main__":

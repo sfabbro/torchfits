@@ -394,10 +394,10 @@ class SpectralReader:
             # Create spectral axis values
             naxis = data.shape[spectral_axis_index]
             crval = header.get(
-                f"CRVAL{3-spectral_axis_index}", 0.0
+                f"CRVAL{3 - spectral_axis_index}", 0.0
             )  # Convert back to FITS indexing
-            cdelt = header.get(f"CDELT{3-spectral_axis_index}", 1.0)
-            crpix = header.get(f"CRPIX{3-spectral_axis_index}", 1.0)
+            cdelt = header.get(f"CDELT{3 - spectral_axis_index}", 1.0)
+            crpix = header.get(f"CRPIX{3 - spectral_axis_index}", 1.0)
 
             # Generate spectral axis values
             pixels = torch.arange(naxis, dtype=torch.float32)

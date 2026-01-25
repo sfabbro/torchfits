@@ -27,7 +27,6 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     # On Apple Silicon, -mcpu=native ensures correct scheduling for M-series.
     # This assumes building on M1+ for M1+ target (standard for macOS wheels).
     if(APPLE)
-       add_compile_options(-mcpu=native)
        message(STATUS "Enabled Native Apple Silicon optimizations")
     else()
        message(STATUS "Enabled ARM64 optimizations")

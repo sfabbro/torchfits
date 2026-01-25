@@ -68,7 +68,7 @@ jobs:
     
     - name: Build package
       run: |
-        pip install -e .
+        pip install -e . --no-build-isolation
     
     - name: Run full test suite
       run: |
@@ -99,7 +99,7 @@ jobs:
         python -m pip install --upgrade pip wheel setuptools
         pip install torch --index-url https://download.pytorch.org/whl/cpu
         pip install numpy astropy fitsio pytest pybind11
-        pip install -e .
+        pip install -e . --no-build-isolation
     
     - name: Run memory leak tests
       run: |
@@ -131,7 +131,7 @@ jobs:
         python -m pip install --upgrade pip wheel setuptools
         pip install torch --index-url https://download.pytorch.org/whl/cpu
         pip install numpy astropy fitsio pytest pybind11
-        pip install -e .
+        pip install -e . --no-build-isolation
     
     - name: Run performance benchmarks
       run: |

@@ -106,7 +106,7 @@ before-all = [
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]
-before-all = "brew install wcslib"
+before-all = "brew install wcslib cfitsio"
 
 [tool.cibuildwheel.linux]
 before-all = "yum install -y wcslib-devel || (apt-get update && apt-get install -y libwcs-dev)"

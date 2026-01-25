@@ -11,9 +11,7 @@ automatic feature type inference and deep learning models.
 import tempfile
 
 import numpy as np
-import torch
 import torchfits
-from astropy.io import fits as astropy_fits
 from astropy.table import Table
 
 # Check if pytorch-frame is available
@@ -159,16 +157,16 @@ def example_ml_workflow():
     cat_idx = tf.col_names_dict[stype.categorical].index("source_type")
     target = tf.feat_dict[stype.categorical][:, cat_idx]
 
-    print(f"\n  Target distribution (source_type):")
+    print("\n  Target distribution (source_type):")
     for i in range(3):
         count = (target == i).sum().item()
-        print(f"    Type {i}: {count} ({100*count/tf.num_rows:.1f}%)")
+        print(f"    Type {i}: {count} ({100 * count / tf.num_rows:.1f}%)")
 
     # Create simple splits
     n_train = int(0.7 * tf.num_rows)
     n_val = int(0.15 * tf.num_rows)
 
-    print(f"\n  Data splits:")
+    print("\n  Data splits:")
     print(f"    Train: {n_train}")
     print(f"    Val: {n_val}")
     print(f"    Test: {tf.num_rows - n_train - n_val}")

@@ -255,11 +255,13 @@ def demo_training_loop(train_loader, val_loader):
 
             val_acc = 100.0 * val_correct / val_total
 
-            print(f"  Epoch {epoch+1}/{num_epochs}:")
+            print(f"  Epoch {epoch + 1}/{num_epochs}:")
             print(
-                f"    Train Loss: {train_loss/len(train_loader):.4f}, Acc: {train_acc:.2f}%"
+                f"    Train Loss: {train_loss / len(train_loader):.4f}, Acc: {train_acc:.2f}%"
             )
-            print(f"    Val Loss: {val_loss/len(val_loader):.4f}, Acc: {val_acc:.2f}%")
+            print(
+                f"    Val Loss: {val_loss / len(val_loader):.4f}, Acc: {val_acc:.2f}%"
+            )
             print(f"    Time: {epoch_time:.2f}s")
 
         print("  ✅ Training completed successfully")

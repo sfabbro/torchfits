@@ -75,7 +75,7 @@ class BufferBenchmark:
 
                 print(
                     f"    Pool {pool_size}MB, {shape_key}: "
-                    f"alloc={alloc_time*1000:.2f}ms, access={access_time*1000:.2f}ms"
+                    f"alloc={alloc_time * 1000:.2f}ms, access={access_time * 1000:.2f}ms"
                 )
 
                 # Clean up
@@ -152,7 +152,7 @@ class BufferBenchmark:
 
             print(
                 f"    {workload['name'].title()} workload: "
-                f"optimized in {optimization_time*1000:.2f}ms"
+                f"optimized in {optimization_time * 1000:.2f}ms"
             )
 
         return results

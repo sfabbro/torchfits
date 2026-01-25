@@ -250,7 +250,7 @@ def train_model(model, train_loader, val_loader, num_epochs: int = 5):
     val_accuracies = []
 
     for epoch in range(num_epochs):
-        print(f"\n📈 Epoch {epoch+1}/{num_epochs}")
+        print(f"\n📈 Epoch {epoch + 1}/{num_epochs}")
 
         # Training phase
         model.train()
@@ -336,7 +336,7 @@ def demonstrate_advanced_features():
         for _ in range(10):
             transform(test_image)
         avg_time = (time.time() - start_time) / 10
-        print(f"  {name:12s}: {avg_time*1000:.2f}ms per transform")
+        print(f"  {name:12s}: {avg_time * 1000:.2f}ms per transform")
 
     # 2. Buffer management demonstration
     print("\n2️⃣ Buffer Management Performance")
@@ -354,7 +354,7 @@ def demonstrate_advanced_features():
     allocation_time = time.time() - start_time
     buffer_stats = buffer.get_buffer_stats()
 
-    print(f"  Buffer allocation: {allocation_time*1000:.2f}ms for 50 buffers")
+    print(f"  Buffer allocation: {allocation_time * 1000:.2f}ms for 50 buffers")
     print(f"  Memory usage: {buffer_stats['total_memory_mb']:.1f}MB")
 
     # Clean up
@@ -395,7 +395,7 @@ def demonstrate_advanced_features():
         cache.get_cache_stats()
     stats_time = time.time() - start_time
 
-    print(f"  Cache stats access: {stats_time*1000:.2f}ms for 1000 calls")
+    print(f"  Cache stats access: {stats_time * 1000:.2f}ms for 1000 calls")
 
 
 def main():

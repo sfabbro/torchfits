@@ -177,7 +177,7 @@ class TensorHDU:
             # But NAXIS1 is closest to contiguous in FITS (Fortran order).
             # PyTorch is C order. torchfits likely handles this.
             # Let's just list NAXISn values.
-            dims = [str(self.header.get(f"NAXIS{i+1}", 0)) for i in range(naxis)]
+            dims = [str(self.header.get(f"NAXIS{i + 1}", 0)) for i in range(naxis)]
             # Reverse to match typical python shape (C-order) if strictly following numpy?
             # But FITS convention is usually (NAXIS1, NAXIS2) -> (x, y)
             # Python image is (y, x).
@@ -656,7 +656,7 @@ class HDUList:
             filename = self._file_handle.name
 
         lines.append(f"Filename: {filename}")
-        lines.append(f"No.    Name         Type       Cards   Dimensions   Format")
+        lines.append("No.    Name         Type       Cards   Dimensions   Format")
 
         for idx, hdu in enumerate(self._hdus):
             # Name

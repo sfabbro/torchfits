@@ -108,7 +108,7 @@ class GPUMemoryBenchmark:
                     direct_memory = mem_after_direct - mem_before
 
                     print(
-                        f"    Direct GPU load: {direct_time*1000:.1f}ms, {direct_memory:.1f}MB GPU memory"
+                        f"    Direct GPU load: {direct_time * 1000:.1f}ms, {direct_memory:.1f}MB GPU memory"
                     )
 
                     # Verify data is on GPU
@@ -135,7 +135,7 @@ class GPUMemoryBenchmark:
                 transfer_memory = mem_after_transfer - mem_before
 
                 print(
-                    f"    CPU->GPU transfer: {transfer_time*1000:.1f}ms, {transfer_memory:.1f}MB GPU memory"
+                    f"    CPU->GPU transfer: {transfer_time * 1000:.1f}ms, {transfer_memory:.1f}MB GPU memory"
                 )
 
                 # Compare methods
@@ -242,7 +242,7 @@ class GPUMemoryBenchmark:
             cpu_result = transform(cpu_tensor)
             cpu_time = time.perf_counter() - start_time
 
-            print(f"    CPU transforms: {cpu_time*1000:.1f}ms")
+            print(f"    CPU transforms: {cpu_time * 1000:.1f}ms")
 
             # Test GPU transforms
             self.clear_gpu_memory()
@@ -258,7 +258,7 @@ class GPUMemoryBenchmark:
             gpu_memory = mem_after - mem_before
 
             print(
-                f"    GPU transforms: {gpu_time*1000:.1f}ms, {gpu_memory:.1f}MB GPU memory"
+                f"    GPU transforms: {gpu_time * 1000:.1f}ms, {gpu_memory:.1f}MB GPU memory"
             )
 
             # Compare performance

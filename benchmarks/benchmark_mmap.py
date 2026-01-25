@@ -43,9 +43,9 @@ def benchmark_mmap():
     t_tf = timeit.timeit(read_torchfits, number=n_iter) / n_iter
     t_fitsio = timeit.timeit(read_fitsio, number=n_iter) / n_iter
 
-    print(f"TorchFits (mmap): {t_tf*1000:.2f} ms")
-    print(f"Fitsio:           {t_fitsio*1000:.2f} ms")
-    print(f"Speedup:          {t_fitsio/t_tf:.2f}x")
+    print(f"TorchFits (mmap): {t_tf * 1000:.2f} ms")
+    print(f"Fitsio:           {t_fitsio * 1000:.2f} ms")
+    print(f"Speedup:          {t_fitsio / t_tf:.2f}x")
 
     # Check for FD leaks
     gc.collect()

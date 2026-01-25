@@ -54,9 +54,9 @@ def benchmark_parallel():
     t_parallel_cpp = timeit.timeit(read_parallel_torchfits, number=n_iter) / n_iter
     t_parallel_py = timeit.timeit(read_parallel_python_threads, number=n_iter) / n_iter
 
-    print(f"Serial (Python):       {t_serial*1000:.2f} ms")
-    print(f"Parallel (Python Threads): {t_parallel_py*1000:.2f} ms")
-    print(f"Parallel (C++ Batch):  {t_parallel_cpp*1000:.2f} ms")
+    print(f"Serial (Python):       {t_serial * 1000:.2f} ms")
+    print(f"Parallel (Python Threads): {t_parallel_py * 1000:.2f} ms")
+    print(f"Parallel (C++ Batch):  {t_parallel_cpp * 1000:.2f} ms")
 
     speedup_cpp = t_serial / t_parallel_cpp
     speedup_py = t_serial / t_parallel_py

@@ -48,7 +48,7 @@ class TableBenchmarkData:
                 data[col_name] = np.random.randint(0, 1000, nrows).astype(dtype)
             elif dtype.startswith("U"):  # string
                 str_len = int(dtype[1:]) if len(dtype) > 1 else 10
-                data[col_name] = [f"str_{j:0{str_len-4}d}" for j in range(nrows)]
+                data[col_name] = [f"str_{j:0{str_len - 4}d}" for j in range(nrows)]
             else:
                 data[col_name] = np.random.randn(nrows).astype("f4")
 

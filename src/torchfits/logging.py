@@ -49,13 +49,13 @@ def log_performance(func):
             result = func(*args, **kwargs)
             end_time = time.perf_counter()
             logger.debug(
-                f"{func.__name__} completed in {(end_time - start_time)*1000:.2f}ms"
+                f"{func.__name__} completed in {(end_time - start_time) * 1000:.2f}ms"
             )
             return result
         except Exception as e:
             end_time = time.perf_counter()
             logger.error(
-                f"{func.__name__} failed after {(end_time - start_time)*1000:.2f}ms: {str(e)}"
+                f"{func.__name__} failed after {(end_time - start_time) * 1000:.2f}ms: {str(e)}"
             )
             raise
 

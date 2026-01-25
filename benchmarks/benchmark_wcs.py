@@ -78,7 +78,7 @@ def benchmark(n_coords=1_000_000, device="cpu", sip=False):
     try:
         print(f"[DEBUG] Astropy PC:\n{aw.wcs.pc}")
     except AttributeError:
-        print(f"[DEBUG] Astropy PC: Not present (using CD?)")
+        print("[DEBUG] Astropy PC: Not present (using CD?)")
 
     print(f"[DEBUG] Torch   PC:\n{tw.pc.cpu().numpy()}")
     print(f"[DEBUG] Astropy Lonpole: {aw.wcs.lonpole}")
@@ -111,9 +111,9 @@ def benchmark(n_coords=1_000_000, device="cpu", sip=False):
     # assert max_diff < 1.0, "Result mismatch > 1 arcsec!"
 
     # --- Performance ---
-    print(f"Astropy time: {t_astro:.4f}s ({n_coords/t_astro:.2e} coords/s)")
-    print(f"Torchfits time: {t_torch:.4f}s ({n_coords/t_torch:.2e} coords/s)")
-    print(f"Speedup: {t_astro/t_torch:.2f}x")
+    print(f"Astropy time: {t_astro:.4f}s ({n_coords / t_astro:.2e} coords/s)")
+    print(f"Torchfits time: {t_torch:.4f}s ({n_coords / t_torch:.2e} coords/s)")
+    print(f"Speedup: {t_astro / t_torch:.2f}x")
 
     # --- Round Trip Check ---
     with torch.no_grad():

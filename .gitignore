@@ -17,6 +17,7 @@ dist/
 *.egg-info/
 _skbuild/
 *.whl
+*.conda
 
 # Data
 *.fits

@@ -126,7 +126,7 @@ class TableBenchmarkSuite:
             elif dtype.startswith("U"):  # string types
                 str_len = int(dtype[1:]) if len(dtype) > 1 else 10
                 data[col_name] = [
-                    f"str_{i:0{min(str_len-4, 6)}d}" for i in range(nrows)
+                    f"str_{i:0{min(str_len - 4, 6)}d}" for i in range(nrows)
                 ]
 
         # Create temporary file
@@ -137,7 +137,7 @@ class TableBenchmarkSuite:
             # Use astropy to create the table
             table = Table(data)
             hdu = astropy_fits.BinTableHDU(
-                table, name=f'TABLE_{config["name"].upper()}'
+                table, name=f"TABLE_{config['name'].upper()}"
             )
             hdu.writeto(filepath, overwrite=True)
         else:
