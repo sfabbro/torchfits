@@ -197,9 +197,28 @@ if(DLPACK_INCLUDE_DIR)
 endif()
 target_compile_definitions(cpp PRIVATE HAS_CFITSIO)
 
-if(WCSLIB_LIBRARY)
-    target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARY})
-    target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIR})
+if(WCSLIB_FOUND)
+    if(WCSLIB_LIBRARY_DIRS)
+        target_link_directories(cpp PRIVATE ${WCSLIB_LIBRARY_DIRS})
+    endif()
+
+    if(WCSLIB_LIBRARIES)
+        target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARIES})
+    else()
+        target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARY})
+    endif()
+
+    if(WCSLIB_INCLUDE_DIRS)
+        target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIRS})
+        # Add parent directory of include dirs to support <wcslib/wcs.h> style includes
+        foreach(DIR ${WCSLIB_INCLUDE_DIRS})
+             get_filename_component(PARENT_DIR ${DIR} DIRECTORY)
+             target_include_directories(cpp PRIVATE ${PARENT_DIR})
+        endforeach()
+    else()
+        target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIR})
+    endif()
+
     target_compile_definitions(cpp PRIVATE HAS_WCSLIB)
 elseif(WCSLIB_FOUND)
     # PkgConfig path

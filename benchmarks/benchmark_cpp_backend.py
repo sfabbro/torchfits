@@ -97,16 +97,22 @@ class CPPBackendBenchmark:
             # Benchmark torchfits
             if torchfits:
                 times = []
+                tensor = None
                 for _ in range(3):
                     start = time.perf_counter()
-                    tensor = torchfits.read(filepath)
+                    res = torchfits.read(filepath)
+                    if isinstance(res, tuple):
+                        tensor = res[0]
+                    else:
+                        tensor = res
                     end = time.perf_counter()
                     times.append(end - start)
 
                 results["torchfits_time"] = np.mean(times)
                 results["torchfits_std"] = np.std(times)
-                results["torchfits_shape"] = tuple(tensor.shape)
-                results["torchfits_dtype"] = str(tensor.dtype)
+                if tensor is not None:
+                    results["torchfits_shape"] = tuple(tensor.shape)
+                    results["torchfits_dtype"] = str(tensor.dtype)
 
             # Benchmark astropy
             if astropy_fits:
@@ -116,7 +122,10 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         array = hdul[0].data
                         if array is not None:
-                            tensor = torch.from_numpy(array.copy())
+                            # Ensure native byte order for PyTorch
+                            if array.dtype.byteorder not in ('=', '|'):
+                                array = array.astype(array.dtype.newbyteorder('='))
+                            tensor = torch.from_numpy(array)
                     end = time.perf_counter()
                     times.append(end - start)
 
@@ -129,6 +138,9 @@ class CPPBackendBenchmark:
                 for _ in range(3):
                     start = time.perf_counter()
                     array = fitsio.read(filepath)
+                    # Ensure native byte order for PyTorch
+                    if array.dtype.byteorder not in ('=', '|'):
+                        array = array.astype(array.dtype.newbyteorder('='))
                     tensor = torch.from_numpy(array)
                     end = time.perf_counter()
                     times.append(end - start)
@@ -190,16 +202,22 @@ class CPPBackendBenchmark:
         try:
             if torchfits:
                 times = []
+                subset = None
                 for _ in range(5):
                     start = time.perf_counter()
-                    subset = torchfits.read(cutout_spec)
+                    res = torchfits.read(cutout_spec)
+                    if isinstance(res, tuple):
+                        subset = res[0]
+                    else:
+                        subset = res
                     end = time.perf_counter()
                     times.append(end - start)
 
                 print(
                     f"  torchfits cutout: {np.mean(times)*1000:.1f}ms ± {np.std(times)*1000:.1f}ms"
                 )
-                print(f"  cutout shape: {subset.shape}")
+                if subset is not None:
+                    print(f"  cutout shape: {subset.shape}")
 
             # Compare with full read + slice
             if astropy_fits:
@@ -209,7 +227,9 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         full_data = hdul[0].data
                         subset = full_data[1000:2000, 1000:2000]
-                        torch.from_numpy(subset.copy())
+                        if subset.dtype.byteorder not in ('=', '|'):
+                            subset = subset.astype(subset.dtype.newbyteorder('='))
+                        torch.from_numpy(subset)
                     end = time.perf_counter()
                     times.append(end - start)
 
