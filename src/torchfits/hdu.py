@@ -164,6 +164,42 @@ class TensorHDU:
 
         return cpp.compute_stats(self._file_handle, self._hdu_index)
 
+    def _get_shape_str(self) -> str:
+        """Get shape string representation."""
+        if self._data is not None:
+            return str(tuple(self._data.shape))
+        elif self._file_handle:
+            # Try to get from header first to avoid C++ call if possible
+            naxis = self.header.get("NAXIS", 0)
+            if naxis == 0:
+                return "()"
+            # FITS stores dimensions in reverse order of C/Python usually?
+            # But NAXIS1 is closest to contiguous in FITS (Fortran order).
+            # PyTorch is C order. torchfits likely handles this.
+            # Let's just list NAXISn values.
+            dims = [str(self.header.get(f"NAXIS{i+1}", 0)) for i in range(naxis)]
+            # Reverse to match typical python shape (C-order) if strictly following numpy?
+            # But FITS convention is usually (NAXIS1, NAXIS2) -> (x, y)
+            # Python image is (y, x).
+            # Let's trust what DataView would return if we could call it,
+            # but for purely header based, (NAXIS2, NAXIS1) is a good guess for 2D.
+            return f"({', '.join(reversed(dims))})"
+        return "()"
+
+    def _get_dtype_str(self) -> str:
+        """Get dtype string representation."""
+        if self._data is not None:
+            return str(self._data.dtype).replace("torch.", "")
+        elif self._file_handle:
+            bitpix = self.header.get("BITPIX", 0)
+            mapping = {8: "uint8", 16: "int16", 32: "int32", -32: "float32", -64: "float64"}
+            return mapping.get(bitpix, str(bitpix))
+        return "unknown"
+
+    def __repr__(self):
+        name = self.header.get("EXTNAME", "PRIMARY")
+        return f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()})"
+
 
 class TableDataAccessor:
     """Dictionary-like accessor for table data."""
@@ -422,6 +458,10 @@ class TableHDU(TensorFrame):
 
         cpp.write_fits_table(file_path, self, self.header, overwrite)
 
+    def __repr__(self):
+        name = self.header.get("EXTNAME", "TABLE")
+        return f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
+
 
 class HDUList:
     """HDU container."""
@@ -590,5 +630,56 @@ class HDUList:
         except Exception:
             return False
 
+    def info(self, output=None):
+        """Print summary info about the HDUList."""
+        summary = self._get_summary()
+        if output is None:
+            print(summary)
+        else:
+            output.write(summary + "\n")
+
+    def _get_summary(self) -> str:
+        """Generate summary table."""
+        # Header
+        lines = []
+        # Try to get filename
+        filename = "(No file associated)"
+        if self._file_handle and hasattr(self._file_handle, "name"):
+            filename = self._file_handle.name
+
+        lines.append(f"Filename: {filename}")
+        lines.append(f"No.    Name         Type       Cards   Dimensions   Format")
+
+        for idx, hdu in enumerate(self._hdus):
+            # Name
+            name = str(hdu.header.get("EXTNAME", "PRIMARY"))
+
+            # Type
+            if isinstance(hdu, TableHDU):
+                hdu_type = "TableHDU"
+            else:
+                if idx == 0 and name == "PRIMARY":
+                    hdu_type = "PrimaryHDU"
+                else:
+                    hdu_type = "ImageHDU"
+
+            # Cards
+            cards = len(hdu.header._cards) if hasattr(hdu.header, '_cards') else len(hdu.header)
+
+            # Dimensions & Format
+            if isinstance(hdu, TableHDU):
+                dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
+                fmt = "Table"
+            elif isinstance(hdu, TensorHDU):
+                dims = hdu._get_shape_str()
+                fmt = hdu._get_dtype_str()
+            else:
+                dims = ""
+                fmt = ""
+
+            lines.append(f"{idx:<6d} {name:<12s} {hdu_type:<10s} {cards:<7d} {dims:<12s} {fmt}")
+
+        return "\n".join(lines)
+
     def __repr__(self):
-        return f"HDUList({len(self._hdus)} HDUs)"
+        return self._get_summary()
