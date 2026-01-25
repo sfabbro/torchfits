@@ -1,0 +1,249 @@
+[
+  {
+    "shape": [
+      100,
+      100
+    ],
+    "dtype": "float32",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 0.04119873046875,
+    "torchfits_time": 0.00039051266670261003,
+    "torchfits_std": 0.0005433132568355833,
+    "torchfits_shape": [
+      100,
+      100
+    ],
+    "torchfits_dtype": "torch.float32",
+    "astropy_time": 0.0010146559999763365,
+    "astropy_std": 0.00012422471018689538,
+    "fitsio_time": 0.010108908333374226,
+    "fitsio_std": 0.01401344700185804,
+    "vs_astropy": 2.598266551873553,
+    "vs_fitsio": 25.88624952611982
+  },
+  {
+    "shape": [
+      100,
+      100
+    ],
+    "dtype": "int16",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 0.02197265625,
+    "torchfits_time": 6.26646666811818e-05,
+    "torchfits_std": 8.322117622265734e-05,
+    "torchfits_shape": [
+      100,
+      100
+    ],
+    "torchfits_dtype": "torch.int16",
+    "astropy_time": 0.0009042666667179825,
+    "astropy_std": 6.315330468406197e-05,
+    "fitsio_time": 0.0014795303332751548,
+    "fitsio_std": 0.001893843034321571,
+    "vs_astropy": 14.430247771341515,
+    "vs_fitsio": 23.610280108925526
+  },
+  {
+    "shape": [
+      1000,
+      1000
+    ],
+    "dtype": "float32",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 3.8177490234375,
+    "torchfits_time": 0.0012287930000335716,
+    "torchfits_std": 0.0017290187721728017,
+    "torchfits_shape": [
+      1000,
+      1000
+    ],
+    "torchfits_dtype": "torch.float32",
+    "astropy_time": 0.0038672809999601063,
+    "astropy_std": 0.001412977378707841,
+    "fitsio_time": 0.0024577319999631677,
+    "fitsio_std": 0.00012206755169017387,
+    "vs_astropy": 3.1472192630121176,
+    "vs_fitsio": 2.0001188156963954
+  },
+  {
+    "shape": [
+      1000,
+      1000
+    ],
+    "dtype": "int16",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 1.91162109375,
+    "torchfits_time": 0.00022909000009955585,
+    "torchfits_std": 0.0003158885368095213,
+    "torchfits_shape": [
+      1000,
+      1000
+    ],
+    "torchfits_dtype": "torch.int16",
+    "astropy_time": 0.0014550346666813614,
+    "astropy_std": 0.00011796359053892566,
+    "fitsio_time": 0.0020479856666497653,
+    "fitsio_std": 3.691845102996144e-05,
+    "vs_astropy": 6.351367000083136,
+    "vs_fitsio": 8.93965544440949
+  },
+  {
+    "shape": [
+      1000,
+      1000
+    ],
+    "dtype": "float64",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 7.63275146484375,
+    "torchfits_time": 0.0022733350000028927,
+    "torchfits_std": 0.003205385629471719,
+    "torchfits_shape": [
+      1000,
+      1000
+    ],
+    "torchfits_dtype": "torch.float64",
+    "astropy_time": 0.0038648466666018066,
+    "astropy_std": 0.0010191175829612085,
+    "fitsio_time": 0.0035634640000049935,
+    "fitsio_std": 0.00032324058208780876,
+    "vs_astropy": 1.7000779324634903,
+    "vs_fitsio": 1.5675050091607525
+  },
+  {
+    "shape": [
+      2000,
+      2000
+    ],
+    "dtype": "float32",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 15.26275634765625,
+    "torchfits_time": 0.0034362263332544294,
+    "torchfits_std": 0.004847977547282288,
+    "torchfits_shape": [
+      2000,
+      2000
+    ],
+    "torchfits_dtype": "torch.float32",
+    "astropy_time": 0.007976489000081225,
+    "astropy_std": 0.00220672647457258,
+    "fitsio_time": 0.01077329133325596,
+    "fitsio_std": 0.0006997956745999546,
+    "vs_astropy": 2.321293252102733,
+    "vs_fitsio": 3.1352100497561346
+  },
+  {
+    "shape": [
+      2000,
+      2000
+    ],
+    "dtype": "int16",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 7.63275146484375,
+    "torchfits_time": 0.0010094096667216945,
+    "torchfits_std": 0.001417481969476226,
+    "torchfits_shape": [
+      2000,
+      2000
+    ],
+    "torchfits_dtype": "torch.int16",
+    "astropy_time": 0.0033242596666696045,
+    "astropy_std": 0.00035067294450333145,
+    "fitsio_time": 0.008813338666717149,
+    "fitsio_std": 0.0001190771997243087,
+    "vs_astropy": 3.293271083351077,
+    "vs_fitsio": 8.731181161896961
+  },
+  {
+    "shape": [
+      1000,
+      1000
+    ],
+    "dtype": "float32",
+    "compressed": true,
+    "scaled": false,
+    "file_size_mb": 0.85693359375,
+    "torchfits_time": 0.00012979133324127665,
+    "torchfits_std": 0.0001753550304237299,
+    "torchfits_shape": [],
+    "torchfits_dtype": "torch.uint8",
+    "astropy_time": 0.0007577583332931681,
+    "astropy_std": 0.00013906250462263208,
+    "fitsio_time": 0.03545400233338114,
+    "fitsio_std": 0.0047913995263839035,
+    "vs_astropy": 5.8382814504611575,
+    "vs_fitsio": 273.1615543810898
+  },
+  {
+    "shape": [
+      1000,
+      1000
+    ],
+    "dtype": "int16",
+    "compressed": true,
+    "scaled": false,
+    "file_size_mb": 1.1370849609375,
+    "torchfits_time": 8.158933337654162e-05,
+    "torchfits_std": 0.0001098647621095279,
+    "torchfits_shape": [],
+    "torchfits_dtype": "torch.uint8",
+    "astropy_time": 0.0007982836666542426,
+    "astropy_std": 0.0002083300830670923,
+    "fitsio_time": 0.027669437999975344,
+    "fitsio_std": 0.0001579644093844744,
+    "vs_astropy": 9.784167042646327,
+    "vs_fitsio": 339.1305806149753
+  },
+  {
+    "shape": [
+      2000,
+      2000
+    ],
+    "dtype": "int16",
+    "compressed": false,
+    "scaled": true,
+    "file_size_mb": 7.63275146484375,
+    "torchfits_time": 0.001992573666636114,
+    "torchfits_std": 0.0028064594906356,
+    "torchfits_shape": [
+      2000,
+      2000
+    ],
+    "torchfits_dtype": "torch.float32",
+    "astropy_time": 0.0088031676667318,
+    "astropy_std": 0.0011751202024569232,
+    "fitsio_time": 0.024013456999985767,
+    "fitsio_std": 0.0007428540144340433,
+    "vs_astropy": 4.417988561292899,
+    "vs_fitsio": 12.051477645253419
+  },
+  {
+    "shape": [
+      2000,
+      2000
+    ],
+    "dtype": "float32",
+    "compressed": false,
+    "scaled": false,
+    "file_size_mb": 15.26275634765625,
+    "torchfits_time": 0.002249194333292811,
+    "torchfits_std": 0.0031678617708973183,
+    "torchfits_shape": [
+      2000,
+      2000
+    ],
+    "torchfits_dtype": "torch.float32",
+    "astropy_time": 0.008292855666695687,
+    "astropy_std": 0.0020121197831666706,
+    "fitsio_time": 0.011982929666676986,
+    "fitsio_std": 0.0004946690889890347,
+    "vs_astropy": 3.6870338609447684,
+    "vs_fitsio": 5.327654213468531
+  }
+]
