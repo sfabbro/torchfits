@@ -4,6 +4,7 @@
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
 #include <wcslib/wcsfix.h>
+#include <wcslib/cel.h>
 #include <omp.h>
 
 #ifndef M_PI
@@ -86,7 +87,7 @@ public:
         }
         
         // Pre-compute matrices for GPU optimization
-        // precompute_matrices(); // Removed
+        precompute_matrices();
     }
     
     ~WCS() {
@@ -256,13 +257,227 @@ public:
 
 private:
     // Cached matrices for GPU optimization
-    // double cd_matrix_[4];
-    // double cd_matrix_inv_[4];
-    // bool is_linear_wcs_ = false;
+    double cd_matrix_[4];
+    double cd_matrix_inv_[4];
+    double rotation_matrix_[9];
+    double crpix_[2];
+    bool is_tan_projection_ = false;
     
-    // void precompute_matrices() { ... } // Removed
+    // Helper to compute inverse of 2x2 matrix
+    void invert_2x2(const double* m, double* inv) {
+        double det = m[0]*m[3] - m[1]*m[2];
+        if (std::abs(det) < 1e-10) {
+            inv[0] = inv[1] = inv[2] = inv[3] = 0;
+            return;
+        }
+        double inv_det = 1.0 / det;
+        inv[0] =  m[3] * inv_det;
+        inv[1] = -m[1] * inv_det;
+        inv[2] = -m[2] * inv_det;
+        inv[3] =  m[0] * inv_det;
+    }
 
+    void precompute_matrices() {
         // Only for 2D
+        if (wcs_->naxis != 2) return;
+
+        // Check for TAN projection
+        bool is_tan = false;
+        const char* ctype1 = wcs_->ctype[0];
+        const char* ctype2 = wcs_->ctype[1];
+
+        // Basic check for -TAN suffix
+        if (strlen(ctype1) >= 8 && strncmp(ctype1 + 4, "-TAN", 4) == 0 &&
+            strlen(ctype2) >= 8 && strncmp(ctype2 + 4, "-TAN", 4) == 0) {
+            is_tan = true;
+        }
+
+        if (!is_tan) {
+            is_tan_projection_ = false;
+            return;
+        }
+
+        // 1. Extract CD Matrix (PC * CDELT)
+        // wcs->pc is naxis * naxis (2x2)
+        // cd[i][j] = pc[i][j] * cdelt[i]
+        // Note: pc is row-major in wcslib logic for access but let's verify storage
+        // wcslib: pc is double*, element (i,j) is pc[i*naxis + j]
+
+        cd_matrix_[0] = wcs_->pc[0] * wcs_->cdelt[0];
+        cd_matrix_[1] = wcs_->pc[1] * wcs_->cdelt[0];
+        cd_matrix_[2] = wcs_->pc[2] * wcs_->cdelt[1];
+        cd_matrix_[3] = wcs_->pc[3] * wcs_->cdelt[1];
+
+        // Invert CD matrix
+        invert_2x2(cd_matrix_, cd_matrix_inv_);
+
+        // 2. Extract CRPIX
+        crpix_[0] = wcs_->crpix[0];
+        crpix_[1] = wcs_->crpix[1];
+
+        // 3. Compute Rotation Matrix via Probe
+        // We probe 3 native unit vectors: (1,0,0), (0,1,0), (0,0,1)
+        // Corresponding native spherical (phi, theta) in degrees:
+        // (1,0,0) -> phi=0, theta=0
+        // (0,1,0) -> phi=90, theta=0
+        // (0,0,1) -> phi=0, theta=90
+
+        double native_phi[3] = {0.0, 90.0, 0.0};
+        double native_theta[3] = {0.0, 0.0, 90.0};
+
+        double cel_lng[3];
+        double cel_lat[3];
+        int stat[3];
+
+        // Use wcs->cel structure to transform native spherical to celestial spherical
+        // stride = 1
+        if (cels2s(&wcs_->cel, 3, 1, native_phi, native_theta, cel_lng, cel_lat, stat) != 0) {
+            is_tan_projection_ = false;
+            return;
+        }
+
+        // Convert celestial results to Cartesian unit vectors (columns of R)
+        for (int i = 0; i < 3; i++) {
+            double lng_rad = cel_lng[i] * M_PI / 180.0;
+            double lat_rad = cel_lat[i] * M_PI / 180.0;
+
+            double x = cos(lat_rad) * cos(lng_rad);
+            double y = cos(lat_rad) * sin(lng_rad);
+            double z = sin(lat_rad);
+
+            // Store in column i
+            rotation_matrix_[0 * 3 + i] = x;
+            rotation_matrix_[1 * 3 + i] = y;
+            rotation_matrix_[2 * 3 + i] = z;
+        }
+
+        is_tan_projection_ = true;
+    }
+
+    bool is_simple_projection() const {
+        return is_tan_projection_;
+    }
+
+    torch::Tensor pixel_to_world_gpu(const torch::Tensor& pixels) {
+        auto device = pixels.device();
+        auto options = torch::TensorOptions().dtype(torch::kFloat64).device(device);
+
+        // 1. Apply Linear Transform
+        auto crpix = torch::from_blob(crpix_, {2}, torch::kFloat64).to(device);
+        auto p = pixels - crpix;
+
+        auto cd = torch::from_blob(cd_matrix_, {2, 2}, torch::kFloat64).to(device);
+        // intermediate = p @ cd.T
+        auto intermediate = torch::matmul(p, cd.t());
+
+        auto x = intermediate.select(1, 0);
+        auto y = intermediate.select(1, 1);
+
+        // 2. Deproject TAN
+        auto r = torch::sqrt(x*x + y*y);
+
+        // Avoid division by zero or singularity at r=0
+        // For r=0, theta should be 90 deg.
+        // atan2(180/pi, 0) = pi/2. Correct.
+        double rad_deg = 180.0 / M_PI;
+        auto theta_native = torch::atan2(torch::tensor(rad_deg, options), r);
+        auto phi_native = torch::atan2(x, -y);
+
+        // 3. Convert Native Spherical to Cartesian Unit Vector
+        auto cos_theta = torch::cos(theta_native);
+        auto sin_theta = torch::sin(theta_native);
+        auto cos_phi = torch::cos(phi_native);
+        auto sin_phi = torch::sin(phi_native);
+
+        auto ux = cos_theta * cos_phi;
+        auto uy = cos_theta * sin_phi;
+        auto uz = sin_theta;
+
+        auto u_native = torch::stack({ux, uy, uz}, 1);
+
+        // 4. Rotate to Celestial
+        auto R = torch::from_blob(rotation_matrix_, {3, 3}, torch::kFloat64).to(device);
+        auto u_cel = torch::matmul(u_native, R.t());
+
+        // 5. Convert Celestial Unit Vector to Spherical
+        auto cx = u_cel.select(1, 0);
+        auto cy = u_cel.select(1, 1);
+        auto cz = u_cel.select(1, 2);
+
+        cz = torch::clamp(cz, -1.0, 1.0);
+
+        auto alpha_rad = torch::atan2(cy, cx);
+        auto delta_rad = torch::asin(cz);
+
+        auto alpha = alpha_rad * rad_deg;
+        auto delta = delta_rad * rad_deg;
+
+        alpha = torch::remainder(alpha, 360.0);
+
+        return torch::stack({alpha, delta}, 1);
+    }
+
+    torch::Tensor world_to_pixel_gpu(const torch::Tensor& world) {
+        auto device = world.device();
+        auto options = torch::TensorOptions().dtype(torch::kFloat64).device(device);
+        double rad_deg = 180.0 / M_PI;
+        double deg_rad = M_PI / 180.0;
+
+        auto alpha = world.select(1, 0);
+        auto delta = world.select(1, 1);
+
+        auto alpha_rad = alpha * deg_rad;
+        auto delta_rad = delta * deg_rad;
+
+        // 1. Celestial Spherical -> Cartesian
+        auto cx = torch::cos(delta_rad) * torch::cos(alpha_rad);
+        auto cy = torch::cos(delta_rad) * torch::sin(alpha_rad);
+        auto cz = torch::sin(delta_rad);
+
+        auto u_cel = torch::stack({cx, cy, cz}, 1);
+
+        // 2. Rotate to Native
+        // u_native = u_cel @ R (since R maps Native -> Cel, and is orthogonal)
+        auto R = torch::from_blob(rotation_matrix_, {3, 3}, torch::kFloat64).to(device);
+        auto u_native = torch::matmul(u_cel, R);
+
+        auto ux = u_native.select(1, 0);
+        auto uy = u_native.select(1, 1);
+        auto uz = u_native.select(1, 2);
+
+        // 3. Native Cartesian -> Spherical
+        uz = torch::clamp(uz, -1.0, 1.0);
+        auto theta_native = torch::asin(uz);
+        auto phi_native = torch::atan2(uy, ux);
+
+        // 4. Project TAN
+        // r = (180/pi) / tan(theta)
+        // Check for theta=pi/2 (pole) -> r=0
+        // tan(pi/2) is inf.
+        // We use cot(theta) = tan(pi/2 - theta)?
+        // r = (180/pi) * cot(theta)
+        // cot(theta) = cos(theta)/sin(theta)
+        auto r = (rad_deg * torch::cos(theta_native)) / torch::sin(theta_native);
+
+        // If theta is very close to 90 deg, r -> 0.
+        // If theta is 0 (equator), r -> inf.
+        // TAN diverges at equator (theta=0).
+
+        auto x = r * torch::sin(phi_native);
+        auto y = -r * torch::cos(phi_native); // Note minus sign in FITS TAN definition
+
+        auto intermediate = torch::stack({x, y}, 1);
+
+        // 5. Inverse Linear Transform
+        auto cd_inv = torch::from_blob(cd_matrix_inv_, {2, 2}, torch::kFloat64).to(device);
+        // d = intermediate @ cd_inv.T
+        auto d = torch::matmul(intermediate, cd_inv.t());
+
+        auto crpix = torch::from_blob(crpix_, {2}, torch::kFloat64).to(device);
+        auto pixels = d + crpix;
+
+        return pixels;
+    }
     
 public:
     // Getters for WCS properties
