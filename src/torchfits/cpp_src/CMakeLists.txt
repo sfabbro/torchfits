@@ -4,6 +4,12 @@ project(torchfits_cpp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add environment prefix to search path (important for pixi/conda)
+if(DEFINED ENV{PREFIX})
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{PREFIX}")
+    message(STATUS "Added environment prefix to CMAKE_PREFIX_PATH: $ENV{PREFIX}")
+endif()
+
 # Find required packages
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
@@ -180,6 +186,9 @@ if(TARGET cfitsio)
 else()
     target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
     target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
+    if(CFITSIO_LIBRARY_DIRS)
+        target_link_directories(cpp PRIVATE ${CFITSIO_LIBRARY_DIRS})
+    endif()
 endif()
 target_link_libraries(cpp PRIVATE ZLIB::ZLIB)
 
@@ -191,6 +200,14 @@ target_compile_definitions(cpp PRIVATE HAS_CFITSIO)
 if(WCSLIB_LIBRARY)
     target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARY})
     target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIR})
+    target_compile_definitions(cpp PRIVATE HAS_WCSLIB)
+elseif(WCSLIB_FOUND)
+    # PkgConfig path
+    target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARIES})
+    target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIRS})
+    if(WCSLIB_LIBRARY_DIRS)
+        target_link_directories(cpp PRIVATE ${WCSLIB_LIBRARY_DIRS})
+    endif()
     target_compile_definitions(cpp PRIVATE HAS_WCSLIB)
 endif()
 

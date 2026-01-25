@@ -18,23 +18,7 @@ def test_security_cve_cfitsio_command_injection():
 
     for filename in dangerous_filenames:
         with pytest.raises(RuntimeError, match="Security Error"):
-            try:
-                # We expect this to fail with our specific security error.
-                # If it fails with FileNotFoundError, that means the check was bypassed
-                # (and cfitsio tried to open it as a file).
-                # If it executes the command, we have a problem.
-                torchfits.read(filename)
-            except FileNotFoundError:
-                pytest.fail(f"Security check bypassed for filename: {filename} (got FileNotFoundError)")
-            except Exception as e:
-                # Check if it's our security error
-                if "Security Error" in str(e):
-                    pass # Test passed
-                elif "does not exist" in str(e) or "No such file" in str(e):
-                     pytest.fail(f"Security check bypassed for filename: {filename} (got {e})")
-                else:
-                    # Reraise to see what happened (maybe it was the security error wrapped differently)
-                    raise e
+            torchfits.read(filename)
 
 def test_valid_filenames_allowed():
     """Test that normal filenames are still allowed."""

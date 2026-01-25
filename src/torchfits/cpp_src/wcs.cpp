@@ -68,7 +68,7 @@ public:
         }
 
         // Apply standard corrections (e.g. date formats, TPV aliases, etc.)
-        int stat_fix[WCSFIX_NWCS]; // Status return for wcsfix
+        int stat_fix[NWCSFIX]; // Status return for wcsfix
         // ctrl=1 (CDCXX), naxis=0 (default)
         // Note: checking return status might be noisy for minor fixes, but usually safe to ignore usually unless critical
         wcsfix(1, 0, wcs_, stat_fix);
