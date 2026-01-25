@@ -123,8 +123,8 @@ class CPPBackendBenchmark:
                         array = hdul[0].data
                         if array is not None:
                             # Ensure native byte order for PyTorch
-                            if array.dtype.byteorder not in ('=', '|'):
-                                array = array.astype(array.dtype.newbyteorder('='))
+                            if array.dtype.byteorder not in ("=", "|"):
+                                array = array.astype(array.dtype.newbyteorder("="))
                             tensor = torch.from_numpy(array)
                     end = time.perf_counter()
                     times.append(end - start)
@@ -139,8 +139,8 @@ class CPPBackendBenchmark:
                     start = time.perf_counter()
                     array = fitsio.read(filepath)
                     # Ensure native byte order for PyTorch
-                    if array.dtype.byteorder not in ('=', '|'):
-                        array = array.astype(array.dtype.newbyteorder('='))
+                    if array.dtype.byteorder not in ("=", "|"):
+                        array = array.astype(array.dtype.newbyteorder("="))
                     tensor = torch.from_numpy(array)
                     end = time.perf_counter()
                     times.append(end - start)
@@ -227,8 +227,8 @@ class CPPBackendBenchmark:
                     with astropy_fits.open(filepath) as hdul:
                         full_data = hdul[0].data
                         subset = full_data[1000:2000, 1000:2000]
-                        if subset.dtype.byteorder not in ('=', '|'):
-                            subset = subset.astype(subset.dtype.newbyteorder('='))
+                        if subset.dtype.byteorder not in ("=", "|"):
+                            subset = subset.astype(subset.dtype.newbyteorder("="))
                         torch.from_numpy(subset)
                     end = time.perf_counter()
                     times.append(end - start)

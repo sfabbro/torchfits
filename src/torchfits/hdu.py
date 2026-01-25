@@ -192,7 +192,13 @@ class TensorHDU:
             return str(self._data.dtype).replace("torch.", "")
         elif self._file_handle:
             bitpix = self.header.get("BITPIX", 0)
-            mapping = {8: "uint8", 16: "int16", 32: "int32", -32: "float32", -64: "float64"}
+            mapping = {
+                8: "uint8",
+                16: "int16",
+                32: "int32",
+                -32: "float32",
+                -64: "float64",
+            }
             return mapping.get(bitpix, str(bitpix))
         return "unknown"
 
@@ -460,7 +466,9 @@ class TableHDU(TensorFrame):
 
     def __repr__(self):
         name = self.header.get("EXTNAME", "TABLE")
-        return f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
+        return (
+            f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
+        )
 
 
 class HDUList:
@@ -664,7 +672,11 @@ class HDUList:
                     hdu_type = "ImageHDU"
 
             # Cards
-            cards = len(hdu.header._cards) if hasattr(hdu.header, '_cards') else len(hdu.header)
+            cards = (
+                len(hdu.header._cards)
+                if hasattr(hdu.header, "_cards")
+                else len(hdu.header)
+            )
 
             # Dimensions & Format
             if isinstance(hdu, TableHDU):
@@ -677,7 +689,9 @@ class HDUList:
                 dims = ""
                 fmt = ""
 
-            lines.append(f"{idx:<6d} {name:<12s} {hdu_type:<10s} {cards:<7d} {dims:<12s} {fmt}")
+            lines.append(
+                f"{idx:<6d} {name:<12s} {hdu_type:<10s} {cards:<7d} {dims:<12s} {fmt}"
+            )
 
         return "\n".join(lines)
 

@@ -2,6 +2,7 @@ import pytest
 import os
 import torchfits
 
+
 def test_security_cve_cfitsio_command_injection():
     """
     Test that filenames starting or ending with '|' are rejected to prevent
@@ -20,6 +21,7 @@ def test_security_cve_cfitsio_command_injection():
         with pytest.raises(RuntimeError, match="Security Error"):
             torchfits.read(filename)
 
+
 def test_valid_filenames_allowed():
     """Test that normal filenames are still allowed."""
     # We can't easily test success without a real file, but we can verify
@@ -29,6 +31,6 @@ def test_valid_filenames_allowed():
     except RuntimeError as e:
         assert "Security Error" not in str(e)
     except FileNotFoundError:
-        pass # Expected
+        pass  # Expected
     except Exception:
-        pass # Other errors are fine, as long as not Security Error
+        pass  # Other errors are fine, as long as not Security Error
