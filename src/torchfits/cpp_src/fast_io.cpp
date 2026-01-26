@@ -17,6 +17,25 @@
 #include <arm_neon.h>
 #endif
 
+// Define TARGET_CLONES macro to enable Function Multi-Versioning (FMV)
+// This allows auto-dispatching to AVX2 optimized versions on capable hardware
+// while maintaining compatibility with older CPUs via the default path.
+// This relies on the compiler auto-vectorizing the scalar fallback loop
+// when compiling the 'avx2' clone.
+#if defined(__x86_64__)
+  #if defined(__has_attribute)
+    #if __has_attribute(target_clones)
+      #define TARGET_CLONES __attribute__((target_clones("avx2", "default")))
+    #endif
+  #elif defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 6)
+      #define TARGET_CLONES __attribute__((target_clones("avx2", "default")))
+  #endif
+#endif
+
+#ifndef TARGET_CLONES
+#define TARGET_CLONES
+#endif
+
 namespace torchfits {
 
 
@@ -61,6 +80,7 @@ torch::Tensor read_image_mmap_impl(const std::string& filename, int naxis, long*
 }
 
 // Implementations for specific types
+TARGET_CLONES
 torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int16_t, float>(filename, naxis, naxes, datastart, [&](const int16_t* in, float* out, long n) {
         #ifdef __aarch64__
@@ -96,6 +116,7 @@ torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, in
     });
 }
 
+TARGET_CLONES
 torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int32_t, float>(filename, naxis, naxes, datastart, [&](const int32_t* in, float* out, long n) {
         #ifdef __aarch64__
@@ -122,6 +143,7 @@ torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, in
     });
 }
 
+TARGET_CLONES
 torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int32_t, float>(filename, naxis, naxes, datastart, [&](const int32_t* in, float* out, long n) {
         // Note: we read as int32 then reinterpret bits
@@ -153,6 +175,7 @@ torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, 
     });
 }
 
+TARGET_CLONES
 torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int64_t, double>(filename, naxis, naxes, datastart, [&](const int64_t* in, double* out, long n) {
         // Read as int64, reinterpret as double
