@@ -697,7 +697,15 @@ class HDUList:
 
     def _repr_html_(self):
         """HTML representation for Jupyter notebooks."""
-        html = ["<table style='border-collapse: collapse; width: 100%;'><thead><tr>"]
+        filename = "(No file associated)"
+        if self._file_handle and hasattr(self._file_handle, "name"):
+            filename = self._file_handle.name
+
+        html = [
+            "<table style='border-collapse: collapse; width: 100%;'>",
+            f"<caption style='text-align: left; padding-bottom: 8px; font-weight: bold;'>Filename: {filename}</caption>",
+            "<thead><tr>",
+        ]
         headers = ["No.", "Name", "Type", "Cards", "Dimensions", "Format"]
         styles = (
             ["text-align: left;"] * 3
@@ -706,7 +714,7 @@ class HDUList:
         )
         for h, s in zip(headers, styles):
             html.append(
-                f"<th style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
+                f"<th scope='col' style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
             )
         html.append("</tr></thead><tbody>")
 
@@ -732,9 +740,10 @@ class HDUList:
 
             row = [idx, name, hdu_type, cards, dims, fmt]
             html.append("<tr>")
-            for val, s in zip(row, styles):
+            for i, (val, s) in enumerate(zip(row, styles)):
+                scope_attr = " scope='row'" if i == 0 else ""
                 html.append(
-                    f"<td style='{s} padding: 4px; border-bottom: 1px solid #eee;'>{val}</td>"
+                    f"<td{scope_attr} style='{s} padding: 4px; border-bottom: 1px solid #eee;'>{val}</td>"
                 )
             html.append("</tr>")
 
