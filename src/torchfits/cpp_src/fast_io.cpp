@@ -10,6 +10,7 @@
 #include <iostream>
 #include <cstring>
 #include "hardware.h"
+#include "fits_utils.h"
 
 #ifdef __x86_64__
 #include <immintrin.h>
@@ -189,6 +190,8 @@ torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, i
 }
 
 torch::Tensor read_image_fast(const std::string& filename, int hdu_num, bool use_mmap) {
+    torchfits::validate_fits_filename(filename);
+
     if (!use_mmap) {
         throw std::runtime_error("Standard I/O not implemented in fast path");
     }

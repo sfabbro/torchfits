@@ -24,6 +24,7 @@
 
 #include <fitsio.h>
 #include "hardware.h"
+#include "fits_utils.h"
 #include "torch_compat.h"
 
 #ifdef HAS_OPENMP
@@ -105,6 +106,7 @@ struct ColumnInfo {
 class TableReader {
 public:
     TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num) {
+        validate_fits_filename(filename_);
         int status = 0;
         fits_open_file(&fptr_, filename.c_str(), READONLY, &status);
         if (status != 0) {
@@ -1108,6 +1110,7 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
 
 
 void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
+    torchfits::validate_fits_filename(filename);
     fitsfile* fptr;
     int status = 0;
 
@@ -1133,6 +1136,7 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
 
 
 void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
+    torchfits::validate_fits_filename(filename);
     fitsfile* fptr;
     int status = 0;
 
