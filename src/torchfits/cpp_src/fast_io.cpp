@@ -179,12 +179,32 @@ TARGET_CLONES
 torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int64_t, double>(filename, naxis, naxes, datastart, [&](const int64_t* in, double* out, long n) {
         // Read as int64, reinterpret as double
+        #ifdef __aarch64__
+        long i = 0;
+        float64x2_t vscale = vdupq_n_f64(bscale);
+        float64x2_t vzero = vdupq_n_f64(bzero);
+        for (; i <= n - 2; i += 2) {
+            int64x2_t raw = vld1q_s64(in + i);
+            int8x16_t raw_bytes = vreinterpretq_s8_s64(raw);
+            int8x16_t swapped_bytes = vrev64q_s8(raw_bytes);
+            float64x2_t fval = vreinterpretq_f64_s8(swapped_bytes);
+            fval = vmlaq_f64(vzero, fval, vscale);
+            vst1q_f64(out + i, fval);
+        }
+        for (; i < n; ++i) {
+            int64_t val = bswap_64(in[i]);
+            double dval;
+            std::memcpy(&dval, &val, 8);
+            out[i] = dval * bscale + bzero;
+        }
+        #else
         for (long i = 0; i < n; ++i) {
             int64_t val = bswap_64(in[i]);
             double dval;
             std::memcpy(&dval, &val, 8);
             out[i] = dval * bscale + bzero;
         }
+        #endif
     });
 }
 
