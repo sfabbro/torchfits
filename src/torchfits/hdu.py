@@ -8,6 +8,7 @@ This module implements the main data structures for FITS HDUs:
 - Header: FITS header management
 """
 
+import html as html_lib
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
@@ -103,6 +104,53 @@ class Header(dict):
 
     def get_comment(self):
         return [c[1] for c in self._cards if c[0] == "COMMENT"]
+
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        lines = [
+            f"<p><strong>FITS Header</strong> ({len(self._cards)} cards)</p>",
+            "<div style='max-height: 400px; overflow-y: auto; border: 1px solid #ddd;'>",
+            "<table style='border-collapse: collapse; width: 100%; font-family: monospace; font-size: 12px;'>",
+            "<thead style='position: sticky; top: 0; background-color: #f5f5f5; z-index: 1;'>",
+            "<tr>",
+        ]
+        headers = ["Key", "Value", "Comment"]
+        for h in headers:
+            lines.append(
+                f"<th scope='col' style='text-align: left; padding: 6px; border-bottom: 2px solid #ccc;'>{h}</th>"
+            )
+
+        lines.append("</tr></thead><tbody>")
+
+        for i, card in enumerate(self._cards):
+            if len(card) == 3:
+                k, v, c = card
+            elif len(card) == 2:
+                k, v = card
+                c = ""
+            else:
+                continue
+
+            bg_color = "#ffffff" if i % 2 == 0 else "#f9f9f9"
+
+            k_str = html_lib.escape(str(k))
+            v_str = html_lib.escape(str(v))
+            c_str = html_lib.escape(str(c)) if c else ""
+
+            lines.append(f"<tr style='background-color: {bg_color};'>")
+            lines.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee; font-weight: bold; color: #0056b3; white-space: nowrap;'>{k_str}</td>"
+            )
+            lines.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee; color: #333; word-break: break-all;'>{v_str}</td>"
+            )
+            lines.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee; color: #666; font-style: italic;'>{c_str}</td>"
+            )
+            lines.append("</tr>")
+
+        lines.append("</tbody></table></div>")
+        return "".join(lines)
 
 
 class DataView:
@@ -750,7 +798,7 @@ class HDUList:
         )
         for h, s in zip(headers, styles):
             html.append(
-                f"<th style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
+                f"<th scope='col' style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
             )
         html.append("</tr></thead><tbody>")
 
