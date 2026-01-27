@@ -10,6 +10,7 @@
 #include <torch/torch.h>
 #include <fitsio.h>
 #include "hardware.h"
+#include "fits_utils.h"
 #include "cache.cpp"
 
 namespace nb = nanobind;
@@ -52,16 +53,7 @@ class FITSFileV2 {
 public:
     FITSFileV2(const char* filename, int mode) : filename_(filename) {
         // Security check: Prevent command injection via cfitsio pipe syntax
-        if (!filename_.empty()) {
-            size_t first = filename_.find_first_not_of(" \t");
-            size_t last = filename_.find_last_not_of(" \t");
-
-            if (first != std::string::npos) {
-                if (filename_[first] == '|' || filename_[last] == '|') {
-                     throw std::runtime_error("Security Error: Filenames starting or ending with '|' are not allowed to prevent command execution.");
-                }
-            }
-        }
+        torchfits::validate_fits_filename(filename_);
 
         int status = 0;
         if (mode == 0) {
