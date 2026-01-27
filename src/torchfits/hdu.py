@@ -25,6 +25,7 @@ class Header(dict):
 
     def __init__(self, cards=None):
         super().__init__()
+        self._version = 0
         self._cards = []  # List of (key, value, comment)
         if cards:
             if isinstance(cards, dict):
@@ -58,6 +59,37 @@ class Header(dict):
                         pass
                     else:
                         self[k] = v
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self._version += 1
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self._version += 1
+
+    def update(self, *args, **kwargs):
+        super().update(*args, **kwargs)
+        self._version += 1
+
+    def clear(self):
+        super().clear()
+        self._version += 1
+
+    def pop(self, *args):
+        res = super().pop(*args)
+        self._version += 1
+        return res
+
+    def popitem(self):
+        res = super().popitem()
+        self._version += 1
+        return res
+
+    def setdefault(self, key, default=None):
+        res = super().setdefault(key, default)
+        self._version += 1
+        return res
 
     def add_history(self, value):
         self._cards.append(("HISTORY", value, ""))
@@ -124,6 +156,8 @@ class TensorHDU:
         self._file_handle = file_handle
         self._hdu_index = hdu_index
         self._data_view = DataView(file_handle, hdu_index) if file_handle else None
+        self._wcs_cache = None
+        self._wcs_version = -1
 
     @property
     def data(self) -> DataView:
@@ -138,9 +172,19 @@ class TensorHDU:
     @property
     def wcs(self):
         """WCS object for coordinate transformations."""
-        from .wcs import WCS
+        current_version = getattr(self._header, "_version", None)
+        if current_version is None:
+            # Header does not support versioning (e.g. plain dict), disable caching
+            from .wcs import WCS
 
-        return WCS(self._header)
+            return WCS(self._header)
+
+        if self._wcs_cache is None or self._wcs_version != current_version:
+            from .wcs import WCS
+
+            self._wcs_cache = WCS(self._header)
+            self._wcs_version = current_version
+        return self._wcs_cache
 
     def to_tensor(self, device: str = "cpu") -> Tensor:
         if self._data is not None:
