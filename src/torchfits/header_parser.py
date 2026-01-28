@@ -72,25 +72,70 @@ class FastHeaderParser:
             return {}
 
         header = {}
-        cards = cls._split_into_cards(header_string)
 
-        for card in cards:
-            if not card.strip():
+        # Iterate over 80-character cards directly to avoid list allocation
+        for i in range(0, len(header_string), 80):
+            card = header_string[i : i + 80]
+            if len(card) < 80:
+                card = card.ljust(80)  # Pad short cards
+
+            # Fast skip empty/space cards
+            if card.isspace():
                 continue
 
-            keyword, value, comment = cls._parse_card(card)
-            if keyword:
-                header[keyword] = value
+            # Stop at END card to save processing padding
+            if card.startswith("END     "):
+                break
 
-                # Store comment separately if present
-                if comment and comment.strip():
-                    header[f"{keyword}_COMMENT"] = comment.strip()
+            # Handle comment-only cards (COMMENT, HISTORY, etc.)
+            if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+                keyword = card[:8].strip()
+                value = card[8:].strip()
+                if keyword:
+                    # Note: Original behavior overwrites duplicates.
+                    # FITS standard allows multiple COMMENT/HISTORY.
+                    # We preserve original behavior here.
+                    header[keyword] = value
+                continue
+
+            # Look for equals sign at position 8 (standard FITS keyword)
+            if len(card) > 8 and card[8] == "=":
+                keyword = card[:8].strip()
+                value_comment = card[9:].strip()
+
+                # Find comment separator
+                # Inlining logic or calling optimized method?
+                # Calling optimized method is clean and fast enough now.
+                comment_start = cls._find_comment_separator(value_comment)
+                if comment_start != -1:
+                    value_str = value_comment[:comment_start].strip()
+                    comment = value_comment[comment_start + 1 :].strip()
+                else:
+                    value_str = value_comment
+                    comment = None
+
+                # Parse the value
+                value = cls._parse_value(value_str, keyword)
+                if keyword:
+                    header[keyword] = value
+
+                    # Store comment separately if present
+                    if comment:
+                        header[f"{keyword}_COMMENT"] = comment
+            else:
+                # No equals sign - might be a comment-only keyword or non-standard
+                keyword = card[:8].strip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
 
         return header
 
     @classmethod
     def _split_into_cards(cls, header_string: str) -> list:
-        """Split header string into 80-character FITS cards."""
+        """
+        Split header string into 80-character FITS cards.
+        Deprecated: Used internally by old tests or legacy code.
+        """
         cards = []
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
@@ -103,6 +148,7 @@ class FastHeaderParser:
     def _parse_card(cls, card: str) -> tuple:
         """
         Parse a single 80-character FITS card.
+        Deprecated: Inlined into parse_header_string for performance.
 
         Returns:
             (keyword, value, comment) tuple
@@ -152,14 +198,19 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
+        # Fast path: if no quotes, use built-in find
+        if "'" not in value_comment:
+            return value_comment.find('/')
+
         in_quotes = False
         i = 0
-        while i < len(value_comment):
+        n = len(value_comment)
+        while i < n:
             char = value_comment[i]
             if char == "'":
                 if (
                     in_quotes
-                    and i + 1 < len(value_comment)
+                    and i + 1 < n
                     and value_comment[i + 1] == "'"
                 ):
                     # Escaped quote inside string
@@ -188,7 +239,7 @@ class FastHeaderParser:
         if not value_str:
             return None
 
-        value_str = value_str.strip()
+        # value_str is already stripped by caller
 
         # Force string parsing for certain keywords
         if keyword in cls._STRING_KEYWORDS:
@@ -245,10 +296,11 @@ class FastHeaderParser:
         # Find the closing quote, handling escaped quotes
         content_parts = []
         i = 1  # Skip opening quote
-        while i < len(quoted_str):
+        n = len(quoted_str)
+        while i < n:
             char = quoted_str[i]
             if char == "'":
-                if i + 1 < len(quoted_str) and quoted_str[i + 1] == "'":
+                if i + 1 < n and quoted_str[i + 1] == "'":
                     # Escaped quote
                     content_parts.append("'")
                     i += 2
