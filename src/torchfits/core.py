@@ -50,7 +50,10 @@ class FITSDataTypeHandler:
         """Convert FITS BITPIX to PyTorch dtype - fast direct lookup."""
         dtype = _BITPIX_TO_TORCH.get(bitpix)
         if dtype is None:
-            raise ValueError(f"Unsupported BITPIX: {bitpix}")
+            supported = sorted(list(_BITPIX_TO_TORCH.keys()))
+            raise ValueError(
+                f"Unsupported BITPIX: {bitpix}. Supported values: {supported}"
+            )
         return dtype
 
     @staticmethod
@@ -144,7 +147,9 @@ class FITSCore:
         # Pattern: filename[hdu_index][slice_spec] - e.g., 'image.fits[1][10:20,30:40]'
         match = re.match(r"(.+?)\[(\d+)\]\[(.+?)\]", spec)
         if not match:
-            raise ValueError(f"Invalid cutout specification: {spec}")
+            raise ValueError(
+                f"Invalid cutout specification: {spec}. Expected format: 'filename[hdu][slice,slice]' e.g. 'image.fits[1][10:20,30:40]'"
+            )
 
         file_path, hdu_str, slice_str = match.groups()
         hdu_index = int(hdu_str)
@@ -164,7 +169,7 @@ class FITSCore:
                     slices.append(slice(index, index + 1))
             except ValueError as e:
                 raise ValueError(
-                    f"Invalid slice specification '{part}' in cutout spec: {spec}"
+                    f"Invalid slice specification '{part}' in cutout spec: {spec}. Use format 'start:stop' or 'index'"
                 ) from e
 
         return file_path, hdu_index, tuple(slices)

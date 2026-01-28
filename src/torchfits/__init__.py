@@ -476,24 +476,36 @@ def writeto(
     return write(path, data, header, overwrite, compress)
 
 
-def read_batch(file_paths: List[str], device: str = "cpu") -> List[Tensor]:
+def read_batch(
+    file_paths: List[str], device: str = "cpu", verbose: bool = False
+) -> List[Tensor]:
     """Read multiple FITS files in batch.
 
     Args:
         file_paths: List of file paths to read
         device: Target device for tensors
+        verbose: Whether to show progress and log warnings
 
     Returns:
         List of tensors from each file
     """
     results = []
-    for path in file_paths:
+    total = len(file_paths)
+    for i, path in enumerate(file_paths):
+        if verbose:
+            print(f"Reading file {i+1}/{total}: {path}", end="\r")
         try:
             tensor, _ = read(path, device=device)
             results.append(tensor)
-        except Exception:
-            # Skip failed files
+        except Exception as e:
+            # Skip failed files but log them
+            from .logging import logger
+
+            logger.warning(f"Failed to read file {path}: {e}")
             continue
+
+    if verbose:
+        print()  # Newline after progress
     return results
 
 
