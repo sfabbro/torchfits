@@ -13,6 +13,8 @@
 #include <sys/mount.h>
 #endif
 
+#include "validation.h"
+
 namespace torchfits {
 
 // Simplified cache entry
@@ -28,6 +30,8 @@ public:
 
     fitsfile* get_or_open(const std::string& filepath) {
         std::lock_guard<std::mutex> lock(mutex_);
+
+        validate_fits_filename(filepath);
 
         auto it = cache_.find(filepath);
         if (it != cache_.end()) {
