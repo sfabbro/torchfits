@@ -1,4 +1,5 @@
 #include <torch/torch.h>
+#include <ATen/Parallel.h>
 #include <fitsio.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -83,63 +84,67 @@ torch::Tensor read_image_mmap_impl(const std::string& filename, int naxis, long*
 TARGET_CLONES
 torch::Tensor read_image_fast_int16(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int16_t, float>(filename, naxis, naxes, datastart, [&](const int16_t* in, float* out, long n) {
-        #ifdef __aarch64__
-        // SIMD implementation
-        long i = 0;
-        float32x4_t vscale = vdupq_n_f32((float)bscale);
-        float32x4_t vzero = vdupq_n_f32((float)bzero);
-        
-        for (; i <= n - 8; i += 8) {
-            int16x8_t raw = vld1q_s16(in + i);
-            int16x8_t swapped = vreinterpretq_s16_s8(vrev16q_s8(vreinterpretq_s8_s16(raw)));
-            int16x4_t low = vget_low_s16(swapped);
-            int16x4_t high = vget_high_s16(swapped);
-            int32x4_t low32 = vmovl_s16(low);
-            int32x4_t high32 = vmovl_s16(high);
-            float32x4_t flow = vcvtq_f32_s32(low32);
-            float32x4_t fhigh = vcvtq_f32_s32(high32);
-            flow = vmlaq_f32(vzero, flow, vscale);
-            fhigh = vmlaq_f32(vzero, fhigh, vscale);
-            vst1q_f32(out + i, flow);
-            vst1q_f32(out + i + 4, fhigh);
-        }
-        for (; i < n; ++i) {
-            int16_t val = bswap_16(in[i]);
-            out[i] = val * bscale + bzero;
-        }
-        #else
-        for (long i = 0; i < n; ++i) {
-            int16_t val = bswap_16(in[i]);
-            out[i] = val * bscale + bzero;
-        }
-        #endif
+        at::parallel_for(0, n, 2048, [&](long start, long end) {
+            #ifdef __aarch64__
+            // SIMD implementation
+            long i = start;
+            float32x4_t vscale = vdupq_n_f32((float)bscale);
+            float32x4_t vzero = vdupq_n_f32((float)bzero);
+
+            for (; i <= end - 8; i += 8) {
+                int16x8_t raw = vld1q_s16(in + i);
+                int16x8_t swapped = vreinterpretq_s16_s8(vrev16q_s8(vreinterpretq_s8_s16(raw)));
+                int16x4_t low = vget_low_s16(swapped);
+                int16x4_t high = vget_high_s16(swapped);
+                int32x4_t low32 = vmovl_s16(low);
+                int32x4_t high32 = vmovl_s16(high);
+                float32x4_t flow = vcvtq_f32_s32(low32);
+                float32x4_t fhigh = vcvtq_f32_s32(high32);
+                flow = vmlaq_f32(vzero, flow, vscale);
+                fhigh = vmlaq_f32(vzero, fhigh, vscale);
+                vst1q_f32(out + i, flow);
+                vst1q_f32(out + i + 4, fhigh);
+            }
+            for (; i < end; ++i) {
+                int16_t val = bswap_16(in[i]);
+                out[i] = val * bscale + bzero;
+            }
+            #else
+            for (long i = start; i < end; ++i) {
+                int16_t val = bswap_16(in[i]);
+                out[i] = val * bscale + bzero;
+            }
+            #endif
+        });
     });
 }
 
 TARGET_CLONES
 torch::Tensor read_image_fast_int32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int32_t, float>(filename, naxis, naxes, datastart, [&](const int32_t* in, float* out, long n) {
-        #ifdef __aarch64__
-        long i = 0;
-        float32x4_t vscale = vdupq_n_f32((float)bscale);
-        float32x4_t vzero = vdupq_n_f32((float)bzero);
-        for (; i <= n - 4; i += 4) {
-            int32x4_t raw = vld1q_s32(in + i);
-            int32x4_t swapped = vreinterpretq_s32_s8(vrev32q_s8(vreinterpretq_s8_s32(raw)));
-            float32x4_t fval = vcvtq_f32_s32(swapped);
-            fval = vmlaq_f32(vzero, fval, vscale);
-            vst1q_f32(out + i, fval);
-        }
-        for (; i < n; ++i) {
-            int32_t val = bswap_32(in[i]);
-            out[i] = val * bscale + bzero;
-        }
-        #else
-        for (long i = 0; i < n; ++i) {
-            int32_t val = bswap_32(in[i]);
-            out[i] = val * bscale + bzero;
-        }
-        #endif
+        at::parallel_for(0, n, 2048, [&](long start, long end) {
+            #ifdef __aarch64__
+            long i = start;
+            float32x4_t vscale = vdupq_n_f32((float)bscale);
+            float32x4_t vzero = vdupq_n_f32((float)bzero);
+            for (; i <= end - 4; i += 4) {
+                int32x4_t raw = vld1q_s32(in + i);
+                int32x4_t swapped = vreinterpretq_s32_s8(vrev32q_s8(vreinterpretq_s8_s32(raw)));
+                float32x4_t fval = vcvtq_f32_s32(swapped);
+                fval = vmlaq_f32(vzero, fval, vscale);
+                vst1q_f32(out + i, fval);
+            }
+            for (; i < end; ++i) {
+                int32_t val = bswap_32(in[i]);
+                out[i] = val * bscale + bzero;
+            }
+            #else
+            for (long i = start; i < end; ++i) {
+                int32_t val = bswap_32(in[i]);
+                out[i] = val * bscale + bzero;
+            }
+            #endif
+        });
     });
 }
 
@@ -147,31 +152,33 @@ TARGET_CLONES
 torch::Tensor read_image_fast_float32(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int32_t, float>(filename, naxis, naxes, datastart, [&](const int32_t* in, float* out, long n) {
         // Note: we read as int32 then reinterpret bits
-        #ifdef __aarch64__
-        long i = 0;
-        float32x4_t vscale = vdupq_n_f32((float)bscale);
-        float32x4_t vzero = vdupq_n_f32((float)bzero);
-        for (; i <= n - 4; i += 4) {
-            int32x4_t raw = vld1q_s32(in + i);
-            int32x4_t swapped = vreinterpretq_s32_s8(vrev32q_s8(vreinterpretq_s8_s32(raw)));
-            float32x4_t fval = vreinterpretq_f32_s32(swapped);
-            fval = vmlaq_f32(vzero, fval, vscale);
-            vst1q_f32(out + i, fval);
-        }
-        for (; i < n; ++i) {
-            int32_t val = bswap_32(in[i]);
-            float fval;
-            std::memcpy(&fval, &val, 4);
-            out[i] = fval * bscale + bzero;
-        }
-        #else
-        for (long i = 0; i < n; ++i) {
-            int32_t val = bswap_32(in[i]);
-            float fval;
-            std::memcpy(&fval, &val, 4);
-            out[i] = fval * bscale + bzero;
-        }
-        #endif
+        at::parallel_for(0, n, 2048, [&](long start, long end) {
+            #ifdef __aarch64__
+            long i = start;
+            float32x4_t vscale = vdupq_n_f32((float)bscale);
+            float32x4_t vzero = vdupq_n_f32((float)bzero);
+            for (; i <= end - 4; i += 4) {
+                int32x4_t raw = vld1q_s32(in + i);
+                int32x4_t swapped = vreinterpretq_s32_s8(vrev32q_s8(vreinterpretq_s8_s32(raw)));
+                float32x4_t fval = vreinterpretq_f32_s32(swapped);
+                fval = vmlaq_f32(vzero, fval, vscale);
+                vst1q_f32(out + i, fval);
+            }
+            for (; i < end; ++i) {
+                int32_t val = bswap_32(in[i]);
+                float fval;
+                std::memcpy(&fval, &val, 4);
+                out[i] = fval * bscale + bzero;
+            }
+            #else
+            for (long i = start; i < end; ++i) {
+                int32_t val = bswap_32(in[i]);
+                float fval;
+                std::memcpy(&fval, &val, 4);
+                out[i] = fval * bscale + bzero;
+            }
+            #endif
+        });
     });
 }
 
@@ -179,12 +186,14 @@ TARGET_CLONES
 torch::Tensor read_image_fast_double(const std::string& filename, int hdu_num, int naxis, long* naxes, LONGLONG datastart, double bscale, double bzero) {
     return read_image_mmap_impl<int64_t, double>(filename, naxis, naxes, datastart, [&](const int64_t* in, double* out, long n) {
         // Read as int64, reinterpret as double
-        for (long i = 0; i < n; ++i) {
-            int64_t val = bswap_64(in[i]);
-            double dval;
-            std::memcpy(&dval, &val, 8);
-            out[i] = dval * bscale + bzero;
-        }
+        at::parallel_for(0, n, 2048, [&](long start, long end) {
+            for (long i = start; i < end; ++i) {
+                int64_t val = bswap_64(in[i]);
+                double dval;
+                std::memcpy(&dval, &val, 8);
+                out[i] = dval * bscale + bzero;
+            }
+        });
     });
 }
 
