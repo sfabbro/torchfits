@@ -104,6 +104,50 @@ class Header(dict):
     def get_comment(self):
         return [c[1] for c in self._cards if c[0] == "COMMENT"]
 
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        import html
+
+        html_out = ["<div style='max-height: 400px; overflow: auto;'>"]
+        html_out.append(
+            "<table style='border-collapse: collapse; width: 100%; font-family: monospace; font-size: 12px;'>"
+        )
+        html_out.append(
+            "<thead><tr style='background: #f5f5f5; position: sticky; top: 0;'>"
+        )
+        html_out.append(
+            "<th style='text-align: left; padding: 4px; border-bottom: 2px solid #ddd;'>Key</th>"
+        )
+        html_out.append(
+            "<th style='text-align: left; padding: 4px; border-bottom: 2px solid #ddd;'>Value</th>"
+        )
+        html_out.append(
+            "<th style='text-align: left; padding: 4px; border-bottom: 2px solid #ddd;'>Comment</th>"
+        )
+        html_out.append("</tr></thead>")
+        html_out.append("<tbody>")
+
+        for card in self._cards:
+            k, v, c = card
+            k = html.escape(str(k))
+            v = html.escape(str(v))
+            c = html.escape(str(c))
+
+            html_out.append("<tr>")
+            html_out.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee; font-weight: bold; color: #007bff;'>{k}</td>"
+            )
+            html_out.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee;'>{v}</td>"
+            )
+            html_out.append(
+                f"<td style='padding: 4px; border-bottom: 1px solid #eee; color: #666;'>{c}</td>"
+            )
+            html_out.append("</tr>")
+
+        html_out.append("</tbody></table></div>")
+        return "".join(html_out)
+
 
 class DataView:
     """Lazy data accessor."""
@@ -513,6 +557,95 @@ class TableHDU(TensorFrame):
         return (
             f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
         )
+
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        import html
+
+        # Limit to 10 rows and 10 columns
+        max_rows = 10
+        max_cols = 10
+
+        columns = self.columns
+        num_rows = self.num_rows
+
+        display_cols = columns[:max_cols]
+        display_rows = min(num_rows, max_rows)
+
+        html_out = ["<div style='max-height: 300px; overflow: auto;'>"]
+        html_out.append(
+            f"<p><strong>TableHDU</strong>: {num_rows} rows x {len(columns)} columns</p>"
+        )
+        html_out.append(
+            "<table style='border-collapse: collapse; font-family: monospace; font-size: 12px;'>"
+        )
+
+        # Header
+        html_out.append("<thead><tr>")
+        html_out.append(
+            "<th style='text-align: right; padding: 4px; border-bottom: 2px solid #ddd; background: #f5f5f5;'>Idx</th>"
+        )
+        for col in display_cols:
+            html_out.append(
+                f"<th style='text-align: left; padding: 4px; border-bottom: 2px solid #ddd; background: #f5f5f5;'>{col}</th>"
+            )
+        if len(columns) > max_cols:
+            html_out.append(
+                "<th style='text-align: left; padding: 4px; border-bottom: 2px solid #ddd; background: #f5f5f5;'>...</th>"
+            )
+        html_out.append("</tr></thead>")
+
+        # Body
+        html_out.append("<tbody>")
+        for i in range(display_rows):
+            html_out.append("<tr>")
+            html_out.append(
+                f"<td style='text-align: right; padding: 4px; border-bottom: 1px solid #eee; color: #888;'>{i}</td>"
+            )
+            for col in display_cols:
+                # Get value
+                try:
+                    val = self[col][i]
+                    # Format value
+                    if hasattr(val, "item") and val.numel() == 1:
+                        val_str = (
+                            f"{val.item():.4g}"
+                            if val.is_floating_point()
+                            else str(val.item())
+                        )
+                    else:
+                        # For array columns or others, use minimal str
+                        val_str = str(val)
+                        if len(val_str) > 20:
+                            val_str = val_str[:17] + "..."
+                except Exception:
+                    val_str = "Error"
+
+                val_str = html.escape(val_str)
+                html_out.append(
+                    f"<td style='text-align: left; padding: 4px; border-bottom: 1px solid #eee;'>{val_str}</td>"
+                )
+
+            if len(columns) > max_cols:
+                html_out.append(
+                    "<td style='text-align: left; padding: 4px; border-bottom: 1px solid #eee;'>...</td>"
+                )
+            html_out.append("</tr>")
+
+        if num_rows > max_rows:
+            html_out.append("<tr>")
+            html_out.append(
+                "<td style='text-align: right; padding: 4px; color: #888;'>...</td>"
+            )
+            for _ in display_cols:
+                html_out.append("<td style='padding: 4px;'>...</td>")
+            if len(columns) > max_cols:
+                html_out.append("<td style='padding: 4px;'>...</td>")
+            html_out.append("</tr>")
+
+        html_out.append("</tbody></table>")
+        html_out.append("</div>")
+        return "".join(html_out)
 
 
 class HDUList:
