@@ -1,0 +1,3 @@
+## 2026-01-30 - [REPL Introspection for Data Structures]
+**Learning:** For data-heavy libraries (like torchfits), the "UX" is often the REPL experience. Users frequently check object state (device, shape, columns). Hiding this info in `__repr__` forces context switching. Exposing critical metadata (like tensor device or table columns) in the string representation is a high-value, low-cost UX win.
+**Action:** When working on data structures, always ensure `__repr__` provides enough context to understand the object's "physical" location (device) and content summary (columns/keys) without cluttering the output.
