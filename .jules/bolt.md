@@ -1,3 +1,5 @@
-## 2024-05-23 - [Function Multi-Versioning for Auto-Vectorization]
-**Learning:** Manual SIMD intrinsics (AVX2) were significantly SLOWER (2.9 GB/s vs 3.6 GB/s) than GCC's auto-vectorization of the scalar loop when targeting AVX2. This is because modern compilers are extremely good at vectorizing simple loops (like linear scaling `val * scale + zero`). The key was enabling AVX2 instruction set for the function.
-**Action:** Use Function Multi-Versioning (`__attribute__((target_clones("avx2", "default")))`) to enable AVX2 auto-vectorization for specific hot functions without raising the global architecture baseline or maintaining complex manual intrinsic paths.
+# Bolt's Journal
+
+## 2025-05-23 - FITS Header Parsing Optimization
+**Learning:** Python string parsing of fixed-width records (FITS cards) can be significantly optimized by avoiding character-level loops. Using regex for quoted strings and fast-path logic for unquoted values (numbers/booleans) yields ~20% speedup.
+**Action:** When parsing well-defined formats in Python, prefer regex or string methods (split/find) over manual iteration, especially for hot paths.

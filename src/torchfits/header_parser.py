@@ -152,6 +152,10 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
+        # Fast path: if no quotes, just find the first slash
+        if "'" not in value_comment:
+            return value_comment.find("/")
+
         in_quotes = False
         i = 0
         while i < len(value_comment):
@@ -204,18 +208,26 @@ class FastHeaderParser:
             return cls._parse_string_value(value_str)
 
         # 2. Logical values
-        logical_match = cls._LOGICAL_PATTERN.match(value_str)
-        if logical_match:
+        if len(value_str) == 1 and value_str in "TF":
             return value_str == "T"
 
         # 3. Complex numbers
-        complex_match = cls._COMPLEX_PATTERN.match(value_str)
-        if complex_match:
-            real_part = float(complex_match.group(1))
-            imag_part = float(complex_match.group(2))
-            return complex(real_part, imag_part)
+        if "(" in value_str:
+            complex_match = cls._COMPLEX_PATTERN.match(value_str)
+            if complex_match:
+                real_part = float(complex_match.group(1))
+                imag_part = float(complex_match.group(2))
+                return complex(real_part, imag_part)
 
         # 4. Integer values
+        # Optimization: Try fast check before regex
+        # Check for simple integer: optional sign + digits
+        if value_str.isdigit():
+            return int(value_str)
+        elif value_str.startswith(("-", "+")) and value_str[1:].isdigit():
+            return int(value_str)
+
+        # Fallback to regex (though above covers standard cases)
         if cls._INTEGER_PATTERN.match(value_str):
             try:
                 return int(value_str)
@@ -242,7 +254,12 @@ class FastHeaderParser:
         if not quoted_str.startswith("'"):
             return quoted_str
 
-        # Find the closing quote, handling escaped quotes
+        # Fast regex parsing
+        match = cls._STRING_PATTERN.match(quoted_str)
+        if match:
+            return match.group(1).replace("''", "'")
+
+        # Fallback for malformed strings or complex cases
         content_parts = []
         i = 1  # Skip opening quote
         while i < len(quoted_str):
