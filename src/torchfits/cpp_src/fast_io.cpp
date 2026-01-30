@@ -10,6 +10,7 @@
 #include <iostream>
 #include <cstring>
 #include "hardware.h"
+#include "security.h"
 
 #ifdef __x86_64__
 #include <immintrin.h>
@@ -192,6 +193,9 @@ torch::Tensor read_image_fast(const std::string& filename, int hdu_num, bool use
     if (!use_mmap) {
         throw std::runtime_error("Standard I/O not implemented in fast path");
     }
+
+    // Security check: Prevent command injection via cfitsio pipe syntax
+    validate_fits_filename(filename);
 
     int status = 0;
     fitsfile* fptr = nullptr;
