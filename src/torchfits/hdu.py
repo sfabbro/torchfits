@@ -248,7 +248,13 @@ class TensorHDU:
 
     def __repr__(self):
         name = self.header.get("EXTNAME", "PRIMARY")
-        return f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()})"
+        base = f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()}"
+
+        if self._data is not None:
+            base += f", device='{self._data.device}'"
+
+        base += ")"
+        return base
 
 
 class TableDataAccessor:
@@ -510,9 +516,19 @@ class TableHDU(TensorFrame):
 
     def __repr__(self):
         name = self.header.get("EXTNAME", "TABLE")
-        return (
-            f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
-        )
+        base = f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
+
+        cols = self.columns
+        max_cols = 5
+        if cols:
+            if len(cols) <= max_cols:
+                col_str = ", ".join(cols)
+                base += f"\n  Columns: {col_str}"
+            else:
+                col_str = ", ".join(cols[:max_cols])
+                base += f"\n  Columns: {col_str}, ... ({len(cols) - max_cols} more)"
+
+        return base
 
 
 class HDUList:
