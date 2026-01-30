@@ -13,6 +13,8 @@
 #include <sys/mount.h>
 #endif
 
+#include "security.h"
+
 namespace torchfits {
 
 // Simplified cache entry
@@ -39,6 +41,9 @@ public:
         }
 
         // Open new file
+        // Security check: Prevent command injection via cfitsio pipe syntax
+        validate_fits_filename(filepath);
+
         fitsfile* fptr = nullptr;
         int status = 0;
         fits_open_file(&fptr, filepath.c_str(), READONLY, &status);
