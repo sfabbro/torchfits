@@ -558,8 +558,7 @@ public:
             return "";
         }
         std::string result(header_str);
-        // fits_free_memory(header_str, &status); // Need to free? cfitsio usually allocates
-        // free(header_str); // fits_hdr2str allocates with malloc?
+        free(header_str); // Allocated by fits_hdr2str via malloc
         return result;
     }
 
@@ -603,26 +602,33 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
     std::vector<torch::Tensor> results(n);
     std::vector<std::string> errors(n);
     
-    // Use simple std::thread for now. For production, a thread pool is better.
-    // But since we are I/O bound or GIL-released, launching N threads is okay for moderate N.
-    std::vector<std::thread> threads;
-    threads.reserve(n);
-    
-    for (size_t i = 0; i < n; ++i) {
-        threads.emplace_back([&, i]() {
-            try {
-                // Each thread opens its own file handle - CRITICAL for cfitsio thread safety
-                FITSFileV2 file(paths[i].c_str(), 0); // Read mode
-                results[i] = file.read_image(hdu_num);
-                // File closes automatically via destructor
-            } catch (const std::exception& e) {
-                errors[i] = e.what();
-            }
-        });
-    }
-    
-    for (auto& t : threads) {
-        t.join();
+    // Limit concurrency to avoid thread exhaustion (DoS)
+    unsigned int max_threads = std::thread::hardware_concurrency();
+    if (max_threads == 0) max_threads = 4; // Fallback
+    // Cap at a reasonable number to avoid FD exhaustion too
+    if (max_threads > 32) max_threads = 32;
+
+    for (size_t i = 0; i < n; i += max_threads) {
+        size_t batch_end = std::min(i + max_threads, n);
+        std::vector<std::thread> threads;
+        threads.reserve(batch_end - i);
+
+        for (size_t j = i; j < batch_end; ++j) {
+            threads.emplace_back([&, j]() {
+                try {
+                    // Each thread opens its own file handle - CRITICAL for cfitsio thread safety
+                    FITSFileV2 file(paths[j].c_str(), 0); // Read mode
+                    results[j] = file.read_image(hdu_num);
+                    // File closes automatically via destructor
+                } catch (const std::exception& e) {
+                    errors[j] = e.what();
+                }
+            });
+        }
+
+        for (auto& t : threads) {
+            t.join();
+        }
     }
     
     // Check for errors
