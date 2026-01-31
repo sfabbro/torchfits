@@ -250,6 +250,32 @@ class TensorHDU:
         name = self.header.get("EXTNAME", "PRIMARY")
         return f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()})"
 
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        import html
+
+        def esc(x):
+            return html.escape(str(x))
+
+        name = self.header.get("EXTNAME", "PRIMARY")
+        cards = getattr(self.header, "_cards", []) or [
+            (k, v, "") for k, v in self.header.items()
+        ]
+
+        h_rows = "".join(
+            f"<tr><td>{esc(k)}</td><td>{esc(v)}</td><td style='color:#666'>{esc(c)}</td></tr>"
+            for k, v, c in cards[:10]
+        )
+
+        return (
+            f"<h3>TensorHDU: {esc(name)}</h3>"
+            f"<p><b>Shape:</b> {self._get_shape_str()} | <b>Dtype:</b> {self._get_dtype_str()}</p>"
+            f"<details><summary>Header ({len(cards)} cards)</summary>"
+            f"<table style='font-family:monospace;font-size:0.9em'><thead><tr><th>Key</th><th>Value</th><th>Comment</th></tr></thead>"
+            f"<tbody>{h_rows}</tbody></table>"
+            f"{'<p>...</p>' if len(cards) > 10 else ''}</details>"
+        )
+
 
 class TableDataAccessor:
     """Dictionary-like accessor for table data."""
@@ -512,6 +538,46 @@ class TableHDU(TensorFrame):
         name = self.header.get("EXTNAME", "TABLE")
         return (
             f"TableHDU(name='{name}', rows={self.num_rows}, cols={len(self.columns)})"
+        )
+
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        import html
+
+        def esc(x):
+            return html.escape(str(x))
+
+        rows, cols = self.num_rows, len(self.columns)
+        disp_cols = self.columns[:10]
+
+        # Header row
+        th = "".join(f"<th>{esc(c)}</th>" for c in disp_cols)
+        if len(self.columns) > 10:
+            th += "<th>...</th>"
+
+        # Data rows
+        tr = ""
+        for i in range(min(rows, 5)):
+            td = ""
+            for c in disp_cols:
+                try:
+                    val = self.feat_dict[c][i]
+                    if hasattr(val, "item"):
+                        val = val.item()
+                    v_str = f"{val:.4g}" if isinstance(val, float) else str(val)
+                except Exception:
+                    v_str = "Error"
+                td += f"<td>{esc(v_str)}</td>"
+            if len(self.columns) > 10:
+                td += "<td>...</td>"
+            tr += f"<tr><td>{i}</td>{td}</tr>"
+
+        return (
+            f"<h3>TableHDU: {esc(self.header.get('EXTNAME', 'TABLE'))}</h3>"
+            f"<p><b>Rows:</b> {rows} | <b>Columns:</b> {cols}</p>"
+            f"<div style='overflow-x:auto'><table><thead><tr><th>#</th>{th}</tr></thead>"
+            f"<tbody>{tr}</tbody></table></div>"
+            f"{'<p>...</p>' if rows > 5 else ''}"
         )
 
 
