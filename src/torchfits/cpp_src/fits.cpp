@@ -57,7 +57,16 @@ public:
             size_t last = filename_.find_last_not_of(" \t");
 
             if (first != std::string::npos) {
-                if (filename_[first] == '|' || filename_[last] == '|') {
+                size_t check_index = first;
+                // If prepended with !, skip it to check what follows (handling overwrite flag)
+                if (filename_[check_index] == '!') {
+                     size_t next = filename_.find_first_not_of(" \t", check_index + 1);
+                     if (next != std::string::npos) {
+                         check_index = next;
+                     }
+                }
+
+                if (filename_[check_index] == '|' || filename_[last] == '|') {
                      throw std::runtime_error("Security Error: Filenames starting or ending with '|' are not allowed to prevent command execution.");
                 }
             }
