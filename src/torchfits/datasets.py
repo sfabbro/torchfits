@@ -84,6 +84,16 @@ class FITSDataset(Dataset):
 
         return data
 
+    def __repr__(self) -> str:
+        """Return a string representation of the dataset."""
+        return (
+            f"FITSDataset("
+            f"num_samples={len(self)}, "
+            f"device='{self.device}', "
+            f"hdu={self.hdu}"
+            f")"
+        )
+
 
 class IterableFITSDataset(IterableDataset):
     """
@@ -176,3 +186,14 @@ class IterableFITSDataset(IterableDataset):
 
                 logger.critical(f"Unexpected error processing {file_path}: {str(e)}")
                 raise
+
+    def __repr__(self) -> str:
+        """Return a string representation of the dataset."""
+        return (
+            f"IterableFITSDataset("
+            f"index_url='{self.index_url}', "
+            f"device='{self.device}', "
+            f"hdu={self.hdu}, "
+            f"shard_size={self.shard_size}"
+            f")"
+        )
