@@ -33,3 +33,26 @@ def test_valid_filenames_allowed():
         pass  # Expected
     except Exception:
         pass  # Other errors are fine, as long as not Security Error
+
+
+def test_security_cve_cfitsio_command_injection_write_overwrite():
+    """
+    Test that filenames starting or ending with '|' are rejected even with overwrite=True
+    (which prepends '!').
+    """
+    import torch
+
+    # Minimal dummy data for writing
+    data = torch.zeros((10, 10))
+
+    dangerous_filenames = [
+        "| echo 'pwned'",
+        " | ls",
+        "valid.fits |",
+    ]
+
+    for filename in dangerous_filenames:
+        with pytest.raises(RuntimeError, match="Security Error"):
+            # overwrite=True causes torchfits to prepend '!' to the filename
+            # The C++ layer must handle '!' correctly and still reject the pipe.
+            torchfits.write(filename, data, overwrite=True)
