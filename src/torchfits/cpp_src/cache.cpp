@@ -24,7 +24,16 @@ struct CacheEntry {
 class UnifiedCache {
 public:
     UnifiedCache(size_t max_files = 100, size_t max_memory_mb = 1024)
-        : max_files_(max_files) {}
+        : max_files_(max_files), max_memory_mb_(max_memory_mb) {}
+
+    void configure(size_t max_files, size_t max_memory_mb) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        max_files_ = max_files;
+        max_memory_mb_ = max_memory_mb;
+        while (cache_.size() > max_files_) {
+            evict_lru();
+        }
+    }
 
     fitsfile* get_or_open(const std::string& filepath) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -32,9 +41,8 @@ public:
         auto it = cache_.find(filepath);
         if (it != cache_.end()) {
             // Update LRU - move to front
-            lru_list_.erase(it->second.lru_iter);
-            lru_list_.push_front(filepath);
-            it->second.lru_iter = lru_list_.begin();
+            // Use splice to move the node without reallocation (O(1))
+            lru_list_.splice(lru_list_.begin(), lru_list_, it->second.lru_iter);
             return it->second.fptr;
         }
 
@@ -82,6 +90,7 @@ private:
     std::list<std::string> lru_list_;
     mutable std::mutex mutex_;
     size_t max_files_;
+    size_t max_memory_mb_;
 
     void evict_lru() {
         if (lru_list_.empty()) return;
