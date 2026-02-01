@@ -19,8 +19,10 @@
 #include "torch_compat.h"
 
 #include <fitsio.h>
+#ifdef HAS_WCSLIB
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#endif
 #include <vector>
 #include <unordered_map>
 
@@ -28,7 +30,9 @@ namespace nb = nanobind;
 
 #include "hardware.h"
 #include "fits.cpp"
+#ifdef HAS_WCSLIB
 #include "wcs.cpp"
+#endif
 #include "table.cpp"
 #include "hardware.cpp"
 #include "fast_io.cpp"
@@ -224,6 +228,7 @@ NB_MODULE(cpp, m) {
 
 
 
+#ifdef HAS_WCSLIB
     nb::class_<torchfits::WCS>(m, "WCS")
         .def(nb::init<const std::unordered_map<std::string, std::string>&>())
         .def("pixel_to_world", [](torchfits::WCS& self, nb::ndarray<> pixels) {
@@ -267,6 +272,7 @@ NB_MODULE(cpp, m) {
         .def_prop_ro("cunit", &torchfits::WCS::cunit)
         .def_prop_ro("lonpole", &torchfits::WCS::lonpole)
         .def_prop_ro("latpole", &torchfits::WCS::latpole);
+#endif
 
     // Fast I/O bindings
     m.def("read_image_fast", &torchfits::read_image_fast, 
@@ -314,5 +320,18 @@ NB_MODULE(cpp, m) {
 
     m.def("echo_tensor", [](nb::object obj) {
         return obj;
+    });
+
+    // Cache management bindings
+    m.def("configure_cache", [](int max_files, int max_memory_mb) {
+        torchfits::global_cache.configure(max_files, max_memory_mb);
+    }, nb::arg("max_files"), nb::arg("max_memory_mb"));
+
+    m.def("clear_file_cache", []() {
+        torchfits::global_cache.clear();
+    });
+
+    m.def("get_cache_size", []() {
+        return torchfits::global_cache.size();
     });
 }
