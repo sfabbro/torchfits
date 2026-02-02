@@ -5,17 +5,22 @@ This module provides focused benchmarks for buffer management performance,
 including memory pools, streaming buffers, and allocation patterns.
 """
 
-# Add src to path for imports
+# Add benchmarks and src to path for imports
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict
 
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from mpl_config import configure
+
+configure()
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from torchfits import buffer
 

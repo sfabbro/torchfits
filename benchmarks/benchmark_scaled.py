@@ -29,7 +29,7 @@ def benchmark_scaled():
     print("Benchmarking scaled read...")
 
     def read_torchfits():
-        return torchfits.open(filename)[0].to_tensor()
+        return torchfits.read(filename, scale_on_device=True)
 
     def read_fitsio():
         return fitsio.read(filename)

@@ -50,7 +50,9 @@ def benchmark_mps_vs_cpu():
         # CPU
         gc.collect()
         start = time.perf_counter()
-        cpu_data, _ = torchfits.read(str(img_path), device="cpu")
+        cpu_data, _ = torchfits.read(
+            str(img_path), device="cpu", return_header=True
+        )
         cpu_time = time.perf_counter() - start
         print(f"  CPU Read: {cpu_time:.4f}s")
 
@@ -58,7 +60,9 @@ def benchmark_mps_vs_cpu():
         gc.collect()
         torch.mps.empty_cache()
         start = time.perf_counter()
-        mps_data, _ = torchfits.read(str(img_path), device="mps")
+        mps_data, _ = torchfits.read(
+            str(img_path), device="mps", return_header=True
+        )
         torch.mps.synchronize()  # Ensure operation is complete
         mps_time = time.perf_counter() - start
         print(f"  MPS Read: {mps_time:.4f}s")
@@ -117,14 +121,18 @@ def benchmark_mps_vs_cpu():
         # CPU
         gc.collect()
         start = time.perf_counter()
-        cpu_table, _ = torchfits.read(str(table_path), device="cpu")
+        cpu_table, _ = torchfits.read(
+            str(table_path), device="cpu", return_header=True
+        )
         cpu_table_time = time.perf_counter() - start
         print(f"  CPU Table Read: {cpu_table_time:.4f}s")
 
         gc.collect()
         torch.mps.empty_cache()
         start = time.perf_counter()
-        mps_table, _ = torchfits.read(str(table_path), device="mps")
+        mps_table, _ = torchfits.read(
+            str(table_path), device="mps", return_header=True
+        )
         # Synchronize all tensors
         if isinstance(mps_table, dict):
             for v in mps_table.values():

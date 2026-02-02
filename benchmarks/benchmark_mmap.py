@@ -30,8 +30,8 @@ def benchmark_mmap():
     print(f"Initial open FDs: {initial_fds}")
 
     def read_torchfits():
-        # Force mmap usage (it's default now for read_image)
-        return torchfits.open(filename)[0].to_tensor()
+        # Use high-level read API and avoid temporary HDUList handles lingering.
+        return torchfits.read(filename, mmap=True, cache_capacity=0)
 
     def read_fitsio():
         return fitsio.read(filename)
@@ -48,6 +48,7 @@ def benchmark_mmap():
     print(f"Speedup:          {t_fitsio / t_tf:.2f}x")
 
     # Check for FD leaks
+    torchfits.clear_file_cache()
     gc.collect()
     final_fds = get_open_fds()
     print(f"Final open FDs: {final_fds}")

@@ -27,7 +27,7 @@ def benchmark(filename):
 
     # TorchFits
     start = time.time()
-    t_data, _ = torchfits.read(filename)
+    t_data, _ = torchfits.read(filename, return_header=True)
     end = time.time()
     tf_time = end - start
     print(f"TorchFits: {tf_time * 1000:.2f} ms")
