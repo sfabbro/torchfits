@@ -14,6 +14,7 @@ from torchfits.dataloader import (
     create_fits_dataloader,
     create_ml_dataloader,
     create_streaming_dataloader,
+    create_table_dataloader,
     get_optimal_dataloader_config,
 )
 from torchfits.datasets import FITSDataset, IterableFITSDataset
@@ -80,7 +81,11 @@ class TestDataLoaderCreation:
             create_fits_dataloader(file_paths, hdu=1, batch_size=4, num_workers=0)
 
             mock_dataset_class.assert_called_once_with(
-                file_paths=file_paths, hdu=1, transform=None, device="cpu"
+                file_paths=file_paths,
+                hdu=1,
+                transform=None,
+                device="cpu",
+                include_header=False,
             )
 
     def test_create_streaming_dataloader(self):
@@ -96,12 +101,26 @@ class TestDataLoaderCreation:
                 num_workers=0,
             )
 
+    def test_create_table_dataloader(self):
+        """Test table chunk DataLoader creation."""
+        file_paths = ["file1.fits"]
+
+        with patch("torchfits.dataloader.TableChunkDataset") as mock_dataset_class:
+            mock_dataset = Mock()
+            mock_dataset_class.return_value = mock_dataset
+
+            create_table_dataloader(file_paths, hdu=1, chunk_rows=100, num_workers=0)
+
             mock_dataset_class.assert_called_once_with(
-                index_url="http://example.com/index.json",
-                hdu=0,
-                transform=None,
+                file_paths=file_paths,
+                hdu=1,
+                columns=None,
+                chunk_rows=100,
+                max_chunks=None,
+                mmap=False,
                 device="cpu",
-                shard_size=1000,
+                transform=None,
+                include_header=False,
             )
 
 

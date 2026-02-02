@@ -26,12 +26,8 @@ def test_writing():
     # Create HDUList
     hdul = torchfits.HDUList([hdu_tensor, hdu_table])
 
-    # Write to file
-    hdul.writeto(filename, overwrite=True)
-
-    # Verify with Astropy
-    try:
-        with fits.open(filename) as hdul_astro:
+    def assert_written(path: str) -> None:
+        with fits.open(path) as hdul_astro:
             # Verify TensorHDU (Primary)
             # Handle endianness for PyTorch
             data_numpy = hdul_astro[0].data
@@ -48,6 +44,17 @@ def test_writing():
             assert np.allclose(data_read_table["col2"], data_table["col2"].numpy())
             assert hdul_astro[1].header["TBLKEY"] == "TBLVAL"
 
+    filenames = [filename, "test_write_hdulist.fits"]
+
+    try:
+        # Write via HDUList
+        hdul.write(filenames[0], overwrite=True)
+        assert_written(filenames[0])
+
+        # Write via top-level helper
+        torchfits.write(filenames[1], hdul, overwrite=True)
+        assert_written(filenames[1])
     finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+        for path in filenames:
+            if os.path.exists(path):
+                os.remove(path)

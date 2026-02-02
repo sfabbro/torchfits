@@ -35,7 +35,7 @@ class TestMainAPI:
         filepath, expected_data = self.create_test_fits()
 
         try:
-            result, header = torchfits.read(filepath)
+            result, header = torchfits.read(filepath, return_header=True)
             assert isinstance(result, torch.Tensor)
             assert result.shape == expected_data.shape
             np.testing.assert_allclose(result.numpy(), expected_data, rtol=1e-5)
@@ -48,12 +48,14 @@ class TestMainAPI:
 
         try:
             # CPU
-            result_cpu, _ = torchfits.read(filepath, device="cpu")
+            result_cpu, _ = torchfits.read(filepath, device="cpu", return_header=True)
             assert result_cpu.device.type == "cpu"
 
             # GPU if available
             if torch.cuda.is_available():
-                result_gpu, _ = torchfits.read(filepath, device="cuda")
+                result_gpu, _ = torchfits.read(
+                    filepath, device="cuda", return_header=True
+                )
                 assert result_gpu.device.type == "cuda"
                 torch.testing.assert_close(result_cpu, result_gpu.cpu())
         finally:
@@ -65,11 +67,11 @@ class TestMainAPI:
 
         try:
             # FP16
-            result_fp16, _ = torchfits.read(filepath, fp16=True)
+            result_fp16, _ = torchfits.read(filepath, fp16=True, return_header=True)
             assert result_fp16.dtype == torch.float16
 
             # BF16
-            result_bf16, _ = torchfits.read(filepath, bf16=True)
+            result_bf16, _ = torchfits.read(filepath, bf16=True, return_header=True)
             assert result_bf16.dtype == torch.bfloat16
         finally:
             os.unlink(filepath)
@@ -83,7 +85,7 @@ class TestMainAPI:
                 torchfits.write(f.name, data, overwrite=True)
 
                 # Read back and verify
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
                 torch.testing.assert_close(result, data)
             finally:
                 os.unlink(f.name)

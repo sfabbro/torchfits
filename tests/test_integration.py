@@ -86,13 +86,15 @@ class TestRealDataIntegration:
 
             try:
                 # Test torchfits reading
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
                 assert isinstance(result, torch.Tensor)
                 assert result.shape == shape
                 assert result.dtype == torch.float32
 
                 # Test subset reading (fixed cutout parsing)
-                subset, _ = torchfits.read(f.name + "[0][1000:2000,1000:2000]")
+                subset, _ = torchfits.read(
+                    f.name + "[0][1000:2000,1000:2000]", return_header=True
+                )
                 assert subset.shape == (1001, 1001)
 
             finally:
@@ -180,7 +182,7 @@ class TestRealDataIntegration:
 
             try:
                 # Test reading compressed data (compressed images are in HDU 1)
-                result, _ = torchfits.read(f.name, hdu=1)
+                result, _ = torchfits.read(f.name, hdu=1, return_header=True)
                 assert result.shape == shape
 
                 # Verify data integrity (within compression tolerance)
@@ -205,7 +207,7 @@ class TestRealDataIntegration:
             hdu.writeto(f.name, overwrite=True)
 
             try:
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
 
                 # Should be automatically scaled to float
                 assert result.dtype == torch.float32
@@ -246,7 +248,7 @@ class TestRealDataIntegration:
             hdu.writeto(f.name, overwrite=True)
 
             try:
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
                 assert result.shape == shape
                 assert result.ndim == 3
 
@@ -284,7 +286,7 @@ class TestPerformanceIntegration:
                 mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
                 # Read with torchfits
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
 
                 # Measure memory after
                 mem_after = process.memory_info().rss / 1024 / 1024  # MB
@@ -319,12 +321,12 @@ class TestPerformanceIntegration:
 
             try:
                 # Test direct GPU loading
-                result, _ = torchfits.read(f.name, device="cuda")
+                result, _ = torchfits.read(f.name, device="cuda", return_header=True)
                 assert result.device.type == "cuda"
                 assert result.shape == shape
 
                 # Test CPU->GPU transfer
-                cpu_result, _ = torchfits.read(f.name)
+                cpu_result, _ = torchfits.read(f.name, return_header=True)
                 gpu_result = cpu_result.cuda()
 
                 torch.testing.assert_close(result, gpu_result)

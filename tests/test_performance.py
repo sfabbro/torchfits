@@ -50,7 +50,7 @@ class TestPerformance:
         try:
             # Measure read time
             start_time = time.time()
-            result, _ = torchfits.read(filepath)
+            result, _ = torchfits.read(filepath, return_header=True)
             read_time = time.time() - start_time
 
             # Should be fast due to zero-copy optimization
@@ -70,7 +70,7 @@ class TestPerformance:
             process = psutil.Process()
             mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
-            result, _ = torchfits.read(filepath)
+            result, _ = torchfits.read(filepath, return_header=True)
 
             mem_after = process.memory_info().rss / 1024 / 1024  # MB
             memory_increase = mem_after - mem_before
@@ -122,12 +122,12 @@ class TestPerformance:
 
             # First read (cache miss)
             start_time = time.time()
-            result1, _ = torchfits.read(filepath)
+            result1, _ = torchfits.read(filepath, return_header=True)
             first_read_time = time.time() - start_time
 
             # Second read (cache hit)
             start_time = time.time()
-            result2, _ = torchfits.read(filepath)
+            result2, _ = torchfits.read(filepath, return_header=True)
             second_read_time = time.time() - start_time
 
             # Cache hit should be faster (though not always guaranteed due to OS caching)
@@ -149,7 +149,7 @@ class TestPerformance:
 
         try:
             start_time = time.time()
-            result, _ = torchfits.read(filepath)
+            result, _ = torchfits.read(filepath, return_header=True)
             read_time = time.time() - start_time
 
             assert result.shape == shape
@@ -169,7 +169,9 @@ class TestPerformance:
         try:
             # Test direct GPU loading
             start_time = time.time()
-            result_gpu, _ = torchfits.read(filepath, device="cuda")
+            result_gpu, _ = torchfits.read(
+                filepath, device="cuda", return_header=True
+            )
             gpu_read_time = time.time() - start_time
 
             assert result_gpu.device.type == "cuda"
@@ -190,7 +192,9 @@ class TestPerformance:
         try:
             # Read small subset
             start_time = time.time()
-            subset, _ = torchfits.read(filepath + "[0][1000:2000,1000:2000]")
+            subset, _ = torchfits.read(
+                filepath + "[0][1000:2000,1000:2000]", return_header=True
+            )
             subset_time = time.time() - start_time
 
             # FITS slicing is 1-based inclusive, so 1000:2000 is 1001 elements
@@ -221,7 +225,7 @@ class TestPerformanceRegression:
                 times = []
                 for _ in range(3):
                     start_time = time.time()
-                    result, _ = torchfits.read(f.name)
+                    result, _ = torchfits.read(f.name, return_header=True)
                     read_time = time.time() - start_time
                     times.append(read_time)
 
@@ -253,7 +257,7 @@ class TestPerformanceRegression:
                 process = psutil.Process()
                 mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
-                result, _ = torchfits.read(f.name)
+                result, _ = torchfits.read(f.name, return_header=True)
 
                 mem_after = process.memory_info().rss / 1024 / 1024  # MB
                 memory_increase = mem_after - mem_before

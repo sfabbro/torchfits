@@ -41,7 +41,7 @@ class TestCompression:
 
         try:
             # Compressed images are typically in HDU 1
-            result, header = torchfits.read(filepath, hdu=1)
+            result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
             assert isinstance(result, torch.Tensor)
             assert result.shape == expected_data.shape
@@ -61,7 +61,7 @@ class TestCompression:
         filepath, expected_data = self.create_compressed_fits(compression="GZIP_1")
 
         try:
-            result, header = torchfits.read(filepath, hdu=1)
+            result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
             assert isinstance(result, torch.Tensor)
             assert result.shape == expected_data.shape
@@ -81,12 +81,14 @@ class TestCompression:
 
         try:
             # Read full image
-            full_result, _ = torchfits.read(filepath, hdu=1)
+            full_result, _ = torchfits.read(filepath, hdu=1, return_header=True)
 
             # Read subset (should use tile-aware optimization)
             # FITS uses 1-based inclusive indexing. Python [500:1500] is 0-based 500 to 1499.
             # So FITS range is 501 to 1500.
-            subset_result, _ = torchfits.read(filepath + "[1][501:1500,501:1500]")
+            subset_result, _ = torchfits.read(
+                filepath + "[1][501:1500,501:1500]", return_header=True
+            )
 
             assert subset_result.shape == (1000, 1000)
 
@@ -105,7 +107,7 @@ class TestCompression:
 
         try:
             # Should automatically detect and handle compression
-            result, header = torchfits.read(filepath, hdu=1)
+            result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
             assert isinstance(result, torch.Tensor)
             # Header should contain compression info
@@ -125,7 +127,9 @@ class TestCompression:
                     shape=(500, 500), compression=comp_type
                 )
 
-                result, header = torchfits.read(filepath, hdu=1)
+                result, header = torchfits.read(
+                    filepath, hdu=1, return_header=True
+                )
 
                 assert isinstance(result, torch.Tensor)
                 assert result.shape == expected_data.shape
@@ -160,7 +164,7 @@ class TestCompressionPerformance:
 
             try:
                 start_time = time.time()
-                result, _ = torchfits.read(f.name, hdu=1)
+                result, _ = torchfits.read(f.name, hdu=1, return_header=True)
                 read_time = time.time() - start_time
 
                 assert result.shape == shape
@@ -188,7 +192,9 @@ class TestCompressionPerformance:
                 # Read small subset - should be fast due to tile optimization
                 start_time = time.time()
                 # FITS 1-based inclusive: 1001 to 1500 (length 500)
-                subset, _ = torchfits.read(f.name + "[1][1001:1500,1001:1500]")
+                subset, _ = torchfits.read(
+                    f.name + "[1][1001:1500,1001:1500]", return_header=True
+                )
                 subset_time = time.time() - start_time
 
                 assert subset.shape == (500, 500)
