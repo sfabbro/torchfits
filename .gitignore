@@ -26,5 +26,10 @@ examples/data_*/
 # Logs/Temp
 benchmark_full_output.txt
 benchmark_results/
+benchmark_results_*/
 benchmarks/benchmark_results/
+bench*.log
+benchmark*.log
 benchmarks/debug_sip.py
+fitsio.setup.py
+package-lock.json

@@ -2,8 +2,8 @@
 # Compatible with both pip and pixi-build cmake backend
 # When using pixi-build, these are automatically provided but we keep them for pip compatibility
 requires = [
-    "scikit-build-core>=0.10",
-    "nanobind>=2.8.0",
+    "scikit-build-core>=0.11.6,<0.12",
+    "nanobind>=2.10.2,<3",
     "torch>=2.0.0"
 ]
 build-backend = "scikit_build_core.build"
@@ -35,7 +35,6 @@ requires-python = ">=3.11"
 # but needed here for PyPI compatibility
 dependencies = [
     "torch>=2.0.0",
-    "pytorch-frame>=0.2.0",
     "psutil>=5.0.0",  # For system resource monitoring
     "numpy>=1.20.0",  # Core numerical operations
 ]
@@ -47,6 +46,9 @@ Repository = "https://github.com/sfabbro/torchfits"
 # Defines optional dependencies for different use cases.
 # For pixi environments, these are managed separately via features
 [project.optional-dependencies]
+frame = [
+    "pytorch-frame>=0.2.0",
+]
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0", 
@@ -78,6 +80,12 @@ examples = [
 [tool.scikit-build]
 # Specifies the directory containing the top-level CMakeLists.txt file.
 cmake.source-dir = "src/torchfits/cpp_src"
+cmake.build-type = "Release"
+cmake.args = [
+    "-DTORCHFITS_USE_VENDORED_CFITSIO=ON",
+    "-DTORCHFITS_NIOBUF=80",
+    "-DTORCHFITS_MINDIRECT=16384",
+]
 
 # Configures the install directory for the compiled extension.
 # This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.
