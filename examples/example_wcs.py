@@ -64,7 +64,7 @@ def main():
     print("\n--- 2D Image (RA/Dec) ---")
     image_file = os.path.join(data_dir, "test_image_2d.fits")
     try:
-        data, header = torchfits.read(image_file)
+        data, header = torchfits.read(image_file, return_header=True)
         print(f"Header: {header}")  # Print the header to show WCS info
         # You can access WCS keywords directly from the header dictionary:
         print(f"  CTYPE1: {header['CTYPE1']}")
@@ -76,7 +76,7 @@ def main():
     print("\n--- 1D Spectrum (Wavelength) ---")
     spectrum_file = os.path.join(data_dir, "test_spectrum_1d.fits")
     try:
-        data, header = torchfits.read(spectrum_file)
+        data, header = torchfits.read(spectrum_file, return_header=True)
         print(f"Header: {header}")
         print(f"  CTYPE1: {header['CTYPE1']}")
         print(f"  CUNIT1: {header['CUNIT1']}")
@@ -88,7 +88,7 @@ def main():
     print("\n--- 3D Cube (RA/Dec/Wavelength) ---")
     cube_file = os.path.join(data_dir, "test_cube_3d.fits")
     try:
-        data, header = torchfits.read(cube_file)
+        data, header = torchfits.read(cube_file, return_header=True)
         print(f"Header: {header}")
         print(f"  CTYPE1: {header['CTYPE1']}")
         print(f"  CTYPE2: {header['CTYPE2']}")
@@ -102,7 +102,9 @@ def main():
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 10, 100]:  # Test with and without caching
         try:
-            data, header = torchfits.read(image_file, cache_capacity=capacity)
+            data, header = torchfits.read(
+                image_file, cache_capacity=capacity, return_header=True
+            )
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
@@ -112,7 +114,9 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            data, _ = torchfits.read(image_file, device="cuda")
+            data, _ = torchfits.read(
+                image_file, device="cuda", return_header=True
+            )
             print(f"  Data device: {data.device}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

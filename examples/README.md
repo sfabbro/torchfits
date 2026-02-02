@@ -23,6 +23,10 @@ python example_basic_reading.py
 
 **`example_tables.py`** - Read FITS binary tables as tensor dictionaries, column selection, row ranges
 
+**`example_table_streaming.py`** - Stream FITS table chunks without loading the full table
+
+**`example_interop.py`** - Convert table dicts to Pandas/DataFrame or PyArrow for analytics workflows
+
 **`example_datacube.py`** - Handle 3D data cubes, extract spatial slices and spectral profiles
 
 **`example_wcs.py`** - World Coordinate System transformations between pixel and sky coordinates
@@ -45,13 +49,13 @@ python example_basic_reading.py
 import torchfits
 
 # Read full image
-data, header = torchfits.read("image.fits")
+data, header = torchfits.read("image.fits", return_header=True)
 
 # Read specific HDU by name
-data, header = torchfits.read("mef.fits", hdu="SCI")
+data, header = torchfits.read("mef.fits", hdu="SCI", return_header=True)
 
 # Read to GPU
-data, header = torchfits.read("image.fits", device='cuda')
+data, header = torchfits.read("image.fits", device='cuda', return_header=True)
 
 # Extract cutout from large file
 cutout = torchfits.read_subset("large.fits", hdu=0,
@@ -59,6 +63,7 @@ cutout = torchfits.read_subset("large.fits", hdu=0,
 
 # Read catalog columns
 table, header = torchfits.read("catalog.fits", hdu=1,
+                               return_header=True,
                                columns=["RA", "DEC", "MAG"])
 ```
 

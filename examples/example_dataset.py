@@ -64,7 +64,10 @@ class SimpleFitsDataset(Dataset):
 
         try:
             data, _ = torchfits.read(
-                filename, cache_capacity=self.cache_capacity, device=self.device
+                filename,
+                cache_capacity=self.cache_capacity,
+                device=self.device,
+                return_header=True,
             )  # Pass cache and device
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:

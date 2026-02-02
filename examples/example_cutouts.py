@@ -40,7 +40,7 @@ def main():
     # Read a cutout using a CFITSIO string
     try:
         cutout, header = torchfits.read(
-            f"{test_file}[1][11:15,16:23]"
+            f"{test_file}[1][11:15,16:23]", return_header=True
         )  # 1-based indexing
         print("\nCutout (CFITSIO String):")
         print(f"  Cutout shape: {cutout.shape}")  # Expected: (5, 8)
@@ -65,7 +65,9 @@ def main():
     print("\n--- Testing cache with full read ---")
     for capacity in [0, 10]:
         try:
-            data, _ = torchfits.read(test_file, hdu=0, cache_capacity=capacity)
+            data, _ = torchfits.read(
+                test_file, hdu=0, cache_capacity=capacity, return_header=True
+            )
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:

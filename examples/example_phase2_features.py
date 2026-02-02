@@ -72,7 +72,7 @@ def demo_zero_copy_operations():
     try:
         # Measure read performance
         start_time = time.time()
-        result, _ = torchfits.read(filepath)
+        result, _ = torchfits.read(filepath, return_header=True)
         read_time = time.time() - start_time
 
         # Calculate throughput
@@ -105,7 +105,9 @@ def demo_tile_aware_compression():
     try:
         # Read full compressed image
         start_time = time.time()
-        full_result, _ = torchfits.read(filepath, hdu=1)  # Compressed images in HDU 1
+        full_result, _ = torchfits.read(
+            filepath, hdu=1, return_header=True
+        )  # Compressed images in HDU 1
         full_time = time.time() - start_time
 
         print(f"  Full image: {full_result.shape}")
@@ -115,7 +117,7 @@ def demo_tile_aware_compression():
         # Use FITS 1-based inclusive indexing to match Python [1000:2000]
         subset_spec = "[1][1001:2000,1001:2000]"
         start_time = time.time()
-        subset_result, _ = torchfits.read(filepath + subset_spec)
+        subset_result, _ = torchfits.read(filepath + subset_spec, return_header=True)
         subset_time = time.time() - start_time
 
         print(f"  Subset: {subset_result.shape}")
@@ -151,7 +153,7 @@ def demo_streaming_tables():
     try:
         # Regular table read
         start_time = time.time()
-        regular_result, _ = torchfits.read(filepath, hdu=1)
+        regular_result, _ = torchfits.read(filepath, hdu=1, return_header=True)
         regular_time = time.time() - start_time
 
         print(f"  Regular read: {regular_time:.3f}s")
@@ -259,7 +261,7 @@ def demo_batch_operations():
         start_time = time.time()
         sequential_results = []
         for filepath in files:
-            result, _ = torchfits.read(filepath)
+            result, _ = torchfits.read(filepath, return_header=True)
             sequential_results.append(result)
         sequential_time = time.time() - start_time
 
@@ -307,7 +309,7 @@ def demo_memory_efficiency():
         # Measure memory usage
         mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
-        result, _ = torchfits.read(filepath)
+        result, _ = torchfits.read(filepath, return_header=True)
 
         mem_after = process.memory_info().rss / 1024 / 1024  # MB
         memory_increase = mem_after - mem_before

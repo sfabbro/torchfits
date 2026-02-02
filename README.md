@@ -12,6 +12,12 @@ High-performance FITS I/O library for PyTorch. Provides zero-copy tensor operati
 pip install torchfits
 ```
 
+Optional TensorFrame support:
+
+```bash
+pip install "torchfits[frame]"
+```
+
 ## Features
 
 - **Fast I/O**: Zero-copy tensor creation from FITS data with SIMD-optimized type conversions
@@ -30,11 +36,11 @@ pip install torchfits
 import torchfits
 
 # Read FITS image as PyTorch tensor
-data, header = torchfits.read("image.fits", device='cuda')
+data, header = torchfits.read("image.fits", device='cuda', return_header=True)
 print(data.shape, data.device)  # torch.Size([2048, 2048]) cuda:0
 
 # Read specific HDU
-data, header = torchfits.read("multi.fits", hdu=1)
+data, header = torchfits.read("multi.fits", hdu=1, return_header=True)
 
 # Read cutout from large file
 cutout = torchfits.read_subset("large.fits", hdu=0, 
@@ -45,7 +51,7 @@ cutout = torchfits.read_subset("large.fits", hdu=0,
 
 ```python
 # Read FITS table as dictionary of tensors
-table, header = torchfits.read("catalog.fits", hdu=1)
+table, header = torchfits.read("catalog.fits", hdu=1, return_header=True)
 
 # Access columns as tensors
 ra = table['RA']      # torch.Tensor
@@ -53,9 +59,59 @@ dec = table['DEC']    # torch.Tensor
 mag = table['MAG_G']  # torch.Tensor
 
 # Select specific columns and row ranges
-table, _ = torchfits.read("catalog.fits", hdu=1, 
+table, _ = torchfits.read("catalog.fits", hdu=1,
+                          return_header=True,
                           columns=['RA', 'DEC'],
                           start_row=1000, num_rows=5000)
+```
+
+Decoding string columns from `TableHDU`:
+
+```python
+with torchfits.open("catalog.fits") as hdul:
+    table = hdul[1]
+    if "NAME" in table.string_columns:
+        names = table.get_string_column("NAME")
+```
+
+Streaming tables in chunks:
+
+```python
+for chunk in torchfits.stream_table("catalog.fits", hdu=1, chunk_rows=10000):
+    # chunk is a dict of column tensors (or lists for VLA)
+    ...
+```
+
+Memory-budgeted streaming iterator:
+
+```python
+chunks = torchfits.read_large_table("catalog.fits", hdu=1, streaming=True, return_iterator=True)
+for chunk in chunks:
+    ...
+```
+
+VLA lengths:
+
+```python
+with torchfits.open("catalog.fits") as hdul:
+    table = hdul[1]
+    lengths = table.vla_lengths  # dict column -> list of lengths
+```
+
+Streaming table dataset:
+
+```python
+from torchfits import TableChunkDataset, create_table_dataloader
+
+dataset = TableChunkDataset(["catalog.fits"], hdu=1, chunk_rows=5000)
+dataloader = create_table_dataloader(["catalog.fits"], hdu=1, chunk_rows=5000)
+```
+
+Interoperability helpers:
+
+```python
+df = torchfits.to_pandas(table, decode_bytes=True)
+arrow = torchfits.to_arrow(table, decode_bytes=True)
 ```
 
 ### Writing FITS Files
@@ -92,7 +148,7 @@ transform = Compose([
 ])
 
 # Apply transformations on GPU
-data, _ = torchfits.read("image.fits", device='cuda')
+data, _ = torchfits.read("image.fits", device='cuda', return_header=True)
 stretched = transform(data)
 ```
 
@@ -141,6 +197,7 @@ See `benchmarks/` for detailed methodology and scaling behavior.
 - PyTorch ≥ 2.0
 - cfitsio (bundled)
 - wcslib (system dependency)
+- pytorch-frame (optional; required for TensorFrame integration)
 
 ## Device Support
 
@@ -150,9 +207,9 @@ See `benchmarks/` for detailed methodology and scaling behavior.
 
 ```python
 # Specify device when reading
-data, _ = torchfits.read("image.fits", device='mps')  # Apple Silicon
-data, _ = torchfits.read("image.fits", device='cuda') # NVIDIA GPU
-data, _ = torchfits.read("image.fits", device='cpu')  # CPU
+data, _ = torchfits.read("image.fits", device='mps', return_header=True)  # Apple Silicon
+data, _ = torchfits.read("image.fits", device='cuda', return_header=True) # NVIDIA GPU
+data, _ = torchfits.read("image.fits", device='cpu', return_header=True)  # CPU
 ```
 
 For more examples, see the `examples/` directory.
@@ -168,7 +225,7 @@ import torchfits
 tf = torchfits.read_tensor_frame("catalog.fits", hdu=1)
 
 # Or convert from dict
-data, header = torchfits.read("catalog.fits", hdu=1)
+data, header = torchfits.read("catalog.fits", hdu=1, return_header=True)
 tf = torchfits.to_tensor_frame(data)
 
 # Use with pytorch-frame models

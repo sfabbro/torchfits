@@ -42,6 +42,7 @@ class SDSSDataset(Dataset):
                     hdu=2,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
+                    return_header=True,
                 )
                 if hasattr(data, "keys") and "flux" in data:
                     flux = data["flux"]
@@ -52,6 +53,7 @@ class SDSSDataset(Dataset):
                         hdu=1,
                         cache_capacity=self.cache_capacity,
                         device=self.device,
+                        return_header=True,
                     )
             except Exception:
                 # Fall back to HDU 1 as image data
@@ -60,6 +62,7 @@ class SDSSDataset(Dataset):
                     hdu=1,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
+                    return_header=True,
                 )
 
             # Get the class from header
@@ -96,7 +99,11 @@ class SDSSDataset(Dataset):
         try:
             # Try to read the table HDU with wavelength data
             data, header = torchfits.read(
-                filename, hdu=2, cache_capacity=self.cache_capacity, device=self.device
+                filename,
+                hdu=2,
+                cache_capacity=self.cache_capacity,
+                device=self.device,
+                return_header=True,
             )
             # For table data, torchfits returns a dictionary-like object
             if hasattr(data, "keys") and "loglam" in data:
@@ -108,6 +115,7 @@ class SDSSDataset(Dataset):
                     hdu=1,
                     cache_capacity=self.cache_capacity,
                     device=self.device,
+                    return_header=True,
                 )
                 n_points = flux_data.shape[0] if flux_data is not None else 3000
                 return torch.linspace(np.log10(3800), np.log10(9200), n_points)

@@ -29,7 +29,9 @@ def main():
 
     # Read the entire primary HDU (HDU 0)
     try:
-        data, header = torchfits.read(test_file, hdu=0)  # Primary HDU is 0
+        data, header = torchfits.read(
+            test_file, hdu=0, return_header=True
+        )  # Primary HDU is 0
         print("Full Image (Primary HDU):")
         print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         print(f"  CRVAL1: {header.get('CRVAL1')}")
@@ -51,7 +53,9 @@ def main():
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 10, 100]:  # Test no cache, small cache, larger cache
         try:
-            data, header = torchfits.read(test_file, hdu=0, cache_capacity=capacity)
+            data, header = torchfits.read(
+                test_file, hdu=0, cache_capacity=capacity, return_header=True
+            )
             print(f"\nCache Capacity: {capacity}")
             print(f"  Data shape: {data.shape}, Data type: {data.dtype}")
         except RuntimeError as e:
@@ -61,7 +65,9 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            data, header = torchfits.read(test_file, hdu=0, device="cuda")
+            data, header = torchfits.read(
+                test_file, hdu=0, device="cuda", return_header=True
+            )
             print(f"  Data device: {data.device}")  # Should print 'cuda:0'
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

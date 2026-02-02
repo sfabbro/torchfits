@@ -105,7 +105,10 @@ class MNIST_FITS_Dataset(Dataset):
                 str(self.device) if hasattr(self.device, "__str__") else self.device
             )
             data, _ = torchfits.read(
-                filename, cache_capacity=self.cache_capacity, device=device_str
+                filename,
+                cache_capacity=self.cache_capacity,
+                device=device_str,
+                return_header=True,
             )
             # Add a channel dimension if it's a 2D image (for consistency)
             if data.ndim == 2:

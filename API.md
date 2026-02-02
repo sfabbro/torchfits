@@ -11,8 +11,84 @@ Complete API documentation for torchfits.
 - [DataLoaders](#dataloaders)
 - [Transforms](#transforms)
 - [Utility Functions](#utility-functions)
+- [Streaming](#streaming)
+- [Interop](#interop)
 
 ---
+## Streaming
+
+### `stream_table()`
+
+Iterate over a FITS table in row chunks.
+
+```python
+for chunk in torchfits.stream_table("catalog.fits", hdu=1, chunk_rows=10000):
+    # chunk is a dict of column tensors (or lists for VLA)
+    ...
+```
+
+**Parameters:**
+- `file_path` (str): Path to FITS file
+- `hdu` (int): HDU index (default: 1)
+- `columns` (list[str] | None): Column names to read (default: all)
+- `start_row` (int): 1-based starting row
+- `num_rows` (int): Rows to read, -1 = all
+- `chunk_rows` (int): Rows per yielded chunk (default: 10000)
+- `mmap` (bool): Use memory mapping when available
+- `max_chunks` (int | None): Stop after N chunks (default: None)
+
+### `read_large_table()`
+
+Read large FITS table with memory-aware chunking.
+
+```python
+data = torchfits.read_large_table("catalog.fits", hdu=1, streaming=True)
+
+# Or return an iterator
+chunks = torchfits.read_large_table("catalog.fits", hdu=1, streaming=True, return_iterator=True)
+for chunk in chunks:
+    ...
+```
+
+**Parameters:**
+- `file_path` (str): Path to FITS file
+- `hdu` (int): HDU index (default: 1)
+- `max_memory_mb` (int): Memory budget used to size chunks
+- `streaming` (bool): Enable chunked reads
+- `return_iterator` (bool): Return an iterator over chunks instead of a dict
+  - If `streaming=False`, returns a single-chunk iterator over the full table.
+
+---
+## Interop
+
+### `to_pandas()`
+
+Convert a dict of tensors to a Pandas DataFrame.
+
+```python
+df = torchfits.to_pandas(table, decode_bytes=True, vla_policy="object")
+```
+
+Parameters:
+- `decode_bytes` (bool): Decode uint8 string columns into Python strings
+- `encoding` (str): String encoding (default: ascii)
+- `strip` (bool): Strip trailing spaces/nulls (default: True)
+- `vla_policy` (str): "object" or "drop"
+
+### `to_arrow()`
+
+Convert a dict of tensors to a PyArrow Table.
+
+```python
+tbl = torchfits.to_arrow(table, decode_bytes=True, vla_policy="list")
+```
+
+Parameters:
+- `decode_bytes` (bool): Decode uint8 string columns into Python strings
+- `encoding` (str): String encoding (default: ascii)
+- `strip` (bool): Strip trailing spaces/nulls (default: True)
+- `vla_policy` (str): "list" or "drop"
+
 
 ## Core I/O Functions
 
@@ -21,27 +97,32 @@ Complete API documentation for torchfits.
 Read FITS data as PyTorch tensors.
 
 ```python
-torchfits.read(path, hdu=0, device='cpu', mmap=False, fp16=False, bf16=False,
+torchfits.read(path, hdu=0, device='cpu', mmap=True, fp16=False, bf16=False,
                columns=None, start_row=1, num_rows=-1, cache_capacity=10,
-               fast_header=True)
+               fast_header=True, return_header=False)
 ```
 
 **Parameters:**
 - `path` (str): Path to FITS file or URL
 - `hdu` (int | str): HDU index or name (default: 0)
 - `device` (str): Target device - 'cpu', 'cuda', 'mps', or 'cuda:N' (default: 'cpu')
-- `mmap` (bool): Use memory mapping for large files (default: False). Useful for files larger than available RAM.
+- `mmap` (bool): Use memory mapping for large files (default: True). Useful for files larger than available RAM.
 - `fp16` (bool): Convert to half precision (default: False). Not recommended for photometry or astrometry.
 - `bf16` (bool): Convert to bfloat16 (default: False). Better for ML than fp16 but still lossy.
 - `columns` (list[str] | None): Column names for table reading (default: None = all)
 - `start_row` (int): Starting row for tables, 1-based FITS indexing (default: 1)
 - `num_rows` (int): Number of rows to read, -1 = all (default: -1)
-- `cache_capacity` (int): File cache capacity in MB (default: 10)
+- `cache_capacity` (int): Max number of cached entries (default: 10)
 - `fast_header` (bool): Use fast bulk header parsing (default: True)
+- `return_header` (bool): Whether to return header (default: False)
 
 **Returns:**
-- For images: `(torch.Tensor, Header)` - Image data and header
-- For tables: `(dict[str, torch.Tensor], Header)` - Dictionary of column tensors and header
+- If `return_header=True`:
+  - For images: `(torch.Tensor, Header)` - Image data and header
+  - For tables: `(dict[str, torch.Tensor], Header)` - Dictionary of column tensors and header
+- If `return_header=False`:
+  - For images: `torch.Tensor`
+  - For tables: `dict[str, torch.Tensor | list]`
 
 **Example:**
 
@@ -49,22 +130,24 @@ torchfits.read(path, hdu=0, device='cpu', mmap=False, fp16=False, bf16=False,
 import torchfits
 
 # Read image - preserves original dtype by default
-data, header = torchfits.read("image.fits", device='cuda')
+data, header = torchfits.read("image.fits", device='cuda', return_header=True)
 print(data.shape, data.device)  # torch.Size([2048, 2048]) cuda:0
 
 # Read table with column selection for catalogs
-table, header = torchfits.read("catalog.fits", hdu=1, 
-                               columns=['RA', 'DEC', 'MAG'])
+table, header = torchfits.read("catalog.fits", hdu=1,
+                               columns=['RA', 'DEC', 'MAG'],
+                               return_header=True)
 print(table['RA'].shape)  # torch.Size([100000])
 
 # Read table row range for processing subsets
 table, header = torchfits.read("catalog.fits", hdu=1,
-                               start_row=1000, num_rows=5000)
+                               start_row=1000, num_rows=5000,
+                               return_header=True)
 ```
 
 **Notes:**
 - Data types are preserved from FITS by default for numerical accuracy
-- Use `mmap=True` for files larger than available RAM (slight performance cost)
+- Use `mmap=True` for files larger than available RAM (best performance for large images)
 - Avoid `fp16`/`bf16` for astrometry or photometry requiring full precision
 - URLs supported via cfitsio (http://, https://, ftp://)
 
@@ -229,6 +312,9 @@ num_hdus = len(hdul)
 
 # Close
 hdul.close()
+
+# Write
+hdul.write("output.fits", overwrite=True)
 ```
 
 **Example:**
@@ -330,7 +416,7 @@ for key, value in header.items():
 **Example:**
 
 ```python
-_, header = torchfits.read("image.fits")
+_, header = torchfits.read("image.fits", return_header=True)
 
 # Access values
 naxis1 = header['NAXIS1']
@@ -447,7 +533,7 @@ torchfits.to_tensor_frame(data)
 
 ```python
 # Read table first
-data, header = torchfits.read("catalog.fits", hdu=1)
+data, header = torchfits.read("catalog.fits", hdu=1, return_header=True)
 
 # Convert to TensorFrame
 tf = torchfits.to_tensor_frame(data)
@@ -501,6 +587,7 @@ torchfits.FITSDataset(file_paths, hdu=0, transform=None, device='cpu')
 - `hdu` (int): HDU index to read (default: 0)
 - `transform` (callable | None): Optional transform function (default: None)
 - `device` (str): Target device (default: 'cpu')
+- `include_header` (bool): Return `(data, header)` tuples (default: False)
 
 **Example:**
 
@@ -554,6 +641,27 @@ for sample in dataset:
 
 ---
 
+### `TableChunkDataset`
+
+Iterable dataset yielding table chunks.
+
+```python
+torchfits.TableChunkDataset(file_paths, hdu=1, chunk_rows=10000)
+```
+
+**Parameters:**
+- `file_paths` (list[str]): FITS files to stream
+- `hdu` (int): Table HDU index (default: 1)
+- `columns` (list[str] | None): Column names (default: all)
+- `chunk_rows` (int): Rows per chunk (default: 10000)
+- `max_chunks` (int | None): Stop after N chunks (default: None)
+- `mmap` (bool): Use memory mapping if available
+- `device` (str): Target device (default: 'cpu')
+- `transform` (callable | None): Optional transform
+- `include_header` (bool): Return `(chunk, header)` tuples
+
+---
+
 ## DataLoaders
 
 ### `create_dataloader()`
@@ -590,6 +698,14 @@ for batch in loader:
 
 ---
 
+### `create_table_dataloader()`
+
+Create a DataLoader that yields table chunks.
+
+```python
+torchfits.create_table_dataloader(file_paths, hdu=1, chunk_rows=10000)
+```
+
 ## Transforms
 
 All transforms work on GPU and can be composed.
@@ -612,7 +728,7 @@ torchfits.transforms.ZScale(contrast=0.25, max_reject=0.5)
 from torchfits.transforms import ZScale
 
 transform = ZScale()
-data, _ = torchfits.read("image.fits", device='cuda')
+data, _ = torchfits.read("image.fits", device='cuda', return_header=True)
 normalized = transform(data)  # Normalized to [0, 1]
 ```
 
@@ -792,7 +908,7 @@ transform = Compose([
     AsinhStretch(),
 ])
 
-data, _ = torchfits.read("image.fits", device='cuda')
+data, _ = torchfits.read("image.fits", device='cuda', return_header=True)
 transformed = transform(data)
 ```
 
