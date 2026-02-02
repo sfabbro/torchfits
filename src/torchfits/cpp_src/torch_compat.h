@@ -1,7 +1,7 @@
 #pragma once
 
 #include <nanobind/nanobind.h>
-#include <torch/torch.h>
+#include "torchfits_torch.h"
 #include <Python.h>
 
 namespace nb = nanobind;

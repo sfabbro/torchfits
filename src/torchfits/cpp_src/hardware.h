@@ -34,6 +34,7 @@ public:
 
     MMapHandle() = default;
     explicit MMapHandle(const std::string& filename);
+    explicit MMapHandle(const std::string& filename, bool writable);
     
     // Move constructor
     MMapHandle(MMapHandle&& other) noexcept 

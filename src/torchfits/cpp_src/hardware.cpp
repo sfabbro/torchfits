@@ -125,7 +125,9 @@ size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, co
     return std::min(std::min(bandwidth_chunk, memory_limit), data_size / 2);
 }
 
-MMapHandle::MMapHandle(const std::string& filename) {
+MMapHandle::MMapHandle(const std::string& filename) : MMapHandle(filename, false) {}
+
+MMapHandle::MMapHandle(const std::string& filename, bool writable) {
     fd = open(filename.c_str(), O_RDONLY);
     if (fd == -1) {
         throw std::runtime_error("Failed to open file descriptor: " + filename);
@@ -138,7 +140,8 @@ MMapHandle::MMapHandle(const std::string& filename) {
     }
     size = st.st_size;
     
-    ptr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    int prot = PROT_READ | (writable ? PROT_WRITE : 0);
+    ptr = mmap(nullptr, size, prot, MAP_PRIVATE, fd, 0);
     if (ptr == MAP_FAILED) {
         close(fd);
         throw std::runtime_error("Failed to mmap file: " + filename);

@@ -1,6 +1,6 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
-#include <torch/torch.h>
+#include "torchfits_torch.h"
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
 #include <wcslib/wcsfix.h>
