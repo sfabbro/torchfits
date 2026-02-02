@@ -124,7 +124,7 @@ def read_tensor_frame(
     """
     import torchfits
 
-    data, _ = torchfits.read(path, hdu=hdu, columns=columns)
+    data = torchfits.read(path, hdu=hdu, columns=columns, return_header=False)
     return to_tensor_frame(data)
 
 

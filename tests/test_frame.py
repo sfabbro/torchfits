@@ -1,12 +1,19 @@
 import os
 
+import pytest
 import torch
-from torch_frame import stype
+
+try:
+    from torch_frame import stype
+except Exception:
+    stype = None
 
 from torchfits.frame import read_tensor_frame, to_tensor_frame, write_tensor_frame
 
 
 def test_frame_integration():
+    if stype is None:
+        pytest.skip("torch_frame not installed")
     filename = "test_frame.fits"
 
     # Create sample data

@@ -89,7 +89,7 @@ def example_basic_conversion():
 
     # Method 2: Convert from dictionary
     print("\nMethod 2: read() + to_tensor_frame()")
-    data, header = torchfits.read(catalog_file, hdu=1)
+    data, header = torchfits.read(catalog_file, hdu=1, return_header=True)
     tf2 = torchfits.to_tensor_frame(data)
 
     print(f"  TensorFrame shape: {tf2.num_rows} rows")
@@ -107,7 +107,9 @@ def example_selective_loading():
     # Select only photometry columns
     photo_columns = ["g_mag", "r_mag", "i_mag", "g_r_color", "r_i_color"]
 
-    data, _ = torchfits.read(catalog_file, hdu=1, columns=photo_columns)
+    data, _ = torchfits.read(
+        catalog_file, hdu=1, columns=photo_columns, return_header=True
+    )
     tf = torchfits.to_tensor_frame(data)
 
     print(f"  Loaded {len(photo_columns)} photometric columns")

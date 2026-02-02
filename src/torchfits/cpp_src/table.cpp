@@ -3,7 +3,7 @@
  * Phase 2 implementation supporting all FITS column types.
  */
 
-#include <torch/torch.h>
+#include "torchfits_torch.h"
 #include <vector>
 #include <memory>
 #include <sys/mman.h>
@@ -100,6 +100,9 @@ struct ColumnInfo {
     int width;
     torch::ScalarType torch_type;
     long byte_offset; // Offset in bytes from start of row
+    double tscale = 1.0;
+    double tzero = 0.0;
+    bool scaled = false;
 };
 
 class TableReader {
@@ -151,17 +154,6 @@ public:
         if (status != 0) {
             throw std::runtime_error("Failed to get table dimensions");
         }
-        
-        // Debug output
-        // #ifdef DEBUG_TABLE
-        FILE* f = fopen("/tmp/debug_torchfits_cpp.txt", "a");
-        if (f) {
-            fprintf(f, "analyze_table: nrows=%ld, ncols=%d\n", nrows_, ncols_);
-            fclose(f);
-        }
-        // fprintf(stderr, "analyze_table: nrows=%ld, ncols=%d\n", nrows_, ncols_);
-        // fflush(stderr);
-        // #endif
         
         // Analyze columns
         columns_.clear();
@@ -225,6 +217,20 @@ public:
             col.repeat = (int)repeat_long;
             col.name = std::string(ttype);
             col.width = 1;  // Will be set based on type
+
+            // Read scaling keywords if present
+            col.tscale = 1.0;
+            col.tzero = 0.0;
+            col.scaled = false;
+            int scale_status = 0;
+            char scale_key[FLEN_KEYWORD];
+            snprintf(scale_key, FLEN_KEYWORD, "TSCAL%d", i);
+            fits_read_key(fptr_, TDOUBLE, scale_key, &col.tscale, nullptr, &scale_status);
+            if (scale_status != 0) { scale_status = 0; col.tscale = 1.0; }
+            snprintf(scale_key, FLEN_KEYWORD, "TZERO%d", i);
+            fits_read_key(fptr_, TDOUBLE, scale_key, &col.tzero, nullptr, &scale_status);
+            if (scale_status != 0) { scale_status = 0; col.tzero = 0.0; }
+            col.scaled = (col.tscale != 1.0 || col.tzero != 0.0);
             
             #ifdef DEBUG_TABLE
             fprintf(stderr, "Column %d: name='%s', typecode=%d, repeat=%d\n", i, ttype, typecode, col.repeat);
@@ -280,7 +286,13 @@ public:
                         } else {
                              // Binary table
                              col.width = 1;
-                             // col.repeat is already set to repeat_long
+                             // For binary tables, repeat_long is often the string length,
+                             // but some FITS writers may populate width_long instead.
+                             if (repeat_long > 1) {
+                                 col.repeat = (int)repeat_long;
+                             } else if (width_long > 0) {
+                                 col.repeat = (int)width_long;
+                             }
                         }
                         break;
                     case TLONG:
@@ -468,6 +480,7 @@ public:
         // Note: Buffered reading currently does NOT support VLA.
         long requested_bytes = 0;
         bool has_vla = false;
+        bool has_scaled = false;
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
             if (col.type == FITSColumnType::VARIABLE) {
@@ -475,38 +488,37 @@ public:
             } else {
                 requested_bytes += col.width * col.repeat;
             }
+            if (col.scaled) {
+                has_scaled = true;
+            }
         }
         
         bool use_buffered = false;
-        if (!is_ascii_ && !has_vla && row_width_bytes_ > 0) {
+        if (!is_ascii_ && !has_vla && !has_scaled && row_width_bytes_ > 0) {
             double byte_fraction = (double)requested_bytes / row_width_bytes_;
             double col_fraction = (double)col_indices.size() / ncols_;
             
             if (byte_fraction > 0.25 || col_fraction > 0.5) {
-                // use_buffered = true; // Disable buffered reading for now as it causes issues
-                use_buffered = false;
+                use_buffered = true;
             }
         }
         
-        if (use_buffered) {
-            
-            read_columns_buffered(col_indices, start_row, num_rows, result);
-        } else {
+        auto read_column_by_column = [&]() {
             // Read column by column
             for (int col_idx : col_indices) {
                 const auto& col = columns_[col_idx];
-                
+
                 if (col.type == FITSColumnType::VARIABLE) {
                     // Read VLA column
                     result[col.name] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
                 } else {
                     // Read fixed width column
                     torch::Tensor tensor = result[col.name].fixed_data;
-                    
+
                     int status = 0;
                     // Use fits_read_col to read directly into tensor memory
                     // Note: fits_read_col handles byte swapping automatically!
-                    
+
                     int datatype;
                     switch (col.type) {
                         case FITSColumnType::LOGICAL: datatype = TLOGICAL; break;
@@ -519,23 +531,23 @@ public:
                         case FITSColumnType::STRING: datatype = TBYTE; break; // Read strings as bytes
                         default: datatype = TFLOAT;
                     }
-                    
+
                     long firstelem = 1;
                     long nelements = num_rows * col.repeat;
-                    
+
                     if (col.type == FITSColumnType::STRING) {
                          if (is_ascii_) {
                              // ASCII table: read as strings
                              std::vector<char*> pointers(nelements);
                              std::vector<char> buffer(nelements * (col.width + 1));
-                             
+
                              for (long i = 0; i < nelements; i++) {
                                  pointers[i] = &buffer[i * (col.width + 1)];
                              }
-                             
+
                              fits_read_col(fptr_, TSTRING, col_idx + 1, start_row, firstelem, nelements,
                                           nullptr, pointers.data(), nullptr, &status);
-                                          
+
                              // Copy to tensor (row-major)
                              uint8_t* tensor_data = (uint8_t*)tensor.data_ptr();
                              for (long i = 0; i < nelements; i++) {
@@ -561,7 +573,7 @@ public:
                     } else if (col.type == FITSColumnType::LOGICAL) {
                          fits_read_col(fptr_, TBYTE, col_idx + 1, start_row, firstelem, nelements,
                                       nullptr, tensor.data_ptr(), nullptr, &status);
-                         
+
                          // Convert 'T'/'F' to 1/0
                          // The tensor is kBool, so its data_ptr is bool*.
                          // We read into it as uint8_t* (char), then convert.
@@ -577,7 +589,7 @@ public:
                         fits_read_col(fptr_, datatype, col_idx + 1, start_row, firstelem, nelements,
                                       nullptr, tensor.data_ptr(), nullptr, &status);
                     }
-                    
+
                     if (status != 0) {
                          char err_msg[81];
                          fits_get_errstatus(status, err_msg);
@@ -585,6 +597,17 @@ public:
                     }
                 }
             }
+        };
+
+        if (use_buffered) {
+            try {
+                read_columns_buffered(col_indices, start_row, num_rows, result);
+            } catch (const std::exception&) {
+                // Fallback for CFITSIO edge cases where tblbytes reads fail.
+                read_column_by_column();
+            }
+        } else {
+            read_column_by_column();
         }
         
         return result;
@@ -599,6 +622,10 @@ public:
         
         if (num_rows == -1) {
             num_rows = nrows_;
+        }
+
+        if (nrows_ == 0) {
+            return nb::dict();
         }
         
         // Validate rows
@@ -623,6 +650,16 @@ public:
                     }
                 }
                 if (!found) throw std::runtime_error("Column not found: " + name);
+            }
+        }
+
+        for (int col_idx : col_indices) {
+            const auto& col = columns_[col_idx];
+            if (col.type == FITSColumnType::VARIABLE) {
+                throw std::runtime_error("VLA columns not supported for mmap");
+            }
+            if (col.scaled) {
+                throw std::runtime_error("Scaled columns not supported for mmap");
             }
         }
         
@@ -674,6 +711,11 @@ public:
         
         // Calculate start offset based on start_row (0-based offset)
         size_t row_start_offset = (start_row - 1) * row_width_bytes_;
+
+#if defined(POSIX_MADV_SEQUENTIAL)
+        size_t byte_len = static_cast<size_t>(num_rows) * row_width_bytes_;
+        posix_madvise(const_cast<uint8_t*>(base_ptr + row_start_offset), byte_len, POSIX_MADV_SEQUENTIAL);
+#endif
         
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
@@ -692,7 +734,7 @@ public:
             if (col.type == FITSColumnType::STRING) {
                 // For strings, we return a ByteTensor of shape (num_rows, width)
                 // width is the string length (col.width)
-                shape.push_back(col.width);
+                shape.push_back(is_ascii_ ? col.width : col.repeat);
             } else if (col.repeat > 1) {
                 shape.push_back(col.repeat);
             }
@@ -717,7 +759,9 @@ public:
                 
                 // Parallel copy and swap
                 long repeat = (col.repeat > 1) ? col.repeat : 1;
-                if (col.type == FITSColumnType::STRING) repeat = col.width; // String length
+                if (col.type == FITSColumnType::STRING) {
+                    repeat = is_ascii_ ? col.width : col.repeat; // String length
+                }
                 
                 if (col.type == FITSColumnType::FLOAT) {
                     float* out = tensor.data_ptr<float>();
@@ -969,7 +1013,17 @@ public:
         // Note: FITS is Big Endian, we need to swap if host is Little Endian
         // Assuming Little Endian host (x86/ARM)
         
-        if (col.type == FITSColumnType::STRING || col.type == FITSColumnType::BYTE || col.type == FITSColumnType::LOGICAL) {
+        if (col.type == FITSColumnType::LOGICAL) {
+             // Convert 'T'/'F' (or '1'/'0') to bool
+             bool* out = reinterpret_cast<bool*>(dest);
+             for (long i = 0; i < num_rows; i++) {
+                 const uint8_t* src_cell = buffer + i * row_stride + col_offset;
+                 for (int j = 0; j < col.repeat; j++) {
+                     const uint8_t v = src_cell[j];
+                     out[i * col.repeat + j] = (v == 'T' || v == '1');
+                 }
+             }
+        } else if (col.type == FITSColumnType::STRING || col.type == FITSColumnType::BYTE) {
              // No swapping needed for bytes/strings
              for (long i = 0; i < num_rows; i++) {
                  std::memcpy(dest + i * total_width, buffer + i * row_stride + col_offset, total_width);
@@ -1112,9 +1166,13 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     int status = 0;
 
     if (overwrite) {
-        fits_create_file(&fptr, filename, &status);
+        std::string path = filename ? filename : "";
+        if (!path.empty() && path[0] != '!') {
+            path = "!" + path;
+        }
+        fits_create_file(&fptr, path.c_str(), &status);
     } else {
-        fits_open_file(&fptr, filename, READWRITE, &status);
+        fits_create_file(&fptr, filename, &status);
     }
 
     if (status != 0) {

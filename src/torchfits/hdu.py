@@ -13,7 +13,19 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch import Tensor
-from torch_frame import TensorFrame
+
+try:
+    from torch_frame import TensorFrame
+    HAS_TORCH_FRAME = True
+except ImportError:
+    HAS_TORCH_FRAME = False
+
+    class TensorFrame:
+        """Minimal fallback when torch_frame is unavailable."""
+
+        def __init__(self, feat_dict=None, col_names_dict=None):
+            self.feat_dict = feat_dict or {}
+            self.col_names_dict = col_names_dict or {}
 
 # Import torch first
 _ = torch.empty(1)  # Force torch C++ symbols to load
@@ -133,12 +145,41 @@ class DataView:
         return torch.float32  # Default
 
     def __getitem__(self, slice_spec) -> Tensor:
-        # Parse slice_spec to x1, y1, x2, y2 (simplified)
-        # For now assume full read if not implemented fully
-        # TODO: Implement proper slice parsing
-        return self._handle.read_subset(
-            self._index, 0, 0, 10, 10
-        )  # Dummy implementation matching C++ signature
+        # Parse slice_spec to x1, y1, x2, y2 (exclusive bounds)
+        shape = self.shape
+        if len(shape) < 2:
+            raise ValueError("Subset reading requires at least 2D data")
+
+        if slice_spec is Ellipsis:
+            slice_spec = (slice(None), slice(None))
+        elif not isinstance(slice_spec, tuple):
+            slice_spec = (slice_spec, slice(None))
+
+        if len(slice_spec) != 2:
+            raise ValueError("Subset slicing supports exactly 2 dimensions (y, x)")
+
+        def _normalize_index(s, dim):
+            if isinstance(s, int):
+                idx = s + dim if s < 0 else s
+                return max(0, min(dim, idx)), max(0, min(dim, idx + 1))
+            if isinstance(s, slice):
+                if s.step not in (None, 1):
+                    raise ValueError("Only step=1 slices are supported")
+                start = 0 if s.start is None else s.start
+                stop = dim if s.stop is None else s.stop
+                if start < 0:
+                    start += dim
+                if stop < 0:
+                    stop += dim
+                start = max(0, min(dim, start))
+                stop = max(0, min(dim, stop))
+                return start, stop
+            raise TypeError("Slice spec must be int or slice")
+
+        y1, y2 = _normalize_index(slice_spec[0], shape[0])
+        x1, x2 = _normalize_index(slice_spec[1], shape[1])
+
+        return self._handle.read_subset(self._index, x1, y1, x2, y2)
 
 
 class TensorHDU:
@@ -259,9 +300,15 @@ class TableDataAccessor:
 
     def __getitem__(self, key):
         """Get column data."""
+        if hasattr(self._table, "_raw_data") and key in self._table._raw_data:
+            value = self._table._raw_data[key]
+            if isinstance(value, torch.Tensor):
+                if value.dim() > 1:
+                    return value.squeeze()
+                return value
+            return value
         if hasattr(self._table, "feat_dict") and key in self._table.feat_dict:
             tensor = self._table.feat_dict[key]
-            # Return 1D tensor for compatibility
             if tensor.dim() > 1:
                 return tensor.squeeze()
             return tensor
@@ -269,10 +316,15 @@ class TableDataAccessor:
 
     def __contains__(self, key):
         """Check if column exists."""
-        return hasattr(self._table, "feat_dict") and key in self._table.feat_dict
+        return (
+            hasattr(self._table, "_raw_data")
+            and key in self._table._raw_data
+        ) or (hasattr(self._table, "feat_dict") and key in self._table.feat_dict)
 
     def keys(self):
         """Get column names."""
+        if hasattr(self._table, "_raw_data"):
+            return self._table._raw_data.keys()
         if hasattr(self._table, "feat_dict"):
             return self._table.feat_dict.keys()
         return []
@@ -291,17 +343,26 @@ class TableHDU(TensorFrame):
     """FITS table as TensorFrame."""
 
     def __init__(
-        self, tensor_dict: dict, col_stats: dict = None, header: Optional[Header] = None
+        self,
+        tensor_dict: dict,
+        col_stats: dict = None,
+        header: Optional[Header] = None,
+        source_path: Optional[str] = None,
+        source_hdu: Optional[int] = None,
     ):
+        self._raw_data = tensor_dict or {}
+        self._source_path = source_path
+        self._source_hdu = source_hdu
         # Convert raw data to proper TensorFrame format
         feat_dict = {}
         col_names_dict = {}
+        string_cols = self._get_string_columns(header)
 
         for col_name, data in tensor_dict.items():
-            # print(f"DEBUG: Processing column {col_name}, type {type(data)}")
-            with open("/tmp/debug_torchfits_py.txt", "a") as f:
-                f.write(f"DEBUG: Processing column {col_name}, type {type(data)}\n")
             try:
+                if col_name in string_cols:
+                    # Keep strings in raw data only
+                    continue
                 if isinstance(data, torch.Tensor):
                     # Ensure tensor is 2D
                     if data.dim() == 1:
@@ -316,9 +377,12 @@ class TableHDU(TensorFrame):
                     try:
                         # Try to infer the dtype from the data
                         if data and isinstance(data[0], str):
-                            # Skip string columns for now
+                            # Keep strings in raw data only
                             continue
-                        elif data and isinstance(data[0], (int, np.integer)):
+                        if data and isinstance(data[0], torch.Tensor):
+                            # VLA-like list of tensors: keep in raw data only
+                            continue
+                        if data and isinstance(data[0], (int, np.integer)):
                             tensor_data = torch.tensor(data, dtype=torch.long)
                         else:
                             tensor_data = torch.tensor(data, dtype=torch.float32)
@@ -357,19 +421,202 @@ class TableHDU(TensorFrame):
                 # Skip any problematic columns
                 continue
 
-        # If no valid columns, create empty structure
+        # If no valid columns, create empty structure with correct row count
         if not feat_dict:
-            feat_dict = {"dummy": torch.zeros(1, 1)}
+            nrows = 1
+            if header and "NAXIS2" in header:
+                try:
+                    nrows = int(header["NAXIS2"])
+                except Exception:
+                    nrows = 1
+            feat_dict = {"dummy": torch.zeros(max(1, nrows), 1)}
             col_names_dict = {"dummy": ["0"]}
 
-        super().__init__(feat_dict, col_names_dict)
         self.header = header or Header()
+        super().__init__(feat_dict, col_names_dict)
+
+    def _get_string_columns(self, header: Optional[Header]) -> set:
+        """Infer string columns from TTYPE/TFORM header cards."""
+        if not header:
+            return set()
+        name_by_idx = {}
+        string_cols = set()
+        for key, value in header.items():
+            if isinstance(key, str) and key.startswith("TTYPE"):
+                idx = key[5:]
+                name_by_idx[str(idx)] = value
+        for key, value in header.items():
+            if isinstance(key, str) and key.startswith("TFORM"):
+                idx = key[5:]
+                tform = str(value)
+                if "A" in tform:
+                    col_name = name_by_idx.get(str(idx))
+                    if col_name:
+                        string_cols.add(col_name)
+        return string_cols
+
+    @property
+    def string_columns(self) -> List[str]:
+        """Return column names inferred as strings."""
+        return sorted(self._get_string_columns(self.header))
+
+    @property
+    def schema(self) -> Dict[str, Any]:
+        """Return basic schema info parsed from FITS headers."""
+        return self._build_schema()
+
+    def _build_schema(self) -> Dict[str, Any]:
+        if not self.header:
+            return {"columns": [], "string_columns": [], "vla_columns": []}
+
+        name_by_idx: Dict[int, str] = {}
+        tform_by_idx: Dict[int, str] = {}
+        tdim_by_idx: Dict[int, str] = {}
+        for key, value in self.header.items():
+            if isinstance(key, str) and key.startswith("TTYPE"):
+                idx = int(key[5:]) if key[5:].isdigit() else None
+                if idx is not None:
+                    name_by_idx[idx] = str(value)
+            if isinstance(key, str) and key.startswith("TFORM"):
+                idx = int(key[5:]) if key[5:].isdigit() else None
+                if idx is not None:
+                    tform_by_idx[idx] = str(value)
+            if isinstance(key, str) and key.startswith("TDIM"):
+                idx = int(key[4:]) if key[4:].isdigit() else None
+                if idx is not None:
+                    tdim_by_idx[idx] = str(value)
+
+        def _parse_tform(tform: str) -> Dict[str, Any]:
+            # Examples: "E", "20A", "1PB", "1PJ"
+            import re
+
+            tform = tform.strip().upper()
+            m = re.match(r"(\d*)([PQ]?)([A-Z])", tform)
+            if not m:
+                return {"tform": tform, "repeat": None, "vla": False, "code": None}
+            repeat = int(m.group(1)) if m.group(1) else 1
+            vla = m.group(2) in ("P", "Q")
+            code = m.group(3)
+            base = {"tform": tform, "repeat": repeat, "vla": vla, "code": code}
+            if vla:
+                base["vla_descriptor"] = m.group(2)
+            return base
+
+        columns = []
+        string_cols = []
+        vla_cols = []
+        for idx in sorted(name_by_idx.keys()):
+            name = name_by_idx[idx]
+            tform = tform_by_idx.get(idx, "")
+            info = _parse_tform(tform) if tform else {"tform": "", "repeat": None, "vla": False, "code": None}
+            tdim = tdim_by_idx.get(idx)
+            is_string = info["code"] == "A"
+            if is_string:
+                string_cols.append(name)
+            if info["vla"]:
+                vla_cols.append(name)
+            columns.append(
+                {
+                    "name": name,
+                    "tform": info["tform"],
+                    "repeat": info["repeat"],
+                    "code": info["code"],
+                    "string": is_string,
+                    "vla": info["vla"],
+                    "tdim": tdim,
+                }
+            )
+
+        return {"columns": columns, "string_columns": string_cols, "vla_columns": vla_cols}
+
+    def get_vla_column(self, name: str) -> List[Tensor]:
+        """Return a VLA column as a list of tensors."""
+        value = self._raw_data.get(name)
+        if isinstance(value, list):
+            return value
+
+        if self._source_path is not None and self._source_hdu is not None:
+            try:
+                from astropy.io import fits
+
+                with fits.open(self._source_path) as hdul:
+                    data = hdul[self._source_hdu].data
+                    if data is None or name not in data.names:
+                        raise KeyError(f"Column '{name}' not found in FITS table")
+                    col = data[name]
+                    vla_list = []
+                    for item in col:
+                        if isinstance(item, np.ndarray):
+                            vla_list.append(torch.from_numpy(item))
+                        else:
+                            vla_list.append(torch.tensor(item))
+                    self._raw_data[name] = vla_list
+                    return vla_list
+            except Exception:
+                pass
+
+        raise KeyError(f"Column '{name}' is not a VLA list")
+
+    def get_vla_lengths(self, name: str) -> List[int]:
+        """Return per-row lengths for a VLA column."""
+        values = self.get_vla_column(name)
+        lengths: List[int] = []
+        for item in values:
+            if isinstance(item, torch.Tensor):
+                lengths.append(int(item.numel()))
+            elif hasattr(item, "__len__"):
+                lengths.append(len(item))
+            else:
+                lengths.append(1)
+        return lengths
+
+    @property
+    def vla_lengths(self) -> Dict[str, List[int]]:
+        """Return per-row lengths for all VLA columns."""
+        out: Dict[str, List[int]] = {}
+        for col in self.schema.get("vla_columns", []):
+            try:
+                out[col] = self.get_vla_lengths(col)
+            except Exception:
+                continue
+        return out
+
+    def get_string_column(
+        self, name: str, encoding: str = "ascii", strip: bool = True
+    ) -> List[str]:
+        """Decode a string column stored as uint8 bytes."""
+        value = self._raw_data.get(name)
+        if not isinstance(value, torch.Tensor):
+            raise KeyError(f"Column '{name}' is not a tensor string column")
+        if value.dtype != torch.uint8:
+            raise TypeError(f"Column '{name}' is not uint8 encoded")
+        if value.dim() != 2:
+            raise ValueError(f"Column '{name}' must be 2D (rows, width)")
+
+        strings: List[str] = []
+        for row in value.cpu().numpy():
+            s = bytes(row.tolist()).decode(encoding, errors="ignore")
+            if strip:
+                s = s.rstrip(" \x00")
+            strings.append(s)
+        return strings
 
     @property
     def num_rows(self) -> int:
         """Get number of rows in the table."""
+        if hasattr(self, "_raw_data") and self._raw_data:
+            for value in self._raw_data.values():
+                if isinstance(value, torch.Tensor):
+                    return value.shape[0] if value.dim() > 0 else 1
+                if isinstance(value, (list, tuple)):
+                    return len(value)
+            return 0
+        if self.header and "NAXIS2" in self.header:
+            try:
+                return int(self.header["NAXIS2"])
+            except Exception:
+                pass
         if hasattr(self, "feat_dict") and self.feat_dict:
-            # Get length from first tensor
             first_tensor = next(iter(self.feat_dict.values()))
             return first_tensor.shape[0] if hasattr(first_tensor, "shape") else 0
         return 0
@@ -382,6 +629,8 @@ class TableHDU(TensorFrame):
     @property
     def columns(self) -> List[str]:
         """Get column names."""
+        if hasattr(self, "_raw_data"):
+            return [str(k) for k in self._raw_data.keys()]
         if hasattr(self, "feat_dict"):
             return [str(k) for k in self.feat_dict.keys()]
         return []
@@ -409,8 +658,10 @@ class TableHDU(TensorFrame):
 
     def select(self, cols: List[str]) -> "TableHDU":
         """Select specific columns."""
+        if hasattr(self, "_raw_data"):
+            selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in cols}
+            return TableHDU(selected_dict, {}, self.header)
         if hasattr(self, "feat_dict"):
-            # Create new TableHDU with selected columns
             selected_dict = {k: v for k, v in self.feat_dict.items() if str(k) in cols}
             return TableHDU(selected_dict, {}, self.header)
         return self
@@ -421,6 +672,16 @@ class TableHDU(TensorFrame):
 
     def head(self, n: int) -> "TableHDU":
         """Limit to first n rows."""
+        if hasattr(self, "_raw_data") and self._raw_data:
+            new_dict = {}
+            for k, v in self._raw_data.items():
+                if isinstance(v, torch.Tensor) and v.dim() > 0:
+                    new_dict[k] = v[:n]
+                elif isinstance(v, list):
+                    new_dict[k] = v[:n]
+                else:
+                    new_dict[k] = v
+            return TableHDU(new_dict, {}, self.header)
         if hasattr(self, "feat_dict") and self.feat_dict:
             new_dict = {}
             for k, v in self.feat_dict.items():
@@ -433,6 +694,8 @@ class TableHDU(TensorFrame):
 
     def __getitem__(self, col_name: str) -> Any:
         """Get column data by name."""
+        if hasattr(self, "_raw_data") and col_name in self._raw_data:
+            return self._raw_data[col_name]
         if hasattr(self, "feat_dict") and col_name in self.feat_dict:
             return self.feat_dict[col_name]
         raise KeyError(f"Column '{col_name}' not found")
@@ -443,6 +706,10 @@ class TableHDU(TensorFrame):
 
     def to_tensor_dict(self) -> Dict[str, Any]:
         """Return the tensor dictionary."""
+        if hasattr(self, "_raw_data"):
+            return {
+                str(k): v for k, v in self._raw_data.items() if isinstance(v, torch.Tensor)
+            }
         if hasattr(self, "feat_dict"):
             return {str(k): v for k, v in self.feat_dict.items()}
         return {}
@@ -450,10 +717,28 @@ class TableHDU(TensorFrame):
     def iter_rows(self, batch_size: int = 1000):
         """Iterate over table rows in batches."""
         # Simple implementation - yield the data in chunks
-        if hasattr(self, "feat_dict") and self.feat_dict:
+        if hasattr(self, "_raw_data") and self._raw_data:
             total_rows = self.num_rows
             for start in range(0, total_rows, batch_size):
-                yield {str(k): v for k, v in self.feat_dict.items()}
+                batch = {}
+                for k, v in self._raw_data.items():
+                    if isinstance(v, torch.Tensor):
+                        batch[str(k)] = v[start : start + batch_size]
+                    elif isinstance(v, list):
+                        batch[str(k)] = v[start : start + batch_size]
+                    else:
+                        batch[str(k)] = v
+                yield batch
+        elif hasattr(self, "feat_dict") and self.feat_dict:
+            total_rows = self.num_rows
+            for start in range(0, total_rows, batch_size):
+                batch = {}
+                for k, v in self.feat_dict.items():
+                    if hasattr(v, "shape") and len(v.shape) > 0:
+                        batch[str(k)] = v[start : start + batch_size]
+                    else:
+                        batch[str(k)] = v
+                yield batch
 
     @classmethod
     def from_fits(cls, file_path: str, hdu_index: int = 1) -> "TableHDU":
@@ -481,12 +766,7 @@ class TableHDU(TensorFrame):
             tensor_dict = cpp.read_fits_table(file_path, hdu_index)
             header = Header(cpp.read_header_dict(file_path, hdu_index))
 
-            # Handle variable length arrays
-            for key, value in tensor_dict.items():
-                if isinstance(value, list):
-                    tensor_dict[key] = value[0]
-
-            return cls(tensor_dict, {}, header)
+            return cls(tensor_dict, {}, header, source_path=file_path, source_hdu=hdu_index)
         except (IOError, RuntimeError) as e:
             from .logging import logger
 
@@ -494,7 +774,7 @@ class TableHDU(TensorFrame):
                 f"Failed to read table from {file_path}[{hdu_index}]: {str(e)}"
             )
             # Return empty TableHDU for benchmark compatibility
-            return cls({}, {}, Header())
+            return cls({}, {}, Header(), source_path=file_path, source_hdu=hdu_index)
         except Exception as e:
             from .logging import logger
 
@@ -506,7 +786,7 @@ class TableHDU(TensorFrame):
     def to_fits(self, file_path: str, overwrite: bool = False):
         import torchfits.cpp as cpp
 
-        cpp.write_fits_table(file_path, self, self.header, overwrite)
+        cpp.write_fits_table(file_path, self.to_tensor_dict(), self.header, overwrite)
 
     def __repr__(self):
         name = self.header.get("EXTNAME", "TABLE")
@@ -586,11 +866,6 @@ class HDUList:
                         # table_res is the dictionary of columns
                         tensor_dict = table_res
 
-                        with open("/tmp/debug_torchfits_py.txt", "a") as f:
-                            f.write(
-                                f"DEBUG: table_res keys: {list(table_res.keys())}\n"
-                            )
-
                         # Handle VLA columns (lists of tensors) - convert to single tensor if possible or keep as list
                         for key, value in tensor_dict.items():
                             if isinstance(value, list):
@@ -601,12 +876,13 @@ class HDUList:
                                 # Wait, VLA support in TableHDU?
                                 pass
 
-                        hdu = TableHDU(tensor_dict, {}, header)
+                        hdu = TableHDU(tensor_dict, {}, header, source_path=path, source_hdu=i)
                     except Exception:
-                        # Fallback to empty table if read fails
-                        # import sys
-                        # sys.stderr.write(f"DEBUG: Failed to create TableHDU: {e}\n")
-                        hdu = TableHDU({}, {}, header)
+                        try:
+                            tensor_dict = cpp.read_fits_table(path, i)
+                            hdu = TableHDU(tensor_dict, {}, header, source_path=path, source_hdu=i)
+                        except Exception:
+                            hdu = TableHDU({}, {}, header, source_path=path, source_hdu=i)
                 else:
                     # Unknown type, treat as empty image
                     hdu = TensorHDU(header=header)
@@ -646,7 +922,7 @@ class HDUList:
             self._file_handle.close()
             self._file_handle = None
 
-    def writeto(self, path: str, overwrite: bool = False):
+    def write(self, path: str, overwrite: bool = False):
         import torchfits.cpp as cpp
 
         cpp.write_fits_file(path, self._hdus, overwrite)

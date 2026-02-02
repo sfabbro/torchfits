@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <torch/torch.h>
+#include "torchfits_torch.h"
 #include <fitsio.h>
 #include <string>
 #include <vector>

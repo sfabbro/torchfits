@@ -46,7 +46,7 @@ class TestTableReading:
 
         try:
             result, header = torchfits.read(
-                filepath, hdu=1
+                filepath, hdu=1, return_header=True
             )  # Tables are usually in HDU 1
 
             assert isinstance(result, dict)
@@ -62,7 +62,9 @@ class TestTableReading:
         filepath, expected_data = self.create_test_table(100)
 
         try:
-            result, header = torchfits.read(filepath, hdu=1, columns=["RA", "DEC"])
+            result, header = torchfits.read(
+                filepath, hdu=1, columns=["RA", "DEC"], return_header=True
+            )
 
             assert isinstance(result, dict)
             assert "RA" in result
@@ -77,7 +79,9 @@ class TestTableReading:
         filepath, expected_data = self.create_test_table(1000)
 
         try:
-            result, header = torchfits.read(filepath, hdu=1, start_row=100, num_rows=50)
+            result, header = torchfits.read(
+                filepath, hdu=1, start_row=100, num_rows=50, return_header=True
+            )
 
             assert isinstance(result, dict)
             assert len(result["RA"]) == 50
@@ -102,12 +106,69 @@ class TestTableReading:
         finally:
             os.unlink(filepath)
 
+    def test_string_column_decoding(self):
+        """Test decoding of string columns."""
+        from astropy.table import Table
+
+        names = ["alpha", "beta", "gamma"]
+        values = [1.0, 2.0, 3.0]
+        table = Table({"NAME": names, "VAL": values})
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            table.write(f.name, format="fits", overwrite=True)
+            path = f.name
+
+        try:
+            with torchfits.open(path) as hdul:
+                table_hdu = hdul[1]
+                assert "NAME" in table_hdu.columns
+                assert "NAME" in table_hdu.string_columns
+                decoded = table_hdu.get_string_column("NAME")
+                assert decoded == names
+        finally:
+            os.unlink(path)
+
+    def test_stream_table_chunks(self):
+        """Test stream_table yields correct total row count."""
+        filepath, _ = self.create_test_table(1234)
+
+        try:
+            total = 0
+            for chunk in torchfits.stream_table(filepath, hdu=1, chunk_rows=200):
+                assert "RA" in chunk
+                total += len(chunk["RA"])
+            assert total == 1234
+        finally:
+            os.unlink(filepath)
+
+    def test_schema_vla_flags(self):
+        """Test schema reports VLA columns."""
+        from astropy.table import Table
+        import numpy as np
+
+        vla = np.array([np.array([1, 2]), np.array([3])], dtype=object)
+        table = Table({"VLA": vla})
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            table.write(f.name, format="fits", overwrite=True)
+            path = f.name
+
+        try:
+            with torchfits.open(path) as hdul:
+                table_hdu = hdul[1]
+                schema = table_hdu.schema
+                assert "VLA" in schema["vla_columns"]
+                lengths = table_hdu.get_vla_lengths("VLA")
+                assert lengths == [2, 1]
+        finally:
+            os.unlink(path)
+
     def test_data_types(self):
         """Test various FITS data types."""
         filepath, expected_data = self.create_test_table(100)
 
         try:
-            result, header = torchfits.read(filepath, hdu=1)
+            result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
             # Check data types are preserved appropriately
             assert result["ID"].dtype in [torch.int32, torch.int64]
@@ -130,7 +191,7 @@ class TestTableReading:
                 empty_table.write(f.name, format="fits", overwrite=True)
 
                 # Should handle empty table gracefully
-                result, header = torchfits.read(f.name, hdu=1)
+                result, header = torchfits.read(f.name, hdu=1, return_header=True)
                 assert isinstance(result, dict)
 
             finally:

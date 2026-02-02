@@ -13,7 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 import torchfits
 
-from .datasets import FITSDataset, IterableFITSDataset
+from .datasets import FITSDataset, IterableFITSDataset, TableChunkDataset
 
 
 def create_dataloader(
@@ -74,6 +74,7 @@ def create_fits_dataloader(
     hdu: int = 0,
     transform: Optional[Callable] = None,
     device: str = "cpu",
+    include_header: bool = False,
     **dataloader_kwargs,
 ) -> DataLoader:
     """
@@ -90,7 +91,11 @@ def create_fits_dataloader(
         Configured DataLoader instance
     """
     dataset = FITSDataset(
-        file_paths=file_paths, hdu=hdu, transform=transform, device=device
+        file_paths=file_paths,
+        hdu=hdu,
+        transform=transform,
+        device=device,
+        include_header=include_header,
     )
 
     return create_dataloader(dataset, **dataloader_kwargs)
@@ -138,6 +143,35 @@ def create_streaming_dataloader(
     dataloader_kwargs = {**streaming_defaults, **dataloader_kwargs}
 
     return create_dataloader(dataset, **dataloader_kwargs)
+
+
+def create_table_dataloader(
+    file_paths: List[str],
+    hdu: int = 1,
+    columns: Optional[List[str]] = None,
+    chunk_rows: int = 10000,
+    max_chunks: Optional[int] = None,
+    mmap: bool = False,
+    device: str = "cpu",
+    transform: Optional[Callable] = None,
+    include_header: bool = False,
+    **dataloader_kwargs,
+) -> DataLoader:
+    """
+    Create a DataLoader that yields table chunks.
+    """
+    dataset = TableChunkDataset(
+        file_paths=file_paths,
+        hdu=hdu,
+        columns=columns,
+        chunk_rows=chunk_rows,
+        max_chunks=max_chunks,
+        mmap=mmap,
+        device=device,
+        transform=transform,
+        include_header=include_header,
+    )
+    return create_dataloader(dataset, shuffle=False, **dataloader_kwargs)
 
 
 def create_distributed_dataloader(

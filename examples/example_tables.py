@@ -31,7 +31,9 @@ def main():
 
     # Read the entire table
     try:
-        table_data, header = torchfits.read(test_file, hdu="MY_TABLE")  # Read by name
+        table_data, header = torchfits.read(
+            test_file, hdu="MY_TABLE", return_header=True
+        )  # Read by name
         print("Table Data:")
         for col_name in table_data:
             print(f"  Column '{col_name}': {table_data[col_name]}")
@@ -44,7 +46,9 @@ def main():
 
     # Read specific columns
     try:
-        table_subset, _ = torchfits.read(test_file, hdu=1, columns=["ra", "id"])
+        table_subset, _ = torchfits.read(
+            test_file, hdu=1, columns=["ra", "id"], return_header=True
+        )
         print("\nSubset of Columns (ra, id):")
         if table_subset is not None:
             for col_name in table_subset:
@@ -56,7 +60,9 @@ def main():
 
     # Read a subset of rows
     try:
-        table_rows, _ = torchfits.read(test_file, hdu=1, start_row=1, num_rows=2)
+        table_rows, _ = torchfits.read(
+            test_file, hdu=1, start_row=1, num_rows=2, return_header=True
+        )
         print("\nSubset of Rows (start_row=1, num_rows=2):")
         if table_rows is not None:
             for col_name in table_rows:
@@ -69,7 +75,12 @@ def main():
     # Read specific columns and rows
     try:
         table_subset, _ = torchfits.read(
-            test_file, hdu=1, columns=["id", "flag"], start_row=1, num_rows=2
+            test_file,
+            hdu=1,
+            columns=["id", "flag"],
+            start_row=1,
+            num_rows=2,
+            return_header=True,
         )
         print("\nSubset of Columns and Rows:")
         if table_subset is not None:
@@ -84,7 +95,9 @@ def main():
     print("\n--- Testing with different cache capacities ---")
     for capacity in [0, 2, 10]:
         try:
-            table_data, _ = torchfits.read(test_file, hdu=1, cache_capacity=capacity)
+            table_data, _ = torchfits.read(
+                test_file, hdu=1, cache_capacity=capacity, return_header=True
+            )
             print(f"\nCache Capacity: {capacity}")
             if table_data is not None:
                 print(
@@ -99,7 +112,9 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            table_data, _ = torchfits.read(test_file, hdu=1, device="cuda")
+            table_data, _ = torchfits.read(
+                test_file, hdu=1, device="cuda", return_header=True
+            )
             if table_data is not None:
                 print(f"  Data device, first column: {table_data['ra'].device}")
             else:

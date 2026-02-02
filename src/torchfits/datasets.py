@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterator, List, Optional
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
+# Import stream_table lazily in methods to avoid circular imports
 # Import will be done locally to avoid circular imports
 
 
@@ -28,6 +29,7 @@ class FITSDataset(Dataset):
         hdu: int = 0,
         transform: Optional[Callable] = None,
         device: str = "cpu",
+        include_header: bool = False,
     ):
         """
         Initialize FITSDataset.
@@ -42,6 +44,7 @@ class FITSDataset(Dataset):
         self.hdu = hdu
         self.transform = transform
         self.device = device
+        self.include_header = include_header
 
         # Build manifest of all samples
         self._build_manifest()
@@ -74,15 +77,23 @@ class FITSDataset(Dataset):
         # Load data (import locally to avoid circular imports)
         from . import read
 
-        data = read(
-            sample_info["file_path"], hdu=sample_info["hdu"], device=self.device
+        result = read(
+            sample_info["file_path"],
+            hdu=sample_info["hdu"],
+            device=self.device,
+            return_header=self.include_header,
         )
+
+        if self.include_header:
+            data, header = result
+        else:
+            data, header = result, None
 
         # Apply transform if provided
         if self.transform:
             data = self.transform(data)
 
-        return data
+        return (data, header) if self.include_header else data
 
 
 class IterableFITSDataset(IterableDataset):
@@ -176,3 +187,66 @@ class IterableFITSDataset(IterableDataset):
 
                 logger.critical(f"Unexpected error processing {file_path}: {str(e)}")
                 raise
+
+
+class TableChunkDataset(IterableDataset):
+    """
+    Iterable dataset that yields table chunks from one or more FITS files.
+    """
+
+    def __init__(
+        self,
+        file_paths: List[str],
+        hdu: int = 1,
+        columns: Optional[List[str]] = None,
+        chunk_rows: int = 10000,
+        max_chunks: Optional[int] = None,
+        mmap: bool = False,
+        device: str = "cpu",
+        transform: Optional[Callable] = None,
+        include_header: bool = False,
+    ):
+        self.file_paths = file_paths
+        self.hdu = hdu
+        self.columns = columns
+        self.chunk_rows = chunk_rows
+        self.max_chunks = max_chunks
+        self.mmap = mmap
+        self.device = device
+        self.transform = transform
+        self.include_header = include_header
+
+    def __iter__(self) -> Iterator[Any]:
+        from . import get_header, stream_table
+
+        for path in self.file_paths:
+            header = get_header(path, self.hdu) if self.include_header else None
+            for chunk in stream_table(
+                path,
+                hdu=self.hdu,
+                columns=self.columns,
+                chunk_rows=self.chunk_rows,
+                max_chunks=self.max_chunks,
+                mmap=self.mmap,
+            ):
+                if self.device != "cpu":
+                    moved = {}
+                    for k, v in chunk.items():
+                        if isinstance(v, torch.Tensor):
+                            moved[k] = v.to(self.device)
+                        elif isinstance(v, list):
+                            new_list = []
+                            for item in v:
+                                if isinstance(item, torch.Tensor):
+                                    new_list.append(item.to(self.device))
+                                else:
+                                    new_list.append(item)
+                            moved[k] = new_list
+                        else:
+                            moved[k] = v
+                    chunk = moved
+
+                if self.transform:
+                    chunk = self.transform(chunk)
+
+                yield (chunk, header) if self.include_header else chunk

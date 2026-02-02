@@ -317,6 +317,14 @@ class WCS:
 
         return torch.stack([x_new, y_new], dim=-1)
 
+    @staticmethod
+    def _batch_process(fn, coords: Tensor, batch_size: int) -> Tensor:
+        """Chunked processing to avoid missing C++ batch helpers."""
+        outputs = []
+        for start in range(0, coords.shape[0], batch_size):
+            outputs.append(fn(coords[start : start + batch_size], batch_size=None))
+        return torch.cat(outputs, dim=0) if outputs else coords
+
     def pixel_to_world(
         self, pixels: Tensor, batch_size: Optional[int] = None
     ) -> Tensor:
@@ -325,7 +333,7 @@ class WCS:
         Supports TAN and SIP.
         """
         if batch_size is not None and pixels.shape[0] > batch_size:
-            return self._wcs._batch_process(self.pixel_to_world, pixels, batch_size)
+            return self._batch_process(self.pixel_to_world, pixels, batch_size)
 
         # Check basic support conditions first
         if self.naxis != 2:
@@ -442,7 +450,7 @@ class WCS:
     ) -> Tensor:
         """Inverse transformation: World -> Pixel."""
         if batch_size is not None and coords.shape[0] > batch_size:
-            return self._wcs._batch_process(self.world_to_pixel, coords, batch_size)
+            return self._batch_process(self.world_to_pixel, coords, batch_size)
 
         # Check basic support conditions first
         if self.naxis != 2:
