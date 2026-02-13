@@ -2770,10 +2770,6 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
             throw std::runtime_error("Error reading image data: status=" + std::to_string(status) + " msg=" + std::string(err_text));
         }
 
-        // Guard restores BSCALE/BZERO on scope exit; disable it before closing
-        // this local CFITSIO handle to avoid touching a closed pointer.
-        guard.active = false;
-        guard.fptr = nullptr;
         fits_close_file(fptr, &status);
         fptr = nullptr;
         return tensor;
