@@ -65,13 +65,7 @@ _cold_nommap_cache = OrderedDict()
 
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
-    global \
-        _file_cache, \
-        _file_handle_cache, \
-        _file_handle_sig_cache, \
-        _image_meta_cache, \
-        _hdu_type_cache, \
-        _cold_nommap_cache
+    global _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache
 
     _file_cache.pop(path, None)
     handle = _file_handle_cache.pop(path, None)
@@ -1945,13 +1939,7 @@ def clear_file_cache(
     - stats: reset cache performance counters
     - cpp: clear C++-side caches (if available)
     """
-    global \
-        _cache_stats, \
-        _file_cache, \
-        _file_handle_cache, \
-        _file_handle_sig_cache, \
-        _image_meta_cache, \
-        _hdu_type_cache
+    global _cache_stats, _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache
 
     if data:
         _file_cache.clear()

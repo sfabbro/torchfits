@@ -2825,9 +2825,7 @@ class ExhaustiveBenchmarkSuite:
                 )
                 rank_series = rank_series[(rank_series >= 1) & (rank_series < 999)]
                 if rank_series.empty:
-                    f.write(
-                        "⚠️ **insufficient ranking data for performance verdict**\n"
-                    )
+                    f.write("⚠️ **insufficient ranking data for performance verdict**\n")
                 else:
                     avg_rank = rank_series.mean()
                     if avg_rank <= 2:

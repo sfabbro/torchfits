@@ -226,7 +226,9 @@ def main():
             flux = np_local.random.normal(1.0, 0.1, 3000).astype(np_local.float32)
             loglam = np_local.linspace(
                 np_local.log10(3800), np_local.log10(9200), 3000
-            ).astype(np_local.float64)  # Log wavelength
+            ).astype(
+                np_local.float64
+            )  # Log wavelength
 
             # Create HDUs mimicking SDSS structure
             primary_hdu = fits.PrimaryHDU()
