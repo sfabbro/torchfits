@@ -170,9 +170,7 @@ class TableBenchmarkSuite:
             gc.collect()
             start_time = time.perf_counter()
             try:
-                data, header = torchfits.read(
-                    filepath, hdu=1, return_header=True
-                )
+                data, header = torchfits.read(filepath, hdu=1, return_header=True)
                 end_time = time.perf_counter()
                 times.append(end_time - start_time)
                 last_data = data

@@ -89,6 +89,127 @@ Parameters:
 - `strip` (bool): Strip trailing spaces/nulls (default: True)
 - `vla_policy` (str): "list" or "drop"
 
+### `torchfits.table.to_polars_lazy()`
+
+Create a Polars `LazyFrame` from FITS table data (via Arrow).
+
+```python
+lf = torchfits.table.to_polars_lazy("catalog.fits", hdu=1, decode_bytes=True)
+result = lf.filter(pl.col("MAG_G") < 20).group_by("BAND").len().collect()
+```
+
+### `torchfits.table.to_duckdb()`
+
+Register FITS table data in DuckDB and return a relation.
+
+```python
+rel = torchfits.table.to_duckdb("catalog.fits", hdu=1, relation_name="cat")
+```
+
+### `torchfits.table.duckdb_query()`
+
+Execute SQL against FITS table data using DuckDB.
+
+```python
+out = torchfits.table.duckdb_query(
+    "catalog.fits",
+    "SELECT COUNT(*) AS n FROM fits_table WHERE DEC > 0",
+    hdu=1,
+)
+```
+
+### `torchfits.table.write()`
+
+Write a FITS binary table through the CFITSIO-native `torchfits.write` path.
+
+```python
+torchfits.table.write(
+    "catalog.fits",
+    data={"ID": [1, 2], "RA": [10.1, 10.2]},
+    header={"EXTNAME": "CATALOG"},
+    overwrite=True,
+)
+```
+
+Notes:
+- Schema-first table writing and ASCII-table output are supported via `torchfits.table.write(...)`.
+
+### `torchfits.table.append_rows()`
+
+Append rows in-place to an existing table HDU.
+
+### `torchfits.table.update_rows()`
+
+Update a row slice in-place for selected columns.
+
+### `torchfits.table.rename_columns()`
+
+Rename one or more columns in-place.
+
+### `torchfits.table.drop_columns()`
+
+Drop one or more columns in-place.
+
+### `torchfits.table.insert_rows()`
+
+Insert rows at a 0-based row index (missing columns get deterministic defaults).
+
+### `torchfits.table.delete_rows()`
+
+Delete rows by 0-based index/slice.
+
+### `torchfits.table.insert_column()`
+
+Insert a new column with optional explicit FITS metadata (`format`, `unit`, `dim`, `tnull`, `tscal`, `tzero`).
+
+### `torchfits.table.replace_column()`
+
+Replace an existing column while preserving metadata unless explicitly overridden.
+
+### Table Recipes
+
+Recommended split of responsibilities:
+- Use `where="..."` in `read/scan/reader/scanner` for C++ row predicate pushdown
+  (comparisons, `IN`/`NOT IN`, `BETWEEN`/`NOT BETWEEN`, `IS NULL`/`IS NOT NULL`,
+  and `NOT`/`AND`/`OR` with parentheses).
+- Use `torchfits.table.scanner()` for Arrow expression filtering/projection on top of pushed rows.
+- Use `torchfits.table.to_polars_lazy()` for expression-heavy analytics.
+- Use `torchfits.table.to_duckdb()` / `duckdb_query()` for SQL joins/windows.
+
+```python
+import duckdb
+import polars as pl
+import pyarrow.dataset as ds
+import torchfits
+
+# 1) Push down rows + columns in torchfits, then optional Arrow filter
+scanner = torchfits.table.scanner(
+    "catalog.fits",
+    hdu=1,
+    columns=["OBJID", "RA", "DEC"],
+    where="DEC > 0",
+    filter=ds.field("DEC") > 0,
+)
+north = scanner.to_table()
+
+# 2) Polars LazyFrame for complex expressions
+lf = torchfits.table.to_polars_lazy("catalog.fits", hdu=1, decode_bytes=True)
+summary = (
+    lf.filter(pl.col("MAG_G").is_not_null())
+    .group_by("BAND")
+    .agg(pl.col("MAG_G").mean().alias("mag_g_mean"), pl.len().alias("n"))
+    .collect()
+)
+
+# 3) DuckDB SQL for joins/window functions
+con = duckdb.connect()
+torchfits.table.to_duckdb("catalog_a.fits", hdu=1, relation_name="a", connection=con)
+torchfits.table.to_duckdb("catalog_b.fits", hdu=1, relation_name="b", connection=con)
+joined = con.sql(
+    "SELECT a.OBJID, a.RA, b.CLASS FROM a JOIN b USING (OBJID)"
+).arrow()
+```
+
 
 ## Core I/O Functions
 
@@ -97,7 +218,7 @@ Parameters:
 Read FITS data as PyTorch tensors.
 
 ```python
-torchfits.read(path, hdu=0, device='cpu', mmap=True, fp16=False, bf16=False,
+torchfits.read(path, hdu=0, device='cpu', mmap='auto', fp16=False, bf16=False,
                columns=None, start_row=1, num_rows=-1, cache_capacity=10,
                fast_header=True, return_header=False)
 ```
@@ -106,7 +227,9 @@ torchfits.read(path, hdu=0, device='cpu', mmap=True, fp16=False, bf16=False,
 - `path` (str): Path to FITS file or URL
 - `hdu` (int | str): HDU index or name (default: 0)
 - `device` (str): Target device - 'cpu', 'cuda', 'mps', or 'cuda:N' (default: 'cpu')
-- `mmap` (bool): Use memory mapping for large files (default: True). Useful for files larger than available RAM.
+- `mmap` (bool | "auto"): Memory mapping mode (default: `"auto"`).
+  - `"auto"`: compressed image HDUs default to non-mmap; uncompressed images use latency heuristics
+  - `True` / `False`: explicit override
 - `fp16` (bool): Convert to half precision (default: False). Not recommended for photometry or astrometry.
 - `bf16` (bool): Convert to bfloat16 (default: False). Better for ML than fp16 but still lossy.
 - `columns` (list[str] | None): Column names for table reading (default: None = all)
@@ -147,7 +270,7 @@ table, header = torchfits.read("catalog.fits", hdu=1,
 
 **Notes:**
 - Data types are preserved from FITS by default for numerical accuracy
-- Use `mmap=True` for files larger than available RAM (best performance for large images)
+- Default `mmap='auto'` is recommended for typical workloads, especially mixed compressed/uncompressed archives
 - Avoid `fp16`/`bf16` for astrometry or photometry requiring full precision
 - URLs supported via cfitsio (http://, https://, ftp://)
 
@@ -194,6 +317,20 @@ table = {
 }
 torchfits.write("catalog.fits", table, overwrite=True)
 ```
+
+---
+
+### `insert_hdu()`
+
+Insert an HDU into an existing file at a given index.
+
+### `replace_hdu()`
+
+Replace an HDU by index or `EXTNAME`.
+
+### `delete_hdu()`
+
+Delete an HDU by index or `EXTNAME`.
 
 ---
 
@@ -261,6 +398,9 @@ with torchfits.open("multi.fits") as hdul:
     
     # Get header
     header = primary.header  # Header object
+
+    # Tables are lazy by default (safe): hdul[ext] returns a TableHDURef handle,
+    # which supports streaming / column-projection without materializing the full table.
 ```
 
 ---
@@ -371,7 +511,7 @@ with torchfits.open("image.fits") as hdul:
 
 ### `TableHDU`
 
-Table HDU for tabular data.
+Materialized table (in-memory) for tabular data.
 
 **Attributes:**
 - `data` (dict[str, torch.Tensor]): Table data as dictionary
@@ -381,18 +521,38 @@ Table HDU for tabular data.
 
 ```python
 with torchfits.open("catalog.fits") as hdul:
-    table_hdu = hdul[1]
-    
-    # Access table data
-    table = table_hdu.data
-    ra = table['RA']
-    dec = table['DEC']
-    
-    # Header info
-    nrows = table_hdu.header['NAXIS2']
+    table_ref = hdul[1]  # TableHDURef (lazy handle)
+
+    # Column access reads only that column
+    ra = table_ref["RA"]
+
+    # Materialize explicitly (loads full table into memory)
+    table_hdu = table_ref.materialize()
+    dec = table_hdu["DEC"]
 ```
 
 ---
+
+### `TableHDURef`
+
+Lazy, file-backed table handle returned by `torchfits.open(...)` for table HDUs.
+
+Useful for out-of-core workflows:
+
+```python
+with torchfits.open("catalog.fits") as hdul:
+    t = hdul[1]  # TableHDURef
+
+    # Stream in bounded memory
+    for chunk in t.iter_rows(batch_size=100_000):
+        ...
+
+    # Arrow-native streaming
+    for batch in t.scan_arrow(batch_size=100_000):
+        ...
+```
+
+To load the full table: `t.materialize()`.
 
 ### `Header`
 

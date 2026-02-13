@@ -127,9 +127,7 @@ class TestCompression:
                     shape=(500, 500), compression=comp_type
                 )
 
-                result, header = torchfits.read(
-                    filepath, hdu=1, return_header=True
-                )
+                result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
                 assert isinstance(result, torch.Tensor)
                 assert result.shape == expected_data.shape
@@ -147,6 +145,75 @@ class TestCompression:
 
 class TestCompressionPerformance:
     """Test performance aspects of compressed image reading."""
+
+    def test_large_integer_rice_roundtrip_exact(self):
+        """Large integer RICE reads should stay exact (parallel path safety net)."""
+        shape = (3072, 3072)
+        # Integer ramps are lossless under RICE and exercise row-wise tiles.
+        data = (
+            np.arange(shape[0] * shape[1], dtype=np.int64).reshape(shape) % 32767
+        ).astype(np.int16)
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            try:
+                torchfits.write(
+                    f.name, torch.from_numpy(data), overwrite=True, compress="RICE_1"
+                )
+                result = torchfits.read(f.name, hdu=1, mmap=False)
+                np.testing.assert_array_equal(result.numpy(), data)
+            finally:
+                os.unlink(f.name)
+
+    def test_large_float_rice_parallel_matches_serial(self, monkeypatch):
+        """Parallel compressed float path must match serial output exactly."""
+        shape = (2048, 2048)
+        data = np.random.normal(100.0, 5.0, shape).astype(np.float32)
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            from astropy.io import fits
+
+            hdu = fits.CompImageHDU(data, compression_type="RICE_1")
+            hdu.writeto(f.name, overwrite=True)
+
+            try:
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL", "0")
+                serial = torchfits.read(f.name, hdu=1, mmap=False)
+
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL", "1")
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL_MIN_PIXELS", "1")
+                parallel = torchfits.read(f.name, hdu=1, mmap=False)
+
+                torch.testing.assert_close(parallel, serial, rtol=0.0, atol=0.0)
+            finally:
+                os.unlink(f.name)
+
+    def test_hcompress_parallel_matches_serial(self, monkeypatch):
+        """HCOMPRESS parallel path must preserve serialized output exactly."""
+        shape = (1024, 1024)
+        data = np.random.normal(100.0, 5.0, shape).astype(np.float32)
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            from astropy.io import fits
+
+            try:
+                hdu = fits.CompImageHDU(data, compression_type="HCOMPRESS_1")
+            except Exception as e:
+                pytest.skip(f"HCOMPRESS_1 not available: {e}")
+
+            hdu.writeto(f.name, overwrite=True)
+
+            try:
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL", "1")
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL_MIN_PIXELS", "1")
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL_HCOMPRESS", "0")
+                serial = torchfits.read(f.name, hdu=1, mmap=False)
+
+                monkeypatch.setenv("TORCHFITS_COMPRESSED_PARALLEL_HCOMPRESS", "1")
+                parallel = torchfits.read(f.name, hdu=1, mmap=False)
+
+                torch.testing.assert_close(parallel, serial, rtol=0.0, atol=0.0)
+            finally:
+                os.unlink(f.name)
 
     def test_large_compressed_image(self):
         """Test reading large compressed images."""

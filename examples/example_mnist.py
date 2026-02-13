@@ -5,8 +5,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-from torchvision import datasets, transforms  # Use torchvision for MNIST
-from tqdm import tqdm
+
+try:
+    from torchvision import datasets, transforms  # Use torchvision for MNIST
+except ImportError:
+    datasets = None
+    transforms = None
+
+try:
+    from tqdm import tqdm
+except ImportError:
+
+    def tqdm(iterable, **_kwargs):
+        return iterable
+
 
 import torchfits
 
@@ -20,6 +32,9 @@ def create_mnist_fits(data_dir, max_samples=1000):
         data_dir: Directory to save FITS files
         max_samples: Maximum number of samples per split (train/test) to convert
     """
+    if datasets is None or transforms is None:
+        raise RuntimeError("torchvision is required to create MNIST FITS files")
+
     os.makedirs(data_dir, exist_ok=True)
 
     # Download MNIST using torchvision
@@ -157,6 +172,12 @@ def collate_fn(batch):
 def main():
     data_dir = "data_mnist_fits"
 
+    if datasets is None or transforms is None:
+        print(
+            "Skipping example_mnist.py: torchvision is not installed in this environment."
+        )
+        return 0
+
     # Use a subset for faster demonstration (1000 train, 200 test)
     max_train = 1000
 
@@ -283,4 +304,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

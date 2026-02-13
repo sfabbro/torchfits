@@ -118,3 +118,9 @@ before-all = "brew install wcslib cfitsio"
 
 [tool.cibuildwheel.linux]
 before-all = "yum install -y wcslib-devel || (apt-get update && apt-get install -y libwcs-dev)"
+
+[tool.pytest.ini_options]
+markers = [
+    "performance: performance-oriented benchmark or stress tests",
+    "integration: integration tests across multiple modules",
+]

@@ -331,10 +331,10 @@ private:
 
         // Use wcs->cel structure to transform native spherical to celestial spherical
         // stride = 1
-        if (cels2s(&wcs_->cel, 3, 1, native_phi, native_theta, cel_lng, cel_lat, stat) != 0) {
-            is_tan_projection_ = false;
-            return;
-        }
+        // WCSLIB does not expose a direct native-spherical -> celestial-spherical helper
+        // for this probe path in all versions. Keep a safe fallback instead of hard failing.
+        is_tan_projection_ = false;
+        return;
 
         // Convert celestial results to Cartesian unit vectors (columns of R)
         for (int i = 0; i < 3; i++) {
@@ -368,53 +368,53 @@ private:
 
         auto cd = torch::from_blob(cd_matrix_, {2, 2}, torch::kFloat64).to(device);
         // intermediate = p @ cd.T
-        auto intermediate = torch::matmul(p, cd.t());
+        auto intermediate = at::matmul(p, cd.t());
 
         auto x = intermediate.select(1, 0);
         auto y = intermediate.select(1, 1);
 
         // 2. Deproject TAN
-        auto r = torch::sqrt(x*x + y*y);
+        auto r = at::sqrt(x*x + y*y);
 
         // Avoid division by zero or singularity at r=0
         // For r=0, theta should be 90 deg.
         // atan2(180/pi, 0) = pi/2. Correct.
         double rad_deg = 180.0 / M_PI;
-        auto theta_native = torch::atan2(torch::tensor(rad_deg, options), r);
-        auto phi_native = torch::atan2(x, -y);
+        auto theta_native = at::atan2(at::full_like(r, rad_deg), r);
+        auto phi_native = at::atan2(x, -y);
 
         // 3. Convert Native Spherical to Cartesian Unit Vector
-        auto cos_theta = torch::cos(theta_native);
-        auto sin_theta = torch::sin(theta_native);
-        auto cos_phi = torch::cos(phi_native);
-        auto sin_phi = torch::sin(phi_native);
+        auto cos_theta = at::cos(theta_native);
+        auto sin_theta = at::sin(theta_native);
+        auto cos_phi = at::cos(phi_native);
+        auto sin_phi = at::sin(phi_native);
 
         auto ux = cos_theta * cos_phi;
         auto uy = cos_theta * sin_phi;
         auto uz = sin_theta;
 
-        auto u_native = torch::stack({ux, uy, uz}, 1);
+        auto u_native = at::stack({ux, uy, uz}, 1);
 
         // 4. Rotate to Celestial
         auto R = torch::from_blob(rotation_matrix_, {3, 3}, torch::kFloat64).to(device);
-        auto u_cel = torch::matmul(u_native, R.t());
+        auto u_cel = at::matmul(u_native, R.t());
 
         // 5. Convert Celestial Unit Vector to Spherical
         auto cx = u_cel.select(1, 0);
         auto cy = u_cel.select(1, 1);
         auto cz = u_cel.select(1, 2);
 
-        cz = torch::clamp(cz, -1.0, 1.0);
+        cz = at::clamp(cz, -1.0, 1.0);
 
-        auto alpha_rad = torch::atan2(cy, cx);
-        auto delta_rad = torch::asin(cz);
+        auto alpha_rad = at::atan2(cy, cx);
+        auto delta_rad = at::asin(cz);
 
         auto alpha = alpha_rad * rad_deg;
         auto delta = delta_rad * rad_deg;
 
-        alpha = torch::remainder(alpha, 360.0);
+        alpha = at::remainder(alpha, 360.0);
 
-        return torch::stack({alpha, delta}, 1);
+        return at::stack({alpha, delta}, 1);
     }
 
     torch::Tensor world_to_pixel_gpu(const torch::Tensor& world) {
@@ -430,25 +430,25 @@ private:
         auto delta_rad = delta * deg_rad;
 
         // 1. Celestial Spherical -> Cartesian
-        auto cx = torch::cos(delta_rad) * torch::cos(alpha_rad);
-        auto cy = torch::cos(delta_rad) * torch::sin(alpha_rad);
-        auto cz = torch::sin(delta_rad);
+        auto cx = at::cos(delta_rad) * at::cos(alpha_rad);
+        auto cy = at::cos(delta_rad) * at::sin(alpha_rad);
+        auto cz = at::sin(delta_rad);
 
-        auto u_cel = torch::stack({cx, cy, cz}, 1);
+        auto u_cel = at::stack({cx, cy, cz}, 1);
 
         // 2. Rotate to Native
         // u_native = u_cel @ R (since R maps Native -> Cel, and is orthogonal)
         auto R = torch::from_blob(rotation_matrix_, {3, 3}, torch::kFloat64).to(device);
-        auto u_native = torch::matmul(u_cel, R);
+        auto u_native = at::matmul(u_cel, R);
 
         auto ux = u_native.select(1, 0);
         auto uy = u_native.select(1, 1);
         auto uz = u_native.select(1, 2);
 
         // 3. Native Cartesian -> Spherical
-        uz = torch::clamp(uz, -1.0, 1.0);
-        auto theta_native = torch::asin(uz);
-        auto phi_native = torch::atan2(uy, ux);
+        uz = at::clamp(uz, -1.0, 1.0);
+        auto theta_native = at::asin(uz);
+        auto phi_native = at::atan2(uy, ux);
 
         // 4. Project TAN
         // r = (180/pi) / tan(theta)
@@ -457,21 +457,21 @@ private:
         // We use cot(theta) = tan(pi/2 - theta)?
         // r = (180/pi) * cot(theta)
         // cot(theta) = cos(theta)/sin(theta)
-        auto r = (rad_deg * torch::cos(theta_native)) / torch::sin(theta_native);
+        auto r = (rad_deg * at::cos(theta_native)) / at::sin(theta_native);
 
         // If theta is very close to 90 deg, r -> 0.
         // If theta is 0 (equator), r -> inf.
         // TAN diverges at equator (theta=0).
 
-        auto x = r * torch::sin(phi_native);
-        auto y = -r * torch::cos(phi_native); // Note minus sign in FITS TAN definition
+        auto x = r * at::sin(phi_native);
+        auto y = -r * at::cos(phi_native); // Note minus sign in FITS TAN definition
 
-        auto intermediate = torch::stack({x, y}, 1);
+        auto intermediate = at::stack({x, y}, 1);
 
         // 5. Inverse Linear Transform
         auto cd_inv = torch::from_blob(cd_matrix_inv_, {2, 2}, torch::kFloat64).to(device);
         // d = intermediate @ cd_inv.T
-        auto d = torch::matmul(intermediate, cd_inv.t());
+        auto d = at::matmul(intermediate, cd_inv.t());
 
         auto crpix = torch::from_blob(crpix_, {2}, torch::kFloat64).to(device);
         auto pixels = d + crpix;

@@ -203,6 +203,8 @@ class TableChunkDataset(IterableDataset):
         max_chunks: Optional[int] = None,
         mmap: bool = False,
         device: str = "cpu",
+        non_blocking_transfer: bool = True,
+        pin_memory_transfer: bool = False,
         transform: Optional[Callable] = None,
         include_header: bool = False,
     ):
@@ -213,40 +215,31 @@ class TableChunkDataset(IterableDataset):
         self.max_chunks = max_chunks
         self.mmap = mmap
         self.device = device
+        self.non_blocking_transfer = non_blocking_transfer
+        self.pin_memory_transfer = pin_memory_transfer
         self.transform = transform
         self.include_header = include_header
 
     def __iter__(self) -> Iterator[Any]:
-        from . import get_header, stream_table
+        from . import get_header, table as table_api
 
         for path in self.file_paths:
             header = get_header(path, self.hdu) if self.include_header else None
-            for chunk in stream_table(
+            emitted = 0
+            for chunk in table_api.scan_torch(
                 path,
                 hdu=self.hdu,
                 columns=self.columns,
-                chunk_rows=self.chunk_rows,
-                max_chunks=self.max_chunks,
+                batch_size=self.chunk_rows,
                 mmap=self.mmap,
+                device=self.device,
+                non_blocking=self.non_blocking_transfer,
+                pin_memory=self.pin_memory_transfer,
             ):
-                if self.device != "cpu":
-                    moved = {}
-                    for k, v in chunk.items():
-                        if isinstance(v, torch.Tensor):
-                            moved[k] = v.to(self.device)
-                        elif isinstance(v, list):
-                            new_list = []
-                            for item in v:
-                                if isinstance(item, torch.Tensor):
-                                    new_list.append(item.to(self.device))
-                                else:
-                                    new_list.append(item)
-                            moved[k] = new_list
-                        else:
-                            moved[k] = v
-                    chunk = moved
-
                 if self.transform:
                     chunk = self.transform(chunk)
 
                 yield (chunk, header) if self.include_header else chunk
+                emitted += 1
+                if self.max_chunks is not None and emitted >= self.max_chunks:
+                    break

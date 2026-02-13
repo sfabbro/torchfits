@@ -45,9 +45,7 @@ def main():
     # Read a 2D slice using CFITSIO string syntax
     try:
         # Select 2nd plane along 3rd axis (1-based indexing)
-        slice_2d, header = torchfits.read(
-            f"{test_file}[0][*,*,2]", return_header=True
-        )
+        slice_2d, header = torchfits.read(f"{test_file}[0][*,*,2]", return_header=True)
         print("\n2D Slice (CFITSIO String [*,*,2]):")
         print(f"  Shape: {slice_2d.shape}")  # Expected: (3, 4) - collapsed z dimension
         print(f"  Equivalent to cube[1,:,:] = {cube[1, :, :].shape}")

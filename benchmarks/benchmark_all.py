@@ -11,14 +11,16 @@ Produces comprehensive tables, plots, and summaries.
 
 import csv
 import gc
+import os
 import random
 import sys
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from statistics import mean, stdev, median
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Add benchmarks and src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -31,6 +33,8 @@ import numpy as np
 import pandas as pd
 import psutil
 import torch
+import matplotlib.pyplot as plt
+import seaborn as sns
 from astropy.io import fits as astropy_fits
 from astropy.io.fits import CompImageHDU
 
@@ -47,12 +51,16 @@ class ExhaustiveBenchmarkSuite:
         output_dir: Optional[Path] = None,
         use_mmap: bool = True,
         include_tables: bool = False,
-        cache_capacity: int = 0,
+        cache_capacity: int = 10,
         hot_cache_capacity: int = 10,
+        handle_cache_capacity: int = 16,
+        profile: str = "user",
+        payload_min_ratio: float = 0.60,
     ):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="torchfits_exhaustive_"))
         self.output_dir = output_dir or Path("benchmark_results")
-        self.output_dir.mkdir(exist_ok=True)
+        # Allow nested output dirs like benchmark_results/exhaustive_YYYYmmdd_HHMMSS
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = {}
         self.csv_file = self.output_dir / "exhaustive_results.csv"
         self.summary_file = self.output_dir / "exhaustive_summary.md"
@@ -62,12 +70,19 @@ class ExhaustiveBenchmarkSuite:
         self.include_tables = include_tables
         self.cache_capacity = cache_capacity
         self.hot_cache_capacity = hot_cache_capacity
+        self.handle_cache_capacity = handle_cache_capacity
+        self.profile = str(profile).strip().lower() or "user"
+        if self.profile not in {"user", "lab"}:
+            raise ValueError("profile must be 'user' or 'lab'")
+        self.payload_min_ratio = max(0.0, min(1.0, float(payload_min_ratio)))
 
         # Test configurations
         self.data_types = {
             "int8": (np.int8, "BYTE_IMG"),
             "int16": (np.int16, "SHORT_IMG"),
             "int32": (np.int32, "LONG_IMG"),
+            # Common in catalogs / integer timestamp images; BITPIX=64
+            "int64": (np.int64, "LONGLONG_IMG"),
             "float32": (np.float32, "FLOAT_IMG"),
             "float64": (np.float64, "DOUBLE_IMG"),
         }
@@ -80,6 +95,30 @@ class ExhaustiveBenchmarkSuite:
         }
 
         self.compression_types = ["RICE_1", "GZIP_1", "GZIP_2", "HCOMPRESS_1"]
+
+    def _torchfits_mmap_mode(self):
+        """TorchFits mmap mode used by benchmark methods."""
+        if not self.use_mmap:
+            return False
+        # User profile should benchmark library-default behavior.
+        if self.profile == "user":
+            return "auto"
+        # Lab profile can force explicit mmap to study low-level effects.
+        return True
+
+    def _torchfits_effective_mmap_bool(self, path: Path, hdu_num: int) -> bool:
+        """Resolve to a bool mmap flag for C++ methods that require bool."""
+        mode = self._torchfits_mmap_mode()
+        if isinstance(mode, bool):
+            return mode
+        try:
+            return bool(
+                torchfits._resolve_image_mmap(  # benchmark-only internal use
+                    str(path), hdu_num, mode, self.cache_capacity
+                )
+            )
+        except Exception:
+            return True
 
     def create_test_files(self) -> Dict[str, Path]:
         """Create comprehensive test dataset covering all scenarios."""
@@ -280,7 +319,7 @@ class ExhaustiveBenchmarkSuite:
         """Create files with BSCALE/BZERO scaling."""
         files = {}
 
-        for size_name in ["small", "medium"]:
+        for size_name in ["small", "medium", "large"]:
             shape = self.size_categories[size_name]["2d"]
 
             # Create float data that will be scaled to int16
@@ -371,6 +410,8 @@ class ExhaustiveBenchmarkSuite:
             return np.random.randint(-1000, 1000, shape, dtype=dtype)
         elif dtype == np.int32:
             return np.random.randint(-10000, 10000, shape, dtype=dtype)
+        elif dtype == np.int64:
+            return np.random.randint(-100000, 100000, shape, dtype=dtype)
         else:
             if isinstance(shape, tuple):
                 return np.random.randn(*shape).astype(dtype)
@@ -382,6 +423,25 @@ class ExhaustiveBenchmarkSuite:
         print("\n" + "=" * 100)
         print("EXHAUSTIVE BENCHMARK SUITE")
         print("=" * 100)
+        print(
+            "Methods:\n"
+            "- torchfits: torchfits.read -> torch.Tensor\n"
+            "- torchfits_numpy: torchfits.read -> numpy (fair compare vs numpy libs)\n"
+            "- fitsio: fitsio.read -> numpy\n"
+            "- fitsio_torch: fitsio.read -> numpy -> torch.Tensor\n"
+            "- astropy: astropy fits -> numpy\n"
+            "- astropy_torch: astropy fits -> numpy -> torch.Tensor\n"
+            "- torchfits_hot [diag]: torchfits.read with hot torchfits cache\n"
+            "- torchfits_handle_cache [diag]: torchfits.read with data cache OFF but handle cache ON\n"
+            "- torchfits_cpp_open_once [diag]: reuse open C++ FITS handle"
+        )
+        print(
+            "Legend (ranked table columns):\n"
+            "- spread_s: p90(time) - p10(time) across runs (robust jitter / outliers indicator)\n"
+            "- rssΔ_MB: (final RSS - initial RSS) while the method runs (best-effort; allocator reuse can hide deltas)\n"
+            "- peakΔ_MB: (max sampled RSS - initial RSS) while the method runs (sampling can miss brief peaks)\n"
+            "- payload_MB: deterministic size of the returned data (tensor/ndarray nbytes; dict/list summed)\n"
+        )
 
         csv_headers = [
             "filename",
@@ -397,47 +457,79 @@ class ExhaustiveBenchmarkSuite:
             "torchfits_mb_s",
             "torchfits_memory",
             "torchfits_peak_memory",
+            "torchfits_payload_mb",
+            "torchfits_numpy_mean",
+            "torchfits_numpy_std",
+            "torchfits_numpy_median",
+            "torchfits_numpy_mb_s",
+            "torchfits_numpy_memory",
+            "torchfits_numpy_peak_memory",
+            "torchfits_numpy_payload_mb",
             "torchfits_hot_mean",
             "torchfits_hot_std",
             "torchfits_hot_median",
             "torchfits_hot_mb_s",
+            "torchfits_hot_memory",
+            "torchfits_hot_peak_memory",
+            "torchfits_hot_payload_mb",
+            "torchfits_handle_cache_mean",
+            "torchfits_handle_cache_std",
+            "torchfits_handle_cache_median",
+            "torchfits_handle_cache_mb_s",
+            "torchfits_handle_cache_memory",
+            "torchfits_handle_cache_peak_memory",
+            "torchfits_handle_cache_payload_mb",
             "torchfits_mmap_mean",
             "torchfits_mmap_std",
             "torchfits_mmap_median",
             "torchfits_mmap_mb_s",
             "torchfits_mmap_memory",
             "torchfits_mmap_peak_memory",
+            "torchfits_mmap_payload_mb",
             "astropy_mean",
             "astropy_std",
             "astropy_median",
             "astropy_mb_s",
             "astropy_memory",
             "astropy_peak_memory",
+            "astropy_payload_mb",
             "fitsio_mean",
             "fitsio_std",
             "fitsio_median",
             "fitsio_mb_s",
             "fitsio_memory",
             "fitsio_peak_memory",
+            "fitsio_payload_mb",
             "astropy_torch_mean",
             "astropy_torch_std",
             "astropy_torch_median",
             "astropy_torch_mb_s",
             "astropy_torch_memory",
             "astropy_torch_peak_memory",
+            "astropy_torch_payload_mb",
             "fitsio_torch_mean",
             "fitsio_torch_std",
             "fitsio_torch_median",
             "fitsio_torch_mb_s",
             "fitsio_torch_memory",
             "fitsio_torch_peak_memory",
+            "fitsio_torch_payload_mb",
             "torchfits_cpp_open_once_mean",
             "torchfits_cpp_open_once_std",
             "torchfits_cpp_open_once_median",
             "torchfits_cpp_open_once_mb_s",
+            "torchfits_cpp_open_once_memory",
+            "torchfits_cpp_open_once_peak_memory",
+            "torchfits_cpp_open_once_payload_mb",
             "best_method",
             "torchfits_rank",
             "speedup_vs_best",
+            "best_method_torch",
+            "torchfits_rank_torch",
+            "speedup_vs_best_torch",
+            "best_method_numpy",
+            "torchfits_numpy_rank",
+            "speedup_vs_best_numpy",
         ]
 
         detailed_results = []
@@ -456,6 +548,14 @@ class ExhaustiveBenchmarkSuite:
         # Run cutout benchmark
         cutout_results = self._benchmark_cutouts(files)
         detailed_results.extend(cutout_results)
+
+        # Random extension access benchmark (MEF user workflow)
+        ext_results = self._benchmark_random_extension_reads(files)
+        detailed_results.extend(ext_results)
+
+        # Table out-of-core scan benchmark (Arrow streaming)
+        scan_results = self._benchmark_table_scan_arrow(files)
+        detailed_results.extend(scan_results)
 
         # Write CSV results
         with open(self.csv_file, "w", newline="") as f:
@@ -477,7 +577,10 @@ class ExhaustiveBenchmarkSuite:
             "tiny_float32_1d",
             "scaled_small",
             "scaled_medium",
+            "scaled_large",
             "compressed_rice_1",
+            "large_float32_2d",
+            "large_float64_2d",
             "medium_float32_3d",
         ]
 
@@ -492,7 +595,11 @@ class ExhaustiveBenchmarkSuite:
             runs = 30 if size_mb < 0.1 else 10 if size_mb < 1.0 else 3
 
             file_type = self._get_file_type(name)
-            hdu_num = 1 if file_type in {"compressed", "table", "mef", "multi_mef"} else 0
+            hdu_num = (
+                1 if file_type in {"compressed", "table", "mef", "multi_mef"} else 0
+            )
+            tf_mmap_mode = self._torchfits_mmap_mode()
+            tf_mmap_cpp = self._torchfits_effective_mmap_bool(path, hdu_num)
 
             print(f"\n{name} ({size_mb:.2f} MB) - focused")
             print("-" * 80)
@@ -515,17 +622,20 @@ class ExhaustiveBenchmarkSuite:
                 return torchfits.read(
                     str(path),
                     hdu=hdu_num,
-                    mmap=self.use_mmap,
+                    mmap=tf_mmap_mode,
                     scale_on_device=True,
                     cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
                 )
 
             def tf_scaled_cpu():
-                return torchfits.cpp.read_full_scaled_cpu(str(path), hdu_num, self.use_mmap)
+                return torchfits.cpp.read_full_scaled_cpu(
+                    str(path), hdu_num, tf_mmap_cpp
+                )
 
             def tf_raw_with_scale_direct():
                 data, scaled, bscale, bzero = torchfits.cpp.read_full_raw_with_scale(
-                    str(path), hdu_num, self.use_mmap
+                    str(path), hdu_num, tf_mmap_cpp
                 )
                 if scaled:
                     data = data.to(dtype=torch.float32)
@@ -539,18 +649,20 @@ class ExhaustiveBenchmarkSuite:
                 return torchfits.read(
                     str(path),
                     hdu=hdu_num,
-                    mmap=self.use_mmap,
+                    mmap=tf_mmap_mode,
                     raw_scale=True,
                     cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
                 )
 
             def tf_raw_scale_cpu():
                 data = torchfits.read(
                     str(path),
                     hdu=hdu_num,
-                    mmap=self.use_mmap,
+                    mmap=tf_mmap_mode,
                     raw_scale=True,
                     cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
                 )
                 try:
                     header = torchfits.read_header(str(path), hdu=hdu_num)
@@ -571,6 +683,7 @@ class ExhaustiveBenchmarkSuite:
                     hdu=hdu_num,
                     mmap=False,
                     cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
                 )
 
             def fitsio_read():
@@ -589,12 +702,13 @@ class ExhaustiveBenchmarkSuite:
                 "fitsio_read": fitsio_read,
             }
 
+            per_file = []
             for method_name, method_func in methods.items():
                 method_result = self._time_method(
                     method_func, method_name, runs=runs, use_median=use_median
                 )
                 if not method_result:
-                    print(f"{method_name:22s}: FAILED")
+                    per_file.append((method_name, None, None))
                     results.append(
                         {
                             "filename": name,
@@ -611,9 +725,7 @@ class ExhaustiveBenchmarkSuite:
                 time_value = (
                     method_result["median"] if use_median else method_result["mean"]
                 )
-                print(
-                    f"{method_name:22s}: {time_value:.6f}s ± {method_result['std']:.6f}s"
-                )
+                per_file.append((method_name, time_value, method_result["std"]))
                 results.append(
                     {
                         "filename": name,
@@ -625,6 +737,22 @@ class ExhaustiveBenchmarkSuite:
                         "median_s": method_result["median"],
                     }
                 )
+
+            # Display ranked times (fastest first). Execution order is left intact.
+            ranked = [(m, t, s) for (m, t, s) in per_file if t is not None]
+            ranked.sort(key=lambda x: x[1])
+            if ranked:
+                best_m, best_t, _ = ranked[0]
+                stat_label = "median" if use_median else "mean"
+                print(f"\nRanked (focused, {stat_label}, fastest first):")
+                for i, (m, t, s) in enumerate(ranked, start=1):
+                    ratio = t / best_t if best_t else float("inf")
+                    print(f"  {i:2d}. {m:22s} {t:.6f}s ± {s:.6f}s  ({ratio:.2f}x best)")
+            failed = [m for (m, t, _s) in per_file if t is None]
+            if failed:
+                print("\nFailed:")
+                for m in failed:
+                    print(f"  - {m}")
 
         if results:
             with open(self.focused_csv_file, "w", newline="") as f:
@@ -675,9 +803,7 @@ class ExhaustiveBenchmarkSuite:
                         f"- {name}: scaled={tf_scaled.iloc[0]:.6f}s raw={tf_raw.iloc[0]:.6f}s"
                     )
                     if not tf_raw_scale.empty:
-                        f.write(
-                            f" raw+scale_cpu={tf_raw_scale.iloc[0]:.6f}s"
-                        )
+                        f.write(f" raw+scale_cpu={tf_raw_scale.iloc[0]:.6f}s")
                     f.write("\n")
             f.write("\n")
 
@@ -701,6 +827,14 @@ class ExhaustiveBenchmarkSuite:
         # Use robust statistics for all files; means are noisy in cold I/O.
         use_median = True
         runs = 30 if size_mb < 0.1 else 12 if size_mb < 1.0 else 5
+        # Tight races on a few large image buckets are sensitive to scheduling/cache
+        # jitter; use more samples so ranking reflects steady behavior.
+        if name in {"large_int8_2d", "large_float64_2d", "large_int64_2d"}:
+            runs = max(runs, 15)
+        # WCS benchmark is a tight race on a small-ish file and can occasionally
+        # flip on scheduler noise; sample more for stable ranking.
+        if name == "wcs_image":
+            runs = max(runs, 15)
 
         # Parse file characteristics
         parts = name.split("_")
@@ -716,6 +850,7 @@ class ExhaustiveBenchmarkSuite:
 
         result = {
             "filename": name,
+            "operation": "read_full",
             "file_type": file_type,
             "size_mb": size_mb,
             "data_type": data_type,
@@ -728,10 +863,21 @@ class ExhaustiveBenchmarkSuite:
             hdu_num = 1
         else:
             hdu_num = 0
+        expected_payload_mb = (
+            self._expected_image_payload_mb(filepath, hdu_num)
+            if file_type != "table"
+            else None
+        )
 
         # Compression timings are noisy; use more samples for stability.
         if file_type == "compressed":
-            runs = max(runs, 20)
+            runs = max(runs, 30)
+        # Very small table files are dominated by scheduler/open jitter.
+        # Use higher sample count so sub-ms rankings are stable.
+        if file_type == "table" and size_mb < 0.1:
+            runs = max(runs, 60)
+        tf_mmap_mode = self._torchfits_mmap_mode()
+        tf_mmap_cpp = self._torchfits_effective_mmap_bool(filepath, hdu_num)
 
         # Define benchmark methods
         methods = {}
@@ -741,9 +887,106 @@ class ExhaustiveBenchmarkSuite:
         methods["torchfits"] = lambda: torchfits.read(
             str(filepath),
             hdu=hdu_num,
-            mmap=self.use_mmap,
+            mmap=tf_mmap_mode,
             cache_capacity=self.cache_capacity,
+            handle_cache_capacity=self.handle_cache_capacity,
         )
+        # Fair comparison against numpy-returning methods (fitsio/astropy):
+        # return a numpy payload (CPU) instead of a torch.Tensor.
+        try:
+            import torchfits.cpp as cpp
+
+            if file_type == "table":
+                if hasattr(cpp, "read_fits_table_rows_numpy"):
+                    methods["torchfits_numpy"] = lambda: cpp.read_fits_table_rows_numpy(
+                        str(filepath),
+                        hdu_num,
+                        [],
+                        1,
+                        -1,
+                        self.use_mmap,
+                    )
+                elif hasattr(cpp, "read_fits_table_rows_numpy_from_handle"):
+
+                    def _table_numpy_from_handle():
+                        fh = cpp.open_fits_file(str(filepath), "r")
+                        try:
+                            return cpp.read_fits_table_rows_numpy_from_handle(
+                                fh, hdu_num, [], 1, -1
+                            )
+                        finally:
+                            try:
+                                fh.close()
+                            except Exception:
+                                pass
+
+                    methods["torchfits_numpy"] = _table_numpy_from_handle
+            else:
+                # In practice, direct numpy path is best for most dtypes, while the
+                # cached-numpy bridge can be slightly better on 64-bit payloads and
+                # some 64-bit payloads.
+                prefer_cached_numpy = data_type in {"int8", "int64", "float64"}
+                if prefer_cached_numpy and hasattr(cpp, "read_full_numpy_cached"):
+                    methods["torchfits_numpy"] = lambda: cpp.read_full_numpy_cached(
+                        str(filepath), hdu_num, tf_mmap_cpp
+                    )
+                elif hasattr(cpp, "read_full_numpy"):
+                    # Avoid torch->numpy conversion overhead when comparing against
+                    # numpy-native libraries like fitsio/astropy.
+                    methods["torchfits_numpy"] = lambda: cpp.read_full_numpy(
+                        str(filepath), hdu_num, tf_mmap_cpp
+                    )
+                elif hasattr(cpp, "read_full_numpy_cached"):
+                    # Fallback for older builds that only expose the cached variant.
+                    methods["torchfits_numpy"] = lambda: cpp.read_full_numpy_cached(
+                        str(filepath), hdu_num, tf_mmap_cpp
+                    )
+                else:
+                    methods["torchfits_numpy"] = lambda: torchfits.read(
+                        str(filepath),
+                        hdu=hdu_num,
+                        mmap=tf_mmap_mode,
+                        cache_capacity=self.cache_capacity,
+                        handle_cache_capacity=self.handle_cache_capacity,
+                    ).numpy()
+        except Exception:
+            if file_type != "table":
+                methods["torchfits_numpy"] = lambda: torchfits.read(
+                    str(filepath),
+                    hdu=hdu_num,
+                    mmap=tf_mmap_mode,
+                    cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
+                ).numpy()
+        if file_type == "table" and "torchfits_numpy" not in methods:
+
+            def _table_numpy_fallback():
+                table = torchfits.read(
+                    str(filepath),
+                    hdu=hdu_num,
+                    mmap=tf_mmap_mode,
+                    cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
+                )
+                out = {}
+                for k, v in table.items():
+                    if isinstance(v, torch.Tensor):
+                        out[k] = v.numpy()
+                    elif isinstance(v, list):
+                        out[k] = [
+                            item.numpy() if isinstance(item, torch.Tensor) else item
+                            for item in v
+                        ]
+                    elif isinstance(v, tuple):
+                        out[k] = tuple(
+                            item.numpy() if isinstance(item, torch.Tensor) else item
+                            for item in v
+                        )
+                    else:
+                        out[k] = v
+                return out
+
+            methods["torchfits_numpy"] = _table_numpy_fallback
 
         # Test torchfits mmap explicitly for tables
         if file_type == "table":
@@ -752,6 +995,7 @@ class ExhaustiveBenchmarkSuite:
                 hdu=hdu_num,
                 mmap=True,
                 cache_capacity=self.cache_capacity,
+                handle_cache_capacity=self.handle_cache_capacity,
             )
 
         # Test astropy if available
@@ -759,18 +1003,68 @@ class ExhaustiveBenchmarkSuite:
         methods["astropy_torch"] = lambda: self._astropy_to_torch(filepath, hdu_num)
 
         # Test fitsio if available
-        methods["fitsio"] = lambda: fitsio.read(
-            str(filepath), ext=hdu_num
-        )  # fitsio uses mmap by default usually? Or we can't control it easily here.
+        methods["fitsio"] = lambda: self._fitsio_read(filepath, hdu_num)
         methods["fitsio_torch"] = lambda: self._fitsio_to_torch(filepath, hdu_num)
 
-        # Run benchmarks (shuffle order to reduce cache bias)
+        # Run benchmarks (shuffle order to reduce cache bias). We buffer output and
+        # print a single ranked table per benchmark case (no duplicated unranked view).
+        case_label = f"{name} ({size_mb:.2f} MB) - {file_type} {data_type} {dimensions} {compression}"
+
+        progress_enabled = (
+            sys.stdout.isatty() or os.getenv("TORCHFITS_BENCH_PROGRESS") == "1"
+        )
+        progress_log_started = False
+
+        def _progress(method: str) -> None:
+            """
+            One-line progress indicator.
+            - TTY: update in-place on the same line (cleared).
+            - Non-TTY (e.g. piped to tee): default OFF to avoid log spam. If enabled via
+              `TORCHFITS_BENCH_PROGRESS=1`, emit a *single* line by appending method names,
+              then finish with 'done'.
+            """
+            nonlocal progress_log_started
+            if not progress_enabled:
+                return
+
+            try:
+                if sys.stdout.isatty():
+                    # In-place update for interactive runs (clear line first).
+                    line = f"{case_label} : timing {method}"
+                    sys.stdout.write("\r\033[2K" + line)
+                    sys.stdout.flush()
+                    return
+
+                # Non-interactive logs: keep everything on one line (no carriage returns).
+                if method == "done":
+                    if not progress_log_started:
+                        sys.stdout.write(f"{case_label} : done\n")
+                    else:
+                        sys.stdout.write(" done\n")
+                    sys.stdout.flush()
+                    return
+
+                if not progress_log_started:
+                    sys.stdout.write(f"{case_label} : timing {method}")
+                    progress_log_started = True
+                else:
+                    sys.stdout.write(f" {method}")
+                sys.stdout.flush()
+            except Exception:
+                pass
+
         method_results = {}
         method_items = list(methods.items())
         random.shuffle(method_items)
         for method_name, method_func in method_items:
+            _progress(method_name)
+
             method_result = self._time_method(
-                method_func, method_name, runs=runs, use_median=use_median
+                method_func,
+                method_name,
+                runs=runs,
+                use_median=use_median,
+                expected_payload_mb=expected_payload_mb,
             )
             method_results[method_name] = method_result
 
@@ -786,12 +1080,8 @@ class ExhaustiveBenchmarkSuite:
                 )
                 result[f"{method_name}_memory"] = method_result["memory"]
                 result[f"{method_name}_peak_memory"] = method_result["peak_memory"]
-
-                stat_label = "median" if use_median else "mean"
-                print(
-                    f"{method_name:15s}: {time_value:.6f}s ± {method_result['std']:.6f}s ({stat_label})  "
-                    f"mem: {method_result['memory']:.1f}MB  peak: {method_result['peak_memory']:.1f}MB"
-                )
+                payload_mb = method_result.get("payload_memory", 0.0)
+                result[f"{method_name}_payload_mb"] = payload_mb
             else:
                 result[f"{method_name}_mean"] = None
                 result[f"{method_name}_std"] = None
@@ -799,28 +1089,57 @@ class ExhaustiveBenchmarkSuite:
                 result[f"{method_name}_mb_s"] = None
                 result[f"{method_name}_memory"] = None
                 result[f"{method_name}_peak_memory"] = None
-                print(f"{method_name:15s}: FAILED")
+                result[f"{method_name}_payload_mb"] = None
 
-        # Run diagnostic methods (not included in ranking)
+        # Run diagnostic methods (useful for debugging overhead; included in the single
+        # ranked output but marked as diagnostic).
         # Open after the main loop so cache clears don't invalidate the handle.
         try:
             file_handle = torchfits.cpp.open_fits_file(str(filepath), "r")
         except Exception:
             file_handle = None
         if file_handle is not None:
-            diagnostic_methods["torchfits_cpp_open_once"] = lambda: torchfits.cpp.read_full(
-                file_handle, hdu_num, self.use_mmap
-            )
+            # Reuse an already-open file handle. For image HDUs this benchmarks
+            # the C++ image read without open/close overhead; for table HDUs it
+            # benchmarks the handle-based table reader.
+            if file_type == "table":
+                diagnostic_methods["torchfits_cpp_open_once"] = (
+                    lambda fh=file_handle: torchfits.cpp.read_fits_table_from_handle(
+                        fh, hdu_num
+                    )
+                )
+            else:
+                diagnostic_methods["torchfits_cpp_open_once"] = (
+                    lambda fh=file_handle: torchfits.cpp.read_full(
+                        fh, hdu_num, tf_mmap_cpp
+                    )
+                )
         diagnostic_methods["torchfits_hot"] = lambda: torchfits.read(
             str(filepath),
             hdu=hdu_num,
-            mmap=self.use_mmap,
+            mmap=tf_mmap_mode,
             cache_capacity=self.hot_cache_capacity,
+            handle_cache_capacity=self.handle_cache_capacity,
         )
+        diagnostic_methods["torchfits_handle_cache"] = lambda: torchfits.read(
+            str(filepath),
+            hdu=hdu_num,
+            mmap=tf_mmap_mode,
+            cache_capacity=0,
+            handle_cache_capacity=self.hot_cache_capacity,
+        )
+        diagnostic_results = {}
         for method_name, method_func in diagnostic_methods.items():
+            _progress(method_name)
+
             method_result = self._time_method(
-                method_func, method_name, runs=runs, use_median=use_median
+                method_func,
+                method_name,
+                runs=runs,
+                use_median=use_median,
+                expected_payload_mb=expected_payload_mb,
             )
+            diagnostic_results[method_name] = method_result
             if method_result:
                 time_value = (
                     method_result["median"] if use_median else method_result["mean"]
@@ -831,20 +1150,107 @@ class ExhaustiveBenchmarkSuite:
                 result[f"{method_name}_mb_s"] = (
                     size_mb / time_value if time_value else None
                 )
-                stat_label = "median" if use_median else "mean"
-                print(f"{method_name:15s}: {time_value:.6f}s ± {method_result['std']:.6f}s ({stat_label})")
+                result[f"{method_name}_memory"] = method_result["memory"]
+                result[f"{method_name}_peak_memory"] = method_result["peak_memory"]
+                result[f"{method_name}_payload_mb"] = method_result.get(
+                    "payload_memory", 0.0
+                )
             else:
                 result[f"{method_name}_mean"] = None
                 result[f"{method_name}_std"] = None
                 result[f"{method_name}_median"] = None
                 result[f"{method_name}_mb_s"] = None
-                print(f"{method_name:15s}: FAILED")
+                result[f"{method_name}_memory"] = None
+                result[f"{method_name}_peak_memory"] = None
+                result[f"{method_name}_payload_mb"] = None
+
+        # Finish progress indicator cleanly.
+        try:
+            if progress_enabled:
+                _progress("done")
+                if sys.stdout.isatty():
+                    # Clear the in-place progress line before printing the ranked table.
+                    sys.stdout.write("\r\033[2K\n")
+                    sys.stdout.flush()
+        except Exception:
+            pass
 
         if file_handle is not None:
             try:
                 file_handle.close()
             except Exception:
                 pass
+
+        # Single ranked display for this benchmark case.
+        # Include both main methods and diagnostics, but clearly tag diagnostics.
+        stat_label = "median" if use_median else "mean"
+        display_rows = []
+        for mname, res in method_results.items():
+            if not res or res.get("mean") is None:
+                display_rows.append((mname, None, None, None, None, None, "main"))
+                continue
+            t = res["median"] if use_median else res["mean"]
+            display_rows.append(
+                (
+                    mname,
+                    float(t),
+                    float(res.get("spread", 0.0)),
+                    float(res.get("memory", 0.0)),
+                    float(res.get("peak_memory", 0.0)),
+                    float(res.get("payload_memory", 0.0)),
+                    "main",
+                )
+            )
+        for mname, res in diagnostic_results.items():
+            if not res or res.get("mean") is None:
+                display_rows.append((mname, None, None, None, None, None, "diag"))
+                continue
+            t = res["median"] if use_median else res["mean"]
+            display_rows.append(
+                (
+                    mname,
+                    float(t),
+                    float(res.get("spread", 0.0)),
+                    float(res.get("memory", 0.0)),
+                    float(res.get("peak_memory", 0.0)),
+                    float(res.get("payload_memory", 0.0)),
+                    "diag",
+                )
+            )
+
+        ok = [r for r in display_rows if r[1] is not None]
+        ok.sort(key=lambda x: x[1])
+        print(f"\nRanked results ({stat_label}, fastest first):")
+        best_time = ok[0][1] if ok else None
+
+        # Print a single aligned table.
+        # Columns: rank, method, time, std, x_best, MB/s, rssΔ, peakΔ, payload
+        # Note: RSS deltas are best-effort process-level signals; payload is deterministic nbytes.
+        method_w = 28
+        header = (
+            f"{'#':>2s}  {'method':<{method_w}s}  {stat_label + '_s':>10s}  {'spread_s':>10s}  "
+            f"{'x_best':>8s}  {'MB/s':>10s}  {'rssΔ_MB':>8s}  {'peakΔ_MB':>8s}  {'payload_MB':>10s}"
+        )
+        print(header)
+        print("-" * len(header))
+
+        ranked = 1
+        for mname, t, s, rssd, peakd, payload, kind in ok:
+            ratio = (t / best_time) if (best_time and t is not None) else float("inf")
+            mb_s = (size_mb / t) if (t and t > 0) else float("nan")
+            label = mname + (" [diag]" if kind != "main" else "")
+            print(
+                f"{ranked:2d}  {label:<{method_w}.{method_w}s}  {t:10.6f}  {s:10.6f}  "
+                f"{ratio:8.2f}  {mb_s:10.1f}  {rssd:8.2f}  {peakd:8.2f}  {payload:10.2f}"
+            )
+            ranked += 1
+
+        failed = [r for r in display_rows if r[1] is None]
+        for mname, *_rest in failed:
+            label = mname + (
+                " [diag]" if any(mname == k for k in diagnostic_results) else ""
+            )
+            print(f"{'--':>2s}  {label:<{method_w}.{method_w}s}  {'FAILED':>10s}")
 
         # Analyze results
         valid_methods = {}
@@ -874,83 +1280,251 @@ class ExhaustiveBenchmarkSuite:
                 )
                 result["speedup_vs_best"] = speedup
 
-                print(
-                    f"\nBest method: {best_method} ({valid_methods[best_method]:.6f}s)"
-                )
-                print(f"torchfits rank: {torchfits_rank}/{len(valid_methods)}")
-                if best_method != "torchfits":
-                    print(
-                        f"torchfits vs best: {tf_time / valid_methods[best_method]:.2f}x"
-                    )
+                # Keep the console output to a single ranked table; store summary in CSV only.
             else:
                 result["speedup_vs_best"] = None
+
+            # Split rankings by return type (torch tensor vs numpy array) for fair comparisons.
+            torch_methods = {"torchfits", "fitsio_torch", "astropy_torch"}
+            numpy_methods = {"torchfits_numpy", "fitsio", "astropy"}
+
+            torch_valid = {k: v for k, v in valid_methods.items() if k in torch_methods}
+            if torch_valid:
+                best_torch = min(torch_valid.keys(), key=lambda k: torch_valid[k])
+                sorted_torch = sorted(torch_valid.items(), key=lambda x: x[1])
+                tf_rank_torch = next(
+                    (
+                        i + 1
+                        for i, (k, _) in enumerate(sorted_torch)
+                        if k == "torchfits"
+                    ),
+                    len(sorted_torch) + 1,
+                )
+                result["best_method_torch"] = best_torch
+                result["torchfits_rank_torch"] = tf_rank_torch
+                if "torchfits" in torch_valid:
+                    result["speedup_vs_best_torch"] = (
+                        torch_valid[best_torch] / torch_valid["torchfits"]
+                    )
+                else:
+                    result["speedup_vs_best_torch"] = None
+            else:
+                result["best_method_torch"] = "none"
+                result["torchfits_rank_torch"] = 999
+                result["speedup_vs_best_torch"] = None
+
+            numpy_valid = {k: v for k, v in valid_methods.items() if k in numpy_methods}
+            if numpy_valid:
+                best_numpy = min(numpy_valid.keys(), key=lambda k: numpy_valid[k])
+                sorted_numpy = sorted(numpy_valid.items(), key=lambda x: x[1])
+                tf_np_rank = next(
+                    (
+                        i + 1
+                        for i, (k, _) in enumerate(sorted_numpy)
+                        if k == "torchfits_numpy"
+                    ),
+                    len(sorted_numpy) + 1,
+                )
+                result["best_method_numpy"] = best_numpy
+                result["torchfits_numpy_rank"] = tf_np_rank
+                if "torchfits_numpy" in numpy_valid:
+                    result["speedup_vs_best_numpy"] = (
+                        numpy_valid[best_numpy] / numpy_valid["torchfits_numpy"]
+                    )
+                else:
+                    result["speedup_vs_best_numpy"] = None
+            else:
+                result["best_method_numpy"] = "none"
+                result["torchfits_numpy_rank"] = 999
+                result["speedup_vs_best_numpy"] = None
+
+            # Explicitly report the "switch to torch" goal metric in the CSV only.
         else:
             result["best_method"] = "none"
             result["torchfits_rank"] = 999
             result["speedup_vs_best"] = None
+            result["best_method_torch"] = "none"
+            result["torchfits_rank_torch"] = 999
+            result["speedup_vs_best_torch"] = None
+            result["best_method_numpy"] = "none"
+            result["torchfits_numpy_rank"] = 999
+            result["speedup_vs_best_numpy"] = None
 
         return result
 
-    def _time_method(
-        self, method_func, method_name: str, runs: int = 3, use_median: bool = False
-    ) -> Optional[Dict]:
-        """Time a method with memory monitoring."""
-        times = []
-        memory_usage = []
-        peak_memory_usage = []
+    def _estimate_data_size_mb(self, data) -> float:
+        """Estimate payload size (MB) of benchmark return values."""
+        visited = set()
 
-        # Import psutil for memory measurement
+        def _sizeof(obj) -> int:
+            obj_id = id(obj)
+            if obj_id in visited:
+                return 0
+            visited.add(obj_id)
+
+            if obj is None:
+                return 0
+
+            if hasattr(obj, "element_size") and hasattr(obj, "numel"):
+                try:
+                    return int(obj.element_size() * obj.numel())
+                except Exception:
+                    pass
+
+            if hasattr(obj, "nbytes"):
+                try:
+                    return int(obj.nbytes)
+                except Exception:
+                    pass
+
+            if isinstance(obj, dict):
+                return sum(_sizeof(v) for v in obj.values())
+
+            if isinstance(obj, (list, tuple)):
+                return sum(_sizeof(v) for v in obj)
+
+            return 0
+
+        return _sizeof(data) / 1024 / 1024
+
+    def _expected_image_payload_mb(
+        self, filepath: Path, hdu_num: int
+    ) -> Optional[float]:
+        """Estimate expected uncompressed image payload size (MB) from FITS headers."""
+
+        def _to_int(value, default=0) -> int:
+            try:
+                return int(value)
+            except Exception:
+                try:
+                    return int(float(value))
+                except Exception:
+                    return int(default)
+
         try:
-            import psutil
+            header = fitsio.read_header(str(filepath), ext=hdu_num)
+        except Exception:
+            return None
 
-            process = psutil.Process()
-            memory_available = True
-        except ImportError:
-            memory_available = False
+        use_compressed_axes = _to_int(header.get("ZNAXIS", 0), 0) > 0
+        axis_prefix = "ZNAXIS" if use_compressed_axes else "NAXIS"
+        naxis = _to_int(header.get(axis_prefix, 0), 0)
+        if naxis <= 0:
+            return None
 
-        for i in range(runs):
+        bitpix_key = "ZBITPIX" if use_compressed_axes else "BITPIX"
+        bitpix = abs(_to_int(header.get(bitpix_key, header.get("BITPIX", 0)), 0))
+        if bitpix <= 0:
+            return None
+
+        elements = 1
+        for i in range(1, naxis + 1):
+            axis_len = _to_int(header.get(f"{axis_prefix}{i}", 0), 0)
+            if axis_len <= 0:
+                return None
+            elements *= axis_len
+
+        return (elements * (bitpix / 8.0)) / (1024.0 * 1024.0)
+
+    def _time_method(
+        self,
+        method_func,
+        method_name: str,
+        runs: int = 3,
+        use_median: bool = False,
+        expected_payload_mb: Optional[float] = None,
+    ) -> Optional[Dict]:
+        """Time a method with robust RSS memory tracking."""
+        times = []
+        rss_increase_mb = []
+        peak_rss_increase_mb = []
+        payload_memory_mb = []
+
+        process = psutil.Process()
+        # RSS sampling is best-effort. It can under-report brief peaks, and RSS deltas
+        # may be near-zero due to allocator reuse. Treat it as a coarse signal.
+        sample_interval_s = float(os.getenv("TORCHFITS_BENCH_RSS_INTERVAL_S", "0.001"))
+        warmup_runs = max(0, int(os.getenv("TORCHFITS_BENCH_WARMUP_RUNS", "1")))
+
+        # Clear torchfits caches once per timed method (not per run). Clearing inside
+        # the run loop makes the benchmark highly noisy and unrealistically penalizes
+        # torchfits relative to other libs that don't expose/trigger similar cache clears.
+        try:
+            if (
+                "torchfits" in method_name
+                and "open_once" not in method_name
+                and "hot" not in method_name
+                and "handle_cache" not in method_name
+            ):
+                torchfits.clear_file_cache()
+        except Exception:
+            pass
+
+        # Warmup/discard-first pass to reduce cold-start noise in medians.
+        for _ in range(warmup_runs):
+            try:
+                gc.collect()
+                for _ in range(2):
+                    gc.collect()
+                data = method_func()
+                del data
+            except Exception as e:
+                print(f"Error in {method_name} warmup: {e}")
+                return None
+
+        for _ in range(runs):
+            sampler_stop = None
+            sampler_thread = None
+            initial_rss_mb = 0.0
+            peak_rss_mb = 0.0
+
             try:
                 gc.collect()
                 for _ in range(3):  # Extra cleanup
                     gc.collect()
 
-                # Clear torchfits cache if applicable
-                if (
-                    "torchfits" in method_name
-                    and "open_once" not in method_name
-                    and "hot" not in method_name
-                ):
-                    torchfits.clear_file_cache()
+                initial_rss_mb = process.memory_info().rss / 1024 / 1024
+                peak_rss_mb = initial_rss_mb
+                sampler_stop = threading.Event()
 
-                # Get initial memory usage
-                if memory_available:
-                    initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+                def _sample_rss(stop_event):
+                    nonlocal peak_rss_mb
+                    while not stop_event.is_set():
+                        try:
+                            current_rss_mb = process.memory_info().rss / 1024 / 1024
+                        except Exception:
+                            break
+                        if current_rss_mb > peak_rss_mb:
+                            peak_rss_mb = current_rss_mb
+                        stop_event.wait(sample_interval_s)
+
+                sampler_thread = threading.Thread(
+                    target=_sample_rss, args=(sampler_stop,), daemon=True
+                )
+                sampler_thread.start()
 
                 # Time the operation
                 start_time = time.perf_counter()
                 data = method_func()
                 elapsed = time.perf_counter() - start_time
 
-                # Get final memory usage
-                if memory_available:
-                    final_memory = process.memory_info().rss / 1024 / 1024  # MB
-                    peak_memory_increase = max(0, final_memory - initial_memory)
-                else:
-                    peak_memory_increase = 0
-
-                # Calculate data memory usage
-                if hasattr(data, "element_size") and hasattr(data, "numel"):
-                    # PyTorch tensor
-                    data_size_mb = (data.element_size() * data.numel()) / 1024 / 1024
-                elif hasattr(data, "nbytes"):
-                    # NumPy array
-                    data_size_mb = data.nbytes / 1024 / 1024
-                else:
-                    data_size_mb = peak_memory_increase
+                final_rss_mb = process.memory_info().rss / 1024 / 1024
+                peak_rss_mb = max(peak_rss_mb, final_rss_mb)
+                payload_mb = self._estimate_data_size_mb(data)
+                if expected_payload_mb is not None and expected_payload_mb > 0:
+                    min_expected_mb = expected_payload_mb * self.payload_min_ratio
+                    if payload_mb < min_expected_mb:
+                        raise RuntimeError(
+                            "payload check failed "
+                            f"(observed={payload_mb:.4f}MB, "
+                            f"expected>={min_expected_mb:.4f}MB, "
+                            f"ratio={self.payload_min_ratio:.2f})"
+                        )
 
                 times.append(elapsed)
-                memory_usage.append(data_size_mb)
-                peak_memory_usage.append(peak_memory_increase)
+                rss_increase_mb.append(max(0.0, final_rss_mb - initial_rss_mb))
+                peak_rss_increase_mb.append(max(0.0, peak_rss_mb - initial_rss_mb))
+                payload_memory_mb.append(payload_mb)
 
                 del data
                 gc.collect()
@@ -958,14 +1532,40 @@ class ExhaustiveBenchmarkSuite:
             except Exception as e:
                 print(f"Error in {method_name}: {e}")
                 return None
+            finally:
+                if sampler_stop is not None:
+                    sampler_stop.set()
+                if sampler_thread is not None:
+                    sampler_thread.join(timeout=0.05)
+
+        def _percentile(sorted_vals, q: float) -> float:
+            # Linear interpolation between closest ranks (like numpy default).
+            if not sorted_vals:
+                return 0.0
+            if len(sorted_vals) == 1:
+                return float(sorted_vals[0])
+            q = float(min(1.0, max(0.0, q)))
+            pos = (len(sorted_vals) - 1) * q
+            lo = int(pos)
+            hi = min(lo + 1, len(sorted_vals) - 1)
+            if hi == lo:
+                return float(sorted_vals[lo])
+            frac = pos - lo
+            return float(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac)
 
         if times:
+            sorted_times = sorted(times)
+            p10 = _percentile(sorted_times, 0.10)
+            p90 = _percentile(sorted_times, 0.90)
             return {
                 "mean": mean(times),
                 "median": median(times),
                 "std": stdev(times) if len(times) > 1 else 0,
-                "memory": mean(memory_usage),
-                "peak_memory": mean(peak_memory_usage),
+                # Robust spread: helps spot outliers without being dominated by them.
+                "spread": p90 - p10,
+                "memory": mean(rss_increase_mb),
+                "peak_memory": mean(peak_rss_increase_mb),
+                "payload_memory": mean(payload_memory_mb),
             }
         return None
 
@@ -975,7 +1575,109 @@ class ExhaustiveBenchmarkSuite:
         print("CUTOUT BENCHMARK")
         print("=" * 100)
 
-        results = []
+        results: List[Dict] = []
+
+        def _run_case(
+            target_name: str,
+            target_file: Path,
+            hdu_idx: int,
+            compression: str,
+        ) -> Dict:
+            print(
+                f"Benchmarking cutouts on {target_name} (hdu={hdu_idx}, {compression})..."
+            )
+
+            cutout_size = (100, 100)
+            n_iter = 50
+
+            x1, y1 = 100, 100
+            x2 = x1 + cutout_size[1]
+            y2 = y1 + cutout_size[0]
+
+            methods = {
+                "torchfits": lambda: torchfits.read_subset(
+                    str(target_file), hdu_idx, x1, y1, x2, y2
+                ),
+                "astropy": lambda: self._astropy_cutout(
+                    target_file, hdu_idx, x1, y1, x2, y2
+                ),
+                "fitsio": lambda: self._fitsio_cutout(
+                    target_file, hdu_idx, x1, y1, x2, y2
+                ),
+            }
+
+            row = {
+                "filename": target_name,
+                "operation": "cutout_100x100",
+                "file_type": self._get_file_type(target_name),
+                "size_mb": target_file.stat().st_size / 1024 / 1024,
+                "data_type": "mixed",
+                "dimensions": "2d",
+                "compression": compression,
+            }
+
+            for name, func in methods.items():
+                res = self._time_method(func, name, runs=n_iter)
+                if res:
+                    row[f"{name}_mean"] = res["mean"]
+                    row[f"{name}_std"] = res["std"]
+                    row[f"{name}_median"] = res["median"]
+                    row[f"{name}_mb_s"] = (
+                        row["size_mb"] / res["median"] if res["median"] else None
+                    )
+                    row[f"{name}_memory"] = res["memory"]
+                    row[f"{name}_peak_memory"] = res["peak_memory"]
+                    print(
+                        f"{name:15s}: {res['mean'] * 1e6:.2f}us ± {res['std'] * 1e6:.2f}us"
+                    )
+                else:
+                    row[f"{name}_mean"] = None
+                    row[f"{name}_std"] = None
+                    row[f"{name}_median"] = None
+                    row[f"{name}_mb_s"] = None
+                    row[f"{name}_memory"] = None
+                    row[f"{name}_peak_memory"] = None
+
+            valid_methods = {
+                method_name: row[f"{method_name}_median"]
+                for method_name in methods
+                if row.get(f"{method_name}_median") is not None
+            }
+            if valid_methods:
+                best_method = min(valid_methods, key=valid_methods.get)
+                sorted_methods = sorted(valid_methods.items(), key=lambda kv: kv[1])
+                torchfits_rank = next(
+                    (
+                        idx + 1
+                        for idx, (nm, _) in enumerate(sorted_methods)
+                        if nm == "torchfits"
+                    ),
+                    len(sorted_methods) + 1,
+                )
+                row["best_method"] = best_method
+                row["torchfits_rank"] = torchfits_rank
+
+                tf_time = valid_methods.get("torchfits")
+                if tf_time:
+                    if best_method == "torchfits":
+                        competitor_times = [
+                            v for k, v in valid_methods.items() if k != "torchfits"
+                        ]
+                        row["speedup_vs_best"] = (
+                            tf_time / min(competitor_times)
+                            if competitor_times
+                            else None
+                        )
+                    else:
+                        row["speedup_vs_best"] = valid_methods[best_method] / tf_time
+                else:
+                    row["speedup_vs_best"] = None
+            else:
+                row["best_method"] = "none"
+                row["torchfits_rank"] = 999
+                row["speedup_vs_best"] = None
+
+            return row
 
         # Find a suitable large file (MEF or large image)
         target_file = None
@@ -995,67 +1697,243 @@ class ExhaustiveBenchmarkSuite:
                     target_name = name
                     break
 
-        if not target_file:
-            print("No suitable file found for cutout benchmark.")
+        if target_file and target_name:
+            hdu_idx = 5 if "multi_mef" in target_name else 1
+            results.append(_run_case(target_name, target_file, hdu_idx, "uncompressed"))
+        else:
+            print("No suitable file found for uncompressed cutout benchmark.")
+
+        # Compressed cutouts (extension 1)
+        comp_name = None
+        comp_file = None
+        for key in ["compressed_rice_1", "compressed_gzip_1", "compressed_hcompress_1"]:
+            if key in files:
+                comp_name = key
+                comp_file = files[key]
+                break
+        if comp_name and comp_file:
+            results.append(_run_case(comp_name, comp_file, 1, "compressed"))
+        else:
+            print("No suitable file found for compressed cutout benchmark.")
+
+        return results
+
+    def _benchmark_random_extension_reads(self, files: Dict[str, Path]) -> List[Dict]:
+        """Benchmark random extension full reads on a multi-extension FITS."""
+        print("\n" + "=" * 100)
+        print("RANDOM EXTENSION READ BENCHMARK")
+        print("=" * 100)
+
+        target = files.get("multi_mef_10ext")
+        if target is None:
+            print("No multi_mef_10ext file found for extension benchmark.")
             return []
 
-        print(f"Benchmarking cutouts on {target_name}...")
+        target_name = "multi_mef_10ext"
+        size_mb = target.stat().st_size / 1024 / 1024
+        n_iter = 200
+        ext_seq = [((i * 3) % 10) + 1 for i in range(n_iter)]  # 1..10
+        # This benchmark targets extension-switch overhead. For repeated random
+        # HDU hops, mmap data-path setup dominates and is not representative of
+        # the intended comparison, so we force non-mmap here.
+        ext_use_mmap = False
 
-        # Define cutout parameters
-        cutout_size = (100, 100)
-        n_iter = 50
+        def tf_cached_handles():
+            if hasattr(torchfits.cpp, "read_hdus_sequence_last"):
+                return torchfits.cpp.read_hdus_sequence_last(
+                    str(target), ext_seq, ext_use_mmap
+                )
+            out = None
+            for ext in ext_seq:
+                out = torchfits.read(
+                    str(target),
+                    hdu=ext,
+                    mmap=ext_use_mmap,
+                    cache_capacity=0,
+                    handle_cache_capacity=self.handle_cache_capacity,
+                )
+            return out
 
-        # Random position
-        x1, y1 = 100, 100
-        x2 = x1 + cutout_size[1]
-        y2 = y1 + cutout_size[0]
+        def tf_cpp_open_once():
+            fh = torchfits.cpp.open_fits_file(str(target), "r")
+            try:
+                out = None
+                for ext in ext_seq:
+                    out = torchfits.cpp.read_full(fh, ext, ext_use_mmap)
+                return out
+            finally:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
 
-        # Target a middle extension
-        hdu_idx = 5 if "multi_mef" in target_name else 1
+        def fitsio_open_once():
+            f = fitsio.FITS(str(target))
+            try:
+                out = None
+                for ext in ext_seq:
+                    out = f[ext].read()
+                return out
+            finally:
+                try:
+                    f.close()
+                except Exception:
+                    pass
 
-        # Define methods
-        methods = {}
+        def astropy_open_once():
+            # astropy may refuse memmap when BZERO/BSCALE keywords are present; for this
+            # benchmark we care about extension access overhead, so keep it robust.
+            with self._astropy_open(target, False) as hdul:
+                out = None
+                for ext in ext_seq:
+                    # Force materialization to match torchfits/fitsio read semantics.
+                    out = self._ensure_native_endian_numpy(
+                        np.array(hdul[ext].data, copy=True)
+                    )
+                return out
 
-        methods["torchfits"] = lambda: torchfits.read_subset(
-            str(target_file), hdu_idx, x1, y1, x2, y2
-        )
+        methods = {
+            "torchfits": tf_cached_handles,
+            "torchfits_cpp_open_once": tf_cpp_open_once,
+            "fitsio": fitsio_open_once,
+            "astropy": astropy_open_once,
+        }
 
-        methods["astropy"] = lambda: self._astropy_cutout(
-            target_file, hdu_idx, x1, y1, x2, y2
-        )
-
-        methods["fitsio"] = lambda: self._fitsio_cutout(
-            target_file, hdu_idx, x1, y1, x2, y2
-        )
-
-        # Run benchmark
-        row = {
+        row: Dict[str, Any] = {
             "filename": target_name,
-            "operation": "cutout_100x100",
-            "file_type": self._get_file_type(target_name),
-            "size_mb": target_file.stat().st_size / 1024 / 1024,
+            "operation": "random_ext_full_reads_200",
+            "file_type": "multi_mef",
+            "size_mb": size_mb,
             "data_type": "mixed",
             "dimensions": "2d",
             "compression": "uncompressed",
         }
 
+        # Each method already does 200 reads; keep repeat count small.
         for name, func in methods.items():
-            res = self._time_method(func, name, runs=n_iter)
+            res = self._time_method(func, name, runs=5, use_median=True)
             if res:
                 row[f"{name}_mean"] = res["mean"]
                 row[f"{name}_std"] = res["std"]
                 row[f"{name}_median"] = res["median"]
-                row[f"{name}_mb_s"] = (
-                    row["size_mb"] / res["median"] if res["median"] else None
-                )
-                print(
-                    f"{name:15s}: {res['mean'] * 1e6:.2f}us ± {res['std'] * 1e6:.2f}us"
-                )
+                row[f"{name}_mb_s"] = size_mb / res["median"] if res["median"] else None
+                row[f"{name}_memory"] = res["memory"]
+                row[f"{name}_peak_memory"] = res["peak_memory"]
+                row[f"{name}_payload_mb"] = res["payload_memory"]
+                print(f"{name:22s}: {res['median'] * 1e3:.3f}ms (median)")
             else:
                 row[f"{name}_mean"] = None
+                row[f"{name}_std"] = None
+                row[f"{name}_median"] = None
+                row[f"{name}_mb_s"] = None
+                row[f"{name}_memory"] = None
+                row[f"{name}_peak_memory"] = None
+                row[f"{name}_payload_mb"] = None
 
-        results.append(row)
-        return results
+        # Ensure all known columns exist for CSV compatibility.
+        for missing in [
+            "fitsio_torch",
+            "astropy_torch",
+            "torchfits_numpy",
+            "torchfits_hot",
+            "torchfits_handle_cache",
+        ]:
+            if f"{missing}_median" not in row:
+                row[f"{missing}_mean"] = None
+                row[f"{missing}_std"] = None
+                row[f"{missing}_median"] = None
+                row[f"{missing}_mb_s"] = None
+                row[f"{missing}_memory"] = None
+                row[f"{missing}_peak_memory"] = None
+                row[f"{missing}_payload_mb"] = None
+
+        return [row]
+
+    def _benchmark_table_scan_arrow(self, files: Dict[str, Path]) -> List[Dict]:
+        """Benchmark Arrow out-of-core scan path (torchfits only)."""
+        if not self.include_tables:
+            return []
+        target = files.get("table_survey_catalog")
+        if target is None:
+            return []
+
+        print("\n" + "=" * 100)
+        print("TABLE SCAN (ARROW) BENCHMARK")
+        print("=" * 100)
+
+        import pyarrow as pa  # noqa: F401
+
+        def tf_scan_count():
+            total = 0
+            for batch in torchfits.table.scan(
+                str(target),
+                hdu=1,
+                batch_size=65536,
+                mmap=True,
+                backend="cpp_numpy",
+                include_fits_metadata=False,
+                apply_fits_nulls=False,
+            ):
+                total += int(batch.num_rows)
+            return total
+
+        res = self._time_method(tf_scan_count, "torchfits", runs=5, use_median=True)
+        size_mb = target.stat().st_size / 1024 / 1024
+        row: Dict[str, Any] = {
+            "filename": "table_survey_catalog",
+            "operation": "table_scan_arrow_count",
+            "file_type": "table",
+            "size_mb": size_mb,
+            "data_type": "mixed",
+            "dimensions": "2d",
+            "compression": "uncompressed",
+        }
+
+        if res:
+            row["torchfits_mean"] = res["mean"]
+            row["torchfits_std"] = res["std"]
+            row["torchfits_median"] = res["median"]
+            row["torchfits_mb_s"] = size_mb / res["median"] if res["median"] else None
+            row["torchfits_memory"] = res["memory"]
+            row["torchfits_peak_memory"] = res["peak_memory"]
+            row["torchfits_payload_mb"] = res["payload_memory"]
+
+        # Fill other columns with None.
+        for prefix in [
+            "torchfits_numpy",
+            "torchfits_hot",
+            "torchfits_handle_cache",
+            "torchfits_mmap",
+            "astropy",
+            "fitsio",
+            "astropy_torch",
+            "fitsio_torch",
+            "torchfits_cpp_open_once",
+        ]:
+            for suffix in [
+                "mean",
+                "std",
+                "median",
+                "mb_s",
+                "memory",
+                "peak_memory",
+                "payload_mb",
+            ]:
+                row.setdefault(f"{prefix}_{suffix}", None)
+        row.setdefault("best_method", "torchfits")
+        row.setdefault("torchfits_rank", 1)
+        row.setdefault("speedup_vs_best", None)
+        row.setdefault("best_method_torch", "torchfits")
+        row.setdefault("torchfits_rank_torch", 1)
+        row.setdefault("speedup_vs_best_torch", None)
+        row.setdefault("best_method_numpy", "none")
+        row.setdefault("torchfits_numpy_rank", 999)
+        row.setdefault("speedup_vs_best_numpy", None)
+
+        if res:
+            print(f"torchfits (scan count): {res['median']:.6f}s (median)")
+
+        return [row]
 
     def _astropy_cutout(self, path, hdu, x1, y1, x2, y2):
         try:
@@ -1112,6 +1990,20 @@ class ExhaustiveBenchmarkSuite:
             if hdul is not None:
                 hdul.close()
 
+    def _ensure_native_endian_numpy(self, arr):
+        """Return a contiguous numpy array with native byte order."""
+        out = np.ascontiguousarray(np.asarray(arr))
+        if out.dtype.byteorder not in ("=", "|"):
+            out = np.ascontiguousarray(out.astype(out.dtype.newbyteorder("=")))
+        return out
+
+    def _table_to_numpy_dict(self, table_data):
+        """Convert table-like column accessor to dict[str, np.ndarray]."""
+        return {
+            col: self._ensure_native_endian_numpy(table_data[col])
+            for col in table_data.names
+        }
+
     def _astropy_read(self, filepath: Path, hdu_num: int):
         """Pure astropy read - handles both images and tables."""
         try:
@@ -1120,11 +2012,13 @@ class ExhaustiveBenchmarkSuite:
                 if hasattr(hdu, "data") and hdu.data is not None:
                     if isinstance(hdu, astropy_fits.BinTableHDU):
                         # Table: convert to dict for fair comparison
-                        data = hdu.data
-                        return {col: data[col] for col in data.names}
+                        return self._table_to_numpy_dict(hdu.data)
                     else:
-                        # Image: return numpy array
-                        return hdu.data.copy()
+                        # Image: force materialization so this benchmark measures
+                        # full-read latency (not lazy memmap view creation).
+                        return self._ensure_native_endian_numpy(
+                            np.array(hdu.data, copy=True)
+                        )
                 return None
         except Exception:
             if self.use_mmap:
@@ -1132,11 +2026,22 @@ class ExhaustiveBenchmarkSuite:
                     hdu = hdul[hdu_num]
                     if hasattr(hdu, "data") and hdu.data is not None:
                         if isinstance(hdu, astropy_fits.BinTableHDU):
-                            data = hdu.data
-                            return {col: data[col] for col in data.names}
-                        return hdu.data.copy()
+                            return self._table_to_numpy_dict(hdu.data)
+                        return self._ensure_native_endian_numpy(
+                            np.array(hdu.data, copy=True)
+                        )
                     return None
             raise
+
+    def _fitsio_read(self, filepath: Path, hdu_num: int):
+        """Pure fitsio read; table payload is normalized to dict[str, np.ndarray]."""
+        data = fitsio.read(str(filepath), ext=hdu_num)
+        if isinstance(data, np.ndarray) and data.dtype.names:
+            return {
+                col: self._ensure_native_endian_numpy(data[col])
+                for col in data.dtype.names
+            }
+        return data
 
     def _astropy_to_torch(self, filepath: Path, hdu_num: int):
         """Astropy read + torch conversion - handles both images and tables."""
@@ -1151,7 +2056,9 @@ class ExhaustiveBenchmarkSuite:
                         for col in data.names:
                             col_data = data[col]
                             if col_data.dtype.byteorder not in ("=", "|"):
-                                col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                                col_data = col_data.astype(
+                                    col_data.dtype.newbyteorder("=")
+                                )
                             try:
                                 if col_data.dtype.kind in ("S", "U"):
                                     # Convert strings to uint8 tensor
@@ -1167,7 +2074,9 @@ class ExhaustiveBenchmarkSuite:
                                     result[col] = torch.from_numpy(col_data)
                                 elif col_data.dtype.kind == "b":
                                     # Boolean
-                                    result[col] = torch.from_numpy(col_data.astype(bool))
+                                    result[col] = torch.from_numpy(
+                                        col_data.astype(bool)
+                                    )
                                 else:
                                     result[col] = torch.from_numpy(col_data)
                             except Exception:
@@ -1192,7 +2101,9 @@ class ExhaustiveBenchmarkSuite:
                             for col in data.names:
                                 col_data = data[col]
                                 if col_data.dtype.byteorder not in ("=", "|"):
-                                    col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                                    col_data = col_data.astype(
+                                        col_data.dtype.newbyteorder("=")
+                                    )
                                 try:
                                     if col_data.dtype.kind in ("S", "U"):
                                         if col_data.dtype.kind == "U":
@@ -1203,7 +2114,9 @@ class ExhaustiveBenchmarkSuite:
                                         )
                                         result[col] = torch.from_numpy(col_data)
                                     elif col_data.dtype.kind == "b":
-                                        result[col] = torch.from_numpy(col_data.astype(bool))
+                                        result[col] = torch.from_numpy(
+                                            col_data.astype(bool)
+                                        )
                                     else:
                                         result[col] = torch.from_numpy(col_data)
                                 except Exception:
@@ -1230,11 +2143,15 @@ class ExhaustiveBenchmarkSuite:
         """Generate comprehensive plots from benchmark results."""
         import matplotlib.pyplot as plt
         import seaborn as sns
+
         globals()["plt"] = plt
         globals()["sns"] = sns
 
         print("\nGenerating exhaustive plots...")
         df = pd.DataFrame(results)
+        if df.empty:
+            print("No results to plot.")
+            return
 
         # Set up plotting style
         plt.style.use("default")
@@ -1290,33 +2207,44 @@ class ExhaustiveBenchmarkSuite:
         plt.close()
 
     def _plot_memory_usage(self, df: pd.DataFrame):
-        """Plot memory usage analysis."""
+        """Plot RSS memory growth analysis."""
+        if (
+            "torchfits_memory" not in df.columns
+            or "torchfits_peak_memory" not in df.columns
+        ):
+            return
         fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle("Memory Usage Analysis", fontsize=16)
+        fig.suptitle("RSS Memory Growth Analysis", fontsize=16)
 
-        # Memory vs file size
-        valid_df = df[df["torchfits_memory"].notna()]
+        # RSS growth vs file size
+        valid_df = df[
+            df["torchfits_memory"].notna() & df["torchfits_peak_memory"].notna()
+        ]
         if not valid_df.empty:
             axes[0].scatter(
-                valid_df["size_mb"], valid_df["torchfits_memory"], alpha=0.6
+                valid_df["size_mb"],
+                valid_df["torchfits_memory"],
+                alpha=0.6,
+                label="Steady RSS increase",
             )
-            axes[0].plot(
-                [0, valid_df["size_mb"].max()],
-                [0, valid_df["size_mb"].max()],
-                "r--",
-                alpha=0.5,
+            axes[0].scatter(
+                valid_df["size_mb"],
+                valid_df["torchfits_peak_memory"],
+                alpha=0.4,
+                label="Peak RSS increase",
             )
             axes[0].set_xlabel("File Size (MB)")
-            axes[0].set_ylabel("Memory Usage (MB)")
-            axes[0].set_title("Memory Usage vs File Size")
+            axes[0].set_ylabel("RSS Increase (MB)")
+            axes[0].set_title("RSS Increase vs File Size")
+            axes[0].legend()
 
         # Peak memory by data type
         if not valid_df.empty:
             sns.boxplot(
                 data=valid_df, x="data_type", y="torchfits_peak_memory", ax=axes[1]
             )
-            axes[1].set_title("Peak Memory by Data Type")
-            axes[1].set_ylabel("Peak Memory (MB)")
+            axes[1].set_title("Peak RSS Increase by Data Type")
+            axes[1].set_ylabel("Peak RSS Increase (MB)")
             plt.setp(axes[1].get_xticklabels(), rotation=45)
 
         plt.tight_layout()
@@ -1457,14 +2385,31 @@ class ExhaustiveBenchmarkSuite:
         print("\nGenerating exhaustive summary report...")
 
         df = pd.DataFrame(results)
-        tf_col = "torchfits_median" if "torchfits_median" in df.columns else "torchfits_mean"
+        tf_col = (
+            "torchfits_median" if "torchfits_median" in df.columns else "torchfits_mean"
+        )
         fi_col = "fitsio_median" if "fitsio_median" in df.columns else "fitsio_mean"
-        astro_col = "astropy_median" if "astropy_median" in df.columns else "astropy_mean"
         tf_hot_col = (
             "torchfits_hot_median"
             if "torchfits_hot_median" in df.columns
             else "torchfits_hot_mean"
         )
+
+        # Keep the core summary focused on full-read benchmarks.
+        if "operation" in df.columns:
+            op_series = df["operation"].fillna("read_full")
+            primary_df = df[op_series == "read_full"].copy()
+            additional_df = df[op_series != "read_full"].copy()
+        else:
+            primary_df = df.copy()
+            additional_df = pd.DataFrame(columns=df.columns)
+
+        def _is_valid_number(value) -> bool:
+            return value is not None and pd.notna(value)
+
+        def _format_unique(series: pd.Series) -> str:
+            values = [str(v) for v in series.dropna().unique()]
+            return ", ".join(sorted(values)) if values else "-"
 
         with open(self.summary_file, "w") as f:
             f.write("# torchfits Exhaustive Benchmark Report\n\n")
@@ -1482,97 +2427,158 @@ class ExhaustiveBenchmarkSuite:
             f.write(
                 f"- System memory: {psutil.virtual_memory().total / (1024**3):.1f} GB\n"
             )
+            f.write(
+                "- Memory metrics: process RSS deltas (mean rssΔ and peakΔ while the method runs); "
+                "best-effort sampling, may under-report brief peaks and may read as ~0 due to allocator reuse.\n"
+            )
             f.write("\n")
 
             # Test coverage summary
             f.write("## Test Coverage Summary\n\n")
-            f.write(f"- Total test files: {len(results)}\n")
-            f.write(
-                f"- File types tested: {', '.join(sorted(df['file_type'].unique()))}\n"
-            )
-            f.write(
-                f"- Data types tested: {', '.join(sorted(df['data_type'].unique()))}\n"
-            )
+            f.write(f"- Total benchmark rows: {len(df)}\n")
+            f.write(f"- Primary read benchmarks: {len(primary_df)}\n")
+            f.write(f"- Additional operation benchmarks: {len(additional_df)}\n")
+            if primary_df.empty:
+                f.write("\nNo primary read benchmarks matched the current filter.\n")
+                f.write(
+                    "Tip: some cases are intentionally not generated (e.g. 'large_*_3d' is skipped "
+                    "to avoid large memory usage). Adjust --filter accordingly.\n"
+                )
+                return
+            f.write(f"- File types tested: {_format_unique(primary_df['file_type'])}\n")
+            f.write(f"- Data types tested: {_format_unique(primary_df['data_type'])}\n")
             f.write(f"- MMap enabled: {self.use_mmap}\n")
-            f.write(f"- Tables included: {self.include_tables}\n\n")
+            f.write(f"- TorchFits mmap mode: {self._torchfits_mmap_mode()}\n")
+            f.write(f"- Tables included: {self.include_tables}\n")
+            f.write(f"- Benchmark profile: {self.profile}\n\n")
             f.write(f"- Cache capacity (cold): {self.cache_capacity}\n")
+            f.write(f"- Handle cache capacity: {self.handle_cache_capacity}\n")
             f.write(f"- Cache capacity (hot): {self.hot_cache_capacity}\n\n")
+            f.write(f"- Payload sanity min ratio: {self.payload_min_ratio:.2f}\n\n")
+
+            # Winner summary (avoids misreading 'torchfits_rank' when multiple TorchFits variants exist)
+            f.write("## Winner Summary\n\n")
+            best_overall = primary_df["best_method"].fillna("none").astype(str)
+            best_torch = primary_df["best_method_torch"].fillna("none").astype(str)
+            best_numpy = primary_df["best_method_numpy"].fillna("none").astype(str)
+
+            tf_family_wins = int(best_overall.str.startswith("torchfits").sum())
+            tf_default_wins = int((best_overall == "torchfits").sum())
+            tf_torch_wins = int((best_torch == "torchfits").sum())
+            tf_numpy_wins = int((best_numpy == "torchfits_numpy").sum())
+            n_primary = len(primary_df)
+
+            f.write(
+                f"- TorchFits family best overall: {tf_family_wins}/{n_primary} ({(tf_family_wins / max(n_primary, 1)):.1%})\n"
+            )
+            f.write(
+                f"- TorchFits (torch return) best: {tf_torch_wins}/{n_primary} ({(tf_torch_wins / max(n_primary, 1)):.1%})\n"
+            )
+            f.write(
+                f"- TorchFits (numpy return) best: {tf_numpy_wins}/{n_primary} ({(tf_numpy_wins / max(n_primary, 1)):.1%})\n"
+            )
+            f.write(
+                f"- TorchFits default (`torchfits`) best overall: {tf_default_wins}/{n_primary} ({(tf_default_wins / max(n_primary, 1)):.1%})\n"
+            )
+
+            # Show torch-returning misses explicitly (these are the true gaps vs fitsio_torch/astropy_torch)
+            misses = primary_df[best_torch != "torchfits"].copy()
+            if not misses.empty:
+                misses = misses.sort_values("speedup_vs_best_torch").head(10)
+                f.write("\nTop cases where TorchFits (torch) is not best:\n\n")
+                f.write(
+                    "| File | Type | Size (MB) | Best (torch) | Speedup vs Best (torch) |\n"
+                )
+                f.write("|---|---|---:|---|---:|\n")
+                for _, r in misses.iterrows():
+                    speedup = r.get("speedup_vs_best_torch")
+                    speedup_str = (
+                        f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
+                    )
+                    f.write(
+                        f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r.get('best_method_torch', '-')} | {speedup_str} |\n"
+                    )
+            f.write("\n\n")
 
             # Performance Summary Table
-            f.write("## Performance Summary (Ratio vs TorchFits)\n\n")
+            f.write("## Performance Table\n\n")
             f.write(
-                "| File | Type | Size (MB) | TorchFits (s) | TorchFits Hot (s) | Astropy (x) | Fitsio (x) | Fitsio vs Hot (x) | Best |\n"
+                "| File | Operation | Type | Size (MB) | TorchFits (s) | TorchFits Hot (s) | Best (torch) | Rank (torch) | Best (numpy) | Rank (numpy) | Fitsio / TorchFits |\n"
             )
-            f.write("|---|---|---|---|---|---|---|---|---|\n")
+            f.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
 
-            for r in results:
+            for _, r in primary_df.iterrows():
                 name = r["filename"]
+                operation = (
+                    r.get("operation") if pd.notna(r.get("operation")) else "read_full"
+                )
                 ftype = r["file_type"]
                 size = f"{r['size_mb']:.2f}"
 
                 tf_time = r.get(tf_col)
                 tf_hot = r.get(tf_hot_col)
-                if tf_time is None:
+                if not _is_valid_number(tf_time):
                     tf_str = "FAIL"
                     tf_hot_str = "-"
-                    astro_ratio = "-"
-                    fitsio_ratio = "-"
-                    fitsio_hot_ratio = "-"
+                    best_torch = "-"
+                    rank_torch = "-"
+                    best_numpy = "-"
+                    rank_numpy = "-"
+                    fitsio_over_tf = "-"
                 else:
                     tf_str = f"{tf_time:.4f}"
-                    tf_hot_str = f"{tf_hot:.4f}" if tf_hot else "-"
-
-                    astro_time = r.get(astro_col)
-                    if astro_time:
-                        astro_ratio = f"{astro_time / tf_time:.2f}x"
-                    else:
-                        astro_ratio = "-"
-
+                    tf_hot_str = f"{tf_hot:.4f}" if _is_valid_number(tf_hot) else "-"
+                    best_torch = r.get("best_method_torch", "-")
+                    rank_torch = r.get("torchfits_rank_torch", "-")
+                    best_numpy = r.get("best_method_numpy", "-")
+                    rank_numpy = r.get("torchfits_numpy_rank", "-")
                     fitsio_time = r.get(fi_col)
-                    if fitsio_time:
-                        fitsio_ratio = f"{fitsio_time / tf_time:.2f}x"
-                        if tf_hot:
-                            fitsio_hot_ratio = f"{fitsio_time / tf_hot:.2f}x"
-                        else:
-                            fitsio_hot_ratio = "-"
-                    else:
-                        fitsio_ratio = "-"
-                        fitsio_hot_ratio = "-"
-
-                best = r.get("best_method", "-")
+                    fitsio_over_tf = (
+                        f"{fitsio_time / tf_time:.2f}x"
+                        if _is_valid_number(fitsio_time)
+                        else "-"
+                    )
 
                 f.write(
-                    f"| {name} | {ftype} | {size} | {tf_str} | {tf_hot_str} | {astro_ratio} | {fitsio_ratio} | {fitsio_hot_ratio} | {best} |\n"
+                    f"| {name} | {operation} | {ftype} | {size} | {tf_str} | {tf_hot_str} | {best_torch} | {rank_torch} | {best_numpy} | {rank_numpy} | {fitsio_over_tf} |\n"
                 )
 
             f.write("\n")
             f.write(
-                f"- Dimensions tested: {', '.join(sorted(df['dimensions'].unique()))}\n"
+                f"- Dimensions tested: {_format_unique(primary_df['dimensions'])}\n"
             )
             f.write(
-                f"- Compression types: {', '.join(sorted(df['compression'].unique()))}\n"
+                f"- Compression types: {_format_unique(primary_df['compression'])}\n"
             )
             f.write("\n")
+
+            if not additional_df.empty:
+                f.write("## Additional Operation Benchmarks\n\n")
+                op_counts = additional_df["operation"].fillna("unknown").value_counts()
+                for op_name, count in op_counts.items():
+                    f.write(f"- {op_name}: {count} row(s)\n")
+                f.write("\n")
 
             # Performance summary
             if tf_col in df.columns:
                 f.write("## Performance Summary\n\n")
-                valid_df = df[df[tf_col].notna()]
+                valid_df = primary_df[primary_df[tf_col].notna()]
 
-                f.write(
-                    f"- Fastest torchfits time: {valid_df[tf_col].min():.6f}s\n"
-                )
-                f.write(
-                    f"- Slowest torchfits time: {valid_df[tf_col].max():.6f}s\n"
-                )
-                f.write(
-                    f"- Average torchfits time: {valid_df[tf_col].mean():.6f}s\n"
-                )
-                f.write(
-                    f"- Median torchfits time: {valid_df[tf_col].median():.6f}s\n"
-                )
-                if "torchfits_median" in df.columns:
-                    valid_med = df[df["torchfits_median"].notna()]
+                if not valid_df.empty:
+                    f.write(
+                        f"- Fastest torchfits time: {valid_df[tf_col].min():.6f}s\n"
+                    )
+                    f.write(
+                        f"- Slowest torchfits time: {valid_df[tf_col].max():.6f}s\n"
+                    )
+                    f.write(
+                        f"- Average torchfits time: {valid_df[tf_col].mean():.6f}s\n"
+                    )
+                    f.write(
+                        f"- Median torchfits time: {valid_df[tf_col].median():.6f}s\n"
+                    )
+                if "torchfits_median" in primary_df.columns:
+                    valid_med = primary_df[primary_df["torchfits_median"].notna()]
                     if not valid_med.empty:
                         f.write(
                             f"- Median of torchfits median-times: {valid_med['torchfits_median'].median():.6f}s\n"
@@ -1586,7 +2592,7 @@ class ExhaustiveBenchmarkSuite:
             f.write("## Performance by File Type\n\n")
             if tf_col in df.columns:
                 type_stats = (
-                    df.groupby("file_type")[tf_col]
+                    primary_df.groupby("file_type")[tf_col]
                     .agg(["count", "mean", "min", "max"])
                     .round(6)
                 )
@@ -1596,26 +2602,42 @@ class ExhaustiveBenchmarkSuite:
             # Ranking analysis
             if "torchfits_rank" in df.columns:
                 f.write("## Ranking Analysis\n\n")
-                rank_counts = df["torchfits_rank"].value_counts().sort_index()
-                total_valid = rank_counts.sum()
+                rank_series = pd.to_numeric(
+                    primary_df["torchfits_rank"], errors="coerce"
+                )
+                rank_series = rank_series[(rank_series >= 1) & (rank_series < 999)]
+                if not rank_series.empty:
+                    rank_counts = rank_series.value_counts().sort_index()
+                    total_valid = rank_counts.sum()
+                    rank3_plus = sum(rank_counts[rank_counts.index >= 3])
 
-                f.write(
-                    f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0) / total_valid * 100:.1f}%)\n"
-                )
-                f.write(
-                    f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0) / total_valid * 100:.1f}%)\n"
-                )
-                f.write(
-                    f"- Times torchfits ranked #3+: {sum(rank_counts[rank_counts.index >= 3])} ({sum(rank_counts[rank_counts.index >= 3]) / total_valid * 100:.1f}%)\n"
-                )
-                f.write(f"- Average ranking: {df['torchfits_rank'].mean():.2f}\n")
+                    f.write(
+                        f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0) / total_valid * 100:.1f}%)\n"
+                    )
+                    f.write(
+                        f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0) / total_valid * 100:.1f}%)\n"
+                    )
+                    f.write(
+                        f"- Times torchfits ranked #3+: {rank3_plus} ({rank3_plus / total_valid * 100:.1f}%)\n"
+                    )
+                    f.write(f"- Average ranking: {rank_series.mean():.2f}\n")
+                else:
+                    f.write("- No valid ranking data available.\n")
                 f.write("\n")
 
             # Top regressions vs best
             if "speedup_vs_best" in df.columns and "best_method" in df.columns:
                 f.write("## Top Regressions (torchfits vs best)\n\n")
-                regressions = df[
-                    df["speedup_vs_best"].notna() & (df["torchfits_rank"] > 1)
+                regressions = primary_df.copy()
+                regressions["torchfits_rank"] = pd.to_numeric(
+                    regressions["torchfits_rank"], errors="coerce"
+                )
+                regressions["speedup_vs_best"] = pd.to_numeric(
+                    regressions["speedup_vs_best"], errors="coerce"
+                )
+                regressions = regressions[
+                    regressions["speedup_vs_best"].notna()
+                    & (regressions["torchfits_rank"] > 1)
                 ].copy()
                 if not regressions.empty:
                     regressions = regressions.sort_values("speedup_vs_best").head(10)
@@ -1629,20 +2651,147 @@ class ExhaustiveBenchmarkSuite:
                 else:
                     f.write("No regressions found.\n\n")
 
+            # Top regressions vs best (torch-returning methods only)
+            if (
+                "speedup_vs_best_torch" in df.columns
+                and "best_method_torch" in df.columns
+            ):
+                f.write("## Top Regressions (torch-returning methods)\n\n")
+                regressions = primary_df.copy()
+                regressions["torchfits_rank_torch"] = pd.to_numeric(
+                    regressions["torchfits_rank_torch"], errors="coerce"
+                )
+                regressions["speedup_vs_best_torch"] = pd.to_numeric(
+                    regressions["speedup_vs_best_torch"], errors="coerce"
+                )
+                regressions = regressions[
+                    regressions["speedup_vs_best_torch"].notna()
+                    & (regressions["torchfits_rank_torch"] > 1)
+                ].copy()
+                if not regressions.empty:
+                    regressions = regressions.sort_values("speedup_vs_best_torch").head(
+                        10
+                    )
+                    f.write(
+                        "| File | Type | Size (MB) | Best (torch) | Speedup vs Best |\n"
+                    )
+                    f.write("|---|---|---|---|---|\n")
+                    for _, r in regressions.iterrows():
+                        f.write(
+                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['best_method_torch']} | {r['speedup_vs_best_torch']:.2f}x |\n"
+                        )
+                    f.write("\n")
+                else:
+                    f.write("No regressions found.\n\n")
+
+            # Top regressions vs best (numpy-returning methods only)
+            if (
+                "speedup_vs_best_numpy" in df.columns
+                and "best_method_numpy" in df.columns
+            ):
+                f.write("## Top Regressions (numpy-returning methods)\n\n")
+                regressions = primary_df.copy()
+                regressions["torchfits_numpy_rank"] = pd.to_numeric(
+                    regressions["torchfits_numpy_rank"], errors="coerce"
+                )
+                regressions["speedup_vs_best_numpy"] = pd.to_numeric(
+                    regressions["speedup_vs_best_numpy"], errors="coerce"
+                )
+                regressions = regressions[
+                    regressions["speedup_vs_best_numpy"].notna()
+                    & (regressions["torchfits_numpy_rank"] > 1)
+                ].copy()
+                if not regressions.empty:
+                    regressions = regressions.sort_values("speedup_vs_best_numpy").head(
+                        10
+                    )
+                    f.write(
+                        "| File | Type | Size (MB) | Best (numpy) | Speedup vs Best |\n"
+                    )
+                    f.write("|---|---|---|---|---|\n")
+                    for _, r in regressions.iterrows():
+                        f.write(
+                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['best_method_numpy']} | {r['speedup_vs_best_numpy']:.2f}x |\n"
+                        )
+                    f.write("\n")
+                else:
+                    f.write("No regressions found.\n\n")
+
             # Memory analysis
             if "torchfits_memory" in df.columns:
                 f.write("## Memory Analysis\n\n")
-                mem_df = df[df["torchfits_memory"].notna()]
+                mem_df = primary_df[
+                    primary_df["torchfits_memory"].notna()
+                    & primary_df["torchfits_peak_memory"].notna()
+                ].copy()
                 if not mem_df.empty:
+                    mem_df["torchfits_memory"] = (
+                        pd.to_numeric(mem_df["torchfits_memory"], errors="coerce")
+                        .fillna(0)
+                        .clip(lower=0)
+                    )
+                    mem_df["torchfits_peak_memory"] = (
+                        pd.to_numeric(mem_df["torchfits_peak_memory"], errors="coerce")
+                        .fillna(0)
+                        .clip(lower=0)
+                    )
+                    peak_lt_steady = int(
+                        (
+                            mem_df["torchfits_peak_memory"] < mem_df["torchfits_memory"]
+                        ).sum()
+                    )
+                    nonzero_peak_df = mem_df[mem_df["torchfits_peak_memory"] > 0]
+
                     f.write(
-                        f"- Average memory usage: {mem_df['torchfits_memory'].mean():.1f} MB\n"
+                        f"- Average steady RSS increase: {mem_df['torchfits_memory'].mean():.2f} MB\n"
                     )
                     f.write(
-                        f"- Peak memory usage: {mem_df['torchfits_peak_memory'].mean():.1f} MB\n"
+                        f"- Median steady RSS increase: {mem_df['torchfits_memory'].median():.2f} MB\n"
                     )
                     f.write(
-                        f"- Memory efficiency (data/peak): {(mem_df['torchfits_memory'] / mem_df['torchfits_peak_memory']).mean():.2f}\n"
+                        f"- Average peak RSS increase: {mem_df['torchfits_peak_memory'].mean():.2f} MB\n"
                     )
+                    f.write(
+                        f"- Median peak RSS increase: {mem_df['torchfits_peak_memory'].median():.2f} MB\n"
+                    )
+                    f.write(
+                        f"- P95 peak RSS increase: {mem_df['torchfits_peak_memory'].quantile(0.95):.2f} MB\n"
+                    )
+                    f.write(f"- Rows with peak < steady RSS: {peak_lt_steady}\n")
+                    if not nonzero_peak_df.empty:
+                        steady_over_peak = (
+                            nonzero_peak_df["torchfits_memory"]
+                            / nonzero_peak_df["torchfits_peak_memory"]
+                        ).mean()
+                        size_over_peak = (
+                            nonzero_peak_df["size_mb"]
+                            / nonzero_peak_df["torchfits_peak_memory"]
+                        ).mean()
+                        f.write(
+                            f"- Mean steady/peak RSS ratio: {steady_over_peak:.2f}\n"
+                        )
+                        f.write(
+                            f"- Mean file-size/peak RSS ratio: {size_over_peak:.2f}\n"
+                        )
+
+                    # Payload size is deterministic (tensor/ndarray nbytes) and is the most
+                    # reliable per-call memory signal we can compute without forking a subprocess.
+                    if "torchfits_payload_mb" in mem_df.columns:
+                        payload = (
+                            pd.to_numeric(
+                                mem_df["torchfits_payload_mb"], errors="coerce"
+                            )
+                            .fillna(0)
+                            .clip(lower=0)
+                        )
+                        f.write(
+                            f"- Average payload size (TorchFits return): {payload.mean():.2f} MB\n"
+                        )
+                        f.write(
+                            f"- Median payload size (TorchFits return): {payload.median():.2f} MB\n"
+                        )
+                else:
+                    f.write("- No valid torchfits RSS memory data collected.\n")
                 f.write("\n")
 
             # Top performers
@@ -1659,7 +2808,7 @@ class ExhaustiveBenchmarkSuite:
                 f.write("\n")
 
             # Issues and failures
-            failed_files = df[df["torchfits_mean"].isna()]
+            failed_files = primary_df[primary_df["torchfits_mean"].isna()]
             if not failed_files.empty:
                 f.write("## Failed Tests\n\n")
                 for _, row in failed_files.iterrows():
@@ -1671,39 +2820,59 @@ class ExhaustiveBenchmarkSuite:
             f.write("Based on the exhaustive benchmark results:\n\n")
 
             if "torchfits_rank" in df.columns:
-                avg_rank = df["torchfits_rank"].mean()
-                if avg_rank <= 2:
+                rank_series = pd.to_numeric(
+                    primary_df["torchfits_rank"], errors="coerce"
+                )
+                rank_series = rank_series[(rank_series >= 1) & (rank_series < 999)]
+                if rank_series.empty:
                     f.write(
-                        "✅ **torchfits shows excellent performance** across all test scenarios\n"
-                    )
-                elif avg_rank <= 3:
-                    f.write(
-                        "⚠️ **torchfits shows good performance** with opportunities for optimization\n"
+                        "⚠️ **insufficient ranking data for performance verdict**\n"
                     )
                 else:
-                    f.write(
-                        "❌ **torchfits performance needs significant improvement**\n"
-                    )
+                    avg_rank = rank_series.mean()
+                    if avg_rank <= 2:
+                        f.write(
+                            "✅ **torchfits shows excellent performance** across primary read scenarios\n"
+                        )
+                    elif avg_rank <= 3:
+                        f.write(
+                            "⚠️ **torchfits shows good performance** with opportunities for optimization\n"
+                        )
+                    else:
+                        f.write(
+                            "❌ **torchfits performance needs significant improvement**\n"
+                        )
 
             # Specific findings
             f.write("\n### Specific Findings:\n\n")
 
             # Best file types
             if "torchfits_rank" in df.columns and "file_type" in df.columns:
-                best_types = (
-                    df.groupby("file_type")["torchfits_rank"].mean().sort_values()
+                rank_by_type = primary_df.copy()
+                rank_by_type["torchfits_rank"] = pd.to_numeric(
+                    rank_by_type["torchfits_rank"], errors="coerce"
                 )
-                f.write(
-                    f"- **Best file types**: {', '.join(best_types.head(3).index)}\n"
-                )
-                f.write(
-                    f"- **Challenging file types**: {', '.join(best_types.tail(3).index)}\n"
-                )
+                rank_by_type = rank_by_type[
+                    rank_by_type["torchfits_rank"].notna()
+                    & (rank_by_type["torchfits_rank"] < 999)
+                ]
+                if not rank_by_type.empty:
+                    best_types = (
+                        rank_by_type.groupby("file_type")["torchfits_rank"]
+                        .mean()
+                        .sort_values()
+                    )
+                    f.write(
+                        f"- **Best file types**: {', '.join(best_types.head(3).index)}\n"
+                    )
+                    f.write(
+                        f"- **Challenging file types**: {', '.join(best_types.tail(3).index)}\n"
+                    )
 
             # Data type performance
             if "data_type" in df.columns and tf_col in df.columns:
                 dtype_perf = (
-                    df.groupby("data_type")[tf_col].mean().sort_values()
+                    primary_df.groupby("data_type")[tf_col].mean().sort_values()
                 )
                 f.write(
                     f"- **Fastest data types**: {', '.join(dtype_perf.head(3).index)}\n"
@@ -1891,15 +3060,34 @@ class ExhaustiveBenchmarkSuite:
         except Exception as e:
             print(f"  ⚠️  MMap & Safety Benchmark Error: {e}")
 
-    def run_full_suite(self):
+    def run_full_suite(
+        self,
+        *,
+        filter_regex: str = "",
+        core_only: bool = False,
+        generate_plots: bool = True,
+    ):
         """Run the complete exhaustive benchmark suite."""
         try:
             print("Starting exhaustive torchfits benchmark suite...", flush=True)
             print(f"Output directory: {self.output_dir}", flush=True)
+            print(
+                "Benchmark profile: "
+                f"{self.profile} (cache={self.cache_capacity}, "
+                f"handle_cache={self.handle_cache_capacity}, "
+                f"hot_cache={self.hot_cache_capacity}, "
+                f"payload_min_ratio={self.payload_min_ratio:.2f})",
+                flush=True,
+            )
             configure()
 
             # Create test files
             files = self.create_test_files()
+            if filter_regex:
+                import re
+
+                rx = re.compile(filter_regex)
+                files = {k: v for k, v in files.items() if rx.search(k)}
 
             # Run core benchmarks
             results = self.run_exhaustive_benchmarks(files)
@@ -1907,14 +3095,15 @@ class ExhaustiveBenchmarkSuite:
             # Run focused benchmarks
             self.run_focused_benchmarks(files)
 
-            # Run additional feature benchmarks
-            self.run_additional_benchmarks()
+            # Optional: run extra feature/phase3 benches (these are informative, but slow).
+            # Keep core I/O results stable by defaulting to core-only in CI-like workflows.
+            if not core_only:
+                self.run_additional_benchmarks()
+                self.run_phase3_benchmarks()
 
-            # Run Phase 3 benchmarks
-            self.run_phase3_benchmarks()
-
-            # Generate visualizations
-            self.generate_plots(results)
+            # Generate visualizations (optional; expensive during iteration)
+            if generate_plots:
+                self.generate_plots(results)
 
             # Generate summary report
             self.generate_summary_report(results)
@@ -1927,7 +3116,8 @@ class ExhaustiveBenchmarkSuite:
             print(f"- Summary: {self.summary_file}")
             print(f"- Focused CSV: {self.focused_csv_file}")
             print(f"- Focused Summary: {self.focused_summary_file}")
-            print(f"- Plots: {self.output_dir}/*.png")
+            if generate_plots:
+                print(f"- Plots: {self.output_dir}/*.png")
 
         finally:
             self.cleanup()
@@ -1942,6 +3132,12 @@ def main():
         sys.stderr.reconfigure(line_buffering=True)
     except Exception:
         pass
+
+    # `pixi run <task> -- <args>` injects a literal `--` into argv. That is fine
+    # for many CLIs, but argparse treats it as "end of options", which would make
+    # all subsequent `--flags` look like positionals. Strip a leading separator.
+    if len(sys.argv) > 1 and sys.argv[1] == "--":
+        del sys.argv[1]
 
     parser = argparse.ArgumentParser(description="Run exhaustive torchfits benchmarks")
     parser.add_argument(
@@ -1974,16 +3170,61 @@ def main():
         help="Run only focused benchmarks (skip full suite)",
     )
     parser.add_argument(
+        "--core-only",
+        action="store_true",
+        help="Run core exhaustive + focused benchmarks only (skip extra feature/phase3 benches)",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=["user", "lab"],
+        default="user",
+        help=(
+            "Benchmark profile: 'user' uses library-like defaults "
+            "(cache enabled), 'lab' is stricter cold-I/O style defaults"
+        ),
+    )
+    parser.add_argument(
         "--cache-capacity",
         type=int,
-        default=0,
-        help="torchfits in-memory cache entries (0 disables cache for fair I/O timing)",
+        default=None,
+        help="torchfits in-memory cache entries (overrides profile default)",
+    )
+    parser.add_argument(
+        "--handle-cache-capacity",
+        type=int,
+        default=None,
+        help="torchfits open-handle cache entries (overrides profile default)",
     )
     parser.add_argument(
         "--hot-cache-capacity",
         type=int,
-        default=10,
-        help="torchfits cache entries for hot path benchmark (torchfits_hot)",
+        default=None,
+        help="torchfits cache entries for hot path benchmark (overrides profile default)",
+    )
+    parser.add_argument(
+        "--payload-min-ratio",
+        type=float,
+        default=0.60,
+        help=(
+            "minimum observed/expected payload ratio before marking a method invalid "
+            "(image-like read_full only)"
+        ),
+    )
+    parser.add_argument(
+        "--filter",
+        type=str,
+        default="",
+        help="Regex filter for benchmark case names (e.g. 'int8|compressed_rice_1')",
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Generate plots (slow). Defaults to off when using --filter.",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Do not generate plots",
     )
     args = parser.parse_args()
 
@@ -1993,13 +3234,57 @@ def main():
     elif args.mmap:
         use_mmap = True
 
+    profile_defaults = {
+        "user": {
+            "cache_capacity": 10,
+            "handle_cache_capacity": 16,
+            "hot_cache_capacity": 10,
+        },
+        "lab": {
+            "cache_capacity": 0,
+            "handle_cache_capacity": 16,
+            "hot_cache_capacity": 10,
+        },
+    }
+    defaults = profile_defaults[args.profile]
+    cache_capacity = (
+        args.cache_capacity
+        if args.cache_capacity is not None
+        else defaults["cache_capacity"]
+    )
+    handle_cache_capacity = (
+        args.handle_cache_capacity
+        if args.handle_cache_capacity is not None
+        else defaults["handle_cache_capacity"]
+    )
+    hot_cache_capacity = (
+        args.hot_cache_capacity
+        if args.hot_cache_capacity is not None
+        else defaults["hot_cache_capacity"]
+    )
+
     suite = ExhaustiveBenchmarkSuite(
         output_dir=args.output_dir,
         use_mmap=use_mmap,
         include_tables=args.include_tables,
-        cache_capacity=args.cache_capacity,
-        hot_cache_capacity=args.hot_cache_capacity,
+        cache_capacity=cache_capacity,
+        hot_cache_capacity=hot_cache_capacity,
+        handle_cache_capacity=handle_cache_capacity,
+        profile=args.profile,
+        payload_min_ratio=args.payload_min_ratio,
     )
+
+    # Plot policy:
+    # - If user explicitly sets a flag, honor it.
+    # - Otherwise, skip plots when running filtered iterations.
+    if args.no_plots:
+        generate_plots = False
+    elif args.plots:
+        generate_plots = True
+    elif args.filter:
+        generate_plots = False
+    else:
+        generate_plots = True
 
     if args.no_cleanup:
         # Override cleanup method (monkey patch)
@@ -2007,11 +3292,28 @@ def main():
 
     if args.focused_only:
         print("Starting focused torchfits benchmark suite...")
+        print(
+            "Benchmark profile: "
+            f"{suite.profile} (cache={suite.cache_capacity}, "
+            f"handle_cache={suite.handle_cache_capacity}, "
+            f"hot_cache={suite.hot_cache_capacity}, "
+            f"payload_min_ratio={suite.payload_min_ratio:.2f})",
+            flush=True,
+        )
         files = suite.create_test_files()
+        if args.filter:
+            import re
+
+            rx = re.compile(args.filter)
+            files = {k: v for k, v in files.items() if rx.search(k)}
         suite.run_focused_benchmarks(files)
         suite.cleanup()
     else:
-        suite.run_full_suite()
+        suite.run_full_suite(
+            filter_regex=args.filter,
+            core_only=args.core_only,
+            generate_plots=generate_plots,
+        )
 
 
 if __name__ == "__main__":

@@ -3,6 +3,10 @@ Spectral and data cube support for torchfits.
 
 Implements 1D spectra with inverse variance/mask arrays and 3D data cubes
 for IFU instruments and radio astronomy.
+
+Note:
+This module is an experimental helper layer built on top of torchfits FITS I/O.
+It is not part of the core FITS read/write parity surface.
 """
 
 from dataclasses import dataclass
@@ -37,8 +41,9 @@ class SpectralAxis:
             c_angstrom_per_s = 2.998e18
             return c_angstrom_per_s / self.values
 
-        raise NotImplementedError(
-            f"Conversion from {self.type} {self.unit} to wavelength not implemented"
+        raise ValueError(
+            f"Unsupported spectral conversion to wavelength for type={self.type!r}, unit={self.unit!r}. "
+            "Supported: WAVE[A, Angstrom, nm, um] and FREQ[Hz/GHz/MHz]."
         )
 
     def to_frequency(self) -> torch.Tensor:
@@ -55,8 +60,9 @@ class SpectralAxis:
             c_m_per_s = 2.998e8
             return c_m_per_s / wavelength_m
 
-        raise NotImplementedError(
-            f"Conversion from {self.type} {self.unit} to frequency not implemented"
+        raise ValueError(
+            f"Unsupported spectral conversion to frequency for type={self.type!r}, unit={self.unit!r}. "
+            "Supported: FREQ[Hz/GHz/MHz] and WAVE[A, Angstrom, nm, um]."
         )
 
 

@@ -76,13 +76,15 @@ lint = "ruff check . && ruff format ."
 verify = "python verify_setup.py"
 
 # Core benchmarks (essential)
-bench = "python benchmarks/benchmark_all.py --output-dir benchmark_results"
-bench-fast = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv"
-bench-fast-stable = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3"
+bench = "python benchmarks/benchmark_all.py --output-dir benchmark_results --include-tables && python benchmarks/benchmark_table.py && python benchmarks/benchmark_arrow_tables.py --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --output benchmark_results/table_arrow_diverse_results.csv"
+bench-fast = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
+bench-fast-stable = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3 && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
 bench-basic = "python benchmarks/benchmark_basic.py"
 bench-core = "python benchmarks/benchmark_core.py"
 bench-ml = "python benchmarks/benchmark_ml.py"
 bench-table = "python benchmarks/benchmark_table.py"
+bench-table-arrow = "python benchmarks/benchmark_arrow_tables.py"
+bench-table-arrow-diverse = "python benchmarks/benchmark_arrow_tables_diverse.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
 bench-all = "python benchmarks/benchmark_all.py"

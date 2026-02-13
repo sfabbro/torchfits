@@ -27,6 +27,8 @@ python example_basic_reading.py
 
 **`example_interop.py`** - Convert table dicts to Pandas/DataFrame or PyArrow for analytics workflows
 
+**`example_table_recipes.py`** - Recommended table workflow: scanner pushdown, Polars lazy expressions, DuckDB SQL joins
+
 **`example_datacube.py`** - Handle 3D data cubes, extract spatial slices and spectral profiles
 
 **`example_wcs.py`** - World Coordinate System transformations between pixel and sky coordinates

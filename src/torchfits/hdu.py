@@ -16,6 +16,7 @@ from torch import Tensor
 
 try:
     from torch_frame import TensorFrame
+
     HAS_TORCH_FRAME = True
 except ImportError:
     HAS_TORCH_FRAME = False
@@ -26,6 +27,7 @@ except ImportError:
         def __init__(self, feat_dict=None, col_names_dict=None):
             self.feat_dict = feat_dict or {}
             self.col_names_dict = col_names_dict or {}
+
 
 # Import torch first
 _ = torch.empty(1)  # Force torch C++ symbols to load
@@ -316,10 +318,9 @@ class TableDataAccessor:
 
     def __contains__(self, key):
         """Check if column exists."""
-        return (
-            hasattr(self._table, "_raw_data")
-            and key in self._table._raw_data
-        ) or (hasattr(self._table, "feat_dict") and key in self._table.feat_dict)
+        return (hasattr(self._table, "_raw_data") and key in self._table._raw_data) or (
+            hasattr(self._table, "feat_dict") and key in self._table.feat_dict
+        )
 
     def keys(self):
         """Get column names."""
@@ -382,6 +383,9 @@ class TableHDU(TensorFrame):
                         if data and isinstance(data[0], torch.Tensor):
                             # VLA-like list of tensors: keep in raw data only
                             continue
+                        if data and isinstance(data[0], np.ndarray):
+                            # VLA-like list of arrays: keep in raw data only
+                            continue
                         if data and isinstance(data[0], (int, np.integer)):
                             tensor_data = torch.tensor(data, dtype=torch.long)
                         else:
@@ -399,6 +403,17 @@ class TableHDU(TensorFrame):
                 elif isinstance(data, dict):
                     # Skip dict data for now - this might be complex FITS data
                     continue
+                elif isinstance(data, np.ndarray):
+                    # Skip complex/object/string arrays for TensorFrame
+                    if np.iscomplexobj(data) or data.dtype.kind in {"U", "S", "O"}:
+                        continue
+                    tensor_data = torch.tensor(data)
+                    if tensor_data.dim() == 1:
+                        tensor_data = tensor_data.unsqueeze(1)
+                    feat_dict[col_name] = tensor_data
+                    col_names_dict[col_name] = [
+                        str(i) for i in range(tensor_data.shape[1])
+                    ]
                 else:
                     # Convert other data types to tensor
                     try:
@@ -508,7 +523,11 @@ class TableHDU(TensorFrame):
         for idx in sorted(name_by_idx.keys()):
             name = name_by_idx[idx]
             tform = tform_by_idx.get(idx, "")
-            info = _parse_tform(tform) if tform else {"tform": "", "repeat": None, "vla": False, "code": None}
+            info = (
+                _parse_tform(tform)
+                if tform
+                else {"tform": "", "repeat": None, "vla": False, "code": None}
+            )
             tdim = tdim_by_idx.get(idx)
             is_string = info["code"] == "A"
             if is_string:
@@ -527,33 +546,17 @@ class TableHDU(TensorFrame):
                 }
             )
 
-        return {"columns": columns, "string_columns": string_cols, "vla_columns": vla_cols}
+        return {
+            "columns": columns,
+            "string_columns": string_cols,
+            "vla_columns": vla_cols,
+        }
 
     def get_vla_column(self, name: str) -> List[Tensor]:
         """Return a VLA column as a list of tensors."""
         value = self._raw_data.get(name)
         if isinstance(value, list):
             return value
-
-        if self._source_path is not None and self._source_hdu is not None:
-            try:
-                from astropy.io import fits
-
-                with fits.open(self._source_path) as hdul:
-                    data = hdul[self._source_hdu].data
-                    if data is None or name not in data.names:
-                        raise KeyError(f"Column '{name}' not found in FITS table")
-                    col = data[name]
-                    vla_list = []
-                    for item in col:
-                        if isinstance(item, np.ndarray):
-                            vla_list.append(torch.from_numpy(item))
-                        else:
-                            vla_list.append(torch.tensor(item))
-                    self._raw_data[name] = vla_list
-                    return vla_list
-            except Exception:
-                pass
 
         raise KeyError(f"Column '{name}' is not a VLA list")
 
@@ -668,7 +671,100 @@ class TableHDU(TensorFrame):
 
     def filter(self, condition: str) -> "TableHDU":
         """Filter rows by condition."""
-        raise NotImplementedError("Row filtering not yet implemented")
+        if not isinstance(condition, str) or not condition.strip():
+            raise ValueError("condition must be a non-empty string")
+
+        # Prefer raw table data to preserve strings/VLA columns.
+        data_map = self._raw_data if hasattr(self, "_raw_data") else {}
+        if not data_map and hasattr(self, "feat_dict"):
+            data_map = self.feat_dict
+        if not data_map:
+            return self
+
+        num_rows = self.num_rows
+        if num_rows <= 0:
+            return self
+
+        eval_locals: Dict[str, Any] = {}
+        for name, value in data_map.items():
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() > 0
+                and value.shape[0] == num_rows
+            ):
+                t = value.detach()
+                if t.device.type != "cpu":
+                    t = t.cpu()
+                arr = t.numpy()
+                if arr.ndim == 2 and arr.shape[1] == 1:
+                    arr = arr[:, 0]
+                eval_locals[str(name)] = arr
+            elif (
+                isinstance(value, np.ndarray)
+                and value.ndim > 0
+                and value.shape[0] == num_rows
+            ):
+                arr = value
+                if arr.ndim == 2 and arr.shape[1] == 1:
+                    arr = arr[:, 0]
+                eval_locals[str(name)] = arr
+            elif isinstance(value, list) and len(value) == num_rows:
+                eval_locals[str(name)] = np.asarray(value, dtype=object)
+
+        if not eval_locals:
+            raise ValueError("No row-aligned columns available for filtering")
+
+        mask_result = None
+        try:
+            import numexpr as ne
+
+            mask_result = ne.evaluate(condition, local_dict=eval_locals)
+        except Exception:
+            mask_result = eval(
+                condition,
+                {"__builtins__": {}, "np": np},
+                eval_locals,
+            )
+
+        mask_arr = np.asarray(mask_result)
+        if mask_arr.ndim == 0:
+            mask = np.full(num_rows, bool(mask_arr.item()), dtype=bool)
+        else:
+            mask = mask_arr.astype(bool, copy=False).reshape(-1)
+            if mask.shape[0] != num_rows:
+                raise ValueError(
+                    f"Filter produced mask of length {mask.shape[0]}, expected {num_rows}"
+                )
+
+        filtered: Dict[str, Any] = {}
+        for name, value in data_map.items():
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() > 0
+                and value.shape[0] == num_rows
+            ):
+                mask_t = torch.from_numpy(mask)
+                if value.device.type != "cpu":
+                    mask_t = mask_t.to(value.device)
+                filtered[name] = value[mask_t]
+            elif (
+                isinstance(value, np.ndarray)
+                and value.ndim > 0
+                and value.shape[0] == num_rows
+            ):
+                filtered[name] = value[mask]
+            elif isinstance(value, list) and len(value) == num_rows:
+                filtered[name] = [item for item, keep in zip(value, mask) if keep]
+            else:
+                filtered[name] = value
+
+        return TableHDU(
+            filtered,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
 
     def head(self, n: int) -> "TableHDU":
         """Limit to first n rows."""
@@ -692,6 +788,194 @@ class TableHDU(TensorFrame):
             return TableHDU(new_dict, {}, self.header)
         return self
 
+    @staticmethod
+    def _value_num_rows(value: Any) -> int:
+        if isinstance(value, torch.Tensor):
+            return int(value.shape[0]) if value.dim() > 0 else 1
+        if isinstance(value, np.ndarray):
+            return int(value.shape[0]) if value.ndim > 0 else 1
+        if isinstance(value, (list, tuple)):
+            return len(value)
+        raise TypeError(f"Unsupported column type: {type(value)}")
+
+    @staticmethod
+    def _append_column_values(name: str, old_value: Any, new_value: Any) -> Any:
+        if isinstance(old_value, torch.Tensor):
+            if not isinstance(new_value, torch.Tensor):
+                new_value = torch.as_tensor(
+                    np.asarray(new_value), dtype=old_value.dtype
+                )
+            if old_value.device.type != new_value.device.type:
+                new_value = new_value.to(old_value.device)
+
+            if old_value.dim() == 0:
+                old_value = old_value.reshape(1)
+            if new_value.dim() == 0:
+                new_value = new_value.reshape(1)
+            if old_value.dim() == 2 and new_value.dim() == 1:
+                new_value = new_value.unsqueeze(1)
+            if (
+                old_value.dim() == 1
+                and new_value.dim() == 2
+                and new_value.shape[1] == 1
+            ):
+                new_value = new_value.squeeze(1)
+            if old_value.dim() != new_value.dim():
+                raise ValueError(
+                    f"Column '{name}' rank mismatch: {old_value.dim()} vs {new_value.dim()}"
+                )
+            if old_value.dim() > 1 and tuple(old_value.shape[1:]) != tuple(
+                new_value.shape[1:]
+            ):
+                raise ValueError(
+                    f"Column '{name}' shape mismatch: {tuple(old_value.shape[1:])} vs {tuple(new_value.shape[1:])}"
+                )
+            return torch.cat([old_value, new_value.to(dtype=old_value.dtype)], dim=0)
+
+        if isinstance(old_value, np.ndarray):
+            new_arr = np.asarray(new_value, dtype=old_value.dtype)
+            old_arr = old_value
+            if old_arr.ndim == 0:
+                old_arr = old_arr.reshape(1)
+            if new_arr.ndim == 0:
+                new_arr = new_arr.reshape(1)
+            if old_arr.ndim == 2 and new_arr.ndim == 1:
+                new_arr = np.expand_dims(new_arr, axis=1)
+            if old_arr.ndim == 1 and new_arr.ndim == 2 and new_arr.shape[1] == 1:
+                new_arr = np.squeeze(new_arr, axis=1)
+            if old_arr.ndim != new_arr.ndim:
+                raise ValueError(
+                    f"Column '{name}' rank mismatch: {old_arr.ndim} vs {new_arr.ndim}"
+                )
+            if old_arr.ndim > 1 and tuple(old_arr.shape[1:]) != tuple(
+                new_arr.shape[1:]
+            ):
+                raise ValueError(
+                    f"Column '{name}' shape mismatch: {tuple(old_arr.shape[1:])} vs {tuple(new_arr.shape[1:])}"
+                )
+            return np.concatenate([old_arr, new_arr], axis=0)
+
+        if isinstance(old_value, list):
+            if not isinstance(new_value, (list, tuple)):
+                raise ValueError(
+                    f"Column '{name}' expects a list/tuple for append; got {type(new_value)}"
+                )
+            return list(old_value) + list(new_value)
+
+        raise TypeError(
+            f"Unsupported column type for append in '{name}': {type(old_value)}"
+        )
+
+    def add_column(self, name: str, values: Any, overwrite: bool = False) -> "TableHDU":
+        """Return a new table with one additional column."""
+        if not isinstance(name, str) or not name:
+            raise ValueError("name must be a non-empty string")
+
+        raw = dict(self._raw_data) if hasattr(self, "_raw_data") else {}
+        if name in raw and not overwrite:
+            raise KeyError(f"Column '{name}' already exists")
+
+        nrows = self.num_rows
+        new_rows = self._value_num_rows(values)
+        if nrows > 0 and new_rows != nrows:
+            raise ValueError(f"Column '{name}' has {new_rows} rows, expected {nrows}")
+        raw[name] = values
+        return TableHDU(
+            raw,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
+
+    def drop_columns(self, columns: List[str]) -> "TableHDU":
+        """Return a new table with selected columns removed."""
+        if not columns:
+            return self
+        to_drop = {str(c) for c in columns}
+        raw = dict(self._raw_data) if hasattr(self, "_raw_data") else {}
+        missing = [name for name in to_drop if name not in raw]
+        if missing:
+            raise KeyError(f"Columns not found: {missing}")
+        kept = {k: v for k, v in raw.items() if k not in to_drop}
+        return TableHDU(
+            kept,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
+
+    def rename_column(self, old_name: str, new_name: str) -> "TableHDU":
+        """Return a new table with one renamed column."""
+        if not isinstance(old_name, str) or not old_name:
+            raise ValueError("old_name must be a non-empty string")
+        if not isinstance(new_name, str) or not new_name:
+            raise ValueError("new_name must be a non-empty string")
+        if old_name == new_name:
+            return self
+
+        raw = dict(self._raw_data) if hasattr(self, "_raw_data") else {}
+        if old_name not in raw:
+            raise KeyError(f"Column '{old_name}' not found")
+        if new_name in raw:
+            raise KeyError(f"Column '{new_name}' already exists")
+
+        renamed: Dict[str, Any] = {}
+        for key, value in raw.items():
+            renamed[new_name if key == old_name else key] = value
+        return TableHDU(
+            renamed,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
+
+    def append_rows(self, rows: Dict[str, Any]) -> "TableHDU":
+        """Return a new table with additional rows appended."""
+        if not isinstance(rows, dict) or not rows:
+            raise ValueError("rows must be a non-empty dictionary")
+
+        raw = dict(self._raw_data) if hasattr(self, "_raw_data") else {}
+        if not raw:
+            return TableHDU(
+                dict(rows),
+                {},
+                self.header,
+                source_path=self._source_path,
+                source_hdu=self._source_hdu,
+            )
+
+        current_cols = set(raw.keys())
+        incoming_cols = set(rows.keys())
+        if incoming_cols != current_cols:
+            missing = sorted(current_cols - incoming_cols)
+            extra = sorted(incoming_cols - current_cols)
+            raise ValueError(
+                f"append_rows requires exactly matching columns; missing={missing}, extra={extra}"
+            )
+
+        appended: Dict[str, Any] = {}
+        append_rows_count: Optional[int] = None
+        for name in raw.keys():
+            new_count = self._value_num_rows(rows[name])
+            if append_rows_count is None:
+                append_rows_count = new_count
+            elif new_count != append_rows_count:
+                raise ValueError(
+                    f"All appended columns must have same row count; column '{name}' has {new_count}, expected {append_rows_count}"
+                )
+            appended[name] = self._append_column_values(name, raw[name], rows[name])
+
+        return TableHDU(
+            appended,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
+
     def __getitem__(self, col_name: str) -> Any:
         """Get column data by name."""
         if hasattr(self, "_raw_data") and col_name in self._raw_data:
@@ -708,7 +992,9 @@ class TableHDU(TensorFrame):
         """Return the tensor dictionary."""
         if hasattr(self, "_raw_data"):
             return {
-                str(k): v for k, v in self._raw_data.items() if isinstance(v, torch.Tensor)
+                str(k): v
+                for k, v in self._raw_data.items()
+                if isinstance(v, torch.Tensor)
             }
         if hasattr(self, "feat_dict"):
             return {str(k): v for k, v in self.feat_dict.items()}
@@ -766,15 +1052,18 @@ class TableHDU(TensorFrame):
             tensor_dict = cpp.read_fits_table(file_path, hdu_index)
             header = Header(cpp.read_header_dict(file_path, hdu_index))
 
-            return cls(tensor_dict, {}, header, source_path=file_path, source_hdu=hdu_index)
+            return cls(
+                tensor_dict, {}, header, source_path=file_path, source_hdu=hdu_index
+            )
         except (IOError, RuntimeError) as e:
             from .logging import logger
 
             logger.error(
                 f"Failed to read table from {file_path}[{hdu_index}]: {str(e)}"
             )
-            # Return empty TableHDU for benchmark compatibility
-            return cls({}, {}, Header(), source_path=file_path, source_hdu=hdu_index)
+            raise RuntimeError(
+                f"Failed to read table from {file_path}[{hdu_index}]: {e}"
+            ) from e
         except Exception as e:
             from .logging import logger
 
@@ -784,9 +1073,39 @@ class TableHDU(TensorFrame):
             raise
 
     def to_fits(self, file_path: str, overwrite: bool = False):
-        import torchfits.cpp as cpp
+        """Write this table to a FITS file (materialized table payload)."""
+        # Use top-level writer so non-tensor columns (e.g., strings/VLA/complex)
+        # are preserved via the table fallback path.
+        import torchfits
 
-        cpp.write_fits_table(file_path, self.to_tensor_dict(), self.header, overwrite)
+        payload = (
+            dict(self._raw_data)
+            if hasattr(self, "_raw_data")
+            else self.to_tensor_dict()
+        )
+        for name in self.string_columns:
+            value = payload.get(name)
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dtype == torch.uint8
+                and value.dim() == 2
+            ):
+                decoded: List[str] = []
+                arr = value.detach().cpu().numpy()
+                for row in arr:
+                    decoded.append(
+                        bytes(row.tolist())
+                        .decode("ascii", errors="ignore")
+                        .rstrip(" \x00")
+                    )
+                payload[name] = decoded
+
+        torchfits.write(
+            file_path,
+            payload,
+            header=self.header if self.header is not None else {},
+            overwrite=overwrite,
+        )
 
     def __repr__(self):
         name = self.header.get("EXTNAME", "TABLE")
@@ -795,10 +1114,534 @@ class TableHDU(TensorFrame):
         )
 
 
+class TableHDURef:
+    """
+    Lazy, file-backed table handle.
+
+    Unlike TableHDU (TensorFrame), this does not materialize the full table at open().
+    It exposes:
+    - metadata (columns/num_rows/schema) from headers
+    - explicit materialization via .materialize()/read()
+    - out-of-core streaming via .iter_rows() and Arrow via torchfits.table.*
+    """
+
+    def __init__(
+        self,
+        *,
+        header: Optional[Header] = None,
+        source_path: Optional[str] = None,
+        source_hdu: Optional[int] = None,
+        columns: Optional[List[str]] = None,
+        row_slice: Optional[slice | tuple[int, int]] = None,
+    ):
+        self.header = header or Header()
+        self._source_path = source_path
+        self._source_hdu = source_hdu
+        self._columns = columns[:] if columns else None
+        self._row_slice = row_slice
+
+    def _require_source(self) -> tuple[str, int]:
+        if not self._source_path or self._source_hdu is None:
+            raise RuntimeError("This TableHDURef is not associated with a FITS file")
+        return self._source_path, int(self._source_hdu)
+
+    @property
+    def num_rows(self) -> int:
+        try:
+            total = int(self.header.get("NAXIS2", 0))
+        except Exception:
+            total = 0
+        if total <= 0:
+            return 0
+        if self._row_slice is None:
+            return total
+        # Respect view row slice.
+        if isinstance(self._row_slice, tuple):
+            start, stop = self._row_slice
+        else:
+            start = 0 if self._row_slice.start is None else int(self._row_slice.start)
+            stop = self._row_slice.stop
+        start = int(start)
+        if start < 0:
+            start = 0
+        if stop is None:
+            return max(0, total - start)
+        stop = int(stop)
+        stop = min(stop, total)
+        return max(0, stop - start)
+
+    def __len__(self) -> int:
+        return self.num_rows
+
+    @property
+    def columns(self) -> List[str]:
+        # Prefer explicit projection if this is a view.
+        if self._columns is not None:
+            return list(self._columns)
+        try:
+            n = int(self.header.get("TFIELDS", 0))
+        except Exception:
+            n = 0
+        out: List[str] = []
+        for i in range(1, n + 1):
+            name = self.header.get(f"TTYPE{i}")
+            if isinstance(name, str) and name:
+                out.append(name)
+            else:
+                out.append(f"COL{i}")
+        return out
+
+    @property
+    def string_columns(self) -> List[str]:
+        # Mirror TableHDU behavior: infer from header TFORMn with 'A' code.
+        cols = []
+        name_by_idx: Dict[str, str] = {}
+        for k, v in self.header.items():
+            if isinstance(k, str) and k.upper().startswith("TTYPE"):
+                name_by_idx[k[5:]] = str(v)
+        for k, v in self.header.items():
+            if not isinstance(k, str) or not k.upper().startswith("TFORM"):
+                continue
+            idx = k[5:]
+            tform = str(v).strip().upper()
+            if "A" in tform:
+                name = name_by_idx.get(idx)
+                if name:
+                    cols.append(name)
+        if self._columns is not None:
+            cols = [c for c in cols if c in set(self._columns)]
+        return sorted(set(cols))
+
+    @property
+    def schema(self) -> Dict[str, Any]:
+        # Reuse the same basic schema format as TableHDU._build_schema().
+        if not self.header:
+            return {"columns": [], "string_columns": [], "vla_columns": []}
+
+        name_by_idx: Dict[int, str] = {}
+        tform_by_idx: Dict[int, str] = {}
+        tdim_by_idx: Dict[int, str] = {}
+        for key, value in self.header.items():
+            if isinstance(key, str) and key.startswith("TTYPE"):
+                idx = int(key[5:]) if key[5:].isdigit() else None
+                if idx is not None:
+                    name_by_idx[idx] = str(value)
+            if isinstance(key, str) and key.startswith("TFORM"):
+                idx = int(key[5:]) if key[5:].isdigit() else None
+                if idx is not None:
+                    tform_by_idx[idx] = str(value)
+            if isinstance(key, str) and key.startswith("TDIM"):
+                idx = int(key[4:]) if key[4:].isdigit() else None
+                if idx is not None:
+                    tdim_by_idx[idx] = str(value)
+
+        def _parse_tform(tform: str) -> Dict[str, Any]:
+            # Examples: "E", "20A", "1PB", "1PJ"
+            import re
+
+            tform = tform.strip().upper()
+            m = re.match(r"(\d*)([PQ]?)([A-Z])", tform)
+            if not m:
+                return {"tform": tform, "repeat": None, "vla": False, "code": None}
+            repeat = int(m.group(1)) if m.group(1) else 1
+            vla = m.group(2) in ("P", "Q")
+            code = m.group(3)
+            base = {"tform": tform, "repeat": repeat, "vla": vla, "code": code}
+            if vla:
+                base["vla_descriptor"] = m.group(2)
+            return base
+
+        selected = set(self._columns) if self._columns is not None else None
+        columns = []
+        string_cols = []
+        vla_cols = []
+        for idx in sorted(name_by_idx.keys()):
+            name = name_by_idx[idx]
+            if selected is not None and name not in selected:
+                continue
+            tform = tform_by_idx.get(idx, "")
+            info = (
+                _parse_tform(tform)
+                if tform
+                else {"tform": "", "repeat": None, "vla": False, "code": None}
+            )
+            tdim = tdim_by_idx.get(idx)
+            is_string = info.get("code") == "A"
+            if is_string:
+                string_cols.append(name)
+            if info.get("vla"):
+                vla_cols.append(name)
+            columns.append(
+                {
+                    "name": name,
+                    "tform": info.get("tform", ""),
+                    "repeat": info.get("repeat"),
+                    "code": info.get("code"),
+                    "string": is_string,
+                    "vla": bool(info.get("vla")),
+                    "tdim": tdim,
+                }
+            )
+
+        return {
+            "columns": columns,
+            "string_columns": string_cols,
+            "vla_columns": vla_cols,
+        }
+
+    def select(self, cols: List[str]) -> "TableHDURef":
+        if not isinstance(cols, list) or not all(isinstance(c, str) for c in cols):
+            raise TypeError("cols must be a list[str]")
+        return TableHDURef(
+            header=self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+            columns=cols,
+            row_slice=self._row_slice,
+        )
+
+    def head(self, n: int) -> "TableHDURef":
+        if n < 0:
+            raise ValueError("n must be >= 0")
+        return TableHDURef(
+            header=self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+            columns=self._columns,
+            row_slice=slice(0, n),
+        )
+
+    def filter(self, condition: str) -> "TableHDU":
+        """
+        In-memory filter convenience (materializes the table, then filters).
+
+        For large/out-of-core workflows, prefer Arrow:
+        - torchfits.table.scan(...)/reader(...)/scanner(...)
+        """
+        return self.materialize().filter(condition)
+
+    def _normalize_row_slice(self, row_slice: Optional[slice | tuple[int, int]]):
+        # Convert python-style slice to (start_row, num_rows) where start_row is 1-based.
+        if row_slice is None:
+            return 1, -1
+        if isinstance(row_slice, tuple):
+            if len(row_slice) != 2:
+                raise ValueError("row_slice tuple must be (start, stop)")
+            start, stop = row_slice
+        else:
+            start = 0 if row_slice.start is None else row_slice.start
+            stop = row_slice.stop
+            if row_slice.step not in (None, 1):
+                raise ValueError("row_slice step is not supported")
+        start = int(start)
+        if start < 0:
+            raise ValueError("row_slice start must be >= 0")
+        if stop is None:
+            # Until end
+            return start + 1, -1
+        stop = int(stop)
+        if stop < start:
+            return start + 1, 0
+        return start + 1, stop - start
+
+    def _is_ascii_table(self) -> bool:
+        try:
+            return str(self.header.get("XTENSION", "")).strip().upper() == "TABLE"
+        except Exception:
+            return False
+
+    def read(
+        self,
+        *,
+        columns: Optional[List[str]] = None,
+        row_slice: Optional[slice | tuple[int, int]] = None,
+        mmap: bool = True,
+        device: str = "cpu",
+    ) -> Dict[str, Any]:
+        import torchfits
+
+        path, hdu = self._require_source()
+        if columns is None:
+            columns = self._columns
+        if row_slice is None:
+            row_slice = self._row_slice
+        start_row, num_rows = self._normalize_row_slice(row_slice)
+        # ASCII tables are not supported by the mmap column path; force CFITSIO reads.
+        effective_mmap = bool(mmap)
+        if effective_mmap and self._is_ascii_table():
+            effective_mmap = False
+        return torchfits.read(
+            path,
+            hdu=hdu,
+            columns=columns,
+            start_row=start_row,
+            num_rows=num_rows,
+            mmap=effective_mmap,
+            device=device,
+            # Don't use the python-side result cache for an open() handle: it can
+            # return stale data if the file is updated in-place.
+            cache_capacity=0,
+        )
+
+    def materialize(self, *, mmap: bool = True, device: str = "cpu") -> "TableHDU":
+        data = self.read(mmap=mmap, device=device)
+        return TableHDU(
+            data,
+            {},
+            self.header,
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
+
+    def iter_rows(self, batch_size: int = 65536, *, mmap: bool = True):
+        import torchfits
+
+        path, hdu = self._require_source()
+        start_row, num_rows = self._normalize_row_slice(self._row_slice)
+        effective_mmap = bool(mmap)
+        if effective_mmap and self._is_ascii_table():
+            effective_mmap = False
+
+        for chunk in torchfits.stream_table(
+            path,
+            hdu=hdu,
+            columns=self._columns,
+            start_row=start_row,
+            num_rows=num_rows,
+            chunk_rows=batch_size,
+            mmap=effective_mmap,
+        ):
+            yield chunk
+
+    def __getitem__(self, col_name: str) -> Any:
+        # Materialize only the requested column (still potentially large).
+        data = self.read(columns=[col_name])
+        if col_name not in data:
+            raise KeyError(f"Column '{col_name}' not found")
+        return data[col_name]
+
+    def get_string_column(
+        self, name: str, encoding: str = "ascii", strip: bool = True
+    ) -> List[str]:
+        value = self[name]
+        if not isinstance(value, torch.Tensor):
+            raise KeyError(f"Column '{name}' is not a tensor string column")
+        if value.dtype != torch.uint8 or value.dim() != 2:
+            raise TypeError(
+                f"Column '{name}' is not a uint8 (rows,width) encoded string column"
+            )
+        out: List[str] = []
+        arr = value.detach().cpu().numpy()
+        for row in arr:
+            s = bytes(row.tolist()).decode(encoding, errors="ignore")
+            if strip:
+                s = s.rstrip(" \x00")
+            out.append(s)
+        return out
+
+    def get_vla_column(self, name: str) -> List[Tensor]:
+        value = self[name]
+        if isinstance(value, list):
+            # torchfits.read returns VLA as list[Tensor] in the torch path.
+            return value  # type: ignore[return-value]
+        raise KeyError(f"Column '{name}' is not a VLA list")
+
+    def get_vla_lengths(self, name: str) -> List[int]:
+        values = self.get_vla_column(name)
+        lengths: List[int] = []
+        for item in values:
+            if isinstance(item, torch.Tensor):
+                lengths.append(int(item.numel()))
+            elif hasattr(item, "__len__"):
+                lengths.append(len(item))
+            else:
+                lengths.append(1)
+        return lengths
+
+    @property
+    def vla_lengths(self) -> Dict[str, List[int]]:
+        out: Dict[str, List[int]] = {}
+        for col in self.schema.get("vla_columns", []):
+            try:
+                out[col] = self.get_vla_lengths(col)
+            except Exception:
+                continue
+        return out
+
+    @property
+    def data(self):
+        """Dictionary-like column access (lazy per-column reads)."""
+
+        class _Wrapper:
+            def __init__(self, parent: "TableHDURef"):
+                self._parent = parent
+
+            def __getitem__(self, key: str) -> Any:
+                return self._parent[key]
+
+            def __contains__(self, key: str) -> bool:
+                return key in set(self._parent.columns)
+
+            def keys(self):
+                return self._parent.columns
+
+        return _Wrapper(self)
+
+    def to_arrow(self, **kwargs):
+        import torchfits
+
+        path, hdu = self._require_source()
+        # Prefer Arrow-native table APIs.
+        return torchfits.table.read(
+            path, hdu=hdu, columns=self._columns, row_slice=self._row_slice, **kwargs
+        )
+
+    def scan_arrow(self, **kwargs):
+        import torchfits
+
+        path, hdu = self._require_source()
+        return torchfits.table.scan(
+            path, hdu=hdu, columns=self._columns, row_slice=self._row_slice, **kwargs
+        )
+
+    def reader_arrow(self, **kwargs):
+        import torchfits
+
+        path, hdu = self._require_source()
+        return torchfits.table.reader(
+            path, hdu=hdu, columns=self._columns, row_slice=self._row_slice, **kwargs
+        )
+
+    def _refresh_file_view(self) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        header = Header(torchfits.get_header(path, hdu))
+        # Return a full refreshed view after in-place mutations.
+        return TableHDURef(header=header, source_path=path, source_hdu=hdu)
+
+    def append_rows_file(self, rows: Dict[str, Any]) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.append_rows(path, rows, hdu=hdu)
+        return self._refresh_file_view()
+
+    def insert_column_file(
+        self,
+        name: str,
+        values: Any,
+        *,
+        index: Optional[int] = None,
+        format: Optional[str] = None,
+        unit: Optional[str] = None,
+        dim: Optional[str] = None,
+        tnull: Optional[Any] = None,
+        tscal: Optional[float] = None,
+        tzero: Optional[float] = None,
+    ) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.insert_column(
+            path,
+            name,
+            values,
+            hdu=hdu,
+            index=index,
+            format=format,
+            unit=unit,
+            dim=dim,
+            tnull=tnull,
+            tscal=tscal,
+            tzero=tzero,
+        )
+        return self._refresh_file_view()
+
+    def replace_column_file(
+        self,
+        name: str,
+        values: Any,
+        *,
+        format: Optional[str] = None,
+        unit: Optional[str] = None,
+        dim: Optional[str] = None,
+        tnull: Optional[Any] = None,
+        tscal: Optional[float] = None,
+        tzero: Optional[float] = None,
+    ) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.replace_column(
+            path,
+            name,
+            values,
+            hdu=hdu,
+            format=format,
+            unit=unit,
+            dim=dim,
+            tnull=tnull,
+            tscal=tscal,
+            tzero=tzero,
+        )
+        return self._refresh_file_view()
+
+    def insert_rows_file(self, rows: Dict[str, Any], *, row: int) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.insert_rows(path, rows, row=row, hdu=hdu)
+        return self._refresh_file_view()
+
+    def delete_rows_file(
+        self, row_slice: Union[int, slice, tuple[int, int]]
+    ) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.delete_rows(path, row_slice, hdu=hdu)
+        return self._refresh_file_view()
+
+    def update_rows_file(
+        self,
+        rows: Dict[str, Any],
+        row_slice: Union[slice, tuple[int, int]],
+        *,
+        mmap: Union[bool, str] = "auto",
+    ) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.update_rows(path, rows, row_slice=row_slice, hdu=hdu, mmap=mmap)
+        return self._refresh_file_view()
+
+    def rename_columns_file(self, mapping: Dict[str, str]) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.rename_columns(path, mapping, hdu=hdu)
+        return self._refresh_file_view()
+
+    def drop_columns_file(self, columns: List[str]) -> "TableHDURef":
+        import torchfits
+
+        path, hdu = self._require_source()
+        torchfits.table.drop_columns(path, columns, hdu=hdu)
+        return self._refresh_file_view()
+
+    def __repr__(self):
+        name = self.header.get("EXTNAME", "TABLE")
+        proj = f", cols={len(self.columns)}" if self._columns is not None else ""
+        return f"TableHDURef(name='{name}', rows={self.num_rows}{proj})"
+
+
 class HDUList:
     """HDU container."""
 
-    def __init__(self, hdus: Optional[List[Union[TensorHDU, TableHDU]]] = None):
+    def __init__(
+        self, hdus: Optional[List[Union[TensorHDU, TableHDU, TableHDURef]]] = None
+    ):
         self._hdus = hdus or []
         self._file_handle = None
 
@@ -859,30 +1702,8 @@ class HDUList:
                 if hdu_type == "IMAGE":
                     hdu = TensorHDU(header=header, file_handle=handle, hdu_index=i)
                 elif hdu_type in ["ASCII_TABLE", "BINARY_TABLE"]:
-                    # sys.stderr.write(f"DEBUG: Reading table HDU {i}, type {hdu_type}\n")
-                    # sys.stderr.flush()
-                    try:
-                        table_res = cpp.read_fits_table_from_handle(handle, i)
-                        # table_res is the dictionary of columns
-                        tensor_dict = table_res
-
-                        # Handle VLA columns (lists of tensors) - convert to single tensor if possible or keep as list
-                        for key, value in tensor_dict.items():
-                            if isinstance(value, list):
-                                # For now, just take the first element if it's a list of tensors?
-                                # Or keep it as list? TableHDU expects tensors.
-                                # If it's VLA, we might need special handling.
-                                # But let's assume for now it works or we fix it later.
-                                # Wait, VLA support in TableHDU?
-                                pass
-
-                        hdu = TableHDU(tensor_dict, {}, header, source_path=path, source_hdu=i)
-                    except Exception:
-                        try:
-                            tensor_dict = cpp.read_fits_table(path, i)
-                            hdu = TableHDU(tensor_dict, {}, header, source_path=path, source_hdu=i)
-                        except Exception:
-                            hdu = TableHDU({}, {}, header, source_path=path, source_hdu=i)
+                    # Safe-by-default: do not materialize tables at open().
+                    hdu = TableHDURef(header=header, source_path=path, source_hdu=i)
                 else:
                     # Unknown type, treat as empty image
                     hdu = TensorHDU(header=header)
@@ -923,9 +1744,60 @@ class HDUList:
             self._file_handle = None
 
     def write(self, path: str, overwrite: bool = False):
+        import torchfits
         import torchfits.cpp as cpp
 
-        cpp.write_fits_file(path, self._hdus, overwrite)
+        class _TableWriteProxy:
+            def __init__(self, raw_data, header):
+                self._raw_data = raw_data
+                self.header = header
+
+        def _sanitize_table_header_for_write(header):
+            skip_keys = {
+                "SIMPLE",
+                "XTENSION",
+                "BITPIX",
+                "NAXIS",
+                "NAXIS1",
+                "NAXIS2",
+                "PCOUNT",
+                "GCOUNT",
+                "TFIELDS",
+                "EXTEND",
+                "THEAP",
+            }
+            out = {}
+            for key, value in dict(header or {}).items():
+                key_upper = str(key).upper()
+                if key_upper in skip_keys or key_upper.startswith("NAXIS"):
+                    continue
+                out[str(key)] = value
+            return out
+
+        payload_hdus = []
+        for hdu in list(self._hdus):
+            if isinstance(hdu, TableHDU):
+                raw_data = dict(getattr(hdu, "_raw_data", {}))
+                raw_data = torchfits._normalize_cpp_table_data(raw_data)
+                payload_hdus.append(
+                    _TableWriteProxy(
+                        raw_data, _sanitize_table_header_for_write(hdu.header)
+                    )
+                )
+            elif isinstance(hdu, TableHDURef):
+                # Materialize lazy tables so rewrite/replace paths keep extension contents.
+                materialized = hdu.materialize()
+                raw_data = dict(getattr(materialized, "_raw_data", {}))
+                raw_data = torchfits._normalize_cpp_table_data(raw_data)
+                payload_hdus.append(
+                    _TableWriteProxy(
+                        raw_data, _sanitize_table_header_for_write(hdu.header)
+                    )
+                )
+            else:
+                payload_hdus.append(hdu)
+
+        cpp.write_fits_file(path, payload_hdus, overwrite)
 
     def append(self, hdu: Union[TensorHDU, TableHDU]):
         self._hdus.append(hdu)
@@ -983,7 +1855,7 @@ class HDUList:
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
 
             # Type
-            if isinstance(hdu, TableHDU):
+            if isinstance(hdu, (TableHDU, TableHDURef)):
                 hdu_type = "TableHDU"
             else:
                 if idx == 0 and name == "PRIMARY":
@@ -999,7 +1871,7 @@ class HDUList:
             )
 
             # Dimensions & Format
-            if isinstance(hdu, TableHDU):
+            if isinstance(hdu, (TableHDU, TableHDURef)):
                 dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
                 fmt = "Table"
             elif isinstance(hdu, TensorHDU):
@@ -1032,7 +1904,7 @@ class HDUList:
 
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
-            if isinstance(hdu, TableHDU):
+            if isinstance(hdu, (TableHDU, TableHDURef)):
                 hdu_type = "TableHDU"
                 dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
                 fmt = "Table"

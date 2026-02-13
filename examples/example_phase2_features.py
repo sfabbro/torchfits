@@ -77,7 +77,7 @@ def demo_zero_copy_operations():
 
         # Calculate throughput
         data_size_mb = result.numel() * 4 / (1024 * 1024)  # float32
-        throughput = data_size_mb / read_time
+        throughput = data_size_mb / read_time if read_time > 0 else float("inf")
 
         print(f"  Image size: {result.shape}")
         print(f"  Data size: {data_size_mb:.1f} MB")
@@ -127,9 +127,11 @@ def demo_tile_aware_compression():
         subset_pixels = 1000 * 1000
         full_pixels = 3000 * 3000
         expected_time = full_time * (subset_pixels / full_pixels)
-        efficiency = expected_time / subset_time
-
-        print(f"  Tile optimization: {efficiency:.1f}x faster than expected")
+        if subset_time > 0:
+            efficiency = expected_time / subset_time
+            print(f"  Tile optimization: {efficiency:.1f}x faster than expected")
+        else:
+            print("  Tile optimization: n/a (subset_time too small to measure)")
 
         # Verify subset correctness
         expected_subset = full_result[1000:2000, 1000:2000]
@@ -231,7 +233,10 @@ def demo_enhanced_caching():
         print(f"  Files: {len(files)}")
         print(f"  First pass (misses): {first_pass_time:.3f}s")
         print(f"  Second pass (hits): {second_pass_time:.3f}s")
-        print(f"  Speedup: {first_pass_time / second_pass_time:.1f}x")
+        if second_pass_time > 0:
+            print(f"  Speedup: {first_pass_time / second_pass_time:.1f}x")
+        else:
+            print("  Speedup: n/a (second pass too small to measure)")
         print(f"  Hit rate: {stats_after_second.get('hit_rate', 0):.1%}")
         print(f"  Total requests: {stats_after_second.get('total_requests', 0)}")
         print("  ✅ Enhanced caching working correctly")
@@ -273,7 +278,10 @@ def demo_batch_operations():
         print(f"  Files: {len(files)}")
         print(f"  Sequential: {sequential_time:.3f}s")
         print(f"  Batch: {batch_time:.3f}s")
-        print(f"  Speedup: {sequential_time / batch_time:.1f}x")
+        if batch_time > 0:
+            print(f"  Speedup: {sequential_time / batch_time:.1f}x")
+        else:
+            print("  Speedup: n/a (batch time too small to measure)")
 
         # Batch info
         info = torchfits.get_batch_info(files)
@@ -321,7 +329,10 @@ def demo_memory_efficiency():
         print(f"  File size: {file_size:.1f} MB")
         print(f"  Data size: {data_size:.1f} MB")
         print(f"  Memory increase: {memory_increase:.1f} MB")
-        print(f"  Efficiency: {data_size / memory_increase:.1f}x")
+        if memory_increase > 0:
+            print(f"  Efficiency: {data_size / memory_increase:.1f}x")
+        else:
+            print("  Efficiency: n/a (RSS unchanged or decreased)")
         print("  ✅ Memory efficiency optimized")
 
         del result

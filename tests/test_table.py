@@ -163,6 +163,93 @@ class TestTableReading:
         finally:
             os.unlink(path)
 
+    def test_filter_rows_with_expression(self):
+        """Test TableHDU row filtering by expression."""
+        filepath, _ = self.create_test_table(200)
+
+        try:
+            with torchfits.open(filepath) as hdul:
+                table_hdu = hdul[1]
+                filtered = table_hdu.filter("(RA > 180.0) & (FLAG >= 0)")
+                assert isinstance(filtered, torchfits.TableHDU)
+                assert filtered.num_rows > 0
+                assert filtered.num_rows <= table_hdu.num_rows
+        finally:
+            os.unlink(filepath)
+
+    def test_complex_column_reading(self):
+        """Test complex-valued FITS columns are readable."""
+        from astropy.io import fits
+
+        col1 = fits.Column(
+            name="ID", format="J", array=np.array([1, 2, 3], dtype=np.int32)
+        )
+        col2 = fits.Column(
+            name="Z",
+            format="C",
+            array=np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64),
+        )
+        hdu = fits.BinTableHDU.from_columns([col1, col2])
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            path = f.name
+        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path, overwrite=True)
+
+        try:
+            table = torchfits.read(path, hdu=1)
+            assert "Z" in table
+            assert len(table["Z"]) == 3
+        finally:
+            os.unlink(path)
+
+    def test_tablehdu_column_manipulations(self):
+        """Test add/rename/drop/append operations on TableHDU."""
+        table_hdu = torchfits.TableHDU(
+            {
+                "A": torch.tensor([1, 2], dtype=torch.int32),
+                "B": torch.tensor([10.0, 20.0], dtype=torch.float32),
+            }
+        )
+
+        with_c = table_hdu.add_column("C", torch.tensor([100, 200], dtype=torch.int64))
+        assert "C" in with_c.columns
+        assert with_c.num_rows == 2
+
+        renamed = with_c.rename_column("C", "C_NEW")
+        assert "C_NEW" in renamed.columns
+        assert "C" not in renamed.columns
+
+        dropped = renamed.drop_columns(["B"])
+        assert dropped.columns == ["A", "C_NEW"]
+
+        appended = dropped.append_rows(
+            {
+                "A": torch.tensor([3], dtype=torch.int32),
+                "C_NEW": torch.tensor([300], dtype=torch.int64),
+            }
+        )
+        assert appended.num_rows == 3
+        assert appended["A"].tolist() == [1, 2, 3]
+
+    def test_tablehdu_append_rows_with_vla_lists(self):
+        """Test appending rows for VLA-like list columns."""
+        table_hdu = torchfits.TableHDU(
+            {
+                "ID": torch.tensor([1, 2], dtype=torch.int32),
+                "VLA": [torch.tensor([1, 2]), torch.tensor([3])],
+            }
+        )
+
+        out = table_hdu.append_rows(
+            {
+                "ID": torch.tensor([3], dtype=torch.int32),
+                "VLA": [torch.tensor([4, 5, 6])],
+            }
+        )
+        assert out.num_rows == 3
+        assert out["ID"].tolist() == [1, 2, 3]
+        assert len(out["VLA"]) == 3
+        assert out["VLA"][-1].tolist() == [4, 5, 6]
+
     def test_data_types(self):
         """Test various FITS data types."""
         filepath, expected_data = self.create_test_table(100)

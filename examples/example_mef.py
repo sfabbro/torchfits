@@ -56,7 +56,9 @@ def main():
 
         # Access by name:
         print("\n--- Accessing HDU by Name ---")
-        data, _ = torchfits.read(test_file, hdu="SCI", return_header=True)  # String name
+        data, _ = torchfits.read(
+            test_file, hdu="SCI", return_header=True
+        )  # String name
         print(f"  SCI data shape: {data.shape}")
 
         table_data, _ = torchfits.read(

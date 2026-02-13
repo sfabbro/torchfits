@@ -18,12 +18,12 @@ from mpl_config import configure
 
 configure()
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import torch
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits import transforms
+from torchfits import transforms  # noqa: E402
 
 
 class TransformBenchmark:
@@ -188,6 +188,25 @@ def main():
     results = benchmark.run_benchmarks()
     benchmark.generate_plots(results)
     benchmark.save_results(results)
+    # Ranked console view for quick comparison (lower is better).
+    try:
+        print("\nRanked Summary (Transforms):")
+        # Rank transforms by average time across sizes.
+        agg = {}
+        for size_key, transforms in results.items():
+            for tname, m in transforms.items():
+                agg.setdefault(tname, []).append(float(m.get("avg_time_ms", 0.0)))
+        items = []
+        for tname, vals in agg.items():
+            avg = sum(vals) / len(vals) if vals else float("inf")
+            items.append((tname, avg))
+        items.sort(key=lambda x: x[1])
+        best = items[0][1] if items else None
+        for i, (tname, avg) in enumerate(items, start=1):
+            ratio = avg / best if best else float("inf")
+            print(f"  {i:2d}. {tname:18s} avg_time_ms={avg:.4f}  ({ratio:.2f}x best)")
+    except Exception as e:
+        print(f"(ranked summary skipped: {e})")
     print("✅ Transform benchmarks completed!")
 
 

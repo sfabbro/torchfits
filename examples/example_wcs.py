@@ -114,9 +114,7 @@ def main():
     if torch.cuda.is_available():
         print("\n--- Testing GPU Read ---")
         try:
-            data, _ = torchfits.read(
-                image_file, device="cuda", return_header=True
-            )
+            data, _ = torchfits.read(image_file, device="cuda", return_header=True)
             print(f"  Data device: {data.device}")
         except RuntimeError as e:
             print(f"  Error reading to GPU: {e}")

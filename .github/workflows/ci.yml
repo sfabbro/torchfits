@@ -98,7 +98,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip wheel setuptools
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install numpy astropy fitsio pytest pybind11
+        pip install numpy astropy fitsio pytest pybind11 scikit-build-core nanobind
         pip install -e . --no-build-isolation
     
     - name: Run memory leak tests
@@ -130,7 +130,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip wheel setuptools
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install numpy astropy fitsio pytest pybind11
+        pip install numpy astropy fitsio pytest pybind11 scikit-build-core nanobind
         pip install -e . --no-build-isolation
     
     - name: Run performance benchmarks

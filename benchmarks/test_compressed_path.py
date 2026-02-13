@@ -22,7 +22,9 @@ import torchfits
 
 def _create_compressed(path: Path, compression_type: str, shape=(1024, 1024)) -> None:
     data = (np.random.randn(*shape) * 100.0).astype(np.float32)
-    hdul = fits.HDUList([fits.PrimaryHDU(), CompImageHDU(data, compression_type=compression_type)])
+    hdul = fits.HDUList(
+        [fits.PrimaryHDU(), CompImageHDU(data, compression_type=compression_type)]
+    )
     hdul.writeto(path, overwrite=True)
 
 
