@@ -90,14 +90,12 @@ def main() -> None:
             torchfits.table.to_duckdb(
                 labels_file.name, hdu=1, relation_name="labels", connection=con
             )
-            joined = con.sql(
-                """
+            joined = con.sql("""
                 SELECT c.OBJID, c.RA, l.CLASS
                 FROM catalog c
                 JOIN labels l USING (OBJID)
                 WHERE c.DEC > 0
-                """
-            ).arrow()
+                """).arrow()
             print("DuckDB join rows:", joined.num_rows)
     finally:
         os.unlink(catalog_file.name)
