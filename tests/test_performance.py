@@ -169,9 +169,7 @@ class TestPerformance:
         try:
             # Test direct GPU loading
             start_time = time.time()
-            result_gpu, _ = torchfits.read(
-                filepath, device="cuda", return_header=True
-            )
+            result_gpu, _ = torchfits.read(filepath, device="cuda", return_header=True)
             gpu_read_time = time.time() - start_time
 
             assert result_gpu.device.type == "cuda"

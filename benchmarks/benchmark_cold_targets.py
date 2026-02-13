@@ -61,7 +61,12 @@ def main():
     files = {
         "wcs_image": ("wcs_image.fits", (1024, 1024), np.float32, True),
         "medium_int8_2d": ("medium_int8_2d.fits", (1024, 1024), np.int8, False),
-        "medium_float32_2d": ("medium_float32_2d.fits", (1024, 1024), np.float32, False),
+        "medium_float32_2d": (
+            "medium_float32_2d.fits",
+            (1024, 1024),
+            np.float32,
+            False,
+        ),
         "large_int32_1d": ("large_int32_1d.fits", (1_000_000,), np.int32, False),
         "large_int8_1d": ("large_int8_1d.fits", (1_000_000,), np.int8, False),
         "large_float32_2d": ("large_float32_2d.fits", (2048, 2048), np.float32, False),
@@ -92,9 +97,15 @@ def main():
             "fitsio_read": lambda p=path: fitsio.read(str(p)),
         }
 
+        results = []
         for mname, fn in methods.items():
             m, s = _time(fn, warmup=args.warmup, runs=args.runs)
-            print(f"{mname:32s}: {m:.6f}s ± {s:.6f}s")
+            results.append((mname, m, s))
+        results.sort(key=lambda x: x[1])
+        best_m, best_t, _ = results[0]
+        for i, (mname, m, s) in enumerate(results, start=1):
+            ratio = m / best_t if best_t else float("inf")
+            print(f"{i:2d}. {mname:32s}: {m:.6f}s ± {s:.6f}s  ({ratio:.2f}x best)")
 
     # Dedicated MEF medium-style benchmark (ext=1 image read)
     print("\nmef_medium (ext=1)")
@@ -102,7 +113,9 @@ def main():
     mef_path = base / "mef_medium.fits"
     hdus = [astropy_fits.PrimaryHDU(np.random.randn(256, 256).astype(np.float32))]
     for i in range(8):
-        hdus.append(astropy_fits.ImageHDU(np.random.randn(256, 256).astype(np.float32) + i))
+        hdus.append(
+            astropy_fits.ImageHDU(np.random.randn(256, 256).astype(np.float32) + i)
+        )
     astropy_fits.HDUList(hdus).writeto(mef_path, overwrite=True)
 
     mef_methods = {
@@ -117,9 +130,15 @@ def main():
         ),
         "fitsio_read_ext1": lambda p=mef_path: fitsio.read(str(p), ext=1),
     }
+    results = []
     for mname, fn in mef_methods.items():
         m, s = _time(fn, warmup=args.warmup, runs=args.runs)
-        print(f"{mname:32s}: {m:.6f}s ± {s:.6f}s")
+        results.append((mname, m, s))
+    results.sort(key=lambda x: x[1])
+    best_m, best_t, _ = results[0]
+    for i, (mname, m, s) in enumerate(results, start=1):
+        ratio = m / best_t if best_t else float("inf")
+        print(f"{i:2d}. {mname:32s}: {m:.6f}s ± {s:.6f}s  ({ratio:.2f}x best)")
 
 
 if __name__ == "__main__":

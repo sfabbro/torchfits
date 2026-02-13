@@ -9,7 +9,7 @@ import torchfits
 
 
 def test_to_pandas_decode_bytes():
-    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pandas")
 
     table = Table(
         {

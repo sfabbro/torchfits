@@ -6,6 +6,7 @@
 #include "torchfits_torch.h"
 #include <vector>
 #include <memory>
+#include <algorithm>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -19,6 +20,7 @@
 #include <ATen/Parallel.h>
 #include <functional>
 #include <cstring>  // for memset
+#include <cstdlib>  // for getenv
 
 // #define DEBUG_TABLE 1
 
@@ -33,6 +35,22 @@
 namespace nb = nanobind;
 
 namespace torchfits {
+
+namespace {
+
+bool table_buffered_read_enabled() {
+    // Keep buffered row-path enabled by default; allow fast local bisects.
+    static const bool enabled = []() {
+        const char* env = std::getenv("TORCHFITS_TABLE_BUFFERED");
+        if (!env || env[0] == '\0') {
+            return true;
+        }
+        return !(env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F');
+    }();
+    return enabled;
+}
+
+} // namespace
 
 
 
@@ -83,12 +101,15 @@ struct PerformanceMetrics {
 
 enum class FITSColumnType {
     LOGICAL,    // L
+    BIT,        // X (bit array)
     BYTE,       // B  
     SHORT,      // I
     INT,        // J
     LONG,       // K
     FLOAT,      // E
     DOUBLE,     // D
+    COMPLEX_FLOAT,   // C
+    COMPLEX_DOUBLE,  // M
     STRING,     // A
     VARIABLE    // P/Q - variable length arrays
 };
@@ -245,7 +266,7 @@ public:
                     case TBYTE: col.torch_type = torch::kUInt8; break;
                     case TSHORT: col.torch_type = torch::kInt16; break;
                     case TINT: col.torch_type = torch::kInt32; break;
-                    case TLONG: col.torch_type = (sizeof(long) == 8) ? torch::kInt64 : torch::kInt32; break;
+                    case TLONG: col.torch_type = torch::kInt32; break;
                     case TLONGLONG: col.torch_type = torch::kInt64; break;
                     case TFLOAT: col.torch_type = torch::kFloat32; break;
                     case TDOUBLE: col.torch_type = torch::kFloat64; break;
@@ -263,6 +284,12 @@ public:
                     case TSBYTE:
                         col.type = FITSColumnType::BYTE;
                         col.torch_type = torch::kUInt8;
+                        col.width = 1;
+                        break;
+                    case TBIT:
+                        col.type = FITSColumnType::BIT;
+                        col.torch_type = torch::kUInt8;
+                        // Expose bit arrays as uint8[repeat] values (0/1).
                         col.width = 1;
                         break;
                     case TSHORT:
@@ -296,24 +323,10 @@ public:
                         }
                         break;
                     case TLONG:
-                        if (is_ascii_) {
-                             // For ASCII, TLONG usually means it fits in standard integer.
-                             // Prefer Int32 to match typical usage and avoid issues with TLONGLONG on ASCII?
-                             col.type = FITSColumnType::INT;
-                             col.torch_type = torch::kInt32;
-                             col.width = 4;
-                        } else {
-                            if (sizeof(long) == 8) {
-                                col.type = FITSColumnType::LONG;
-                                col.torch_type = torch::kInt64;
-                                col.width = 8;
-                            } else {
-                                col.type = FITSColumnType::INT;
-                                col.torch_type = torch::kInt32;
-                                col.width = 4;
-                            }
-                        }
-
+                        // CFITSIO reports TLONG as FITS 32-bit integer (same code as TINT32BIT).
+                        col.type = FITSColumnType::INT;
+                        col.torch_type = torch::kInt32;
+                        col.width = 4;
                         break;
                     case TULONG:
                         if (sizeof(long) == 8) {
@@ -341,11 +354,25 @@ public:
                         col.torch_type = torch::kFloat64;
                         col.width = 8;
                         break;
+#ifdef TCOMPLEX
+                    case TCOMPLEX:
+                        col.type = FITSColumnType::COMPLEX_FLOAT;
+                        col.torch_type = at::kComplexFloat;
+                        col.width = 8; // two float32 values
+                        break;
+#endif
+#ifdef TDBLCOMPLEX
+                    case TDBLCOMPLEX:
+                        col.type = FITSColumnType::COMPLEX_DOUBLE;
+                        col.torch_type = at::kComplexDouble;
+                        col.width = 16; // two float64 values
+                        break;
+#endif
                     default:
-                        #ifdef DEBUG_TABLE
-                        fprintf(stderr, "Warning: Unknown typecode %d for column %d\n", typecode, i);
-                        #endif
-                        continue;
+                        throw std::runtime_error(
+                            "Unsupported FITS column typecode " + std::to_string(typecode) +
+                            " for column " + std::string(ttype)
+                        );
                 }
             }
 
@@ -378,17 +405,20 @@ public:
         bool is_vla;
         torch::Tensor fixed_data;
         std::vector<torch::Tensor> vla_data;
+        torch::Tensor vla_offsets;
         
         ColumnData() : is_vla(false) {}
         ColumnData(torch::Tensor t) : is_vla(false), fixed_data(t) {}
         ColumnData(std::vector<torch::Tensor> v) : is_vla(true), vla_data(v) {}
+        ColumnData(torch::Tensor values, torch::Tensor offsets, bool /*flat_vla*/)
+            : is_vla(true), fixed_data(values), vla_offsets(offsets) {}
     };
 
     // Read columns from the table
     // Returns a map of column name to ColumnData
     std::unordered_map<std::string, ColumnData> read_columns(
         const std::vector<std::string>& column_names = {},
-        long start_row = 1, long num_rows = -1) {
+        long start_row = 1, long num_rows = -1, bool vla_flat = false) {
         
         if (num_rows == -1) {
             num_rows = nrows_;
@@ -436,7 +466,28 @@ public:
         
         int status = 0;
         std::unordered_map<std::string, ColumnData> result;
-        
+
+        auto cfitsio_read_datatype = [](const ColumnInfo& col) -> int {
+            switch (col.type) {
+                case FITSColumnType::LOGICAL: return TLOGICAL;
+                case FITSColumnType::BIT: return TBIT;
+                case FITSColumnType::BYTE: return TBYTE;
+                case FITSColumnType::SHORT: return TSHORT;
+                case FITSColumnType::INT: return TINT;
+                case FITSColumnType::LONG: return TLONGLONG;
+                case FITSColumnType::FLOAT: return TFLOAT;
+                case FITSColumnType::DOUBLE: return TDOUBLE;
+#ifdef TCOMPLEX
+                case FITSColumnType::COMPLEX_FLOAT: return TCOMPLEX;
+#endif
+#ifdef TDBLCOMPLEX
+                case FITSColumnType::COMPLEX_DOUBLE: return TDBLCOMPLEX;
+#endif
+                case FITSColumnType::STRING: return TBYTE; // Read strings as bytes
+                default: return TFLOAT;
+            }
+        };
+
         
         // Check if we have any data
         if (nrows_ == 0 || ncols_ == 0) {
@@ -465,7 +516,7 @@ public:
             } else if (col.repeat > 1) {
                  shape.push_back(col.repeat);
             }
-            
+
             // Create tensor
             torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
             
@@ -480,21 +531,24 @@ public:
         // Note: Buffered reading currently does NOT support VLA.
         long requested_bytes = 0;
         bool has_vla = false;
-        bool has_scaled = false;
+        bool has_bit = false;
+        bool has_complex = false;
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
             if (col.type == FITSColumnType::VARIABLE) {
                 has_vla = true;
+            } else if (col.type == FITSColumnType::BIT) {
+                has_bit = true;
+            } else if (col.type == FITSColumnType::COMPLEX_FLOAT || col.type == FITSColumnType::COMPLEX_DOUBLE) {
+                has_complex = true;
             } else {
                 requested_bytes += col.width * col.repeat;
-            }
-            if (col.scaled) {
-                has_scaled = true;
             }
         }
         
         bool use_buffered = false;
-        if (!is_ascii_ && !has_vla && !has_scaled && row_width_bytes_ > 0) {
+        if (table_buffered_read_enabled() &&
+            !is_ascii_ && !has_vla && !has_bit && !has_complex && row_width_bytes_ > 0) {
             double byte_fraction = (double)requested_bytes / row_width_bytes_;
             double col_fraction = (double)col_indices.size() / ncols_;
             
@@ -510,7 +564,12 @@ public:
 
                 if (col.type == FITSColumnType::VARIABLE) {
                     // Read VLA column
-                    result[col.name] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
+                    if (vla_flat) {
+                        auto flat = read_vla_column_flat(col_idx, start_row, num_rows, col);
+                        result[col.name] = ColumnData(std::move(flat.first), std::move(flat.second), true);
+                    } else {
+                        result[col.name] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
+                    }
                 } else {
                     // Read fixed width column
                     torch::Tensor tensor = result[col.name].fixed_data;
@@ -519,18 +578,7 @@ public:
                     // Use fits_read_col to read directly into tensor memory
                     // Note: fits_read_col handles byte swapping automatically!
 
-                    int datatype;
-                    switch (col.type) {
-                        case FITSColumnType::LOGICAL: datatype = TLOGICAL; break;
-                        case FITSColumnType::BYTE: datatype = TBYTE; break;
-                        case FITSColumnType::SHORT: datatype = TSHORT; break;
-                        case FITSColumnType::INT: datatype = TINT; break;
-                        case FITSColumnType::LONG: datatype = TLONGLONG; break;
-                        case FITSColumnType::FLOAT: datatype = TFLOAT; break;
-                        case FITSColumnType::DOUBLE: datatype = TDOUBLE; break;
-                        case FITSColumnType::STRING: datatype = TBYTE; break; // Read strings as bytes
-                        default: datatype = TFLOAT;
-                    }
+                    int datatype = cfitsio_read_datatype(col);
 
                     long firstelem = 1;
                     long nelements = num_rows * col.repeat;
@@ -609,6 +657,34 @@ public:
         } else {
             read_column_by_column();
         }
+
+        // Apply FITS TSCAL/TZERO in-memory for integer-like columns.
+        // This preserves physical values while keeping the read path raw and fast.
+        for (int col_idx : col_indices) {
+            const auto& col = columns_[col_idx];
+            if (!col.scaled ||
+                col.type == FITSColumnType::FLOAT ||
+                col.type == FITSColumnType::DOUBLE ||
+                col.type == FITSColumnType::COMPLEX_FLOAT ||
+                col.type == FITSColumnType::COMPLEX_DOUBLE ||
+                col.type == FITSColumnType::STRING ||
+                col.type == FITSColumnType::LOGICAL ||
+                col.type == FITSColumnType::VARIABLE) {
+                continue;
+            }
+            auto it = result.find(col.name);
+            if (it == result.end() || !it->second.fixed_data.defined()) {
+                continue;
+            }
+            torch::Tensor scaled = it->second.fixed_data.to(torch::kFloat64);
+            if (col.tscale != 1.0) {
+                scaled.mul_(col.tscale);
+            }
+            if (col.tzero != 0.0) {
+                scaled.add_(col.tzero);
+            }
+            it->second.fixed_data = scaled;
+        }
         
         return result;
 
@@ -657,6 +733,9 @@ public:
             const auto& col = columns_[col_idx];
             if (col.type == FITSColumnType::VARIABLE) {
                 throw std::runtime_error("VLA columns not supported for mmap");
+            }
+            if (col.type == FITSColumnType::BIT) {
+                throw std::runtime_error("Bit columns not supported for mmap");
             }
             if (col.scaled) {
                 throw std::runtime_error("Scaled columns not supported for mmap");
@@ -723,6 +802,9 @@ public:
             if (col.type == FITSColumnType::VARIABLE) {
                 continue; 
             }
+            if (col.type == FITSColumnType::COMPLEX_FLOAT || col.type == FITSColumnType::COMPLEX_DOUBLE) {
+                throw std::runtime_error("Complex columns are not supported for mmap table reads");
+            }
             
             // Pointer to start of column data for the first requested row
             const uint8_t* col_ptr = base_ptr + row_start_offset + col.byte_offset;
@@ -751,6 +833,8 @@ public:
                     case FITSColumnType::BYTE: dtype = torch::kUInt8; break;
                     case FITSColumnType::LOGICAL: dtype = torch::kBool; break;
                     case FITSColumnType::STRING: dtype = torch::kUInt8; break;
+                    case FITSColumnType::COMPLEX_FLOAT: dtype = at::kComplexFloat; break;
+                    case FITSColumnType::COMPLEX_DOUBLE: dtype = at::kComplexDouble; break;
                     default: dtype = torch::kFloat32;
                 }
                 
@@ -765,61 +849,108 @@ public:
                 
                 if (col.type == FITSColumnType::FLOAT) {
                     float* out = tensor.data_ptr<float>();
-                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
-                        for (long i = start; i < end; i++) {
-                            const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
-                            float* row_out = out + i * repeat;
-                            for (long j = 0; j < repeat; j++) {
-                                int32_t val = bswap_32(in[j]);
-                                memcpy(&row_out[j], &val, sizeof(float));
+                    if (repeat == 1) {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                                int32_t val = bswap_32(*in);
+                                memcpy(&out[i], &val, sizeof(float));
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                                float* row_out = out + i * repeat;
+                                for (long j = 0; j < repeat; j++) {
+                                    int32_t val = bswap_32(in[j]);
+                                    memcpy(&row_out[j], &val, sizeof(float));
+                                }
+                            }
+                        });
+                    }
                 } else if (col.type == FITSColumnType::DOUBLE) {
                     double* out = tensor.data_ptr<double>();
-                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
-                        for (long i = start; i < end; i++) {
-                            const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
-                            double* row_out = out + i * repeat;
-                            for (long j = 0; j < repeat; j++) {
-                                int64_t val = bswap_64(in[j]);
-                                memcpy(&row_out[j], &val, sizeof(double));
+                    if (repeat == 1) {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                                int64_t val = bswap_64(*in);
+                                memcpy(&out[i], &val, sizeof(double));
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                                double* row_out = out + i * repeat;
+                                for (long j = 0; j < repeat; j++) {
+                                    int64_t val = bswap_64(in[j]);
+                                    memcpy(&row_out[j], &val, sizeof(double));
+                                }
+                            }
+                        });
+                    }
                 } else if (col.type == FITSColumnType::INT) {
                     int32_t* out = tensor.data_ptr<int32_t>();
-                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
-                        for (long i = start; i < end; i++) {
-                            const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
-                            int32_t* row_out = out + i * repeat;
-                            for (long j = 0; j < repeat; j++) {
-                                row_out[j] = bswap_32(in[j]);
+                    if (repeat == 1) {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                                out[i] = bswap_32(*in);
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
+                                int32_t* row_out = out + i * repeat;
+                                for (long j = 0; j < repeat; j++) {
+                                    row_out[j] = bswap_32(in[j]);
+                                }
+                            }
+                        });
+                    }
                 } else if (col.type == FITSColumnType::SHORT) {
                     int16_t* out = tensor.data_ptr<int16_t>();
-                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
-                        for (long i = start; i < end; i++) {
-                            const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
-                            int16_t* row_out = out + i * repeat;
-                            for (long j = 0; j < repeat; j++) {
-                                row_out[j] = bswap_16(in[j]);
+                    if (repeat == 1) {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
+                                out[i] = bswap_16(*in);
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
+                                int16_t* row_out = out + i * repeat;
+                                for (long j = 0; j < repeat; j++) {
+                                    row_out[j] = bswap_16(in[j]);
+                                }
+                            }
+                        });
+                    }
                 } else if (col.type == FITSColumnType::LONG) {
                     int64_t* out = tensor.data_ptr<int64_t>();
-                    at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
-                        for (long i = start; i < end; i++) {
-                            const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
-                            int64_t* row_out = out + i * repeat;
-                            for (long j = 0; j < repeat; j++) {
-                                row_out[j] = bswap_64(in[j]);
+                    if (repeat == 1) {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                                out[i] = bswap_64(*in);
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
+                            for (long i = start; i < end; i++) {
+                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
+                                int64_t* row_out = out + i * repeat;
+                                for (long j = 0; j < repeat; j++) {
+                                    row_out[j] = bswap_64(in[j]);
+                                }
+                            }
+                        });
+                    }
                 } else if (col.type == FITSColumnType::BYTE || col.type == FITSColumnType::STRING) {
                     uint8_t* out = tensor.data_ptr<uint8_t>();
                     at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
@@ -856,6 +987,232 @@ public:
         
         return result;
     }
+
+    void update_rows_mmap(nb::dict tensor_dict, long start_row, long num_rows) {
+        if (num_rows == -1) {
+            num_rows = nrows_ - start_row + 1;
+        }
+        if (num_rows <= 0) {
+            return;
+        }
+        if (start_row < 1 || start_row > nrows_) {
+            throw std::runtime_error("Invalid start row");
+        }
+        if (start_row + num_rows - 1 > nrows_) {
+            throw std::runtime_error("Row range exceeds table length");
+        }
+
+        // Build column index map
+        std::unordered_map<std::string, const ColumnInfo*> column_map;
+        column_map.reserve(columns_.size());
+        for (const auto& col : columns_) {
+            column_map[col.name] = &col;
+        }
+
+        // Validate columns and types
+        for (auto item : tensor_dict) {
+            std::string name = nb::cast<std::string>(item.first);
+            auto it = column_map.find(name);
+            if (it == column_map.end()) {
+                throw std::runtime_error("Column not found: " + name);
+            }
+            const ColumnInfo* col = it->second;
+            if (col->type == FITSColumnType::VARIABLE) {
+                throw std::runtime_error("VLA columns not supported for mmap updates");
+            }
+            if (col->type == FITSColumnType::BIT) {
+                throw std::runtime_error("Bit columns not supported for mmap updates");
+            }
+            if (col->scaled) {
+                throw std::runtime_error("Scaled columns not supported for mmap updates");
+            }
+            if (col->type == FITSColumnType::STRING) {
+                throw std::runtime_error("String columns not supported for mmap updates");
+            }
+            if (col->type == FITSColumnType::COMPLEX_FLOAT ||
+                col->type == FITSColumnType::COMPLEX_DOUBLE) {
+                throw std::runtime_error("Complex columns not supported for mmap updates");
+            }
+        }
+
+        // Get offset to the start of the table data
+        LONGLONG headstart, data_offset, dataend;
+        int status = 0;
+        fits_get_hduaddrll(fptr_, &headstart, &data_offset, &dataend, &status);
+        if (status != 0) {
+            char err_msg[81];
+            fits_get_errstatus(status, err_msg);
+            throw std::runtime_error("Failed to get HDU data offset: " + std::string(err_msg));
+        }
+
+        int fd = open(filename_.c_str(), O_RDWR);
+        if (fd == -1) {
+            throw std::runtime_error("Failed to open file for mmap update");
+        }
+
+        struct stat sb;
+        if (fstat(fd, &sb) == -1) {
+            close(fd);
+            throw std::runtime_error("Failed to stat file for mmap update");
+        }
+
+        void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (map_ptr == MAP_FAILED) {
+            close(fd);
+            throw std::runtime_error("Failed to mmap file for update");
+        }
+
+        uint8_t* base_ptr = static_cast<uint8_t*>(map_ptr) + data_offset;
+        size_t row_start_offset = static_cast<size_t>(start_row - 1) * row_width_bytes_;
+
+        for (auto item : tensor_dict) {
+            std::string name = nb::cast<std::string>(item.first);
+            const ColumnInfo* col = column_map.at(name);
+
+            nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
+            int ndim = tensor.ndim();
+            long rows = 1;
+            long repeat = 1;
+            if (ndim == 0) {
+                rows = 1;
+                repeat = 1;
+            } else if (ndim == 1) {
+                rows = static_cast<long>(tensor.shape(0));
+                repeat = 1;
+            } else if (ndim == 2) {
+                rows = static_cast<long>(tensor.shape(0));
+                repeat = static_cast<long>(tensor.shape(1));
+            } else {
+                munmap(map_ptr, sb.st_size);
+                close(fd);
+                throw std::runtime_error("update_rows mmap only supports 1D/2D columns for " + name);
+            }
+
+            long expected_repeat = (col->repeat > 0) ? col->repeat : 1;
+            if (repeat != expected_repeat) {
+                munmap(map_ptr, sb.st_size);
+                close(fd);
+                throw std::runtime_error("update_rows mmap repeat mismatch for " + name);
+            }
+            if (rows != num_rows) {
+                munmap(map_ptr, sb.st_size);
+                close(fd);
+                throw std::runtime_error("update_rows mmap row count mismatch for " + name);
+            }
+
+            nb::dlpack::dtype dt = tensor.dtype();
+
+            const uint8_t* src_u8 = static_cast<const uint8_t*>(tensor.data());
+            const bool* src_bool = static_cast<const bool*>(tensor.data());
+            const int16_t* src_i16 = static_cast<const int16_t*>(tensor.data());
+            const int32_t* src_i32 = static_cast<const int32_t*>(tensor.data());
+            const int64_t* src_i64 = static_cast<const int64_t*>(tensor.data());
+            const float* src_f32 = static_cast<const float*>(tensor.data());
+            const double* src_f64 = static_cast<const double*>(tensor.data());
+
+            for (long i = 0; i < num_rows; i++) {
+                uint8_t* dest_row = base_ptr + row_start_offset + i * row_width_bytes_ + col->byte_offset;
+                for (long j = 0; j < repeat; j++) {
+                    uint8_t* dest = dest_row + j * col->width;
+                    long idx = i * repeat + j;
+
+                    switch (col->type) {
+                        case FITSColumnType::BYTE: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            *dest = src_u8[idx];
+                            break;
+                        }
+                        case FITSColumnType::LOGICAL: {
+                            bool val = false;
+                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+                                val = src_bool[idx];
+                            } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+                                val = src_u8[idx] != 0;
+                            } else {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            *dest = val ? 'T' : 'F';
+                            break;
+                        }
+                        case FITSColumnType::SHORT: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            uint16_t v;
+                            std::memcpy(&v, &src_i16[idx], sizeof(uint16_t));
+                            v = __builtin_bswap16(v);
+                            std::memcpy(dest, &v, sizeof(uint16_t));
+                            break;
+                        }
+                        case FITSColumnType::INT: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            uint32_t v;
+                            std::memcpy(&v, &src_i32[idx], sizeof(uint32_t));
+                            v = __builtin_bswap32(v);
+                            std::memcpy(dest, &v, sizeof(uint32_t));
+                            break;
+                        }
+                        case FITSColumnType::LONG: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            uint64_t v;
+                            std::memcpy(&v, &src_i64[idx], sizeof(uint64_t));
+                            v = __builtin_bswap64(v);
+                            std::memcpy(dest, &v, sizeof(uint64_t));
+                            break;
+                        }
+                        case FITSColumnType::FLOAT: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            uint32_t v;
+                            std::memcpy(&v, &src_f32[idx], sizeof(uint32_t));
+                            v = __builtin_bswap32(v);
+                            std::memcpy(dest, &v, sizeof(uint32_t));
+                            break;
+                        }
+                        case FITSColumnType::DOUBLE: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            uint64_t v;
+                            std::memcpy(&v, &src_f64[idx], sizeof(uint64_t));
+                            v = __builtin_bswap64(v);
+                            std::memcpy(dest, &v, sizeof(uint64_t));
+                            break;
+                        }
+                        default:
+                            munmap(map_ptr, sb.st_size);
+                            close(fd);
+                            throw std::runtime_error("update_rows mmap unsupported column type");
+                    }
+                }
+            }
+        }
+
+        msync(map_ptr, sb.st_size, MS_SYNC);
+        munmap(map_ptr, sb.st_size);
+        close(fd);
+    }
     
     std::vector<std::string> get_column_names() const {
         std::vector<std::string> names;
@@ -870,68 +1227,179 @@ public:
     std::vector<torch::Tensor> read_vla_column(int col_idx, long start_row, long num_rows, const ColumnInfo& col) {
         std::vector<torch::Tensor> column_data;
         column_data.reserve(num_rows);
-        
-        for (long i = 0; i < num_rows; i++) {
-            long row = start_row + i;
-            
-            // Get descriptor (repeat count and offset)
-            long repeat = 0;
-            long offset = 0;
-            int status = 0;
-            
-            // Note: cfitsio uses 1-based column indices
-            fits_read_descript(fptr_, col_idx + 1, row, &repeat, &offset, &status);
-            
-            if (status != 0) {
-                 char err_msg[81];
-                 fits_get_errstatus(status, err_msg);
-                 throw std::runtime_error("Failed to read VLA descriptor: " + std::string(err_msg));
-            }
-            
-            // Allocate tensor for this row
-            std::vector<int64_t> shape;
-            if (col.width > 1 && col.type != FITSColumnType::STRING) {
-                 // If elements themselves are multi-dimensional? 
-                 // FITS VLA is usually 1D array of elements.
-                 // But if TFORM has repeat count?
-                 // For VLA, repeat count from descriptor is the number of elements.
-                 shape.push_back(repeat);
-            } else {
-                 shape.push_back(repeat);
-            }
-            
-            torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
-            
-            // Read data from heap
-            int anynul;
+
+        // Determine type code for cfitsio once.
+        int type_code = 0;
+        switch (col.torch_type) {
+            case torch::kFloat32: type_code = TFLOAT; break;
+            case torch::kFloat64: type_code = TDOUBLE; break;
+            case torch::kInt32: type_code = TINT; break;
+            case torch::kInt16: type_code = TSHORT; break;
+            case torch::kInt64: type_code = TLONGLONG; break;
+            case torch::kUInt8: type_code = TBYTE; break;
+            case torch::kBool: type_code = TLOGICAL; break;
+            default: type_code = TFLOAT;
+        }
+
+        // Bulk-read all VLA descriptors first to reduce per-row CFITSIO overhead.
+        std::vector<long> repeats(num_rows, 0);
+        std::vector<long> heap_offsets(num_rows, 0);
+        int status = 0;
+        fits_read_descripts(
+            fptr_, col_idx + 1, start_row, num_rows, repeats.data(), heap_offsets.data(), &status
+        );
+
+        if (status != 0) {
+            // Fallback to per-row descriptors for older/edge-case CFITSIO behavior.
             status = 0;
-            
-            // Determine type code for cfitsio
-            int type_code = 0;
-            switch (col.torch_type) {
-                case torch::kFloat32: type_code = TFLOAT; break;
-                case torch::kFloat64: type_code = TDOUBLE; break;
-                case torch::kInt32: type_code = TINT; break;
-                case torch::kInt16: type_code = TSHORT; break;
-                case torch::kInt64: type_code = TLONGLONG; break;
-                case torch::kUInt8: type_code = TBYTE; break;
-                case torch::kBool: type_code = TLOGICAL; break;
-                default: type_code = TFLOAT;
+            for (long i = 0; i < num_rows; i++) {
+                long row = start_row + i;
+                fits_read_descript(fptr_, col_idx + 1, row, &repeats[i], &heap_offsets[i], &status);
+                if (status != 0) {
+                    char err_msg[81];
+                    fits_get_errstatus(status, err_msg);
+                    throw std::runtime_error(
+                        "Failed to read VLA descriptor: " + std::string(err_msg)
+                    );
+                }
             }
-            
-            fits_read_col(fptr_, type_code, col_idx + 1, row, 1, repeat, nullptr, 
-                          tensor.data_ptr(), &anynul, &status);
-                          
-            if (status != 0) {
-                 char err_msg[81];
-                 fits_get_errstatus(status, err_msg);
-                 throw std::runtime_error("Failed to read VLA data: " + std::string(err_msg));
+        }
+
+        for (long i = 0; i < num_rows; i++) {
+            long repeat = repeats[i];
+            if (repeat < 0) {
+                repeat = 0;
             }
-            
+
+            std::vector<int64_t> shape;
+            shape.push_back(repeat);
+            torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
+
+            if (repeat > 0) {
+                long row = start_row + i;
+                int anynul = 0;
+                status = 0;
+                fits_read_col(
+                    fptr_, type_code, col_idx + 1, row, 1, repeat, nullptr, tensor.data_ptr(), &anynul, &status
+                );
+                if (status != 0) {
+                    char err_msg[81];
+                    fits_get_errstatus(status, err_msg);
+                    throw std::runtime_error("Failed to read VLA data: " + std::string(err_msg));
+                }
+            }
+
             column_data.push_back(tensor);
         }
         
         return column_data;
+    }
+
+    // Read a VLA column as flat values + row offsets for fast Arrow ListArray construction.
+    std::pair<torch::Tensor, torch::Tensor> read_vla_column_flat(
+        int col_idx, long start_row, long num_rows, const ColumnInfo& col
+    ) {
+        std::vector<long> repeats(num_rows, 0);
+        std::vector<long> heap_offsets(num_rows, 0);
+        int status = 0;
+        fits_read_descripts(
+            fptr_, col_idx + 1, start_row, num_rows, repeats.data(), heap_offsets.data(), &status
+        );
+        if (status != 0) {
+            status = 0;
+            for (long i = 0; i < num_rows; i++) {
+                long row = start_row + i;
+                fits_read_descript(fptr_, col_idx + 1, row, &repeats[i], &heap_offsets[i], &status);
+                if (status != 0) {
+                    char err_msg[81];
+                    fits_get_errstatus(status, err_msg);
+                    throw std::runtime_error("Failed to read VLA descriptor: " + std::string(err_msg));
+                }
+            }
+        }
+
+        std::vector<int64_t> offsets(num_rows + 1, 0);
+        int64_t total = 0;
+        for (long i = 0; i < num_rows; i++) {
+            long rep = repeats[i];
+            if (rep < 0) {
+                rep = 0;
+            }
+            total += static_cast<int64_t>(rep);
+            offsets[i + 1] = total;
+        }
+
+        torch::Tensor values = torch::empty(
+            {total}, torch::TensorOptions().dtype(col.torch_type)
+        );
+        torch::Tensor offs = torch::from_blob(
+            offsets.data(),
+            {static_cast<long long>(offsets.size())},
+            torch::TensorOptions().dtype(torch::kInt64)
+        ).clone();
+
+        int type_code = 0;
+        switch (col.torch_type) {
+            case torch::kFloat32: type_code = TFLOAT; break;
+            case torch::kFloat64: type_code = TDOUBLE; break;
+            case torch::kInt32: type_code = TINT; break;
+            case torch::kInt16: type_code = TSHORT; break;
+            case torch::kInt64: type_code = TLONGLONG; break;
+            case torch::kUInt8: type_code = TBYTE; break;
+            case torch::kBool: type_code = TLOGICAL; break;
+            default: type_code = TFLOAT;
+        }
+
+        int64_t cursor = 0;
+        for (long i = 0; i < num_rows; i++) {
+            long rep = repeats[i];
+            if (rep <= 0) {
+                continue;
+            }
+
+            long row = start_row + i;
+            int anynul = 0;
+            status = 0;
+
+            void* dst = nullptr;
+            switch (values.scalar_type()) {
+                case torch::kBool:
+                    dst = static_cast<void*>(values.data_ptr<bool>() + cursor);
+                    break;
+                case torch::kUInt8:
+                    dst = static_cast<void*>(values.data_ptr<uint8_t>() + cursor);
+                    break;
+                case torch::kInt16:
+                    dst = static_cast<void*>(values.data_ptr<int16_t>() + cursor);
+                    break;
+                case torch::kInt32:
+                    dst = static_cast<void*>(values.data_ptr<int32_t>() + cursor);
+                    break;
+                case torch::kInt64:
+                    dst = static_cast<void*>(values.data_ptr<int64_t>() + cursor);
+                    break;
+                case torch::kFloat32:
+                    dst = static_cast<void*>(values.data_ptr<float>() + cursor);
+                    break;
+                case torch::kFloat64:
+                    dst = static_cast<void*>(values.data_ptr<double>() + cursor);
+                    break;
+                default:
+                    throw std::runtime_error("Unsupported VLA scalar type");
+            }
+
+            fits_read_col(
+                fptr_, type_code, col_idx + 1, row, 1, rep, nullptr, dst, &anynul, &status
+            );
+            if (status != 0) {
+                char err_msg[81];
+                fits_get_errstatus(status, err_msg);
+                throw std::runtime_error("Failed to read VLA data: " + std::string(err_msg));
+            }
+            cursor += rep;
+        }
+
+        return std::make_pair(values, offs);
     }
 
     // Forward declaration of helper function
@@ -1161,7 +1629,7 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
 
 
 
-void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite) {
+void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite, nb::object schema_obj, const std::string& table_type) {
     fitsfile* fptr;
     int status = 0;
 
@@ -1180,7 +1648,15 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     }
     
     try {
-        torchfits::write_table_hdu(fptr, tensor_dict, header);
+        bool is_ascii = false;
+        std::string kind = table_type;
+        for (auto& c : kind) {
+            c = std::tolower(static_cast<unsigned char>(c));
+        }
+        if (kind == "ascii") {
+            is_ascii = true;
+        }
+        torchfits::write_table_hdu(fptr, tensor_dict, header, schema_obj, is_ascii);
     } catch (...) {
         fits_close_file(fptr, &status);
         throw;
@@ -1189,26 +1665,57 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
     fits_close_file(fptr, &status);
 }
 
+long infer_num_rows_from_payload(nb::dict tensor_dict) {
+    long num_rows = 0;
+    if (tensor_dict.size() <= 0) {
+        return 0;
+    }
+
+    nb::handle first_obj = (*tensor_dict.begin()).second;
+    if (nb::isinstance<nb::list>(first_obj)) {
+        nb::list lst = nb::cast<nb::list>(first_obj);
+        return static_cast<long>(lst.size());
+    }
+    if (nb::isinstance<nb::tuple>(first_obj)) {
+        nb::tuple tup = nb::cast<nb::tuple>(first_obj);
+        return static_cast<long>(tup.size());
+    }
+    if (nb::isinstance<nb::str>(first_obj) || nb::isinstance<nb::bytes>(first_obj)) {
+        return 1;
+    }
+
+    nb::ndarray<> first_col = nb::cast<nb::ndarray<>>(first_obj);
+    int ndim = first_col.ndim();
+    if (ndim == 0) {
+        return 1;
+    }
+    return static_cast<long>(first_col.shape(0));
+}
+
+void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows);
 
 void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
     fitsfile* fptr;
     int status = 0;
 
-    fits_open_file(&fptr, filename, READWRITE, &status);
+    // Use explicit cfitsio mode value to avoid macro collisions with Python headers.
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
-        throw std::runtime_error("Failed to open FITS file for writing");
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
     }
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
+        fits_close_file(fptr, &status);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
-    long num_rows = 0;
-    if (tensor_dict.size() > 0) {
-        auto first_col = nb::cast<torch::Tensor>((*tensor_dict.begin()).second);
-        num_rows = first_col.size(0);
-    }
+    long num_rows = infer_num_rows_from_payload(tensor_dict);
 
     long start_row;
     fits_get_num_rows(fptr, &start_row, &status);
@@ -1216,31 +1723,604 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
 
     fits_insert_rows(fptr, start_row -1, num_rows, &status);
 
-    int i = 0;
     for (auto item : tensor_dict) {
-        torch::Tensor tensor = nb::cast<torch::Tensor>(item.second);
-        void* data_ptr = tensor.data_ptr();
-        int fits_type;
-        if (tensor.dtype() == torch::kUInt8) {
-            fits_type = TBYTE;
-        } else if (tensor.dtype() == torch::kInt16) {
-            fits_type = TSHORT;
-        } else if (tensor.dtype() == torch::kInt32) {
-            fits_type = TINT;
-        } else if (tensor.dtype() == torch::kFloat32) {
-            fits_type = TFLOAT;
-        } else if (tensor.dtype() == torch::kFloat64) {
-            fits_type = TDOUBLE;
+        std::string col_name = nb::cast<std::string>(item.first);
+        int colnum = 0;
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &colnum, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Column not found for append_rows: " + col_name);
         }
 
-        fits_write_col(fptr, fits_type, i + 1, start_row, 1, num_rows, data_ptr, &status);
-        i++;
+        int col_status = 0;
+        int typecode = 0;
+        long repeat = 0;
+        long width = 0;
+        fits_get_coltype(fptr, colnum, &typecode, &repeat, &width, &col_status);
+        if (col_status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Failed to get column type for append_rows: " + col_name);
+        }
+
+        if (typecode < 0) {
+            int base_type = -typecode;
+            nb::handle obj = item.second;
+            if (!(nb::isinstance<nb::list>(obj) || nb::isinstance<nb::tuple>(obj))) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("append_rows VLA column expects list/tuple for " + col_name);
+            }
+
+            nb::sequence seq = nb::cast<nb::sequence>(obj);
+            long seq_len = static_cast<long>(nb::len(seq));
+            if (seq_len != num_rows) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("append_rows column length mismatch for " + col_name);
+            }
+
+            for (long row = 0; row < num_rows; ++row) {
+                nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
+                if (arr.ndim() > 1) {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error("append_rows VLA rows must be 1D for " + col_name);
+                }
+                long nelements = static_cast<long>(arr.size());
+                void* data_ptr = arr.size() ? arr.data() : nullptr;
+                std::vector<unsigned char> logical;
+
+                if (base_type == TLOGICAL && nelements > 0) {
+                    nb::dlpack::dtype dt = arr.dtype();
+                    logical.resize(static_cast<size_t>(nelements));
+                    if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+                        const bool* src = static_cast<const bool*>(arr.data());
+                        for (long idx = 0; idx < nelements; ++idx) {
+                            logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                        }
+                    } else {
+                        const uint8_t* src = static_cast<const uint8_t*>(arr.data());
+                        for (long idx = 0; idx < nelements; ++idx) {
+                            logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                        }
+                    }
+                    data_ptr = logical.data();
+                }
+
+                fits_write_col(fptr, base_type, colnum, start_row + row, 1, nelements, data_ptr, &status);
+            }
+            continue;
+        }
+
+        if (typecode == TSTRING) {
+            std::vector<std::string> values;
+            nb::handle obj = item.second;
+            if (nb::isinstance<nb::list>(obj)) {
+                nb::list lst = nb::cast<nb::list>(obj);
+                values.reserve(lst.size());
+                for (auto v : lst) {
+                    values.push_back(nb::cast<std::string>(v));
+                }
+            } else if (nb::isinstance<nb::tuple>(obj)) {
+                nb::tuple tup = nb::cast<nb::tuple>(obj);
+                values.reserve(tup.size());
+                for (auto v : tup) {
+                    values.push_back(nb::cast<std::string>(v));
+                }
+            } else if (nb::isinstance<nb::str>(obj) || nb::isinstance<nb::bytes>(obj)) {
+                values.push_back(nb::cast<std::string>(obj));
+            } else {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("append_rows string column expects list/tuple/str for " + col_name);
+            }
+
+            if (static_cast<long>(values.size()) != num_rows) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("append_rows column length mismatch for " + col_name);
+            }
+
+            long width_chars = repeat > 0 ? repeat : 1;
+            std::vector<std::string> padded;
+            padded.reserve(values.size());
+            for (const auto& v : values) {
+                std::string s = v;
+                if (static_cast<long>(s.size()) > width_chars) {
+                    s = s.substr(0, static_cast<size_t>(width_chars));
+                } else if (static_cast<long>(s.size()) < width_chars) {
+                    s.append(static_cast<size_t>(width_chars - s.size()), ' ');
+                }
+                padded.push_back(std::move(s));
+            }
+            std::vector<const char*> ptrs;
+            ptrs.reserve(padded.size());
+            for (const auto& s : padded) {
+                ptrs.push_back(s.c_str());
+            }
+
+            fits_write_col(fptr, TSTRING, colnum, start_row, 1, num_rows,
+                           const_cast<char**>(ptrs.data()), &status);
+            continue;
+        }
+
+        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
+        int ndim = tensor.ndim();
+        long rows = 1;
+        long repeat_vals = 1;
+        if (ndim == 0) {
+            rows = 1;
+            repeat_vals = 1;
+        } else if (ndim == 1) {
+            rows = static_cast<long>(tensor.shape(0));
+            repeat_vals = 1;
+        } else if (ndim == 2) {
+            rows = static_cast<long>(tensor.shape(0));
+            repeat_vals = static_cast<long>(tensor.shape(1));
+        } else {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("append_rows only supports 1D/2D columns for " + col_name);
+        }
+
+        if (rows != num_rows) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("append_rows column length mismatch for " + col_name);
+        }
+
+        void* data_ptr = tensor.data();
+        int fits_type = 0;
+        std::vector<unsigned char> logical_buffer;
+
+        nb::dlpack::dtype dt = tensor.dtype();
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+            fits_type = TLOGICAL;
+            long nelements = rows * repeat_vals;
+            logical_buffer.resize(static_cast<size_t>(nelements));
+            const bool* src = static_cast<const bool*>(tensor.data());
+            for (long idx = 0; idx < nelements; ++idx) {
+                logical_buffer[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+            }
+            data_ptr = logical_buffer.data();
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+            fits_type = TBYTE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
+            fits_type = TSHORT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
+            fits_type = TINT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
+            fits_type = TFLOAT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
+            fits_type = TDOUBLE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
+            fits_type = TLONGLONG;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 64) {
+            fits_type = TCOMPLEX;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 128) {
+            fits_type = TDBLCOMPLEX;
+        } else {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Unsupported dtype for append_rows");
+        }
+
+        long nelements = num_rows * repeat_vals;
+        fits_write_col(fptr, fits_type, colnum, start_row, 1, nelements, data_ptr, &status);
     }
 
     fits_close_file(fptr, &status);
 
     if (status != 0) {
         throw std::runtime_error("Failed to append rows to FITS table");
+    }
+}
+
+void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row) {
+    long num_rows = infer_num_rows_from_payload(tensor_dict);
+    if (num_rows <= 0) {
+        return;
+    }
+
+    fitsfile* fptr = nullptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to move to table HDU");
+    }
+
+    long total_rows = 0;
+    fits_get_num_rows(fptr, &total_rows, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to get table row count");
+    }
+
+    if (start_row < 1 || start_row > (total_rows + 1)) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("insert_rows start_row out of range");
+    }
+
+    fits_insert_rows(fptr, start_row - 1, num_rows, &status);
+    fits_close_file(fptr, &status);
+    if (status != 0) {
+        throw std::runtime_error("Failed to insert rows into FITS table");
+    }
+
+    // Reuse the existing typed write path to populate inserted rows.
+    update_rows(filename, hdu_num, tensor_dict, start_row, num_rows);
+}
+
+void delete_rows(const char* filename, int hdu_num, long start_row, long num_rows) {
+    if (num_rows <= 0) {
+        return;
+    }
+
+    fitsfile* fptr = nullptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to move to table HDU");
+    }
+
+    long total_rows = 0;
+    fits_get_num_rows(fptr, &total_rows, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to get table row count");
+    }
+
+    if (start_row < 1 || start_row > total_rows) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("delete_rows start_row out of range");
+    }
+
+    long max_rows = total_rows - start_row + 1;
+    long ndelete = std::min(num_rows, max_rows);
+    fits_delete_rows(fptr, start_row, ndelete, &status);
+    fits_close_file(fptr, &status);
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to delete rows from FITS table");
+    }
+}
+
+void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
+    if (num_rows <= 0) {
+        return;
+    }
+
+    fitsfile* fptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to move to table HDU");
+    }
+
+    for (auto item : tensor_dict) {
+        std::string col_name = nb::cast<std::string>(item.first);
+        int colnum = 0;
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &colnum, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Column not found for update_rows: " + col_name);
+        }
+
+        int col_status = 0;
+        int typecode = 0;
+        long repeat = 0;
+        long width = 0;
+        fits_get_coltype(fptr, colnum, &typecode, &repeat, &width, &col_status);
+        if (col_status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Failed to get column type for update_rows: " + col_name);
+        }
+
+        if (typecode < 0) {
+            int base_type = -typecode;
+            nb::handle obj = item.second;
+            if (!(nb::isinstance<nb::list>(obj) || nb::isinstance<nb::tuple>(obj))) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("update_rows VLA column expects list/tuple for " + col_name);
+            }
+
+            nb::sequence seq = nb::cast<nb::sequence>(obj);
+            long seq_len = static_cast<long>(nb::len(seq));
+            if (seq_len != num_rows) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("update_rows column length mismatch for " + col_name);
+            }
+
+            for (long row = 0; row < num_rows; ++row) {
+                nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
+                if (arr.ndim() > 1) {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error("update_rows VLA rows must be 1D for " + col_name);
+                }
+                long nelements = static_cast<long>(arr.size());
+                void* data_ptr = arr.size() ? arr.data() : nullptr;
+                std::vector<unsigned char> logical;
+
+                if (base_type == TLOGICAL && nelements > 0) {
+                    nb::dlpack::dtype dt = arr.dtype();
+                    logical.resize(static_cast<size_t>(nelements));
+                    if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+                        const bool* src = static_cast<const bool*>(arr.data());
+                        for (long idx = 0; idx < nelements; ++idx) {
+                            logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                        }
+                    } else {
+                        const uint8_t* src = static_cast<const uint8_t*>(arr.data());
+                        for (long idx = 0; idx < nelements; ++idx) {
+                            logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                        }
+                    }
+                    data_ptr = logical.data();
+                }
+
+                fits_write_col(fptr, base_type, colnum, start_row + row, 1, nelements, data_ptr, &status);
+            }
+            continue;
+        }
+
+        if (typecode == TSTRING) {
+            std::vector<std::string> values;
+            nb::handle obj = item.second;
+            if (nb::isinstance<nb::list>(obj)) {
+                nb::list lst = nb::cast<nb::list>(obj);
+                values.reserve(lst.size());
+                for (auto v : lst) {
+                    values.push_back(nb::cast<std::string>(v));
+                }
+            } else if (nb::isinstance<nb::tuple>(obj)) {
+                nb::tuple tup = nb::cast<nb::tuple>(obj);
+                values.reserve(tup.size());
+                for (auto v : tup) {
+                    values.push_back(nb::cast<std::string>(v));
+                }
+            } else if (nb::isinstance<nb::str>(obj) || nb::isinstance<nb::bytes>(obj)) {
+                values.push_back(nb::cast<std::string>(obj));
+            } else {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("update_rows string column expects list/tuple/str for " + col_name);
+            }
+
+            if (static_cast<long>(values.size()) != num_rows) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error("update_rows column length mismatch for " + col_name);
+            }
+
+            long width_chars = repeat > 0 ? repeat : 1;
+            std::vector<std::string> padded;
+            padded.reserve(values.size());
+            for (const auto& v : values) {
+                std::string s = v;
+                if (static_cast<long>(s.size()) > width_chars) {
+                    s = s.substr(0, static_cast<size_t>(width_chars));
+                } else if (static_cast<long>(s.size()) < width_chars) {
+                    s.append(static_cast<size_t>(width_chars - s.size()), ' ');
+                }
+                padded.push_back(std::move(s));
+            }
+            std::vector<const char*> ptrs;
+            ptrs.reserve(padded.size());
+            for (const auto& s : padded) {
+                ptrs.push_back(s.c_str());
+            }
+
+            fits_write_col(fptr, TSTRING, colnum, start_row, 1, num_rows,
+                           const_cast<char**>(ptrs.data()), &status);
+            continue;
+        }
+
+        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
+        int ndim = tensor.ndim();
+        long rows = 1;
+        long repeat_vals = 1;
+        if (ndim == 0) {
+            rows = 1;
+            repeat_vals = 1;
+        } else if (ndim == 1) {
+            rows = static_cast<long>(tensor.shape(0));
+            repeat_vals = 1;
+        } else if (ndim == 2) {
+            rows = static_cast<long>(tensor.shape(0));
+            repeat_vals = static_cast<long>(tensor.shape(1));
+        } else {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("update_rows only supports 1D/2D columns for " + col_name);
+        }
+
+        if (rows != num_rows) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("update_rows column length mismatch for " + col_name);
+        }
+
+        void* data_ptr = tensor.data();
+        int fits_type = 0;
+        std::vector<unsigned char> logical_buffer;
+
+        nb::dlpack::dtype dt = tensor.dtype();
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+            fits_type = TLOGICAL;
+            long nelements = rows * repeat_vals;
+            logical_buffer.resize(static_cast<size_t>(nelements));
+            const bool* src = static_cast<const bool*>(tensor.data());
+            for (long idx = 0; idx < nelements; ++idx) {
+                logical_buffer[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+            }
+            data_ptr = logical_buffer.data();
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+            fits_type = TBYTE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
+            fits_type = TSHORT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) {
+            fits_type = TINT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) {
+            fits_type = TFLOAT;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) {
+            fits_type = TDOUBLE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) {
+            fits_type = TLONGLONG;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 64) {
+            fits_type = TCOMPLEX;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 128) {
+            fits_type = TDBLCOMPLEX;
+        } else {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Unsupported dtype for update_rows");
+        }
+
+        long nelements = num_rows * repeat_vals;
+        fits_write_col(fptr, fits_type, colnum, start_row, 1, nelements, data_ptr, &status);
+    }
+
+    fits_close_file(fptr, &status);
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to update rows in FITS table");
+    }
+}
+
+void update_rows_mmap(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
+    torchfits::TableReader reader(filename, hdu_num);
+    reader.update_rows_mmap(tensor_dict, start_row, num_rows);
+}
+
+void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
+    fitsfile* fptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to move to table HDU");
+    }
+
+    for (auto item : mapping) {
+        std::string old_name = nb::cast<std::string>(item.first);
+        std::string new_name = nb::cast<std::string>(item.second);
+        if (old_name == new_name) {
+            continue;
+        }
+
+        int colnum = 0;
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(old_name.c_str()), &colnum, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Column not found for rename_columns: " + old_name);
+        }
+
+        int check_status = 0;
+        int existing = 0;
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(new_name.c_str()), &existing, &check_status);
+        if (check_status == 0 && existing > 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Target column already exists: " + new_name);
+        }
+
+        char keyname[FLEN_KEYWORD];
+        fits_make_keyn("TTYPE", colnum, keyname, &status);
+        fits_update_key(fptr, TSTRING, keyname, (void*)new_name.c_str(), nullptr, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Failed to update column name for " + old_name);
+        }
+    }
+
+    fits_close_file(fptr, &status);
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to rename FITS table columns");
+    }
+}
+
+void drop_columns(const char* filename, int hdu_num, nb::list columns) {
+    fitsfile* fptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+    if (status != 0) {
+        fits_close_file(fptr, &status);
+        throw std::runtime_error("Failed to move to table HDU");
+    }
+
+    std::vector<int> colnums;
+    colnums.reserve(static_cast<size_t>(columns.size()));
+    for (auto name_obj : columns) {
+        std::string name = nb::cast<std::string>(name_obj);
+        int colnum = 0;
+        fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(name.c_str()), &colnum, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Column not found for drop_columns: " + name);
+        }
+        colnums.push_back(colnum);
+    }
+
+    std::sort(colnums.begin(), colnums.end(), std::greater<int>());
+    colnums.erase(std::unique(colnums.begin(), colnums.end()), colnums.end());
+
+    for (int colnum : colnums) {
+        fits_delete_col(fptr, colnum, &status);
+        if (status != 0) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error("Failed to delete column");
+        }
+    }
+
+    fits_close_file(fptr, &status);
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to drop FITS table columns");
     }
 }
 

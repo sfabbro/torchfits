@@ -5,6 +5,7 @@ Benchmarks table reading, filtering, and pytorch-frame integration
 across different table sizes and column types.
 """
 
+import argparse
 import sys
 import tempfile
 import time
@@ -67,16 +68,22 @@ class TableBenchmarkData:
 class TableBenchmarkSuite:
     """Table-specific benchmark suite."""
 
-    def __init__(self):
+    def __init__(self, table_sizes=None, column_configs=None):
         self.results = {}
         self.temp_dir = tempfile.mkdtemp()
+        self.table_sizes = (
+            list(table_sizes) if table_sizes is not None else list(TABLE_SIZES)
+        )
+        self.column_configs = (
+            list(column_configs) if column_configs is not None else list(COLUMN_CONFIGS)
+        )
 
     def benchmark_table_reading(self):
         """Benchmark table reading operations."""
         print("=== Table Reading Benchmarks ===")
 
-        for nrows in TABLE_SIZES:
-            for config in COLUMN_CONFIGS:
+        for nrows in self.table_sizes:
+            for config in self.column_configs:
                 ncols = config["ncols"]
                 types = config["types"]
 
@@ -115,33 +122,44 @@ class TableBenchmarkSuite:
                     print("No table HDU found")
                     return
 
-                # Selection benchmark
+                # Selection benchmark (view/projection)
                 start_time = time.perf_counter()
-                table.select(["col_0", "col_1", "col_2"])
+                _ = table.select(["col_0", "col_1", "col_2"])
                 select_time = time.perf_counter() - start_time
-                print(f"  Column selection: {select_time:.6f}s (lazy)")
+                print(f"  Column selection: {select_time:.6f}s (view)")
 
-                # Filter benchmark
+                # Filter benchmark (out-of-core Arrow batch)
                 start_time = time.perf_counter()
-                table.filter("col_0 > 0")
-                filter_time = time.perf_counter() - start_time
-                print(f"  Row filtering: {filter_time:.6f}s (lazy)")
+                try:
+                    import pyarrow.dataset as ds
 
-                # Head benchmark
+                    scanner = torchfits.table.scanner(
+                        str(filename),
+                        columns=["col_0", "col_1"],
+                        filter=ds.field("col_0") > 0,
+                        batch_size=65536,
+                        decode_bytes=False,
+                    )
+                    _ = next(scanner.to_batches())
+                    filter_time = time.perf_counter() - start_time
+                    print(f"  Row filtering: {filter_time:.6f}s (arrow batch)")
+                except Exception as e:
+                    filter_time = time.perf_counter() - start_time
+                    print(f"  Row filtering: FAILED ({e})")
+
+                # Head benchmark (view)
                 start_time = time.perf_counter()
-                table.head(1000)
+                _ = table.head(1000)
                 head_time = time.perf_counter() - start_time
-                print(f"  Head operation: {head_time:.6f}s (lazy)")
+                print(f"  Head operation: {head_time:.6f}s (view)")
 
-                # Chained operations
+                # Chained view ops
                 start_time = time.perf_counter()
-                chained = (
-                    table.select(["col_0", "col_1"]).filter("col_0 > 0").head(1000)
-                )
+                chained = table.select(["col_0", "col_1"]).head(1000)
                 chain_time = time.perf_counter() - start_time
-                print(f"  Chained operations: {chain_time:.6f}s (lazy)")
+                print(f"  Chained operations: {chain_time:.6f}s (view)")
 
-                # Materialization benchmark
+                # Materialization benchmark (explicit and potentially expensive)
                 start_time = time.perf_counter()
                 chained.materialize()
                 materialize_time = time.perf_counter() - start_time
@@ -170,7 +188,7 @@ class TableBenchmarkSuite:
                     table = hdul[1]
 
                     # Get available column names
-                    available_cols = list(table.col_names_dict.keys())
+                    available_cols = list(getattr(table, "columns", []))
                     print(f"  Available columns: {available_cols[:5]}...")
 
                     if available_cols:
@@ -320,9 +338,30 @@ class TableBenchmarkSuite:
         self.print_summary()
 
 
+def _quick_column_configs():
+    return [
+        {"ncols": 5, "types": ["f4"] * 5},
+        {"ncols": 20, "types": ["f4"] * 10 + ["i4"] * 10},
+    ]
+
+
 def main():
     """Run table benchmark suite."""
-    suite = TableBenchmarkSuite()
+    parser = argparse.ArgumentParser(description="Run table benchmark suite")
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Use reduced table sizes/configs for fast iteration.",
+    )
+    args = parser.parse_args()
+
+    table_sizes = TABLE_SIZES
+    column_configs = COLUMN_CONFIGS
+    if args.quick:
+        table_sizes = [1000, 10000, 100000]
+        column_configs = _quick_column_configs()
+
+    suite = TableBenchmarkSuite(table_sizes=table_sizes, column_configs=column_configs)
     suite.run_all_benchmarks()
 
 

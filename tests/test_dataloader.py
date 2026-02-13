@@ -119,6 +119,8 @@ class TestDataLoaderCreation:
                 max_chunks=None,
                 mmap=False,
                 device="cpu",
+                non_blocking_transfer=True,
+                pin_memory_transfer=False,
                 transform=None,
                 include_header=False,
             )

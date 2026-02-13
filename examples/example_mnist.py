@@ -15,8 +15,10 @@ except ImportError:
 try:
     from tqdm import tqdm
 except ImportError:
+
     def tqdm(iterable, **_kwargs):
         return iterable
+
 
 import torchfits
 
@@ -171,7 +173,9 @@ def main():
     data_dir = "data_mnist_fits"
 
     if datasets is None or transforms is None:
-        print("Skipping example_mnist.py: torchvision is not installed in this environment.")
+        print(
+            "Skipping example_mnist.py: torchvision is not installed in this environment."
+        )
         return 0
 
     # Use a subset for faster demonstration (1000 train, 200 test)

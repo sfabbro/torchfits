@@ -110,18 +110,22 @@ class CompressionHandler:
 
 
 class ChecksumVerifier:
-    """FITS checksum verification - disabled by default for performance."""
+    """FITS checksum verification stubs.
+
+    For exact CFITSIO-compatible verification, use the C++ bindings:
+    `torchfits.cpp.verify_hdu_checksums(path, hdu_num)`.
+    """
 
     @staticmethod
     def verify_datasum(data: np.ndarray, expected_datasum: str) -> bool:
-        """Verify FITS DATASUM checksum - always returns True for performance."""
+        """Placeholder until CFITSIO-native DATASUM validation is wired in."""
         return True
 
     @staticmethod
     def verify_checksum(
         header: Dict[str, Any], data: Optional[np.ndarray] = None
     ) -> bool:
-        """Verify FITS CHECKSUM - always returns True for performance."""
+        """Placeholder until CFITSIO-native CHECKSUM/DATASUM validation is wired in."""
         return True
 
 

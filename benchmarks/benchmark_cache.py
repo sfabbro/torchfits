@@ -18,10 +18,10 @@ from mpl_config import configure
 
 configure()
 
-import matplotlib.pyplot as plt
-import pandas as pd
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
 
-from torchfits import cache
+from torchfits import cache  # noqa: E402
 
 
 class CacheBenchmark:
@@ -319,6 +319,57 @@ def main():
     results = benchmark.run_benchmarks()
     benchmark.generate_plots(results)
     benchmark.save_results(results)
+    # Ranked console view for quick comparison (lower is better).
+    try:
+        print("\nRanked Summary (Cache):")
+        if results.get("configuration"):
+            items = []
+            for name, m in results["configuration"].items():
+                items.append(
+                    (
+                        name,
+                        m.get("config_time_ms", float("inf")),
+                        m.get("stats_time_ms", float("inf")),
+                        m.get("clear_time_ms", float("inf")),
+                    )
+                )
+            items.sort(key=lambda x: x[1])
+            print("  Configurations (config_time_ms):")
+            best = items[0][1] if items else None
+            for i, (name, cfg, st, cl) in enumerate(items, start=1):
+                ratio = cfg / best if best else float("inf")
+                print(
+                    f"    {i:2d}. {name:12s} config={cfg:.4f}ms  stats={st:.4f}ms  clear={cl:.4f}ms  ({ratio:.2f}x best)"
+                )
+
+        if results.get("environment_detection"):
+            m = results["environment_detection"]
+            print("  Environment detection:")
+            print(
+                f"    detection_time_ms={m.get('detection_time_ms'):.4f}  auto_config_time_ms={m.get('auto_config_time_ms'):.4f}  env={m.get('detected_config', {}).get('environment', 'unknown')}"
+            )
+
+        if results.get("operations"):
+            items = []
+            for name, m in results["operations"].items():
+                # Prefer avg_time_per_call_us when present; else total_time_ms.
+                metric = m.get("avg_time_per_call_us")
+                kind = "avg_time_per_call_us"
+                if metric is None:
+                    metric = m.get("total_time_ms", float("inf"))
+                    kind = "total_time_ms"
+                items.append((name, kind, metric))
+            items.sort(key=lambda x: x[2])
+            print("  Operations (lower is better):")
+            best = items[0][2] if items else None
+            for i, (name, kind, v) in enumerate(items, start=1):
+                ratio = v / best if best else float("inf")
+                suffix = "us" if kind.endswith("_us") else "ms"
+                print(
+                    f"    {i:2d}. {name:20s} {v:.4f}{suffix} ({kind})  ({ratio:.2f}x best)"
+                )
+    except Exception as e:
+        print(f"(ranked summary skipped: {e})")
     print("✅ Cache benchmarks completed!")
 
 

@@ -22,6 +22,13 @@ Run the full suite of benchmarks (may take several minutes):
 pixi run bench-all
 ```
 
+Use benchmark profiles:
+
+```bash
+pixi run bench-all -- --profile user  # representative defaults (cache on)
+pixi run bench-all -- --profile lab   # stricter cold-I/O defaults
+```
+
 To run detailed benchmarks for specific components:
 
 ```bash

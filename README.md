@@ -69,7 +69,7 @@ Decoding string columns from `TableHDU`:
 
 ```python
 with torchfits.open("catalog.fits") as hdul:
-    table = hdul[1]
+    table = hdul[1]  # TableHDURef (lazy handle)
     if "NAME" in table.string_columns:
         names = table.get_string_column("NAME")
 ```
@@ -114,6 +114,103 @@ df = torchfits.to_pandas(table, decode_bytes=True)
 arrow = torchfits.to_arrow(table, decode_bytes=True)
 ```
 
+Arrow-native table API (streaming/out-of-core friendly):
+
+```python
+# Read as Arrow table
+arrow_table = torchfits.table.read("catalog.fits", hdu=1, decode_bytes=True)
+# Push down row predicates before materializing result rows.
+# Supports comparisons, IN/NOT IN, BETWEEN/NOT BETWEEN, IS NULL/IS NOT NULL,
+# plus NOT/AND/OR with parentheses.
+arrow_north = torchfits.table.read("catalog.fits", hdu=1, where="DEC > 0")
+# FITS null sentinels (TNULLn) are converted to Arrow nulls by default.
+# Disable for maximum throughput when you don't need null semantics:
+arrow_fast = torchfits.table.read(
+    "catalog.fits", hdu=1, decode_bytes=False, apply_fits_nulls=False
+)
+
+# Stream Arrow record batches
+for batch in torchfits.table.scan(
+    "catalog.fits", hdu=1, where="ID >= 2", columns=["ID"], batch_size=100_000
+):
+    ...
+
+# Build a RecordBatchReader / Arrow dataset (ecosystem-native)
+reader = torchfits.table.reader("catalog.fits", hdu=1, batch_size=100_000)
+dset = torchfits.table.dataset("catalog.fits", hdu=1)
+scanner = torchfits.table.scanner(
+    "catalog.fits", hdu=1, columns=["RA", "DEC"], where="DEC > 0", filter=None
+)
+
+# Stream directly to accelerator-friendly torch chunks
+for chunk in torchfits.table.scan_torch("catalog.fits", hdu=1, batch_size=100_000, device="cuda"):
+    ...
+
+# Convert to pandas / polars
+df = torchfits.table.to_pandas(arrow_table)
+pl_df = torchfits.table.to_polars(arrow_table)
+lf = torchfits.table.to_polars_lazy("catalog.fits", hdu=1, decode_bytes=True)
+
+# Use DuckDB for SQL-style joins/group-bys/windows
+agg = torchfits.table.duckdb_query(
+    "catalog.fits",
+    "SELECT AVG(RA) AS ra_mean, COUNT(*) AS n FROM fits_table WHERE DEC > 0",
+    hdu=1,
+)
+
+# Export stream to parquet without materializing full table
+torchfits.table.write_parquet("catalog.parquet", reader, stream=True)
+
+# Schema-first table writing and ASCII tables are now supported via `torchfits.table.write(...)`.
+```
+
+Tip: keep `decode_bytes=False` for maximum read throughput and decode only when needed.
+Scaled table columns (`TSCALn`/`TZEROn`) are returned as physical values.
+
+Design note: torchfits focuses on FITS-native I/O, schema/null/scaling semantics, and fast Arrow/torch conversion.
+For complex dataframe operations (multi-table joins, window functions, advanced group-bys), prefer Polars/DuckDB via these adapters.
+
+Table recipes (recommended pattern):
+
+```python
+# 1) Projection/filter pushdown with Arrow scanner
+import pyarrow.dataset as ds
+scanner = torchfits.table.scanner(
+    "catalog.fits",
+    hdu=1,
+    columns=["OBJID", "RA", "DEC"],
+    filter=ds.field("DEC") > 0,
+)
+north = scanner.to_table()
+
+# 2) Complex expressions with Polars LazyFrame
+import polars as pl
+lf = torchfits.table.to_polars_lazy("catalog.fits", hdu=1, decode_bytes=True)
+summary = (
+    lf.filter(pl.col("MAG_G").is_not_null())
+    .group_by("BAND")
+    .agg(pl.col("MAG_G").mean().alias("mag_g_mean"), pl.len().alias("n"))
+    .sort("n", descending=True)
+    .collect()
+)
+
+# 3) SQL joins/windows with DuckDB
+import duckdb
+con = duckdb.connect()
+torchfits.table.to_duckdb("catalog_a.fits", hdu=1, relation_name="a", connection=con)
+torchfits.table.to_duckdb("catalog_b.fits", hdu=1, relation_name="b", connection=con)
+joined = con.sql(
+    \"\"\"
+    SELECT a.OBJID, a.RA, b.CLASS
+    FROM a
+    JOIN b USING (OBJID)
+    WHERE a.DEC > 0
+    \"\"\"
+).arrow()
+```
+
+For a runnable end-to-end version, see `examples/example_table_recipes.py`.
+
 ### Writing FITS Files
 
 ```python
@@ -134,6 +231,8 @@ table = {
     'MAG': torch.randn(1000)
 }
 torchfits.write("catalog.fits", table, overwrite=True)
+
+# File-level HDU insert/replace/delete APIs are planned for CFITSIO-native implementation.
 ```
 
 ### Data Processing

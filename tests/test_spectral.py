@@ -54,6 +54,11 @@ class TestSpectralAxis:
         expected = wave_nm * 10.0
         assert torch.allclose(wave_angstrom, expected)
 
+    def test_unsupported_conversion_raises_valueerror(self):
+        axis = SpectralAxis(torch.tensor([1.0, 2.0]), "keV", "ENER")
+        with pytest.raises(ValueError, match="Unsupported spectral conversion"):
+            _ = axis.to_wavelength()
+
 
 class TestSpectrum1D:
     """Test 1D spectrum functionality."""

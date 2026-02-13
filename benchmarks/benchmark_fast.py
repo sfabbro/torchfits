@@ -60,17 +60,23 @@ def _create_wcs_file(path: Path, shape=(512, 512)):
     hdu.writeto(path, overwrite=True)
 
 
-def _create_compressed_file(path: Path, compression_type: str, shape=(1024, 1024), tile_size=None):
+def _create_compressed_file(
+    path: Path, compression_type: str, shape=(1024, 1024), tile_size=None
+):
     data = _generate_data(shape, np.float32)
     if tile_size is not None:
-        comp_hdu = CompImageHDU(data, compression_type=compression_type, tile_shape=tile_size)
+        comp_hdu = CompImageHDU(
+            data, compression_type=compression_type, tile_shape=tile_size
+        )
     else:
         comp_hdu = CompImageHDU(data, compression_type=compression_type)
     hdul = astropy_fits.HDUList([astropy_fits.PrimaryHDU(), comp_hdu])
     hdul.writeto(path, overwrite=True)
 
 
-def _create_timeseries_files(dir_path: Path, shape=(256, 256), count=5, key_prefix="timeseries_frame"):
+def _create_timeseries_files(
+    dir_path: Path, shape=(256, 256), count=5, key_prefix="timeseries_frame"
+):
     files = {}
     dir_path.mkdir(parents=True, exist_ok=True)
     for i in range(count):
@@ -153,16 +159,24 @@ def build_dataset(data_dir: Path):
 
     # Small/medium/large
     files["small_int32_3d"] = data_dir / "small_int32_3d.fits"
-    _write_primary_image(files["small_int32_3d"], _generate_data((10, 128, 128), np.int32))
+    _write_primary_image(
+        files["small_int32_3d"], _generate_data((10, 128, 128), np.int32)
+    )
 
     files["medium_int16_2d"] = data_dir / "medium_int16_2d.fits"
-    _write_primary_image(files["medium_int16_2d"], _generate_data((1024, 1024), np.int16))
+    _write_primary_image(
+        files["medium_int16_2d"], _generate_data((1024, 1024), np.int16)
+    )
 
     files["medium_int32_3d"] = data_dir / "medium_int32_3d.fits"
-    _write_primary_image(files["medium_int32_3d"], _generate_data((25, 256, 256), np.int32))
+    _write_primary_image(
+        files["medium_int32_3d"], _generate_data((25, 256, 256), np.int32)
+    )
 
     files["medium_float32_3d"] = data_dir / "medium_float32_3d.fits"
-    _write_primary_image(files["medium_float32_3d"], _generate_data((25, 256, 256), np.float32))
+    _write_primary_image(
+        files["medium_float32_3d"], _generate_data((25, 256, 256), np.float32)
+    )
 
     files["large_int32_1d"] = data_dir / "large_int32_1d.fits"
     _write_primary_image(files["large_int32_1d"], _generate_data((1000000,), np.int32))
@@ -183,13 +197,32 @@ def build_dataset(data_dir: Path):
     files["compressed_hcompress_1"] = data_dir / "compressed_hcompress_1.fits"
     _create_compressed_file(files["compressed_hcompress_1"], "HCOMPRESS_1")
     files["compressed_rice_1_large"] = data_dir / "compressed_rice_1_large.fits"
-    _create_compressed_file(files["compressed_rice_1_large"], "RICE_1", shape=(4096, 4096), tile_size=(1024, 1024))
-    files["compressed_hcompress_1_large"] = data_dir / "compressed_hcompress_1_large.fits"
-    _create_compressed_file(files["compressed_hcompress_1_large"], "HCOMPRESS_1", shape=(4096, 4096), tile_size=(1024, 1024))
+    _create_compressed_file(
+        files["compressed_rice_1_large"],
+        "RICE_1",
+        shape=(4096, 4096),
+        tile_size=(1024, 1024),
+    )
+    files["compressed_hcompress_1_large"] = (
+        data_dir / "compressed_hcompress_1_large.fits"
+    )
+    _create_compressed_file(
+        files["compressed_hcompress_1_large"],
+        "HCOMPRESS_1",
+        shape=(4096, 4096),
+        tile_size=(1024, 1024),
+    )
 
     # Timeseries
     files.update(_create_timeseries_files(data_dir / "timeseries"))
-    files.update(_create_timeseries_files(data_dir / "timeseries_long", shape=(64, 64), count=32, key_prefix="timeseries_long"))
+    files.update(
+        _create_timeseries_files(
+            data_dir / "timeseries_long",
+            shape=(64, 64),
+            count=32,
+            key_prefix="timeseries_long",
+        )
+    )
 
     # Multi-MEF
     files["multi_mef_10ext"] = data_dir / "multi_mef_10ext.fits"
@@ -204,7 +237,9 @@ def main():
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"])
+    parser.add_argument(
+        "--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"]
+    )
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument(
         "--torch-threads",
@@ -296,8 +331,16 @@ def main():
             methods["fitsio_torch_device"] = fitsio_torch_device
 
         if name.startswith("scaled_"):
+
             def torchfits_raw():
-                return torchfits.read(str(path), hdu=hdu, return_header=False, raw_scale=True, cache_capacity=10)
+                return torchfits.read(
+                    str(path),
+                    hdu=hdu,
+                    return_header=False,
+                    raw_scale=True,
+                    cache_capacity=10,
+                )
+
             methods["torchfits_raw"] = torchfits_raw
 
             header = astropy_fits.getheader(str(path))
@@ -305,7 +348,13 @@ def main():
             bzero = float(header.get("BZERO", 0.0))
 
             def torchfits_raw_scale_cpu():
-                data = torchfits.read(str(path), hdu=hdu, return_header=False, raw_scale=True, cache_capacity=10)
+                data = torchfits.read(
+                    str(path),
+                    hdu=hdu,
+                    return_header=False,
+                    raw_scale=True,
+                    cache_capacity=10,
+                )
                 data = data.to(torch.float32)
                 if bscale != 1.0:
                     data.mul_(bscale)
@@ -328,7 +377,9 @@ def main():
                 if name.startswith("compressed_") and args.compressed_repeats > 1:
                     repeat_count = args.compressed_repeats
                 if repeat_count > 1:
-                    m, s = _time_method_repeat(fn, warmup_count, iter_count, repeat_count, sync_fn=sync)
+                    m, s = _time_method_repeat(
+                        fn, warmup_count, iter_count, repeat_count, sync_fn=sync
+                    )
                 else:
                     m, s = _time_method(fn, warmup_count, iter_count, sync_fn=sync)
                 row[f"{mname}_mean"] = m
@@ -363,11 +414,17 @@ def main():
             and "device" not in k
         ]
         best = min(comparable, default=None)
-        ratio = (torchfits_best / best) if (torchfits_best is not None and best is not None and best > 0) else None
+        ratio = (
+            (torchfits_best / best)
+            if (torchfits_best is not None and best is not None and best > 0)
+            else None
+        )
         ratio_str = f"{ratio:.2f}x" if ratio is not None else "n/a"
         tf_str = f"{torchfits_best:.6f}s" if torchfits_best is not None else "n/a"
         best_str = f"{best:.6f}s" if best is not None else "n/a"
-        print(f"{row['name']:24s} torchfits_best={tf_str} best={best_str} ratio={ratio_str}")
+        print(
+            f"{row['name']:24s} torchfits_best={tf_str} best={best_str} ratio={ratio_str}"
+        )
 
     if args.output:
         out_path = Path(args.output)
@@ -417,10 +474,22 @@ def main():
             )
 
         def tf_raw():
-            return torchfits.read(str(scaled_path), hdu=0, return_header=False, raw_scale=True, cache_capacity=10)
+            return torchfits.read(
+                str(scaled_path),
+                hdu=0,
+                return_header=False,
+                raw_scale=True,
+                cache_capacity=10,
+            )
 
         def tf_raw_scale():
-            data = torchfits.read(str(scaled_path), hdu=0, return_header=False, raw_scale=True, cache_capacity=10)
+            data = torchfits.read(
+                str(scaled_path),
+                hdu=0,
+                return_header=False,
+                raw_scale=True,
+                cache_capacity=10,
+            )
             data = data.to(torch.float32)
             if bscale != 1.0:
                 data.mul_(bscale)
@@ -453,8 +522,11 @@ def main():
     print("\nMicrobench: compressed_rice_1 (tile read)")
     comp_path = files.get("compressed_rice_1")
     if comp_path:
+
         def tf_compressed():
-            return torchfits.read(str(comp_path), hdu=1, return_header=False, cache_capacity=0)
+            return torchfits.read(
+                str(comp_path), hdu=1, return_header=False, cache_capacity=0
+            )
 
         def fitsio_compressed():
             return fitsio.read(str(comp_path), ext=1)
@@ -476,7 +548,9 @@ def main():
                 ("fitsio", fitsio_compressed),
             ]:
                 if args.repeats > 1:
-                    m, s = _time_method_repeat(fn, warmup_count, iter_count, args.repeats)
+                    m, s = _time_method_repeat(
+                        fn, warmup_count, iter_count, args.repeats
+                    )
                 else:
                     m, s = _time_method(fn, warmup_count, iter_count)
                 print(f"  {label:22s}: {m:.6f}s ± {s:.6f}s")
@@ -488,11 +562,14 @@ def main():
             file_handle = None
             print(f"  torchfits_open_once: FAILED ({e})")
         if file_handle is not None:
+
             def tf_open_once():
                 return torchfits.cpp.read_full(file_handle, 1, True)
 
             if args.repeats > 1:
-                m, s = _time_method_repeat(tf_open_once, warmup_count, iter_count, args.repeats)
+                m, s = _time_method_repeat(
+                    tf_open_once, warmup_count, iter_count, args.repeats
+                )
             else:
                 m, s = _time_method(tf_open_once, warmup_count, iter_count)
             print(f"  torchfits_open_once: {m:.6f}s ± {s:.6f}s")
@@ -502,11 +579,16 @@ def main():
                 pass
 
         print("\nMicrobench: compressed_rice_1 (cached handle)")
+
         def tf_compressed_cached():
-            return torchfits.read(str(comp_path), hdu=1, return_header=False, cache_capacity=1)
+            return torchfits.read(
+                str(comp_path), hdu=1, return_header=False, cache_capacity=1
+            )
 
         if args.repeats > 1:
-            m, s = _time_method_repeat(tf_compressed_cached, warmup_count, iter_count, args.repeats)
+            m, s = _time_method_repeat(
+                tf_compressed_cached, warmup_count, iter_count, args.repeats
+            )
         else:
             m, s = _time_method(tf_compressed_cached, warmup_count, iter_count)
         print(f"  torchfits_cached     : {m:.6f}s ± {s:.6f}s")
@@ -542,8 +624,11 @@ def main():
     print("\nMicrobench: compressed_hcompress_1 (single-thread)")
     comp_hc_path = files.get("compressed_hcompress_1")
     if comp_hc_path:
+
         def tf_compressed_hc():
-            return torchfits.read(str(comp_hc_path), hdu=1, return_header=False, cache_capacity=0)
+            return torchfits.read(
+                str(comp_hc_path), hdu=1, return_header=False, cache_capacity=0
+            )
 
         def fitsio_compressed_hc():
             return fitsio.read(str(comp_hc_path), ext=1)
@@ -554,7 +639,9 @@ def main():
                 ("fitsio", fitsio_compressed_hc),
             ]:
                 if args.repeats > 1:
-                    m, s = _time_method_repeat(fn, warmup_count, iter_count, args.repeats)
+                    m, s = _time_method_repeat(
+                        fn, warmup_count, iter_count, args.repeats
+                    )
                 else:
                     m, s = _time_method(fn, warmup_count, iter_count)
                 print(f"  {label:22s}: {m:.6f}s ± {s:.6f}s")
@@ -566,11 +653,14 @@ def main():
             file_handle_hc = None
             print(f"  torchfits_open_once: FAILED ({e})")
         if file_handle_hc is not None:
+
             def tf_open_once_hc():
                 return torchfits.cpp.read_full(file_handle_hc, 1, True)
 
             if args.repeats > 1:
-                m, s = _time_method_repeat(tf_open_once_hc, warmup_count, iter_count, args.repeats)
+                m, s = _time_method_repeat(
+                    tf_open_once_hc, warmup_count, iter_count, args.repeats
+                )
             else:
                 m, s = _time_method(tf_open_once_hc, warmup_count, iter_count)
             print(f"  torchfits_open_once: {m:.6f}s ± {s:.6f}s")
@@ -580,11 +670,16 @@ def main():
                 pass
 
         print("\nMicrobench: compressed_hcompress_1 (cached handle)")
+
         def tf_compressed_hc_cached():
-            return torchfits.read(str(comp_hc_path), hdu=1, return_header=False, cache_capacity=1)
+            return torchfits.read(
+                str(comp_hc_path), hdu=1, return_header=False, cache_capacity=1
+            )
 
         if args.repeats > 1:
-            m, s = _time_method_repeat(tf_compressed_hc_cached, warmup_count, iter_count, args.repeats)
+            m, s = _time_method_repeat(
+                tf_compressed_hc_cached, warmup_count, iter_count, args.repeats
+            )
         else:
             m, s = _time_method(tf_compressed_hc_cached, warmup_count, iter_count)
         print(f"  torchfits_cached     : {m:.6f}s ± {s:.6f}s")
@@ -596,11 +691,17 @@ def main():
         if key in files:
             ts_paths.append(str(files[key]))
     if ts_paths:
+
         def tf_loop():
-            return [torchfits.read(p, hdu=0, return_header=False, cache_capacity=0) for p in ts_paths]
+            return [
+                torchfits.read(p, hdu=0, return_header=False, cache_capacity=0)
+                for p in ts_paths
+            ]
 
         def tf_batch():
-            return torchfits.read(ts_paths, hdu=0, return_header=False, cache_capacity=0)
+            return torchfits.read(
+                ts_paths, hdu=0, return_header=False, cache_capacity=0
+            )
 
         def fitsio_loop():
             return [fitsio.read(p, ext=0) for p in ts_paths]
@@ -630,10 +731,17 @@ def main():
             hdus = list(range(11))
 
         def tf_loop_mef():
-            return [torchfits.read(str(mef_path), hdu=h, return_header=False, cache_capacity=0) for h in hdus]
+            return [
+                torchfits.read(
+                    str(mef_path), hdu=h, return_header=False, cache_capacity=0
+                )
+                for h in hdus
+            ]
 
         def tf_batch_mef():
-            return torchfits.read(str(mef_path), hdu=hdus, return_header=False, cache_capacity=0)
+            return torchfits.read(
+                str(mef_path), hdu=hdus, return_header=False, cache_capacity=0
+            )
 
         def fitsio_loop_mef():
             return [fitsio.read(str(mef_path), ext=h) for h in hdus]
@@ -645,7 +753,9 @@ def main():
         ]:
             try:
                 if args.repeats > 1:
-                    m, s = _time_method_repeat(fn, warmup_count, iter_count, args.repeats)
+                    m, s = _time_method_repeat(
+                        fn, warmup_count, iter_count, args.repeats
+                    )
                 else:
                     m, s = _time_method(fn, warmup_count, iter_count)
                 print(f"  {label:22s}: {m:.6f}s ± {s:.6f}s")

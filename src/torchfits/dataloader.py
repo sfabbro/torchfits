@@ -153,6 +153,8 @@ def create_table_dataloader(
     max_chunks: Optional[int] = None,
     mmap: bool = False,
     device: str = "cpu",
+    non_blocking_transfer: bool = True,
+    pin_memory_transfer: bool = False,
     transform: Optional[Callable] = None,
     include_header: bool = False,
     **dataloader_kwargs,
@@ -168,6 +170,8 @@ def create_table_dataloader(
         max_chunks=max_chunks,
         mmap=mmap,
         device=device,
+        non_blocking_transfer=non_blocking_transfer,
+        pin_memory_transfer=pin_memory_transfer,
         transform=transform,
         include_header=include_header,
     )

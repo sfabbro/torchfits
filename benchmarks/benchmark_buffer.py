@@ -18,11 +18,11 @@ from mpl_config import configure
 
 configure()
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import torch
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits import buffer
+from torchfits import buffer  # noqa: E402
 
 
 class BufferBenchmark:
@@ -318,6 +318,69 @@ def main():
     results = benchmark.run_benchmarks()
     benchmark.generate_plots(results)
     benchmark.save_results(results)
+    # Ranked console view for quick comparison (lower is better).
+    try:
+        print("\nRanked Summary (Buffer):")
+        if results.get("memory_pools"):
+            pool_scores = []
+            for pool_name, pool_results in results["memory_pools"].items():
+                alloc = [v["allocation_time_ms"] for v in pool_results.values()]
+                access = [v["access_time_ms"] for v in pool_results.values()]
+                pool_scores.append(
+                    (
+                        pool_name,
+                        sum(alloc) / len(alloc) if alloc else float("inf"),
+                        sum(access) / len(access) if access else float("inf"),
+                    )
+                )
+            pool_scores.sort(key=lambda x: x[1])
+            print("  Memory pools (avg allocation_time_ms):")
+            best = pool_scores[0][1] if pool_scores else None
+            for i, (name, alloc_ms, access_ms) in enumerate(pool_scores, start=1):
+                ratio = alloc_ms / best if best else float("inf")
+                print(
+                    f"    {i:2d}. {name:12s} alloc={alloc_ms:.4f}ms  access={access_ms:.4f}ms  ({ratio:.2f}x best)"
+                )
+
+        if results.get("streaming_buffers"):
+            items = []
+            for cap, m in results["streaming_buffers"].items():
+                items.append(
+                    (
+                        cap,
+                        m.get("avg_time_per_op_us", float("inf")),
+                        m.get("throughput_ops_per_sec", 0.0),
+                    )
+                )
+            items.sort(key=lambda x: x[1])
+            print("  Streaming buffers (avg_time_per_op_us):")
+            best = items[0][1] if items else None
+            for i, (cap, us, thr) in enumerate(items, start=1):
+                ratio = us / best if best else float("inf")
+                print(
+                    f"    {i:2d}. {cap:12s} {us:.2f}us/op  {thr:.0f} ops/s  ({ratio:.2f}x best)"
+                )
+
+        if results.get("workload_optimization"):
+            items = []
+            for name, m in results["workload_optimization"].items():
+                items.append(
+                    (
+                        name,
+                        m.get("optimization_time_ms", float("inf")),
+                        m.get("total_memory_mb", 0.0),
+                    )
+                )
+            items.sort(key=lambda x: x[1])
+            print("  Workload optimization (optimization_time_ms):")
+            best = items[0][1] if items else None
+            for i, (name, ms, mem) in enumerate(items, start=1):
+                ratio = ms / best if best else float("inf")
+                print(
+                    f"    {i:2d}. {name:12s} {ms:.2f}ms  mem={mem:.1f}MB  ({ratio:.2f}x best)"
+                )
+    except Exception as e:
+        print(f"(ranked summary skipped: {e})")
     print("✅ Buffer benchmarks completed!")
 
 

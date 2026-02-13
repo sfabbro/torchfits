@@ -127,9 +127,7 @@ class TestCompression:
                     shape=(500, 500), compression=comp_type
                 )
 
-                result, header = torchfits.read(
-                    filepath, hdu=1, return_header=True
-                )
+                result, header = torchfits.read(filepath, hdu=1, return_header=True)
 
                 assert isinstance(result, torch.Tensor)
                 assert result.shape == expected_data.shape
