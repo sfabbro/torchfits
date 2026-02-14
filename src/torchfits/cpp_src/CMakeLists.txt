@@ -141,6 +141,30 @@ else()
     message(FATAL_ERROR "ZLIB not found - required for compressed FITS support")
 endif()
 
+get_filename_component(TORCHFITS_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(CFITSIO_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/cfitsio")
+set(WCSLIB_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/wcslib")
+set(TORCHFITS_VENDOR_SCRIPT "${TORCHFITS_REPO_ROOT}/extern/vendor.sh")
+option(TORCHFITS_AUTO_VENDOR_DEPS "Auto-run extern/vendor.sh when vendored deps are missing" ON)
+set(TORCHFITS_VENDOR_RAN FALSE)
+
+macro(torchfits_run_vendor_once)
+    if(TORCHFITS_AUTO_VENDOR_DEPS AND NOT TORCHFITS_VENDOR_RAN)
+        if(EXISTS "${TORCHFITS_VENDOR_SCRIPT}")
+            message(STATUS "Vendored deps missing; running ${TORCHFITS_VENDOR_SCRIPT}")
+            execute_process(
+                COMMAND bash "${TORCHFITS_VENDOR_SCRIPT}"
+                WORKING_DIRECTORY "${TORCHFITS_REPO_ROOT}"
+                RESULT_VARIABLE TORCHFITS_VENDOR_RESULT
+            )
+            if(NOT TORCHFITS_VENDOR_RESULT EQUAL 0)
+                message(FATAL_ERROR "Failed to run ${TORCHFITS_VENDOR_SCRIPT} (exit ${TORCHFITS_VENDOR_RESULT})")
+            endif()
+            set(TORCHFITS_VENDOR_RAN TRUE)
+        endif()
+    endif()
+endmacro()
+
 # Find CFITSIO
 option(TORCHFITS_USE_VENDORED_CFITSIO "Prefer vendored CFITSIO over environment" ON)
 set(TORCHFITS_NIOBUF "" CACHE STRING "Override CFITSIO NIOBUF (default 40)")
@@ -175,11 +199,8 @@ if(CFITSIO_FOUND)
     message(STATUS "Found environment CFITSIO: ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_LIBRARIES}")
 else()
     # Vendor CFITSIO as fallback
-    # Try to find extern/cfitsio relative to this CMakeLists.txt
-    set(CFITSIO_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/cfitsio")
     if(NOT EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
-        # Try relative to CMAKE_SOURCE_DIR if different
-        set(CFITSIO_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../../../extern/cfitsio")
+        torchfits_run_vendor_once()
     endif()
 
     if(EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
@@ -221,7 +242,6 @@ endif()
 
 # Find WCSLIB
 option(TORCHFITS_USE_VENDORED_WCSLIB "Use vendored WCSLIB" ON)
-set(WCSLIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/wcslib")
 
 if(NOT TORCHFITS_USE_VENDORED_WCSLIB)
     find_package(PkgConfig QUIET)
@@ -239,6 +259,9 @@ if(NOT TORCHFITS_USE_VENDORED_WCSLIB)
 endif()
 
 if(NOT WCSLIB_FOUND)
+    if(NOT EXISTS "${WCSLIB_SOURCE_DIR}/CMakeLists.txt")
+        torchfits_run_vendor_once()
+    endif()
     if(EXISTS "${WCSLIB_SOURCE_DIR}/CMakeLists.txt")
         message(STATUS "Building vendored WCSLIB from ${WCSLIB_SOURCE_DIR}")
         add_subdirectory("${WCSLIB_SOURCE_DIR}" wcslib_build)
