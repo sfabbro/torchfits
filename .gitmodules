@@ -1,3 +1,0 @@
-[submodule "extern/cfitsio"]
-	path = extern/cfitsio
-	url = https://github.com/HEASARC/cfitsio.git

@@ -86,6 +86,11 @@ class TestDataLoaderCreation:
                 transform=None,
                 device="cpu",
                 include_header=False,
+                mmap="auto",
+                cache_capacity=0,
+                handle_cache_capacity=64,
+                scale_on_device=True,
+                raw_scale=False,
             )
 
     def test_create_streaming_dataloader(self):
@@ -124,6 +129,35 @@ class TestDataLoaderCreation:
                 transform=None,
                 include_header=False,
             )
+
+    def test_fitsdataset_forwards_read_options(self):
+        """FITSDataset should forward read-performance options to torchfits.read."""
+        dataset = FITSDataset(
+            ["file1.fits"],
+            hdu=2,
+            device="cpu",
+            include_header=False,
+            mmap=False,
+            cache_capacity=3,
+            handle_cache_capacity=7,
+            scale_on_device=False,
+            raw_scale=True,
+        )
+
+        with patch("torchfits.read", return_value=torch.zeros((2, 2))) as mock_read:
+            _ = dataset[0]
+
+        mock_read.assert_called_once_with(
+            "file1.fits",
+            hdu=2,
+            device="cpu",
+            mmap=False,
+            cache_capacity=3,
+            handle_cache_capacity=7,
+            scale_on_device=False,
+            raw_scale=True,
+            return_header=False,
+        )
 
 
 class TestDistributedDataLoader:

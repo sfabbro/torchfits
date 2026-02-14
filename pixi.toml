@@ -5,7 +5,7 @@ platforms = ["osx-arm64"]
 
 [package]
 name = "torchfits"
-version = "0.1.1"
+version = "0.2.0"
 description = "High-performance FITS I/O for PyTorch"
 authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 
@@ -15,29 +15,28 @@ backend = { name = "pixi-build-cmake", version = "*"}
 # Build dependencies - tools needed to build the package
 # Note: cmake, ninja, and cxx-compiler are automatically provided by pixi-build-cmake
 [package.build-dependencies]
-nanobind = ">=2.10.2,<3"
-scikit-build-core = ">=0.11.6,<0.12"
+nanobind = ">=2.10.2"
+scikit-build-core = ">=0.11.6"
 cmake = ">=3.21"
 ninja = ">=1.10"
-python = ">=3.11,<3.14"
+python = ">=3.11"
 pytorch = ">=2.0"
 cfitsio = ">=4"
 wcslib = ">=7.11"
 
 # Host dependencies - libraries that will be linked into the package
 [package.host-dependencies]
-python = ">=3.11,<3.14"
+python = ">=3.11"
 pytorch = ">=2.0"
 cfitsio = ">=4"
 wcslib = ">=7.11"
-nanobind = ">=2.10.2,<3"
-#dlpack = "*"
+nanobind = ">=2.10.2"
 
 
 # Run dependencies - packages needed at runtime
 [package.run-dependencies]
 pytorch = ">=2.0"
-pytorch-frame = ">=0.2.5"
+
 psutil = ">=5.0"  # For system resource monitoring
 cfitsio = ">=4"
 wcslib = ">=7.11"
@@ -45,27 +44,28 @@ wcslib = ">=7.11"
 # Workspace dependencies - development environment
 [dependencies]
 # torchfits = { path = "." }  # Don't add self-dependency - causes circular dependency
-pytest = ">=9.0.2,<10"
-pytest-cov = ">=7.0.0,<8"
-ruff = ">=0.14.14,<0.15"
-mypy = ">=1.19.1,<2"
-pip = ">=25.3,<26"
-astropy = ">=7.2.0,<8"
-fitsio = ">=1.3.0,<2"
-matplotlib = ">=3.10.8,<4"
-seaborn = ">=0.13.2,<0.14"
-pandas = ">=2.3.3,<3"
-psutil = ">=7.2.1,<8"
-scikit-build-core = ">=0.11.6,<0.12"
-cmake = ">=4.2.2,<5"
-ninja = ">=1.13.2,<2"
-nanobind = ">=2.10.2,<3"
-python = ">=3.13.11,<3.14"
-pytorch = ">=2.10.0,<3"
-pytorch-frame = ">=0.2.5,<0.3"
-cfitsio = ">=4.6.3,<5"
-wcslib = ">=8.2.2,<9"
-tabulate = ">=0.9.0,<0.10"
+pytest = ">=8.0"
+pytest-cov = ">=5.0"
+ruff = ">=0.3"
+mypy = ">=1.9"
+pip = ">=24.0"
+astropy = ">=5.0"
+fitsio = ">=1.2"
+matplotlib = ">=3.8"
+seaborn = ">=0.13"
+pandas = ">=2.2"
+psutil = ">=5.9"
+scikit-build-core = ">=0.11.6"
+cmake = ">=3.21"
+ninja = ">=1.10"
+nanobind = ">=2.10.2"
+polars = ">=0.20"
+python = ">=3.11"
+pytorch = ">=2.0"
+
+cfitsio = ">=4.4"
+wcslib = ">=8.0"
+tabulate = ">=0.9.0"
 
 [tasks]
 # Development tasks
@@ -79,21 +79,18 @@ verify = "python verify_setup.py"
 bench = "python benchmarks/benchmark_all.py --output-dir benchmark_results --include-tables && python benchmarks/benchmark_table.py && python benchmarks/benchmark_arrow_tables.py --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --output benchmark_results/table_arrow_diverse_results.csv"
 bench-fast = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
 bench-fast-stable = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3 && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
-bench-basic = "python benchmarks/benchmark_basic.py"
-bench-core = "python benchmarks/benchmark_core.py"
-bench-ml = "python benchmarks/benchmark_ml.py"
+bench-core = "python benchmarks/benchmark_fast.py"
 bench-table = "python benchmarks/benchmark_table.py"
 bench-table-arrow = "python benchmarks/benchmark_arrow_tables.py"
 bench-table-arrow-diverse = "python benchmarks/benchmark_arrow_tables_diverse.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "python benchmarks/benchmark_all.py"
-bench-all-keep = "python benchmarks/benchmark_all.py --no-cleanup"
+bench-all = "python benchmarks/benchmark_all.py --profile user --include-tables"
+bench-all-keep = "python benchmarks/benchmark_all.py --profile user --include-tables --no-cleanup"
 
 # Comprehensive benchmark runner
-bench-all-auto = "python benchmarks/run_all_benchmarks.py --no-exhaustive"
-bench-all-runner = "python benchmarks/run_all_benchmarks.py"
-bench-all-force = "python benchmarks/run_all_benchmarks.py --exhaustive"
+bench-all-runner = "python benchmarks/benchmark_all.py --profile user --include-tables"
+bench-all-force = "python benchmarks/benchmark_all.py --profile lab --include-tables"
 bench-transforms = "python benchmarks/benchmark_transforms.py"
 bench-buffer = "python benchmarks/benchmark_buffer.py"
 bench-cache = "python benchmarks/benchmark_cache.py"
@@ -107,25 +104,25 @@ notebook = "jupyter lab"
 
 # Test phases for development workflow
 test-phase1 = "python -c 'import sys; sys.path.insert(0, \"src\"); import torchfits; print(\"Phase 1 COMPLETE: All core features implemented\")'"
-test-comprehensive = "python examples/example_comprehensive_ml_pipeline.py"
+test-comprehensive = "python examples/example_ml_pipeline.py"
 test-transforms = "python -m pytest tests/test_transforms.py -v"
 test-dataloader = "python -m pytest tests/test_dataloader.py -v"
 test-buffer = "python -m pytest tests/test_buffer.py -v"
 
 # Test feature with comparison libraries
 [feature.test.dependencies]
-astropy = ">=7.2.0,<8"
-fitsio = ">=1.3.0,<2"
+astropy = ">=5.0"
+fitsio = ">=1.2"
 
 # Benchmark feature with additional dependencies
 [feature.bench.dependencies]
-astropy = ">=7.2.0,<8"
-fitsio = ">=1.3.0,<2"
-matplotlib = ">=3.10.8,<4"
-seaborn = ">=0.13.2,<0.14"
-pandas = ">=2.3.3,<3"
-psutil = ">=7.2.1,<8"
-pytest-benchmark = ">=5.2.3,<6"
+astropy = ">=5.0"
+fitsio = ">=1.2"
+matplotlib = ">=3.8"
+seaborn = ">=0.13"
+pandas = ">=2.2"
+psutil = ">=5.9"
+pytest-benchmark = ">=4.0"
 
 # Environment definitions
 [environments]

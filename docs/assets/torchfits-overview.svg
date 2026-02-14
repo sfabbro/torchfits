@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="280" viewBox="0 0 980 280" role="img" aria-labelledby="title desc">
+  <title id="title">torchfits overview</title>
+  <desc id="desc">Data flow from FITS files through torchfits to PyTorch and analytics tools.</desc>
+  <defs>
+    <style>
+      .label { font: 600 18px sans-serif; fill: #172038; }
+      .small { font: 500 14px sans-serif; fill: #172038; }
+      .box { rx: 14; ry: 14; stroke-width: 2; }
+      .arrow { stroke: #1f4f9f; stroke-width: 4; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#1f4f9f"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="80" width="240" height="120" class="box" fill="#e9f2ff" stroke="#1f4f9f"/>
+  <text x="140" y="128" text-anchor="middle" class="label">FITS Files</text>
+  <text x="140" y="156" text-anchor="middle" class="small">Images + Tables + WCS</text>
+
+  <rect x="370" y="50" width="240" height="180" class="box" fill="#e8fbf3" stroke="#117a4a"/>
+  <text x="490" y="95" text-anchor="middle" class="label">torchfits</text>
+  <text x="490" y="126" text-anchor="middle" class="small">CFITSIO + WCSLIB + C++ fast paths</text>
+  <text x="490" y="152" text-anchor="middle" class="small">Auto HDU + cache + mmap heuristics</text>
+  <text x="490" y="178" text-anchor="middle" class="small">PyTorch-first API</text>
+
+  <rect x="720" y="24" width="240" height="74" class="box" fill="#fff2df" stroke="#ac6f00"/>
+  <text x="840" y="64" text-anchor="middle" class="label">PyTorch</text>
+  <text x="840" y="86" text-anchor="middle" class="small">training / inference</text>
+
+  <rect x="720" y="112" width="240" height="74" class="box" fill="#f2ebff" stroke="#5a2ca0"/>
+  <text x="840" y="152" text-anchor="middle" class="label">Arrow / Polars</text>
+  <text x="840" y="174" text-anchor="middle" class="small">analytics pipelines</text>
+
+  <rect x="720" y="200" width="240" height="74" class="box" fill="#ffeaf2" stroke="#9f1c4f"/>
+  <text x="840" y="240" text-anchor="middle" class="label">DuckDB / SQL</text>
+  <text x="840" y="262" text-anchor="middle" class="small">joins and queries</text>
+
+  <path d="M260 140 L358 140" class="arrow"/>
+  <path d="M610 140 L706 60" class="arrow"/>
+  <path d="M610 140 L706 148" class="arrow"/>
+  <path d="M610 140 L706 236" class="arrow"/>
+</svg>

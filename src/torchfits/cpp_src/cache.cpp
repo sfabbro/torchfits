@@ -59,7 +59,7 @@ const bool kValidateCache = []() {
 const int64_t kValidateIntervalNs = []() {
     // Balance stale-file detection with hot-path latency. A longer default interval
     // reduces repeated stat() overhead in tight read loops.
-    constexpr int64_t kDefaultMs = 250;
+    constexpr int64_t kDefaultMs = 1000;
     return env_nonnegative_int("TORCHFITS_CACHE_VALIDATE_INTERVAL_MS", kDefaultMs) * 1000000LL;
 }();
 }  // namespace

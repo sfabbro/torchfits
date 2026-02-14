@@ -61,11 +61,12 @@ _file_handle_sig_cache = OrderedDict()
 _image_meta_cache = OrderedDict()
 _hdu_type_cache = OrderedDict()
 _cold_nommap_cache = OrderedDict()
+_auto_hdu_cache = OrderedDict()
 
 
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
-    global _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache
+    global _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache, _auto_hdu_cache
 
     _file_cache.pop(path, None)
     handle = _file_handle_cache.pop(path, None)
@@ -82,6 +83,7 @@ def _invalidate_path_caches(path: str) -> None:
         _hdu_type_cache.pop(key, None)
     for key in [k for k in _cold_nommap_cache.keys() if k[0] == path]:
         _cold_nommap_cache.pop(key, None)
+    _auto_hdu_cache.pop(path, None)
 
     # Keep Arrow table reader/handle caches coherent across write/append/update paths.
     try:
@@ -106,7 +108,7 @@ try:
 except Exception:
     pass
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     # Core I/O functions
     "read",
@@ -116,6 +118,7 @@ __all__ = [
     "delete_hdu",
     "open",
     "get_header",
+    "get_wcs",
     "read_subset",
     "io",
     # Batch operations
@@ -421,6 +424,100 @@ def _set_cached_hdu_type(path: str, hdu: int, hdu_type: Optional[str]) -> None:
         _hdu_type_cache.popitem(last=False)
 
 
+def _to_int_header_value(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            return int(float(value))
+        return int(value)
+    except Exception:
+        return default
+
+
+def _header_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().upper() in {"T", "TRUE", "1", "YES", "Y"}
+    try:
+        return bool(int(value))
+    except Exception:
+        return bool(value)
+
+
+def _autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
+    """Return the first HDU with payload, preferring image/compressed-image HDUs."""
+    import torchfits.cpp as cpp
+
+    sig = _path_signature(path)
+    cached = _auto_hdu_cache.get(path)
+    if cached is not None:
+        cached_sig, cached_hdu = cached
+        if sig is None or cached_sig is None or cached_sig == sig:
+            _auto_hdu_cache.move_to_end(path)
+            return int(cached_hdu)
+        _auto_hdu_cache.pop(path, None)
+
+    first_image_hdu: Optional[int] = None
+    first_table_hdu: Optional[int] = None
+
+    file_handle, cached_handle = _get_cached_handle(path, handle_cache_capacity)
+    try:
+        num_hdus = cpp.get_num_hdus(file_handle)
+        for i in range(num_hdus):
+            hdu_type = _get_cached_hdu_type(path, i)
+            if hdu_type is None:
+                try:
+                    hdu_type = cpp.get_hdu_type(file_handle, i)
+                    _set_cached_hdu_type(path, i, hdu_type)
+                except Exception:
+                    hdu_type = None
+
+            try:
+                hdr = _read_header_fast(file_handle, i, fast_header=True)
+            except Exception:
+                hdr = {}
+
+            naxis = _to_int_header_value(hdr.get("NAXIS"), default=0)
+            has_image_payload = False
+            if naxis > 0:
+                has_image_payload = any(
+                    _to_int_header_value(hdr.get(f"NAXIS{axis}"), default=0) > 0
+                    for axis in range(1, naxis + 1)
+                )
+
+            zimage = _header_truthy(hdr.get("ZIMAGE"))
+            has_compression_keys = any(
+                k in hdr for k in ("ZCMPTYPE", "ZBITPIX", "ZNAXIS", "ZTILE1")
+            )
+            is_compressed_image = zimage or has_compression_keys
+
+            if has_image_payload or is_compressed_image:
+                first_image_hdu = i
+                break
+
+            if hdu_type in {"ASCII_TABLE", "BINARY_TABLE"}:
+                if _to_int_header_value(hdr.get("NAXIS2"), default=0) > 0:
+                    if first_table_hdu is None:
+                        first_table_hdu = i
+    finally:
+        if not cached_handle:
+            try:
+                file_handle.close()
+            except Exception:
+                pass
+
+    resolved = first_image_hdu if first_image_hdu is not None else (
+        first_table_hdu if first_table_hdu is not None else 0
+    )
+    _auto_hdu_cache[path] = (sig, int(resolved))
+    _auto_hdu_cache.move_to_end(path)
+    while len(_auto_hdu_cache) > 512:
+        _auto_hdu_cache.popitem(last=False)
+    return int(resolved)
+
+
 def _should_use_cold_nommap(
     path: str, hdu: int, cache_capacity: int, mmap: bool
 ) -> bool:
@@ -564,7 +661,7 @@ def _apply_cpu_scale(data: Tensor, scaled: bool, bscale: float, bzero: float) ->
 
 def read(
     path: Union[str, List[str], Tuple[str, ...]],
-    hdu: Union[int, str, List[int], Tuple[int, ...]] = 0,
+    hdu: Union[int, str, List[int], Tuple[int, ...], None] = 0,
     device: str = "cpu",
     mmap: Union[bool, str] = "auto",
     fp16: bool = False,
@@ -583,7 +680,7 @@ def read(
 
     Args:
         path: File path or cutout specification
-        hdu: HDU index or name
+        hdu: HDU index, name, or `"auto"` (first HDU with payload)
         device: Target device ('cpu', 'cuda')
         mmap: Memory-mapping mode. `True`/`False` are explicit, `'auto'` chooses
             per-HDU defaults (compressed images default to non-mmap).
@@ -657,6 +754,8 @@ def read(
         raise ValueError("mmap must be bool or 'auto'")
     if not isinstance(mmap, (bool, str)):
         raise ValueError("mmap must be bool or 'auto'")
+    if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
+        hdu = _autodetect_hdu(path, handle_cache_capacity)
 
     hdu_type_hint = _get_cached_hdu_type(path, hdu) if isinstance(hdu, int) else None
     is_cached_table_hdu = hdu_type_hint in {"ASCII_TABLE", "BINARY_TABLE"}
@@ -757,88 +856,7 @@ def read(
                 pass
             return data
         except Exception:
-            # Not an image HDU; fall through to the generic/table logic.
-            pass
-
-    if (
-        scale_on_device
-        and not raw_scale
-        and device == "cpu"
-        and not return_header
-        and isinstance(hdu, int)
-        and columns is None
-        and start_row == 1
-        and num_rows == -1
-        and not is_cached_table_hdu
-    ):
-        try:
-            if debug_scale:
-                print("TORCHFITS_DEBUG_SCALE: fast_cpu_scaled")
-            effective_mmap = _resolve_image_mmap(path, hdu, mmap, cache_capacity)
-            cache_hit = False
-            if handle_cache_capacity > 0:
-                if debug_scale:
-                    print("TORCHFITS_DEBUG_SCALE: fast_cpu_scaled_cached_handle")
-                cache_hit = path in _file_handle_cache
-                handle, cached = _get_cached_handle(path, handle_cache_capacity)
-                data = cpp.read_full(handle, hdu, effective_mmap)
-                if not cached:
-                    try:
-                        handle.close()
-                    except Exception:
-                        pass
-            else:
-                if debug_scale:
-                    print("TORCHFITS_DEBUG_SCALE: fast_cpu_scaled_direct")
-                cached_meta = _image_meta_cache.get((path, hdu))
-                # Signed BYTE_IMG files (BITPIX=8 with BZERO=-128) are common and
-                # expensive when routed through float scaling.
-                if (
-                    hasattr(cpp, "read_full_raw_with_scale")
-                    and cached_meta is not None
-                    and len(cached_meta) >= 1
-                    and cached_meta[0] == 8
-                ):
-                    # If we already know this is the signed-byte encoding, prefer
-                    # the C++ scaled path (returns int8 directly) to avoid extra
-                    # Python-side passes and dtype conversions.
-                    if (
-                        len(cached_meta) >= 5
-                        and cached_meta[3] == 1.0
-                        and cached_meta[4] == -128.0
-                    ):
-                        if cache_capacity == 0 and hasattr(cpp, "read_full_nocache"):
-                            # Explicitly disable caching when cache_capacity==0.
-                            data = cpp.read_full_nocache(path, hdu, effective_mmap)
-                        else:
-                            data = cpp.read_full(path, hdu, effective_mmap)
-                    else:
-                        data, scaled, bscale, bzero = cpp.read_full_raw_with_scale(
-                            path, hdu, effective_mmap
-                        )
-                        data = _apply_cpu_scale(data, scaled, bscale, bzero)
-                elif _COLD_NOCACHE and hasattr(cpp, "read_full_nocache"):
-                    data = cpp.read_full_nocache(path, hdu, effective_mmap)
-                else:
-                    if cache_capacity == 0 and hasattr(cpp, "read_full_nocache"):
-                        # Explicitly disable caching when cache_capacity==0.
-                        data = cpp.read_full_nocache(path, hdu, effective_mmap)
-                    else:
-                        data = cpp.read_full(path, hdu, effective_mmap)
-            if fp16:
-                data = data.to(torch.float16)
-            elif bf16:
-                data = data.to(torch.bfloat16)
-
-            _cache_stats["total_requests"] += 1
-            if handle_cache_capacity > 0 and cache_hit:
-                _cache_stats["hits"] += 1
-            else:
-                _cache_stats["misses"] += 1
-
-            return data
-        except Exception:
-            # Not an image HDU or fast path unavailable; fall back to generic path.
+            # Not an image HDU; skip generic image fast path and fall through.
             skip_generic_image_fast_path = True
             pass
 
@@ -1939,7 +1957,7 @@ def clear_file_cache(
     - stats: reset cache performance counters
     - cpp: clear C++-side caches (if available)
     """
-    global _cache_stats, _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache
+    global _cache_stats, _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache, _auto_hdu_cache
 
     if data:
         _file_cache.clear()
@@ -1957,6 +1975,9 @@ def clear_file_cache(
         _image_meta_cache.clear()
     if hdu_types:
         _hdu_type_cache.clear()
+        _auto_hdu_cache.clear()
+    if meta:
+        _cold_nommap_cache.clear()
 
     if stats:
         _cache_stats = {"total_requests": 0, "hits": 0, "misses": 0, "cache_size": 0}
@@ -2270,17 +2291,20 @@ def open(path: str, mode: str = "r") -> HDUList:
         raise RuntimeError(f"Failed to open FITS file '{path}': {e}") from e
 
 
-def get_header(path: str, hdu: Union[int, str] = 0) -> Header:
+def get_header(path: str, hdu: Union[int, str, None] = 0) -> Header:
     """Get the header of a FITS file.
 
     Args:
         path: Path to the FITS file.
-        hdu: HDU index or name (default: 0).
+        hdu: HDU index, name, or `"auto"`/`None` (default: 0).
 
     Returns:
         Header object.
     """
     import torchfits.cpp as cpp
+
+    if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
+        hdu = _autodetect_hdu(path, handle_cache_capacity=16)
 
     # Resolve HDU index if string
     if isinstance(hdu, str):
@@ -2297,6 +2321,27 @@ def get_header(path: str, hdu: Union[int, str] = 0) -> Header:
         raise ValueError(f"HDU '{hdu}' not found")
 
     return Header(cpp.read_header_dict(path, hdu))
+
+
+def get_wcs(
+    path: str,
+    hdu: Union[int, str, None] = "auto",
+    device: Optional[Union[str, torch.device]] = None,
+) -> WCS:
+    """Build a WCS object directly from a FITS file/header HDU.
+
+    Args:
+        path: Path to FITS file.
+        hdu: HDU index/name, or `"auto"`/`None` for first payload HDU.
+        device: Optional torch device for WCS tensor buffers.
+
+    Returns:
+        WCS object initialized from the selected HDU header.
+    """
+    wcs = WCS(get_header(path, hdu=hdu))
+    if device is not None:
+        wcs = wcs.to(torch.device(device))
+    return wcs
 
 
 _DEBUG_SCALE = os.environ.get("TORCHFITS_DEBUG_SCALE") == "1"

@@ -314,7 +314,7 @@ NB_MODULE(cpp, m) {
                     size_t nelem = 1;
                     for (size_t d : shape) nelem *= d;
                     const size_t nbytes = nelem;  // 1 byte/elem
-                    const int fd = open(filename.c_str(), O_RDONLY);
+                    const int fd = open_readonly_fd(filename);
                     if (fd != -1) {
                         struct stat sb {};
                         if (fstat(fd, &sb) == 0 &&
@@ -325,7 +325,14 @@ NB_MODULE(cpp, m) {
                             bool ok = true;
                             while (remaining) {
                                 ssize_t got = pread(fd, dst8, remaining, off);
-                                if (got <= 0) {
+                                if (got < 0) {
+                                    if (errno == EINTR) {
+                                        continue;
+                                    }
+                                    ok = false;
+                                    break;
+                                }
+                                if (got == 0) {
                                     ok = false;
                                     break;
                                 }

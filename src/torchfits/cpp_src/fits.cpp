@@ -181,7 +181,7 @@ const bool kValidateSharedMeta = []() {
 const int64_t kSharedMetaValidateIntervalNs = []() {
     // Balance stale-file detection with hot-path latency. A longer default interval
     // reduces repeated stat() overhead in tight read loops.
-    constexpr int64_t kDefaultMs = 250;
+    constexpr int64_t kDefaultMs = 1000;
     return env_nonnegative_int("TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS", kDefaultMs) *
            1000000LL;
 }();
@@ -2035,7 +2035,7 @@ private:
         }
         if (!raw_fd_ready_) {
             raw_fd_ready_ = true;
-            raw_fd_ = ::open(filename_.c_str(), O_RDONLY);
+            raw_fd_ = open_readonly_fd(filename_);
             if (raw_fd_ == -1) {
                 return false;
             }

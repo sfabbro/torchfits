@@ -304,6 +304,54 @@ class TestCaching:
         with pytest.raises(ValueError, match="mmap must be bool or 'auto'"):
             torchfits.read("dummy.fits", mmap="sometimes")
 
+    def test_read_hdu_auto_detects_compressed_image_extension(self):
+        """`hdu='auto'` should resolve to the first payload HDU (fitsio-like behavior)."""
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            from astropy.io import fits
+
+            image = np.random.normal(size=(64, 64)).astype(np.float32)
+            primary = fits.PrimaryHDU()
+            compressed = fits.CompImageHDU(image, compression_type="RICE_1")
+            fits.HDUList([primary, compressed]).writeto(f.name, overwrite=True)
+            path = f.name
+
+        try:
+            empty_primary = torchfits.read(path, hdu=0, mmap="auto")
+            auto_tensor = torchfits.read(path, hdu="auto", mmap="auto")
+            none_tensor = torchfits.read(path, hdu=None, mmap="auto")
+
+            assert isinstance(empty_primary, torch.Tensor)
+            assert empty_primary.numel() == 0
+            assert isinstance(auto_tensor, torch.Tensor)
+            assert isinstance(none_tensor, torch.Tensor)
+            assert tuple(auto_tensor.shape) == image.shape
+            assert tuple(none_tensor.shape) == image.shape
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+            torchfits.clear_file_cache()
+
+    def test_get_header_auto_matches_detected_hdu(self):
+        """`get_header(..., hdu='auto')` should return the detected payload header."""
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            from astropy.io import fits
+
+            image = np.random.normal(size=(32, 48)).astype(np.float32)
+            primary = fits.PrimaryHDU()
+            compressed = fits.CompImageHDU(image, compression_type="RICE_1")
+            fits.HDUList([primary, compressed]).writeto(f.name, overwrite=True)
+            path = f.name
+
+        try:
+            header = torchfits.get_header(path, hdu="auto")
+            assert int(header.get("NAXIS", 0)) == 2
+            assert int(header.get("NAXIS1", 0)) > 0
+            assert int(header.get("NAXIS2", 0)) > 0
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+            torchfits.clear_file_cache()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

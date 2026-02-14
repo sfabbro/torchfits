@@ -325,6 +325,13 @@ class WCS:
             outputs.append(fn(coords[start : start + batch_size], batch_size=None))
         return torch.cat(outputs, dim=0) if outputs else coords
 
+    @staticmethod
+    def _promote_coordinate_dtype(coords: Tensor) -> Tensor:
+        """Use float64 math for stable inverse WCS transforms."""
+        if coords.dtype in (torch.float16, torch.bfloat16, torch.float32):
+            return coords.to(torch.float64)
+        return coords
+
     def pixel_to_world(
         self, pixels: Tensor, batch_size: Optional[int] = None
     ) -> Tensor:
@@ -334,6 +341,7 @@ class WCS:
         """
         if batch_size is not None and pixels.shape[0] > batch_size:
             return self._batch_process(self.pixel_to_world, pixels, batch_size)
+        pixels = self._promote_coordinate_dtype(pixels)
 
         # Check basic support conditions first
         if self.naxis != 2:
@@ -451,6 +459,7 @@ class WCS:
         """Inverse transformation: World -> Pixel."""
         if batch_size is not None and coords.shape[0] > batch_size:
             return self._batch_process(self.world_to_pixel, coords, batch_size)
+        coords = self._promote_coordinate_dtype(coords)
 
         # Check basic support conditions first
         if self.naxis != 2:
