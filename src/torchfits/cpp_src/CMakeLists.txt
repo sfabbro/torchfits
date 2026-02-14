@@ -50,6 +50,12 @@ if(DEFINED ENV{PREFIX})
 endif()
 
 # Find required packages
+# In pixi/conda packaging builds, ensure Python comes from the host prefix.
+if(DEFINED ENV{PREFIX} AND EXISTS "$ENV{PREFIX}/bin/python")
+    set(Python_ROOT_DIR "$ENV{PREFIX}" CACHE PATH "Python root directory" FORCE)
+    set(Python_EXECUTABLE "$ENV{PREFIX}/bin/python" CACHE FILEPATH "Python executable" FORCE)
+endif()
+set(Python_FIND_STRATEGY LOCATION)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Find nanobind
@@ -266,18 +272,16 @@ execute_process(
 )
 message(STATUS "DEBUG: TORCH_ROOT: ${TORCH_ROOT}")
 
+# Avoid stale cached paths when switching environments/interpreters.
+unset(TORCH_PYTHON_LIBRARY CACHE)
+unset(TORCH_PYTHON_LIBRARY_FALLBACK CACHE)
+
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_ROOT}/lib" NO_DEFAULT_PATH)
 if(TORCH_PYTHON_LIBRARY)
     target_link_libraries(cpp PRIVATE ${TORCH_PYTHON_LIBRARY})
     message(STATUS "Found libtorch_python: ${TORCH_PYTHON_LIBRARY}")
 else()
     message(WARNING "libtorch_python not found in ${TORCH_ROOT}/lib - tensor returns will use slower DLPack path")
-    # Try finding it in site-packages/torch/lib as fallback
-    find_library(TORCH_PYTHON_LIBRARY_FALLBACK torch_python PATHS "${PYTHON_SITE_PACKAGES}/torch/lib" NO_DEFAULT_PATH)
-    if(TORCH_PYTHON_LIBRARY_FALLBACK)
-        target_link_libraries(cpp PRIVATE ${TORCH_PYTHON_LIBRARY_FALLBACK})
-        message(STATUS "Found libtorch_python fallback: ${TORCH_PYTHON_LIBRARY_FALLBACK}")
-    endif()
 endif()
 
 if(TARGET cfitsio)

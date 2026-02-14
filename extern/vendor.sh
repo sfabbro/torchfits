@@ -119,6 +119,7 @@ set(WCSLIB_SOURCES
     C/log.c
     C/prj.c
     C/spc.c
+    C/spx.c
     C/sph.c
     C/tab.c
     C/wcs.c
@@ -126,6 +127,7 @@ set(WCSLIB_SOURCES
     C/wcsfix.c
     C/wcshdr.c
     C/wcsprintf.c
+    C/wcstrig.c
     C/wcsunits.c
     C/wcsutil.c
     C/flexed/fitshdr.c
