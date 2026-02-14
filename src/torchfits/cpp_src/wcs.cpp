@@ -1,10 +1,19 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include "torchfits_torch.h"
+#if __has_include(<wcslib/wcs.h>)
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
 #include <wcslib/wcsfix.h>
 #include <wcslib/cel.h>
+#elif __has_include(<wcs.h>)
+#include <wcs.h>
+#include <wcshdr.h>
+#include <wcsfix.h>
+#include <cel.h>
+#else
+#error "WCSLIB headers not found"
+#endif
 #include <omp.h>
 
 #ifndef M_PI

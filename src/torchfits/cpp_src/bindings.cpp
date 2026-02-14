@@ -19,8 +19,15 @@
 #include "torch_compat.h"
 
 #include <fitsio.h>
+#if __has_include(<wcslib/wcs.h>)
 #include <wcslib/wcs.h>
 #include <wcslib/wcshdr.h>
+#elif __has_include(<wcs.h>)
+#include <wcs.h>
+#include <wcshdr.h>
+#else
+#error "WCSLIB headers not found"
+#endif
 #include <vector>
 #include <unordered_map>
 
