@@ -1420,9 +1420,22 @@ public:
         long start_row, long num_rows,
         std::unordered_map<std::string, ColumnData>& result) {
         
-        // 16MB chunk size
-        const size_t TARGET_CHUNK_SIZE = 16 * 1024 * 1024; 
+        // 16MB chunk target, then align with CFITSIO's suggested table row buffer.
+        const size_t TARGET_CHUNK_SIZE = 16 * 1024 * 1024;
         long rows_per_chunk = std::max(1L, (long)(TARGET_CHUNK_SIZE / row_width_bytes_));
+        {
+            int status = 0;
+            long cfitsio_rows_per_buf = 0;
+            fits_get_rowsize(fptr_, &cfitsio_rows_per_buf, &status);
+            if (status == 0 && cfitsio_rows_per_buf > 0) {
+                if (rows_per_chunk < cfitsio_rows_per_buf) {
+                    rows_per_chunk = cfitsio_rows_per_buf;
+                } else {
+                    rows_per_chunk =
+                        std::max(1L, (rows_per_chunk / cfitsio_rows_per_buf) * cfitsio_rows_per_buf);
+                }
+            }
+        }
         
         std::vector<uint8_t> buffer(rows_per_chunk * row_width_bytes_);
         

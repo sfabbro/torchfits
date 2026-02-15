@@ -205,6 +205,39 @@ else()
 
     if(EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
         message(STATUS "Building vendored CFITSIO from ${CFITSIO_SOURCE_DIR}")
+
+        # CFITSIO hard-defines NIOBUF/MINDIRECT in headers. When we want to tune these
+        # compile-time constants, patch in #ifndef guards once so command-line -D values
+        # can actually take effect.
+        if(TORCHFITS_NIOBUF OR TORCHFITS_MINDIRECT)
+            set(_CFITSIO_FITSIO_H "${CFITSIO_SOURCE_DIR}/fitsio.h")
+            if(EXISTS "${_CFITSIO_FITSIO_H}")
+                file(READ "${_CFITSIO_FITSIO_H}" _fitsio_h_content)
+                if(NOT _fitsio_h_content MATCHES "#ifndef NIOBUF")
+                    string(REPLACE
+                        "#define NIOBUF  40  /* number of IO buffers to create (default = 40) */"
+                        "#ifndef NIOBUF\n#define NIOBUF  40  /* number of IO buffers to create (default = 40) */\n#endif"
+                        _fitsio_h_content
+                        "${_fitsio_h_content}"
+                    )
+                    file(WRITE "${_CFITSIO_FITSIO_H}" "${_fitsio_h_content}")
+                endif()
+            endif()
+
+            set(_CFITSIO_FITSIO2_H "${CFITSIO_SOURCE_DIR}/fitsio2.h")
+            if(EXISTS "${_CFITSIO_FITSIO2_H}")
+                file(READ "${_CFITSIO_FITSIO2_H}" _fitsio2_h_content)
+                if(NOT _fitsio2_h_content MATCHES "#ifndef MINDIRECT")
+                    string(REPLACE
+                        "#define MINDIRECT 8640   /* minimum size for direct reads and writes */"
+                        "#ifndef MINDIRECT\n#define MINDIRECT 8640   /* minimum size for direct reads and writes */\n#endif"
+                        _fitsio2_h_content
+                        "${_fitsio2_h_content}"
+                    )
+                    file(WRITE "${_CFITSIO_FITSIO2_H}" "${_fitsio2_h_content}")
+                endif()
+            endif()
+        endif()
         
         # CFITSIO Build Options
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
@@ -222,10 +255,14 @@ else()
         set(CFITSIO_INCLUDE_DIR "${CFITSIO_SOURCE_DIR}")
         set(CFITSIO_FOUND TRUE)
         if(TORCHFITS_NIOBUF)
-            target_compile_definitions(cfitsio PRIVATE TORCHFITS_NIOBUF=${TORCHFITS_NIOBUF})
+            # CFITSIO reads this compile-time macro directly from fitsio.h.
+            target_compile_definitions(cfitsio PRIVATE NIOBUF=${TORCHFITS_NIOBUF})
+            message(STATUS "Overriding CFITSIO NIOBUF=${TORCHFITS_NIOBUF}")
         endif()
         if(TORCHFITS_MINDIRECT)
-            target_compile_definitions(cfitsio PRIVATE TORCHFITS_MINDIRECT=${TORCHFITS_MINDIRECT})
+            # CFITSIO direct I/O threshold (bytes), defined in fitsio2.h.
+            target_compile_definitions(cfitsio PRIVATE MINDIRECT=${TORCHFITS_MINDIRECT})
+            message(STATUS "Overriding CFITSIO MINDIRECT=${TORCHFITS_MINDIRECT}")
         endif()
     else()
         message(FATAL_ERROR "CFITSIO not found in environment and vendored version not found at ${CFITSIO_SOURCE_DIR}. Run ./extern/vendor.sh")

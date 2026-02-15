@@ -152,6 +152,21 @@ NB_MODULE(cpp, m) {
             return tensor_to_python(tensor);
         });
 
+    nb::class_<torchfits::SubsetReader>(m, "SubsetReader")
+        .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 0)
+        .def("read", [](torchfits::SubsetReader& self, long x1, long y1, long x2, long y2) {
+            torch::Tensor tensor;
+            {
+                nb::gil_scoped_release release;
+                tensor = self.read(x1, y1, x2, y2);
+            }
+            return tensor_to_python(tensor);
+        }, nb::arg("x1"), nb::arg("y1"), nb::arg("x2"), nb::arg("y2"))
+        .def("close", &torchfits::SubsetReader::close)
+        .def_prop_ro("width", &torchfits::SubsetReader::width)
+        .def_prop_ro("height", &torchfits::SubsetReader::height)
+        .def_prop_ro("hdu", &torchfits::SubsetReader::hdu);
+
     nb::class_<torchfits::TableReader>(m, "TableReader")
         .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 1)
         .def("__init__", [](torchfits::TableReader* self, torchfits::FITSFile& file, int hdu_num) {
@@ -196,6 +211,18 @@ NB_MODULE(cpp, m) {
         }
         return tensor_to_python(tensor);
     }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("resolve_hdu_name_cached",
+          [](const std::string& filename, const std::string& hdu_name) {
+              int hdu_num = 0;
+              {
+                  nb::gil_scoped_release release;
+                  hdu_num = torchfits::resolve_hdu_name_cached(filename, hdu_name);
+              }
+              return hdu_num;
+          },
+          nb::arg("filename"),
+          nb::arg("hdu_name"));
 
     m.def("read_full_numpy_cached", [](const std::string& filename, int hdu_num, bool use_mmap) -> nb::object {
         torch::Tensor tensor;
