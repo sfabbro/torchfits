@@ -8,7 +8,10 @@ including local development, HPC clusters, and cloud platforms.
 import os
 from typing import Any, Dict, Optional
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 class CacheConfig:
@@ -29,6 +32,15 @@ class CacheConfig:
     @classmethod
     def for_environment(cls) -> "CacheConfig":
         """Auto-detect optimal cache configuration."""
+        if psutil is None:
+            # Fallback if psutil is not available
+            return cls(
+                max_files=100,
+                max_memory_mb=1024,
+                disk_cache_gb=5,
+                prefetch_enabled=False,
+            )
+
         # Get system memory
         memory_gb = psutil.virtual_memory().total / (1024**3)
 

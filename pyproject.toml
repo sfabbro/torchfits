@@ -4,7 +4,8 @@
 requires = [
     "scikit-build-core>=0.11.6",
     "nanobind>=2.10.2",
-    "torch>=2.0.0"
+    "torch>=2.0.0",
+    "numpy>=1.20.0"
 ]
 build-backend = "scikit_build_core.build"
 
@@ -21,9 +22,9 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
     "Programming Language :: Python :: 3",
-
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -35,7 +36,6 @@ requires-python = ">=3.12"
 # but needed here for PyPI compatibility
 dependencies = [
     "torch>=2.0.0",
-    "psutil>=5.0.0",  # For system resource monitoring
     "numpy>=1.20.0",  # Core numerical operations
 ]
 
@@ -46,6 +46,8 @@ Repository = "https://github.com/sfabbro/torchfits"
 # Defines optional dependencies for different use cases.
 # For pixi environments, these are managed separately via features
 [project.optional-dependencies]
+
+cache = ["psutil>=5.0.0"]
 
 dev = [
     "pytest>=6.0",

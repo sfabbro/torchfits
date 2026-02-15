@@ -61,6 +61,7 @@ jobs:
       CIBW_TEST_COMMAND: python -c "import torchfits; print(torchfits.__version__)"
       CIBW_BEFORE_ALL_LINUX: bash ./extern/vendor.sh --cfitsio-version cfitsio-4.6.3 --wcslib-version 8.5
       CIBW_BEFORE_ALL_MACOS: bash ./extern/vendor.sh --cfitsio-version cfitsio-4.6.3 --wcslib-version 8.5
+      CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-listdeps {wheel} && delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --exclude libtorch_python.dylib --exclude libtorch_cpu.dylib --exclude libtorch.dylib --exclude libc10.dylib"
 
     steps:
       - uses: actions/checkout@v4
