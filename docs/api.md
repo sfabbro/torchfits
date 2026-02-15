@@ -6,7 +6,8 @@ Complete API documentation for torchfits.
 
 If you only need the common workflows, start with these:
 
-- Image I/O: `torchfits.read(...)`, `torchfits.write(...)`, `torchfits.read_subset(...)`, `torchfits.get_wcs(...)`
+- Image I/O: `torchfits.read(...)`, `torchfits.read_image(...)`, `torchfits.write(...)`, `torchfits.read_subset(...)`, `torchfits.get_wcs(...)`
+- Table I/O: `torchfits.read_table(...)`, `torchfits.read_table_rows(...)`, `torchfits.stream_table(...)`, `torchfits.read_large_table(...)`
 - Table reads: `torchfits.table.read(...)`, `torchfits.table.scan(...)`, `torchfits.table.reader(...)`
 - Table file edits: `torchfits.table.append_rows(...)`, `update_rows(...)`, `insert_rows(...)`, `delete_rows(...)`
 - Column edits: `insert_column(...)`, `replace_column(...)`, `rename_columns(...)`, `drop_columns(...)`
@@ -395,7 +396,7 @@ joined = con.sql(
 Read FITS data as PyTorch tensors.
 
 ```python
-torchfits.read(path, hdu=0, device='cpu', mmap='auto', fp16=False, bf16=False,
+torchfits.read(path, hdu=0, mode='auto', device='cpu', mmap='auto', fp16=False, bf16=False,
                columns=None, start_row=1, num_rows=-1, cache_capacity=10,
                handle_cache_capacity=16, fast_header=True, return_header=False)
 ```
@@ -404,6 +405,7 @@ torchfits.read(path, hdu=0, device='cpu', mmap='auto', fp16=False, bf16=False,
 - `path` (str): Path to FITS file or URL
 - `hdu` (int | str | None): HDU index or name (default: 0)
   - Use `"auto"` (or `None`) to select the first HDU with payload data (image/compressed image, then table).
+- `mode` (str): Read intent - `"auto"` (default), `"image"`, or `"table"`
 - `device` (str): Target device - 'cpu', 'cuda', 'mps', or 'cuda:N' (default: 'cpu')
 - `mmap` (bool | "auto"): Memory mapping mode (default: `"auto"`).
   - `"auto"`: compressed image HDUs default to non-mmap; uncompressed images use latency heuristics
@@ -450,8 +452,82 @@ table, header = torchfits.read("catalog.fits", hdu=1,
 **Notes:**
 - Data types are preserved from FITS by default for numerical accuracy
 - Default `mmap='auto'` is recommended for typical workloads, especially mixed compressed/uncompressed archives
+- Use `mode='image'` or `mode='table'` when intent is known to avoid auto fallback logic.
 - Avoid `fp16`/`bf16` for astrometry or photometry requiring full precision
 - URLs supported via cfitsio (http://, https://, ftp://)
+
+---
+
+### `read_image()`
+
+Read image HDUs through an explicit low-level path, bypassing runtime policy/caching dispatch.
+
+```python
+torchfits.read_image(path, hdu=0, device='cpu', mmap=True, handle_cache=True,
+                     fp16=False, bf16=False, raw_scale=False, return_header=False)
+```
+
+**Parameters:**
+- `path` (str): Path to FITS file
+- `hdu` (int): HDU index (default: 0)
+- `device` (str): Target device - 'cpu', 'cuda', 'mps', or 'cuda:N' (default: 'cpu')
+- `mmap` (bool): Explicit mmap mode (required to be bool in this low-level mode)
+- `handle_cache` (bool): Use C++ shared-handle fast path for repeated reads (default: `True`)
+- `fp16` (bool): Convert to half precision (default: False)
+- `bf16` (bool): Convert to bfloat16 (default: False)
+- `raw_scale` (bool): Return raw stored values (no BSCALE/BZERO application) when supported
+- `return_header` (bool): Whether to also return `Header`
+
+**Returns:**
+- If `return_header=True`: `(torch.Tensor, Header)`
+- Else: `torch.Tensor`
+
+**Note:**
+- `read_image()` is explicit: pass a numeric image HDU index (default `0`).
+- For auto HDU selection, use `read(..., hdu='auto')`.
+
+**Example:**
+
+```python
+import torchfits
+
+# Deterministic direct path for profiling / A-B tests
+img = torchfits.read_image("image.fits", hdu=0, mmap=False)
+```
+
+---
+
+### `read_table()`
+
+Table-focused convenience wrapper around `read()`.
+
+```python
+torchfits.read_table(path, hdu=1, columns=None, start_row=1, num_rows=-1,
+                     device='cpu', mmap=True, return_header=False)
+```
+
+**Returns:**
+- Table dictionary (`dict[str, torch.Tensor | list]`)
+- If `return_header=True`: `(table_dict, Header)`
+
+**Note:**
+- `read_table()` is explicit: pass a numeric table HDU index (default `1`).
+- For auto HDU selection, use `read(..., hdu='auto', columns=...)`.
+
+---
+
+### `read_table_rows()`
+
+Read a row slice from a table HDU (`start_row` is FITS 1-based indexing).
+
+```python
+torchfits.read_table_rows(path, hdu=1, start_row=1, num_rows=1000,
+                          columns=None, device='cpu', mmap=True)
+```
+
+**Note:**
+- `read_table_rows()` is explicit: pass a numeric table HDU index (default `1`).
+- For auto HDU selection, use `read(..., hdu='auto', start_row=..., num_rows=...)`.
 
 ---
 
@@ -1478,7 +1554,7 @@ This section mirrors the exported names in `src/torchfits/__init__.py` (`__all__
 
 ### Core I/O
 
-`read`, `write`, `insert_hdu`, `replace_hdu`, `delete_hdu`, `open`, `get_header`, `get_wcs`, `read_subset`, `io`
+`read`, `read_image`, `read_table`, `read_table_rows`, `write`, `insert_hdu`, `replace_hdu`, `delete_hdu`, `open`, `get_header`, `get_wcs`, `read_subset`, `io`
 
 ### Batch and Streaming
 

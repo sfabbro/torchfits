@@ -42,16 +42,17 @@ Update `docs/benchmarks.md` with:
 - key speedup medians and win/loss counts
 - known weak spots
 
-## 3. Build + Artifact Validation
+## 3. Optional Local Artifact Check
 
 ```bash
-pixi run python -m build
+pixi run python -m pip wheel . --no-deps --no-build-isolation -w dist
 pixi run twine check dist/*
 ```
 
 Smoke-test wheel install in a fresh environment before publish.
+The release workflow builds both wheels and sdist during publish.
 
-## 4. Git + Tag
+## 4. Git + Tag Push
 
 ```bash
 git add -A
@@ -60,9 +61,16 @@ git tag vX.Y.Z
 git push origin main --tags
 ```
 
-## 5. Publish
+## 5. Publish from GitHub Release
 
-Use the project publication flow (CI or trusted publisher), then verify:
+Create a GitHub release for `vX.Y.Z` (publish the release in the UI).
+
+Publishing a release triggers `.github/workflows/build_wheels.yml`, which:
+- runs tests first
+- builds wheels on Linux and macOS plus sdist
+- uploads to PyPI via trusted publishing
+
+After workflow success, verify:
 - PyPI version availability
 - install from PyPI in fresh env
 - changelog and release notes links resolve

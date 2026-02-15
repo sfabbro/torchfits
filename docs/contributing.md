@@ -39,7 +39,7 @@ By default, this resolves the latest published dependency tags.
 Pin explicit versions when needed:
 
 ```bash
-./extern/vendor.sh --cfitsio-version cfitsio-4.6.2 --wcslib-version v8.5
+./extern/vendor.sh --cfitsio-version cfitsio-4.6.2 --wcslib-version 8.5
 ```
 
 Optional system-library mode:
@@ -122,7 +122,7 @@ Minimum gates:
 4. Build and validate artifacts:
 
 ```bash
-pixi run python -m build
+pixi run python -m pip wheel . --no-deps --no-build-isolation -w dist
 pixi run twine check dist/*
 ```
 
