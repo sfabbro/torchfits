@@ -224,7 +224,9 @@ def parse_shape(value: str) -> Tuple[int, int]:
 
 def run_benchmark() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"])
+    parser.add_argument(
+        "--device", type=str, default="cpu", choices=["cpu", "cuda", "mps"]
+    )
     parser.add_argument("--n-files", type=int, default=50)
     parser.add_argument("--shape", type=str, default="2048,2048")
     parser.add_argument("--batch-size", type=int, default=4)

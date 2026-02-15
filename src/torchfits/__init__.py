@@ -67,10 +67,20 @@ _auto_hdu_cache = OrderedDict()
 
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
-    global _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache, _auto_mmap_cache, _auto_hdu_cache
+    global \
+        _file_cache, \
+        _file_handle_cache, \
+        _file_handle_sig_cache, \
+        _image_meta_cache, \
+        _hdu_type_cache, \
+        _cold_nommap_cache, \
+        _auto_mmap_cache, \
+        _auto_hdu_cache
 
     stale_data_keys = [
-        k for k in list(_file_cache.keys()) if isinstance(k, tuple) and k and k[0] == path
+        k
+        for k in list(_file_cache.keys())
+        if isinstance(k, tuple) and k and k[0] == path
     ]
     for key in stale_data_keys:
         _file_cache.pop(key, None)
@@ -91,7 +101,9 @@ def _invalidate_path_caches(path: str) -> None:
     for key in [k for k in _auto_mmap_cache.keys() if k[0] == path]:
         _auto_mmap_cache.pop(key, None)
     _auto_hdu_cache.pop(path, None)
-    for key in [k for k in _auto_hdu_cache.keys() if isinstance(k, tuple) and k and k[0] == path]:
+    for key in [
+        k for k in _auto_hdu_cache.keys() if isinstance(k, tuple) and k and k[0] == path
+    ]:
         _auto_hdu_cache.pop(key, None)
 
     # Keep Arrow table reader/handle caches coherent across write/append/update paths.
@@ -931,7 +943,9 @@ def read(
         hdu = _autodetect_hdu(path, handle_cache_capacity)
 
     hdu_type_hint = _get_cached_hdu_type(path, hdu) if isinstance(hdu, int) else None
-    is_cached_table_hdu = force_table or (hdu_type_hint in {"ASCII_TABLE", "BINARY_TABLE"})
+    is_cached_table_hdu = force_table or (
+        hdu_type_hint in {"ASCII_TABLE", "BINARY_TABLE"}
+    )
 
     # Avoid an extra open() just to probe HDU type: for extension images (MEF/compressed)
     # this is pure overhead, and on table HDUs we can simply attempt the image fast-path
@@ -1206,7 +1220,9 @@ def read(
                                     new_data[k] = v
                             cached_data = new_data
 
-                    return (cached_data, cached_header) if return_header else cached_data
+                    return (
+                        (cached_data, cached_header) if return_header else cached_data
+                    )
             else:
                 _cache_stats["misses"] += 1
         else:
@@ -1320,7 +1336,9 @@ def read(
                             _set_cached_hdu_type(path, hdu_num, hdu_type)
                         except Exception:
                             hdu_type = None
-                    is_table_hdu = force_table or (hdu_type in {"ASCII_TABLE", "BINARY_TABLE"})
+                    is_table_hdu = force_table or (
+                        hdu_type in {"ASCII_TABLE", "BINARY_TABLE"}
+                    )
                     if not is_table_hdu:
                         raise
 
@@ -2263,7 +2281,16 @@ def clear_file_cache(
     - stats: reset cache performance counters
     - cpp: clear C++-side caches (if available)
     """
-    global _cache_stats, _file_cache, _file_handle_cache, _file_handle_sig_cache, _image_meta_cache, _hdu_type_cache, _cold_nommap_cache, _auto_mmap_cache, _auto_hdu_cache
+    global \
+        _cache_stats, \
+        _file_cache, \
+        _file_handle_cache, \
+        _file_handle_sig_cache, \
+        _image_meta_cache, \
+        _hdu_type_cache, \
+        _cold_nommap_cache, \
+        _auto_mmap_cache, \
+        _auto_hdu_cache
 
     if data:
         _file_cache.clear()

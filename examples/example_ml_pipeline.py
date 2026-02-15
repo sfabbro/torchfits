@@ -171,9 +171,9 @@ def create_transforms():
     return train_transform, val_transform
 
 
-
 class TransformDataset:
     """Dataset wrapper to apply transforms."""
+
     def __init__(self, dataset, transform):
         self.dataset = dataset
         self.transform = transform

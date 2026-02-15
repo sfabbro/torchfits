@@ -60,7 +60,9 @@ def _show_roundtrip(path: str) -> None:
     if wcs.naxis == 1:
         pixels = torch.tensor([[0.0], [10.0], [100.0]], dtype=torch.float64)
     elif wcs.naxis == 2:
-        pixels = torch.tensor([[0.0, 0.0], [49.0, 49.0], [99.0, 99.0]], dtype=torch.float64)
+        pixels = torch.tensor(
+            [[0.0, 0.0], [49.0, 49.0], [99.0, 99.0]], dtype=torch.float64
+        )
     else:
         pixels = torch.tensor([[4.0, 9.0, 0.0], [10.0, 10.0, 5.0]], dtype=torch.float64)
 

@@ -30,7 +30,9 @@ class TestMainAPI:
             hdu.writeto(f.name, overwrite=True)
             return f.name, data
 
-    def create_test_fits_with_named_ext(self, shape=(64, 64), dtype=np.float32, extname="SCI"):
+    def create_test_fits_with_named_ext(
+        self, shape=(64, 64), dtype=np.float32, extname="SCI"
+    ):
         """Create a FITS file with a named image extension."""
         data = np.random.normal(0, 1, shape).astype(dtype)
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
@@ -74,7 +76,9 @@ class TestMainAPI:
         filepath, expected_data = self.create_test_fits()
 
         try:
-            result, header = torchfits.read_image(filepath, return_header=True, mmap=False)
+            result, header = torchfits.read_image(
+                filepath, return_header=True, mmap=False
+            )
             assert isinstance(result, torch.Tensor)
             assert result.shape == expected_data.shape
             assert result.device.type == "cpu"
@@ -200,7 +204,9 @@ class TestMainAPI:
 
     def test_get_header_by_extname(self):
         """get_header should resolve named HDUs via EXTNAME."""
-        filepath, _expected_data, extname = self.create_test_fits_with_named_ext(extname="SCI_EXT")
+        filepath, _expected_data, extname = self.create_test_fits_with_named_ext(
+            extname="SCI_EXT"
+        )
         try:
             hdr = torchfits.get_header(filepath, hdu=extname)
             assert hdr.get("EXTNAME") == extname
@@ -335,7 +341,9 @@ class TestMainAPI:
 
     def test_cpp_unmapped_raw_matches_raw_no_mmap(self):
         """read_full_unmapped_raw should match stable raw no-mmap behavior."""
-        filepath, expected_data = self.create_test_fits(shape=(64, 64), dtype=np.float64)
+        filepath, expected_data = self.create_test_fits(
+            shape=(64, 64), dtype=np.float64
+        )
 
         try:
             baseline = torchfits.cpp.read_full_raw(filepath, 0, False)
@@ -343,7 +351,9 @@ class TestMainAPI:
             for _ in range(20):
                 result = torchfits.cpp.read_full_unmapped_raw(filepath, 0)
                 torch.testing.assert_close(result, baseline)
-            np.testing.assert_allclose(baseline.numpy(), expected_data, rtol=1e-12, atol=0.0)
+            np.testing.assert_allclose(
+                baseline.numpy(), expected_data, rtol=1e-12, atol=0.0
+            )
         finally:
             os.unlink(filepath)
 
