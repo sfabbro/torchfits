@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil
+          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow
 
       - name: Prepare vendored C deps
         run: |
