@@ -63,7 +63,7 @@ jobs:
       CIBW_BEFORE_ALL_MACOS: bash ./extern/vendor.sh --cfitsio-version cfitsio-4.6.3 --wcslib-version 8.5
       CIBW_ENVIRONMENT_LINUX: PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
       CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair --exclude libtorch_python.so --exclude libtorch_cpu.so --exclude libtorch.so --exclude libc10.so -w {dest_dir} {wheel}"
-      CIBW_REPAIR_WHEEL_COMMAND_MACOS: "export DYLD_LIBRARY_PATH=$(python -c 'import torch, os; print(os.path.dirname(torch.__file__))')/lib:$DYLD_LIBRARY_PATH && delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --exclude libtorch_python.dylib --exclude libtorch_cpu.dylib --exclude libtorch.dylib --exclude libc10.dylib --exclude libshm.dylib --exclude libasiodrv.dylib"
+      CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --ignore-missing-dependencies --exclude libtorch_python.dylib --exclude libtorch_cpu.dylib --exclude libtorch.dylib --exclude libc10.dylib --exclude libshm.dylib --exclude libasiodrv.dylib"
 
     steps:
       - uses: actions/checkout@v4
