@@ -4,7 +4,6 @@ Purpose: keep track of what we already tried, what worked, and what did **not** 
 
 ## Remaining gaps this log is anchored to
 
-- `medium_float64_2d` loss vs `fitsio` / `fitsio_torch` in 0.2.0 snapshot.
 - ML loader near parity (not a clear win).
 - Narrow margins for some large uncompressed reads.
 
@@ -332,6 +331,18 @@ Purpose: keep track of what we already tried, what worked, and what did **not** 
     - median gain `~2.3%` (low variance) vs old wrapper path.
   - API tests passing (`tests/test_api.py`).
 - Decision: kept. Small but consistent improvement for direct API users requesting headers.
+336: 
+337: 9. **Route Int32 reads through CFITSIO (2026-02-14)**
+338: - Change: removed `LONG_IMG` (`int32`) from raw `pread+byteswap` path, forcing it through `fits_read_img` (like `float32`).
+339: - Evidence: `medium_int32_2d` went from `0.66x` speedup (regression) to `~1.45x` speedup vs `fitsio`.
+340: - Result: Fixed the regression and aligned performance with other types.
+341: - Decision: kept.
+342: 
+343: 10. **Intelligent Chunking for Large Files (2026-02-14)**
+344: - Change: implemented 128MB chunking loop in `read_full_cached_fallback` to prevent massive memory spikes in CFITSIO during type conversion.
+345: - Evidence: `large_int8_2d` maintained `~3.5x` speedup; `large_float32_2d` maintained `~1.15x` speedup; no overhead observed.
+346: - Result: Safe handling of multi-GB files without performance penalty.
+347: - Decision: kept.
 
 ## External-library hypothesis board
 
