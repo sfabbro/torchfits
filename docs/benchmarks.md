@@ -1,6 +1,6 @@
 # TorchFits Benchmarks
 
-This page tracks benchmark methodology and the 0.2.0 release snapshot.
+This page tracks benchmark methodology and the 0.2.1 release snapshot.
 
 ## Main Scripts
 
@@ -99,7 +99,7 @@ Worst compressed case in this run: `compressed_rice_1` at `1.021x` (near parity)
 - **No regressions found** (100% win rate against baseline).
 - `medium_float64_2d` gap is closed (now `1.14x` faster).
 
-## ML Loader Snapshot (0.2.0)
+## ML Loader Snapshot (0.2.1)
 
 Command used:
 

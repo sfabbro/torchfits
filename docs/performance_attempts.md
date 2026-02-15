@@ -1,4 +1,4 @@
-# Performance Attempts Log (Pre-0.2.1)
+# Performance Attempts Log (v0.2.1)
 
 Purpose: keep track of what we already tried, what worked, and what did **not** move the remaining gaps enough.
 
