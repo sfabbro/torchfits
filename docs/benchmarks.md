@@ -7,8 +7,10 @@ This page tracks benchmark methodology and the 0.2.0 release snapshot.
 | Script | Description |
 |--------|-------------|
 | `benchmark_all.py` | Exhaustive suite across image/table/compression/WCS/cutout/random-extension paths. |
+| `benchmark_sentinel.py` | Fast 10-case gate with early-stop significance checks for optimization loops. |
 | `benchmark_ml_loader.py` | End-to-end DataLoader throughput benchmark (uncompressed + compressed). |
 | `benchmark_fast.py` | Fast regression loop for image-path changes. |
+| `benchmark_compressed_stability.py` | Randomized-order compressed benchmark for RICE/HCOMPRESS tuning with lower order/cache bias (`library_default` vs forced config modes). |
 | `benchmark_table.py` | FITS table-path read/scan/column access checks. |
 | `benchmark_arrow_tables.py` | Arrow conversion benchmark for table workloads. |
 | `benchmark_wcs.py` | WCS transform throughput checks. |
@@ -19,9 +21,20 @@ This page tracks benchmark methodology and the 0.2.0 release snapshot.
 # Exhaustive release-style run (can exceed 1 hour)
 pixi run python benchmarks/benchmark_all.py --profile user --include-tables --output-dir benchmark_results/<run_id>
 
+# Fast optimization gate (10 diverse cases, early-stop enabled)
+pixi run python benchmarks/benchmark_sentinel.py --initial-repeats 3 --full-repeats 9 --seed 123
+
+# Compressed-path stability run (randomized config order)
+pixi run python benchmarks/benchmark_compressed_stability.py --rounds 4 --repeats 12 --warmup 3
+
 # ML loader throughput run
 pixi run python benchmarks/benchmark_ml_loader.py --device cpu --shape 2048,2048 --n-files 50 --batch-size 4 --num-workers 4 --epochs 3 --repeats 5 --warm-cache
 ```
+
+## Optimization History
+
+For a concise log of attempted optimizations and outcomes (including dead ends), see:
+- `docs/performance_attempts.md`
 
 ## 0.2.0 Release Snapshot
 
