@@ -86,6 +86,7 @@ cmake.args = [
     "-DTORCHFITS_USE_VENDORED_WCSLIB=ON",
     "-DTORCHFITS_NIOBUF=80",
     "-DTORCHFITS_MINDIRECT=16384",
+    "-DUSE_CUDA=OFF",
 ]
 
 # Configures the install directory for the compiled extension.
