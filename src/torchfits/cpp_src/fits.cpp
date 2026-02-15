@@ -102,6 +102,72 @@ constexpr bool _host_is_little_endian() {
 #endif
 }
 
+struct ScaleDetectionResult {
+    bool scaled = false;
+    bool trusted = true;
+    double bscale = 1.0;
+    double bzero = 0.0;
+};
+
+// Determine scaling state with a fast CFITSIO equivalence query first.
+// If scaling is present and not the canonical signed-byte encoding, fall back
+// to reading exact BSCALE/BZERO values.
+inline ScaleDetectionResult detect_scale_info_fast(fitsfile* fptr, int bitpix) {
+    ScaleDetectionResult out;
+    if (!fptr || bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG) {
+        return out;
+    }
+
+    int equiv_status = 0;
+    int equiv_type = bitpix;
+    fits_get_img_equivtype(fptr, &equiv_type, &equiv_status);
+    if (equiv_status == 0) {
+        if (equiv_type == bitpix) {
+            return out;
+        }
+        if (bitpix == BYTE_IMG && equiv_type == SBYTE_IMG) {
+            out.scaled = true;
+            out.bscale = 1.0;
+            out.bzero = -128.0;
+            return out;
+        }
+    }
+
+    double bscale = 1.0;
+    double bzero = 0.0;
+    int s1 = 0;
+    fits_read_key(fptr, TDOUBLE, "BSCALE", &bscale, nullptr, &s1);
+    if (s1 == 0) {
+        out.bscale = bscale;
+        if (bscale != 1.0) {
+            out.scaled = true;
+        }
+    } else if (s1 != KEY_NO_EXIST) {
+        out.scaled = true;
+        out.trusted = false;
+    }
+
+    int s2 = 0;
+    fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &s2);
+    if (s2 == 0) {
+        out.bzero = bzero;
+        if (bzero != 0.0) {
+            out.scaled = true;
+        }
+    } else if (s2 != KEY_NO_EXIST) {
+        out.scaled = true;
+        out.trusted = false;
+    }
+
+    // Preserve "scaled" signal from CFITSIO's equivalence logic even if the
+    // keywords parse to nominal defaults (e.g. malformed headers).
+    if (equiv_status == 0 && equiv_type != bitpix) {
+        out.scaled = true;
+    }
+
+    return out;
+}
+
 struct SharedReadMeta {
     uint64_t uid = 0;
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache;
@@ -109,6 +175,7 @@ struct SharedReadMeta {
     std::unordered_map<int, bool> compressed_parallel_cache;
     std::unordered_map<int, bool> compressed_nulls_cache;
     std::unordered_map<int, std::tuple<bool, bool, double, double>> scale_cache;
+    std::unordered_map<std::string, int> hdu_name_cache;
     bool has_stat = false;
     off_t size = 0;
     int64_t mtime_ns = 0;
@@ -748,44 +815,11 @@ public:
             }
         }
         ScaleInfo info;
-        if (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG) {
-            auto inserted = scale_cache_.emplace(hdu_num, info);
-            if (shared_meta_) {
-                std::lock_guard<std::mutex> lock(shared_meta_->mutex);
-                shared_meta_->scale_cache[hdu_num] = std::make_tuple(
-                    info.scaled, info.trusted, info.bscale, info.bzero
-                );
-            }
-            return inserted.first->second;
-        }
-
-        int status = 0;
-        double bscale = 1.0;
-        double bzero = 0.0;
-
-        status = 0;
-        fits_read_key(fptr_, TDOUBLE, "BSCALE", &bscale, nullptr, &status);
-        if (status == 0) {
-            info.bscale = bscale;
-            if (bscale != 1.0) {
-                info.scaled = true;
-            }
-        } else if (status != KEY_NO_EXIST) {
-            info.scaled = true;
-            info.trusted = false;
-        }
-
-        status = 0;
-        fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &status);
-        if (status == 0) {
-            info.bzero = bzero;
-            if (bzero != 0.0) {
-                info.scaled = true;
-            }
-        } else if (status != KEY_NO_EXIST) {
-            info.scaled = true;
-            info.trusted = false;
-        }
+        const ScaleDetectionResult detected = detect_scale_info_fast(fptr_, bitpix);
+        info.scaled = detected.scaled;
+        info.trusted = detected.trusted;
+        info.bscale = detected.bscale;
+        info.bzero = detected.bzero;
 
         auto inserted = scale_cache_.emplace(hdu_num, info);
         if (shared_meta_) {
@@ -1112,7 +1146,9 @@ public:
                 case SHORT_IMG: elem_size = sizeof(uint16_t); break;
                 case LONG_IMG: elem_size = sizeof(uint32_t); break;
                 case LONGLONG_IMG: elem_size = sizeof(uint64_t); break;
-                case FLOAT_IMG: elem_size = sizeof(uint32_t); break;
+                // Keep FLOAT_IMG on CFITSIO read path: pread+byteswap is
+                // consistently slower for large float32 images.
+                case FLOAT_IMG: elem_size = 0; break;
                 case DOUBLE_IMG: elem_size = sizeof(uint64_t); break;
                 default: elem_size = 0; break;
             }
@@ -1295,8 +1331,10 @@ public:
 
         auto tensor = torch::empty(at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
 
+        const bool compressed = is_compressed_image_cached(hdu_num);
+
         // Fast uncompressed image raw path: mmap + direct decode.
-        if (want_mmap && !is_compressed_image_cached(hdu_num) && bitpix == BYTE_IMG) {
+        if (want_mmap && !compressed && bitpix == BYTE_IMG) {
             if (filename_.find('[') == std::string::npos) {
                 LONGLONG headstart = 0, data_offset = 0, dataend = 0;
                 status = 0;
@@ -1354,10 +1392,12 @@ public:
             }
         }
 
-        // Disable CFITSIO scaling for raw reads and restore after.
+        // For native floating-point images, CFITSIO scaling is not used.
+        // Skip BSCALE/BZERO guard work to match a direct fitsio-like path.
         FITSFile::BScaleGuard guard;
         guard.fptr = fptr_;
-        {
+        const bool needs_bscale_guard = (bitpix != FLOAT_IMG && bitpix != DOUBLE_IMG);
+        if (needs_bscale_guard) {
             int key_status = 0;
             double bscale = 1.0;
             double bzero = 0.0;
@@ -1376,14 +1416,14 @@ public:
 
             guard.bscale = bscale;
             guard.bzero = bzero;
-        }
 
-        status = 0;
-        fits_set_bscale(fptr_, 1.0, 0.0, &status);
-        if (status == 0) {
-            guard.active = true;
-        } else {
             status = 0;
+            fits_set_bscale(fptr_, 1.0, 0.0, &status);
+            if (status == 0) {
+                guard.active = true;
+            } else {
+                status = 0;
+            }
         }
 
         int anynul = 0;
@@ -1391,7 +1431,7 @@ public:
         double dnullval = NAN;
         void* nullval_ptr = nullptr;
         if (datatype == TFLOAT || datatype == TDOUBLE) {
-            if (is_compressed_image_cached(hdu_num) && has_compressed_nulls_cached(hdu_num)) {
+            if (compressed && has_compressed_nulls_cached(hdu_num)) {
                 if (datatype == TFLOAT) {
                     nullval_ptr = &fnullval;
                 } else {
@@ -2078,6 +2118,144 @@ private:
     std::shared_ptr<SharedReadMeta> shared_meta_;
 };
 
+class SubsetReader {
+public:
+    SubsetReader(const std::string& filename, int hdu_num = 0)
+        : file_(filename.c_str(), 0), hdu_num_(hdu_num) {
+        if (hdu_num_ < 0) {
+            throw std::runtime_error("HDU index must be non-negative");
+        }
+        init_from_hdu();
+    }
+
+    torch::Tensor read(long x1, long y1, long x2, long y2) {
+        if (closed_) {
+            throw std::runtime_error("SubsetReader is closed");
+        }
+
+        if (x1 < 0) x1 = 0;
+        if (y1 < 0) y1 = 0;
+        if (x2 > max_x_) x2 = max_x_;
+        if (y2 > max_y_) y2 = max_y_;
+
+        if (x2 <= x1 || y2 <= y1) {
+            return torch::empty(
+                {0, 0},
+                torch::TensorOptions().dtype(dtype_)
+            );
+        }
+
+        long width = x2 - x1;
+        long height = y2 - y1;
+        auto tensor = torch::empty(
+            {height, width},
+            torch::TensorOptions().dtype(dtype_)
+        );
+
+        long fpixel[2] = {x1 + 1, y1 + 1};
+        long lpixel[2] = {x2, y2};
+        long inc[2] = {1, 1};
+        int status = 0;
+        int anynul = 0;
+        fits_read_subset(
+            file_.get_fptr(),
+            datatype_,
+            fpixel,
+            lpixel,
+            inc,
+            nullptr,
+            tensor.data_ptr(),
+            &anynul,
+            &status
+        );
+        if (status != 0) {
+            char err_text[31];
+            fits_get_errstatus(status, err_text);
+            throw std::runtime_error(
+                "Error reading subset: status=" + std::to_string(status) +
+                " msg=" + std::string(err_text)
+            );
+        }
+        return tensor;
+    }
+
+    void close() {
+        if (!closed_) {
+            file_.close();
+            closed_ = true;
+        }
+    }
+
+    long width() const { return max_x_; }
+    long height() const { return max_y_; }
+    int hdu() const { return hdu_num_; }
+
+private:
+    void init_from_hdu() {
+        int status = 0;
+        file_.ensure_hdu(hdu_num_, &status);
+        if (status != 0) {
+            throw std::runtime_error("Could not move to HDU");
+        }
+
+        const auto& info = file_.get_image_info(hdu_num_);
+        const int bitpix = std::get<0>(info);
+        const int naxis = std::get<1>(info);
+        const auto& naxes = std::get<2>(info);
+
+        if (naxis < 2) {
+            throw std::runtime_error("SubsetReader requires at least 2D image HDU");
+        }
+
+        max_x_ = static_cast<long>(naxes[0]);
+        max_y_ = static_cast<long>(naxes[1]);
+
+        const auto scale = file_.get_scale_info_for_hdu(hdu_num_);
+        if (scale.scaled) {
+            dtype_ = torch::kFloat32;
+            datatype_ = TFLOAT;
+            return;
+        }
+
+        switch (bitpix) {
+            case BYTE_IMG:
+                dtype_ = torch::kUInt8;
+                datatype_ = TBYTE;
+                break;
+            case SHORT_IMG:
+                dtype_ = torch::kInt16;
+                datatype_ = TSHORT;
+                break;
+            case LONG_IMG:
+                dtype_ = torch::kInt32;
+                datatype_ = TINT;
+                break;
+            case LONGLONG_IMG:
+                dtype_ = torch::kInt64;
+                datatype_ = TLONGLONG;
+                break;
+            case FLOAT_IMG:
+                dtype_ = torch::kFloat32;
+                datatype_ = TFLOAT;
+                break;
+            case DOUBLE_IMG:
+                dtype_ = torch::kFloat64;
+                datatype_ = TDOUBLE;
+                break;
+            default:
+                throw std::runtime_error("Unsupported BITPIX");
+        }
+    }
+
+    FITSFile file_;
+    int hdu_num_ = 0;
+    long max_x_ = 0;
+    long max_y_ = 0;
+    torch::ScalarType dtype_ = torch::kFloat32;
+    int datatype_ = TFLOAT;
+    bool closed_ = false;
+};
+
 namespace {
 struct CachedHandleGuard {
     std::string path;
@@ -2285,6 +2463,16 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
 
     auto get_scale = [&]() -> void {
         if (local->has_scale) return;
+        // Float images use identity scaling in our reader; skip cache probes.
+        get_image_info();
+        if (local->bitpix == FLOAT_IMG || local->bitpix == DOUBLE_IMG) {
+            local->scaled = false;
+            local->trusted = true;
+            local->bscale = 1.0;
+            local->bzero = 0.0;
+            local->has_scale = true;
+            return;
+        }
         {
             std::lock_guard<std::mutex> lock(meta->mutex);
             auto it = meta->scale_cache.find(hdu_num);
@@ -2297,37 +2485,11 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
                 return;
             }
         }
-        // Need image info (bitpix) before scale decision
-        get_image_info();
-
-        if (local->bitpix < 0) {
-            local->scaled = false;
-            local->trusted = true;
-            local->bscale = 1.0;
-            local->bzero = 0.0;
-        } else {
-            double bscale = 1.0;
-            double bzero = 0.0;
-            status = 0;
-            fits_read_key(fptr, TDOUBLE, "BSCALE", &bscale, nullptr, &status);
-            if (status == 0) {
-                local->bscale = bscale;
-                if (bscale != 1.0) local->scaled = true;
-            } else if (status != KEY_NO_EXIST) {
-                local->scaled = true;
-                local->trusted = false;
-            }
-
-            status = 0;
-            fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &status);
-            if (status == 0) {
-                local->bzero = bzero;
-                if (bzero != 0.0) local->scaled = true;
-            } else if (status != KEY_NO_EXIST) {
-                local->scaled = true;
-                local->trusted = false;
-            }
-        }
+        const ScaleDetectionResult detected = detect_scale_info_fast(fptr, local->bitpix);
+        local->scaled = detected.scaled;
+        local->trusted = detected.trusted;
+        local->bscale = detected.bscale;
+        local->bzero = detected.bzero;
 
         {
             std::lock_guard<std::mutex> lock(meta->mutex);
@@ -2444,9 +2606,12 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         size_t elem_size = 0;
         switch (bitpix) {
             case SHORT_IMG: elem_size = sizeof(uint16_t); break;
-            case LONG_IMG: elem_size = sizeof(uint32_t); break;
+            // LONG_IMG (int32) moved to CFITSIO path (matching FLOAT_IMG)
+            case LONG_IMG: elem_size = 0; break;
             case LONGLONG_IMG: elem_size = sizeof(uint64_t); break;
-            case FLOAT_IMG: elem_size = sizeof(uint32_t); break;
+            // Keep FLOAT_IMG on CFITSIO read path: pread+byteswap is
+            // consistently slower for large float32 images.
+            case FLOAT_IMG: elem_size = 0; break;
             case DOUBLE_IMG: elem_size = sizeof(uint64_t); break;
             default: elem_size = 0; break;
         }
@@ -2506,16 +2671,50 @@ read_full_cached_fallback:
     }
 
     status = 0;
-    fits_read_img(
-        fptr,
-        datatype,
-        1,
-        nelements,
-        nullval_ptr,
-        tensor.data_ptr(),
-        &anynul,
-        &status
-    );
+    
+    // Chunking threshold to avoid huge temporary buffers in CFITSIO during type conversion.
+    // 128 MB per chunk roughly.
+    static const size_t kChunkSizeBytes = 128 * 1024 * 1024;
+    const size_t pixel_size = datatype_elem_size(datatype);
+    // Safe default to 1 byte if unknown path (shouldn't happen here) -> defaults to 128M pixels
+    const size_t effective_pixel_size = pixel_size > 0 ? pixel_size : 1;
+    const LONGLONG chunk_pixels = static_cast<LONGLONG>(kChunkSizeBytes / effective_pixel_size);
+
+    if (nelements <= chunk_pixels) {
+        // Fast path for small/medium images: single read
+        fits_read_img(
+            fptr,
+            datatype,
+            1,
+            nelements,
+            nullval_ptr,
+            tensor.data_ptr(),
+            &anynul,
+            &status
+        );
+    } else {
+        // Chunked path for large images
+        LONGLONG remain = nelements;
+        LONGLONG offset = 0;
+        char* dst_ptr = static_cast<char*>(tensor.data_ptr());
+        
+        while (remain > 0 && status == 0) {
+            LONGLONG n_read = (remain > chunk_pixels) ? chunk_pixels : remain;
+            fits_read_img(
+                fptr,
+                datatype,
+                1 + offset,
+                n_read,
+                nullval_ptr,
+                static_cast<void*>(dst_ptr + (offset * effective_pixel_size)),
+                &anynul,
+                &status
+            );
+            offset += n_read;
+            remain -= n_read;
+        }
+    }
+
     if (status != 0) {
         char err_text[31];
         fits_get_errstatus(status, err_text);
@@ -2524,6 +2723,90 @@ read_full_cached_fallback:
     }
 
     return tensor;
+}
+
+int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name) {
+    if (hdu_name.empty()) {
+        throw std::runtime_error("HDU name cannot be empty");
+    }
+    auto normalize_hdu_name = [](const std::string& s) -> std::string {
+        size_t i = 0;
+        size_t j = s.size();
+        while (i < j && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+        while (j > i && std::isspace(static_cast<unsigned char>(s[j - 1]))) --j;
+        std::string out = s.substr(i, j - i);
+        std::transform(out.begin(), out.end(), out.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return out;
+    };
+    const std::string hdu_name_key = normalize_hdu_name(hdu_name);
+
+    if (path.find('[') != std::string::npos) {
+        // Extended filename syntax can alter HDU semantics; use direct open.
+        FITSFile file(path.c_str(), 0);
+        fitsfile* fptr = file.get_fptr();
+        int status = 0;
+        fits_movnam_hdu(
+            fptr,
+            ANY_HDU,
+            const_cast<char*>(hdu_name.c_str()),
+            0,
+            &status
+        );
+        if (status != 0) {
+            char err_text[31];
+            fits_get_errstatus(status, err_text);
+            throw std::runtime_error(
+                "Could not resolve HDU name '" + hdu_name + "': " + std::string(err_text)
+            );
+        }
+        int current_hdu = 0;
+        fits_get_hdu_num(fptr, &current_hdu);
+        return std::max(0, current_hdu - 1);
+    }
+
+    auto meta = get_shared_meta_for_path(path);
+    if (meta) {
+        std::lock_guard<std::mutex> lock(meta->mutex);
+        auto it = meta->hdu_name_cache.find(hdu_name_key);
+        if (it != meta->hdu_name_cache.end()) {
+            return it->second;
+        }
+    }
+
+    fitsfile* fptr = torchfits::get_or_open_cached(path);
+    if (!fptr) {
+        throw std::runtime_error("Could not open FITS file: " + path);
+    }
+    CachedHandleGuard guard;
+    guard.path = path;
+    guard.fptr = fptr;
+    guard.active = true;
+
+    int status = 0;
+    fits_movnam_hdu(
+        fptr,
+        ANY_HDU,
+        const_cast<char*>(hdu_name.c_str()),
+        0,
+        &status
+    );
+    if (status != 0) {
+        char err_text[31];
+        fits_get_errstatus(status, err_text);
+        throw std::runtime_error(
+            "Could not resolve HDU name '" + hdu_name + "': " + std::string(err_text)
+        );
+    }
+
+    int current_hdu = 0;
+    fits_get_hdu_num(fptr, &current_hdu);
+    const int resolved = std::max(0, current_hdu - 1);
+    if (meta) {
+        std::lock_guard<std::mutex> lock(meta->mutex);
+        meta->hdu_name_cache[hdu_name_key] = resolved;
+    }
+    return resolved;
 }
 
 
@@ -2673,38 +2956,13 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         int bitpix = 0;
         int naxis = 0;
         std::array<LONGLONG, 9> naxes_ll{};
-        bool scaled = false;
+        ScaleDetectionResult scale_info;
         bool compressed = false;
         fits_get_img_paramll(fptr, 9, &bitpix, &naxis, naxes_ll.data(), &status);
         if (status != 0) {
             throw std::runtime_error("Could not read image parameters");
         }
-
-        if (bitpix != FLOAT_IMG && bitpix != DOUBLE_IMG) {
-            int key_status = 0;
-            double bscale = 1.0;
-            double bzero = 0.0;
-
-            key_status = 0;
-            fits_read_key(fptr, TDOUBLE, "BSCALE", &bscale, nullptr, &key_status);
-            if (key_status == 0) {
-                if (bscale != 1.0) {
-                    scaled = true;
-                }
-            } else if (key_status != KEY_NO_EXIST) {
-                scaled = true;
-            }
-
-            key_status = 0;
-            fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &key_status);
-            if (key_status == 0) {
-                if (bzero != 0.0) {
-                    scaled = true;
-                }
-            } else if (key_status != KEY_NO_EXIST) {
-                scaled = true;
-            }
-        }
+        scale_info = detect_scale_info_fast(fptr, bitpix);
 
         int compressed_status = 0;
         int is_compressed = fits_is_compressed_image(fptr, &compressed_status);
@@ -2712,7 +2970,7 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
 
         torch::ScalarType dtype;
         int datatype;
-        if (scaled) {
+        if (scale_info.scaled) {
             dtype = torch::kFloat32;
             datatype = TFLOAT;
         } else {
@@ -2783,130 +3041,10 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
 }
 
 torch::Tensor read_full_unmapped_raw(const std::string& path, int hdu_num) {
-    fitsfile* fptr = nullptr;
-    int status = 0;
-    try {
-        fits_open_file(&fptr, path.c_str(), READONLY, &status);
-        if (status != 0) {
-            throw std::runtime_error("Could not open FITS file: " + path);
-        }
-
-        int start_hdu = 1;
-        fits_get_hdu_num(fptr, &start_hdu);
-
-        int target_hdu = hdu_num + start_hdu;
-        if (!(hdu_num == 0 && start_hdu == 1)) {
-            fits_movabs_hdu(fptr, target_hdu, nullptr, &status);
-            if (status != 0) throw std::runtime_error("Could not move to HDU");
-        }
-
-        int bitpix = 0;
-        int naxis = 0;
-        std::array<LONGLONG, 9> naxes_ll{};
-        fits_get_img_paramll(fptr, 9, &bitpix, &naxis, naxes_ll.data(), &status);
-        if (status != 0) {
-            throw std::runtime_error("Could not read image parameters");
-        }
-
-        torch::ScalarType dtype;
-        int datatype;
-        switch (bitpix) {
-            case BYTE_IMG:   dtype = torch::kUInt8; datatype = TBYTE; break;
-            case SHORT_IMG:  dtype = torch::kInt16; datatype = TSHORT; break;
-            case LONG_IMG:   dtype = torch::kInt32; datatype = TINT; break;
-            case LONGLONG_IMG: dtype = torch::kInt64; datatype = TLONGLONG; break;
-            case FLOAT_IMG:  dtype = torch::kFloat32; datatype = TFLOAT; break;
-            case DOUBLE_IMG: dtype = torch::kFloat64; datatype = TDOUBLE; break;
-            default: throw std::runtime_error("Unsupported BITPIX");
-        }
-
-        int64_t torch_shape[9];
-        for (int i = 0; i < naxis; ++i) {
-            torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]);
-        }
-
-        auto tensor = torch::empty(at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
-        LONGLONG nelements = 0;
-        if (naxis > 0) {
-            nelements = 1;
-            for (int i = 0; i < naxis; ++i) nelements *= naxes_ll[i];
-        }
-
-        // Disable CFITSIO scaling for raw reads and restore after.
-        FITSFile::BScaleGuard guard;
-        guard.fptr = fptr;
-        {
-            int key_status = 0;
-            double bscale = 1.0;
-            double bzero = 0.0;
-
-            key_status = 0;
-            fits_read_key(fptr, TDOUBLE, "BSCALE", &bscale, nullptr, &key_status);
-            if (key_status != 0 && key_status != KEY_NO_EXIST) {
-                bscale = 1.0;
-            }
-
-            key_status = 0;
-            fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &key_status);
-            if (key_status != 0 && key_status != KEY_NO_EXIST) {
-                bzero = 0.0;
-            }
-
-            guard.bscale = bscale;
-            guard.bzero = bzero;
-        }
-
-        status = 0;
-        fits_set_bscale(fptr, 1.0, 0.0, &status);
-        if (status == 0) {
-            guard.active = true;
-        } else {
-            status = 0;
-        }
-
-        int anynul = 0;
-        float fnullval = NAN;
-        double dnullval = NAN;
-        void* nullval_ptr = nullptr;
-        if (datatype == TFLOAT || datatype == TDOUBLE) {
-            int compressed_status = 0;
-            int is_compressed = fits_is_compressed_image(fptr, &compressed_status);
-            if (compressed_status == 0 && is_compressed && has_compressed_nulls(fptr)) {
-                if (datatype == TFLOAT) {
-                    nullval_ptr = &fnullval;
-                } else {
-                    nullval_ptr = &dnullval;
-                }
-            }
-        }
-
-        static LONGLONG firstpixels[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
-        fits_read_pixll(
-            fptr,
-            datatype,
-            firstpixels,
-            nelements,
-            nullval_ptr,
-            tensor.data_ptr(),
-            &anynul,
-            &status
-        );
-        if (status != 0) {
-            char err_text[31];
-            fits_get_errstatus(status, err_text);
-            throw std::runtime_error("Error reading image data: status=" + std::to_string(status) + " msg=" + std::string(err_text));
-        }
-
-        fits_close_file(fptr, &status);
-        fptr = nullptr;
-        return tensor;
-    } catch (...) {
-        if (fptr) {
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
-        }
-        throw;
-    }
+    // Keep this helper as a compatibility API, but route through the main
+    // stable implementation to avoid duplicate low-level raw-read logic.
+    FITSFile file(path.c_str(), 0);
+    return file.read_image_raw(hdu_num, false);
 }
 
 torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_mmap) {
@@ -3026,22 +3164,11 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                 }
             }
             if (!scale_cached) {
-                int s1 = 0;
-                fits_read_key(fptr, TDOUBLE, "BSCALE", &bscale, nullptr, &s1);
-                if (s1 == 0 && bscale != 1.0) {
-                    scaled = true;
-                } else if (s1 != 0 && s1 != KEY_NO_EXIST) {
-                    scaled = true;
-                    scale_trusted = false;
-                }
-                int s2 = 0;
-                fits_read_key(fptr, TDOUBLE, "BZERO", &bzero, nullptr, &s2);
-                if (s2 == 0 && bzero != 0.0) {
-                    scaled = true;
-                } else if (s2 != 0 && s2 != KEY_NO_EXIST) {
-                    scaled = true;
-                    scale_trusted = false;
-                }
+                const ScaleDetectionResult detected = detect_scale_info_fast(fptr, bitpix);
+                scaled = detected.scaled;
+                scale_trusted = detected.trusted;
+                bscale = detected.bscale;
+                bzero = detected.bzero;
                 if (shared_meta) {
                     std::lock_guard<std::mutex> lock(shared_meta->mutex);
                     shared_meta->scale_cache[hdu_num] = std::make_tuple(
@@ -3122,7 +3249,9 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                 case SHORT_IMG: elem_size = sizeof(uint16_t); break;
                 case LONG_IMG: elem_size = sizeof(uint32_t); break;
                 case LONGLONG_IMG: elem_size = sizeof(uint64_t); break;
-                case FLOAT_IMG: elem_size = sizeof(uint32_t); break;
+                // Keep FLOAT_IMG on CFITSIO read path: pread+byteswap is
+                // consistently slower for large float32 images.
+                case FLOAT_IMG: elem_size = 0; break;
                 case DOUBLE_IMG: elem_size = sizeof(uint64_t); break;
                 default: elem_size = 0; break;
             }
