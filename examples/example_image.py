@@ -1,7 +1,6 @@
 """
 Example script demonstrating basic image reading and header access.
 """
-import torchfits
 
 def main():
     # Read image data (returns torch.Tensor on CPU by default)

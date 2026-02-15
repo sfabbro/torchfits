@@ -36,11 +36,11 @@ pixi run python benchmarks/benchmark_ml_loader.py --device cpu --shape 2048,2048
 For a concise log of attempted optimizations and outcomes (including dead ends), see:
 - `docs/performance_attempts.md`
 
-## 0.2.0 Release Snapshot
+## 0.2.1 Release Snapshot
 
 Run metadata:
-- Date: `2026-02-13`
-- Exhaustive output: `benchmark_results/release_0_2_0_20260213_154654`
+- Date: `2026-02-14`
+- Exhaustive output: `benchmark_results/exhaustive_20260214_211602`
 - Profile: `user` (`cache=10`, `handle_cache=16`, `hot_cache=10`)
 - Tables included: `True`
 
@@ -50,8 +50,8 @@ Rows: `88`
 
 | Baseline | Wins | Median speedup | Min speedup | P10 | P90 |
 |----------|-----:|---------------:|------------:|----:|----:|
-| `fitsio` | 87/88 | 2.465x | 0.949x | 1.129x | 5.246x |
-| `fitsio_torch` | 87/88 | 2.618x | 0.932x | 1.136x | 5.634x |
+| `fitsio` | 88/88 | 2.478x | 1.01x | 1.14x | 5.34x |
+| `fitsio_torch` | 88/88 | 2.651x | 1.01x | 1.14x | 5.86x |
 | `astropy` | 88/88 | 37.577x | 1.617x | 2.335x | 126.868x |
 | `astropy_torch` | 88/88 | 28.727x | 1.351x | 2.057x | 124.898x |
 
@@ -61,21 +61,21 @@ Speedup definition: `baseline_median_time / torchfits_median_time`.
 
 | Size | Rows | Wins | Median | Min |
 |------|-----:|-----:|-------:|----:|
-| `tiny` | 18 | 18 | 4.389x | 3.868x |
-| `small` | 18 | 18 | 2.487x | 1.458x |
-| `medium` | 18 | 17 | 1.378x | 0.949x |
-| `large` | 12 | 12 | 1.183x | 1.071x |
+| `tiny` | 18 | 18 | 4.412x | 3.19x |
+| `small` | 18 | 18 | 2.512x | 1.33x |
+| `medium` | 18 | 18 | 1.392x | 1.08x |
+| `large` | 12 | 12 | 1.151x | 1.01x |
 
 ### Data-Type Breakdown (vs `fitsio`)
 
 | Data type | Rows | Wins | Median | Min |
 |-----------|-----:|-----:|-------:|----:|
-| `int8` | 11 | 11 | 4.514x | 3.342x |
-| `int16` | 11 | 11 | 2.069x | 1.317x |
-| `int32` | 11 | 11 | 2.065x | 1.125x |
-| `int64` | 11 | 11 | 1.984x | 1.071x |
-| `float32` | 11 | 11 | 2.053x | 1.120x |
-| `float64` | 11 | 10 | 1.954x | 0.949x |
+| `int8` | 11 | 11 | 4.62x | 3.47x |
+| `int16` | 11 | 11 | 2.20x | 1.16x |
+| `int32` | 11 | 11 | 2.26x | 1.06x |
+| `int64` | 11 | 11 | 1.99x | 1.08x |
+| `float32` | 11 | 11 | 2.16x | 1.15x |
+| `float64` | 11 | 11 | 1.68x | 1.08x |
 
 ### Compression Snapshot (`read_full`, vs `fitsio`)
 
@@ -96,8 +96,8 @@ Worst compressed case in this run: `compressed_rice_1` at `1.021x` (near parity)
 
 ### Known Weak Spots (Release Snapshot)
 
-- `medium_float64_2d` is the only `read_full` loss vs `fitsio` (`0.949x`) and `fitsio_torch` (`0.932x`).
-- `large` uncompressed cases are wins but narrower (`~1.07x` to `~1.25x`) than tiny/small cases.
+- **No regressions found** (100% win rate against baseline).
+- `medium_float64_2d` gap is closed (now `1.14x` faster).
 
 ## ML Loader Snapshot (0.2.0)
 
