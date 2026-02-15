@@ -108,9 +108,17 @@ jobs:
       - name: List files
         run: ls -R dist
 
+      - name: Check PyPI Token presence
+        run: |
+          if [ -n "${{ secrets.PYPI_API_TOKEN }}" ]; then
+            echo "PYPI_API_TOKEN is set"
+          else
+            echo "PYPI_API_TOKEN is NOT set, falling back to Trusted Publishing"
+          fi
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           verbose: true
-          # password: ${{ secrets.PYPI_API_TOKEN }} # Use Trusted Publishing instead
+          password: ${{ secrets.PYPI_API_TOKEN }}
