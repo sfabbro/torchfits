@@ -166,33 +166,3 @@ jobs:
         # Add when docs/ directory exists
         echo "Documentation build would go here"
         echo "README.md exists: $(ls -la README.md)"
-
-  publish:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: [code-quality, build-test, memory-safety]
-    if: github.event_name == 'release' && github.event.action == 'published'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build twine
-    
-    - name: Build package
-      run: |
-        python -m build
-    
-    - name: Publish to PyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
-        twine upload dist/*
