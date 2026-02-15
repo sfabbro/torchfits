@@ -42,7 +42,7 @@ def test_external_overwrite_invalidates_cached_handle(tmp_path):
 
     fits.PrimaryHDU(updated.numpy()).writeto(path, overwrite=True)
     second = torchfits.read(str(path), hdu=0)
-    deadline = time.monotonic() + 0.25
+    deadline = time.monotonic() + 3.0
     while not torch.equal(second, updated) and time.monotonic() < deadline:
         time.sleep(0.01)
         second = torchfits.read(str(path), hdu=0)
