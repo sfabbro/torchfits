@@ -9,7 +9,10 @@ import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import torch
 from torch import Tensor
 
@@ -168,7 +171,10 @@ class BufferManager:
 
     def _get_available_memory_mb(self) -> int:
         """Get available system memory in MB."""
-        return int(psutil.virtual_memory().available / (1024 * 1024))
+        if psutil:
+            return int(psutil.virtual_memory().available / (1024 * 1024))
+        # Fallback to safe default (4GB) if psutil/os check fails
+        return 4096
 
     def get_buffer(
         self, key: str, shape: Tuple[int, ...], dtype: torch.dtype, device: str = "cpu"
@@ -340,7 +346,10 @@ def get_optimal_buffer_config(dataset_info: Dict[str, Any]) -> Dict[str, Any]:
     concurrent_workers = dataset_info.get("num_workers", 4)
 
     # Calculate optimal settings
-    available_memory = psutil.virtual_memory().available / (1024 * 1024)
+    if psutil:
+        available_memory = psutil.virtual_memory().available / (1024 * 1024)
+    else:
+        available_memory = 4096.0  # Fallback default
 
     # Conservative memory usage (25% of available)
     max_buffer_memory = available_memory * 0.25
