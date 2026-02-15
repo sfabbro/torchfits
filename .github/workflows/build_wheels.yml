@@ -94,7 +94,6 @@ jobs:
   upload_pypi:
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    environment: pypi
     if: github.event_name == 'release' && github.event.action == 'published'
     permissions:
       id-token: write
@@ -106,8 +105,12 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: List files
+        run: ls -R dist
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          verbose: true
           # password: ${{ secrets.PYPI_API_TOKEN }} # Use Trusted Publishing instead
