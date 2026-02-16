@@ -4,7 +4,7 @@ from torch import Tensor
 from typing import Optional, Union, Tuple, Dict, Any, List
 import math
 
-from .sip import SIP
+from .tpv import TPV
 
 class WCS:
     """
@@ -23,12 +23,17 @@ class WCS:
         """
         self.wcs_params = {}
         self.sip = None
+        self.tpv = None
         
         if header is not None:
             self._parse_header(header)
             # Check for SIP
             if 'A_ORDER' in header or 'B_ORDER' in header:
                 self.sip = SIP(header)
+            
+            # Check for TPV
+            if self.wcs_params.get('CTYPE1', '').endswith('TPV'):
+                self.tpv = TPV(self.wcs_params) # Pass parsed params which contain PVs
         
         # Override with kwargs
         for k, v in kwargs.items():
@@ -86,6 +91,14 @@ class WCS:
         # CTYPE
         self.wcs_params['CTYPE1'] = str(header.get('CTYPE1', ''))
         self.wcs_params['CTYPE2'] = str(header.get('CTYPE2', ''))
+
+        # Capture PV keywords (PVi_j)
+        # SCAMP/PV distortions can have many terms (0..39 typically)
+        for i in [1, 2]:
+            for j in range(40):
+                key = f'PV{i}_{j}'
+                if key in header:
+                    self.wcs_params[key] = float(header[key])
 
     def _setup_tensors(self):
         """Convert scalar params to PyTorch tensors for computation."""
@@ -166,20 +179,29 @@ class WCS:
         if self.sip is not None:
             rel_x, rel_y = self.sip.distort(rel_x, rel_y)
         
-        # Batched matmul
-        # [xi, eta] = CD @ [rel_x, rel_y]
-        # CD is (2, 2). Input is (2, N). Result (2, N).
-        coords = torch.stack([rel_x, rel_y], dim=0)
-        intermediate = torch.matmul(self.cd, coords)
-        
-        xi = intermediate[0]
-        eta = intermediate[1]
-        
+        # Check for TPV (Tangent + PV distortion)
+        # TPV replaces the linear CD transformation + distortion step.
+        # It takes pixel offsets (rel_x, rel_y) and outputs intermediate world coords (degrees).
+        if self.tpv is not None:
+             if self.tpv is None: # Redundant check but keeps linter happy if type inference fails
+                 pass
+             xi, eta = self.tpv.distort(rel_x, rel_y)
+        else:
+            # Standard Linear Transform
+            # Batched matmul
+            # [xi, eta] = CD @ [rel_x, rel_y]
+            coords = torch.stack([rel_x, rel_y], dim=0)
+            intermediate = torch.matmul(self.cd, coords)
+            
+            xi = intermediate[0]
+            eta = intermediate[1]
+             
+        ctype1 = self.wcs_params['CTYPE1']
+             
         # 2. Intermediate to World (Projection)
         # Dispatch to projection function based on CTYPE
-        # For now, implementing explicit TAN-gnomonic
-        ctype1 = self.wcs_params['CTYPE1']
-        if 'TAN' in ctype1:
+        # TAN and TPV both use gnomonic projection after distortion
+        if 'TAN' in ctype1 or 'TPV' in ctype1:
             ra, dec = self._project_tan(xi, eta)
         else:
              # Fallback or error
