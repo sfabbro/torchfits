@@ -4,6 +4,8 @@ from torch import Tensor
 from typing import Optional, Union, Tuple, Dict, Any, List
 import math
 
+from .sip import SIP
+
 class WCS:
     """
     Base class for TorchWCS (PyTorch-native World Coordinate System).
@@ -20,8 +22,13 @@ class WCS:
             **kwargs: Manual override for WCS keywords (CRVAL, CRPIX, CD, etc.)
         """
         self.wcs_params = {}
+        self.sip = None
+        
         if header is not None:
             self._parse_header(header)
+            # Check for SIP
+            if 'A_ORDER' in header or 'B_ORDER' in header:
+                self.sip = SIP(header)
         
         # Override with kwargs
         for k, v in kwargs.items():
@@ -153,6 +160,11 @@ class WCS:
         
         rel_x = x_flat - (self.crpix[0] - 1.0)
         rel_y = y_flat - (self.crpix[1] - 1.0)
+        
+        # 0. Apply SIP Distortion (if present)
+        # u, v -> u', v'
+        if self.sip is not None:
+            rel_x, rel_y = self.sip.distort(rel_x, rel_y)
         
         # Batched matmul
         # [xi, eta] = CD @ [rel_x, rel_y]
@@ -442,6 +454,11 @@ class WCS:
         
         rel_x = rel_coords[0]
         rel_y = rel_coords[1]
+        
+        # 4b. Apply SIP Reverse Distortion (if present)
+        # u', v' -> u, v
+        if self.sip is not None:
+             rel_x, rel_y = self.sip.undistort(rel_x, rel_y)
         
         # 5. Add CRPIX
         # x = rel_x + (crpix - 1)
