@@ -15,6 +15,15 @@ from .core import (
     unit_xyz_to_lonlat,
     wrap_longitude,
 )
+from ..wcs.healpix import (
+    ang2pix,
+    npix2nside,
+    nside2npix,
+    pix2ang,
+    pix2vec,
+    query_disc,
+    vec2pix,
+)
 from .geom import (
     ExactSphericalRegion,
     NativeExactSphericalRegion,
@@ -106,4 +115,11 @@ __all__ = [
     "smoothmap",
     "synalm",
     "synfast",
+    "ang2pix",
+    "npix2nside",
+    "nside2npix",
+    "pix2ang",
+    "pix2vec",
+    "query_disc",
+    "vec2pix",
 ]
