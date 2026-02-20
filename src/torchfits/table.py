@@ -811,7 +811,9 @@ def _where_columns_from_ast(ast) -> list[str]:
     return out
 
 
-def _compile_where_to_simple_predicates(where: str) -> Optional[list[tuple[str, str, Any]]]:
+def _compile_where_to_simple_predicates(
+    where: str,
+) -> Optional[list[tuple[str, str, Any]]]:
     """
     Compile a restricted where expression into C++ predicate tuples.
 
@@ -1646,6 +1648,7 @@ def read(
     if where is not None:
         # Try fast path: Predicate Pushdown
         import torchfits.cpp as cpp
+
         if hasattr(cpp, "read_fits_table_filtered"):
             filters = _compile_where_to_simple_predicates(where)
             if filters is not None:
@@ -1658,15 +1661,19 @@ def read(
                     # If columns is None, we need schema to know ALL columns.
                     # Better to let fallback handle 'columns=None' or fetch schema first.
                     # But fetching schema defeats the purpose of speed if not careful.
-                    
+
                     target_cols = columns
                     if target_cols is None:
                         # Fetch all column names quickly
-                         schema_ = schema(path, hdu=hdu, backend="cpp_numpy") # Minimal read?
-                         target_cols = list(schema_.names)
-                    
-                    data_dict = cpp.read_fits_table_filtered(path, hdu, target_cols, filters)
-                    
+                        schema_ = schema(
+                            path, hdu=hdu, backend="cpp_numpy"
+                        )  # Minimal read?
+                        target_cols = list(schema_.names)
+
+                    data_dict = cpp.read_fits_table_filtered(
+                        path, hdu, target_cols, filters
+                    )
+
                     # Convert to Arrow Table
                     arrays = []
                     names_out = []
@@ -1685,11 +1692,11 @@ def read(
                                 )
                                 arrays.append(arr)
                                 names_out.append(name)
-                    
+
                     if not arrays:
                         return pa.table({})
                     return pa.Table.from_arrays(arrays, names=names_out)
-                    
+
                 except Exception:
                     # If fast path fails (e.g. type mismatch), fall back to slow path
                     pass

@@ -108,7 +108,8 @@ def _distribution_provenance(dist_name: str) -> dict[str, Any] | None:
     meta: dict[str, Any] = {
         "name": dist.metadata.get("Name", dist_name),
         "version": dist.version,
-        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower() or "unknown",
+        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower()
+        or "unknown",
         "source": "site-packages",
         "release_like": True,
         "reason": "installed from index/conda/wheel/sdist",
@@ -153,18 +154,26 @@ def _strip_closed(lon: np.ndarray, lat: np.ndarray) -> tuple[np.ndarray, np.ndar
 def _sg_contains_scalar(poly: Any, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
     if hasattr(poly, "contains_lonlat"):
         return np.asarray(
-            [bool(poly.contains_lonlat(float(lo), float(la), degrees=True)) for lo, la in zip(lon, lat, strict=False)],
+            [
+                bool(poly.contains_lonlat(float(lo), float(la), degrees=True))
+                for lo, la in zip(lon, lat, strict=False)
+            ],
             dtype=bool,
         )
     if hasattr(poly, "contains_radec"):
         return np.asarray(
-            [bool(poly.contains_radec(float(lo), float(la), degrees=True)) for lo, la in zip(lon, lat, strict=False)],
+            [
+                bool(poly.contains_radec(float(lo), float(la), degrees=True))
+                for lo, la in zip(lon, lat, strict=False)
+            ],
             dtype=bool,
         )
     raise RuntimeError("unsupported comparator contains API")
 
 
-def _sample_points_for_polygon(lon: np.ndarray, lat: np.ndarray, n_points: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+def _sample_points_for_polygon(
+    lon: np.ndarray, lat: np.ndarray, n_points: int, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     lon_open, lat_open = _strip_closed(lon, lat)
     n_local = max(n_points // 2, lon_open.size)
@@ -202,7 +211,9 @@ def _to_array(line: bytes) -> np.ndarray:
     return x.reshape((len(x) // 3, 3))
 
 
-def _load_difficult_pairs(max_pairs: int) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+def _load_difficult_pairs(
+    max_pairs: int,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     path = Path(SG_ROOT_DIR) / "difficult_intersections.txt"
     if not path.exists():
         return []
@@ -241,7 +252,9 @@ def _parse_nsides(raw: str) -> list[int]:
             raise ValueError("difficult-area-nsides must be strictly increasing")
         ratio = cur // prev
         if ratio * prev != cur or (ratio & (ratio - 1)) != 0:
-            raise ValueError("each difficult-area nside must be a power-of-two multiple of the previous nside")
+            raise ValueError(
+                "each difficult-area nside must be a power-of-two multiple of the previous nside"
+            )
     return vals
 
 
@@ -257,7 +270,11 @@ def _xyz_to_lonlat_t(xyz: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     y = xyz[:, 1]
     z = xyz[:, 2]
     lon = torch.remainder(torch.rad2deg(torch.atan2(y, x)), 360.0)
-    lat = torch.rad2deg(torch.asin(torch.clamp(z / torch.linalg.norm(xyz, dim=-1).clamp_min(1e-15), -1.0, 1.0)))
+    lat = torch.rad2deg(
+        torch.asin(
+            torch.clamp(z / torch.linalg.norm(xyz, dim=-1).clamp_min(1e-15), -1.0, 1.0)
+        )
+    )
     return lon.to(torch.float64), lat.to(torch.float64)
 
 
@@ -268,7 +285,9 @@ def _lonlat_to_xyz_t(lon_deg: torch.Tensor, lat_deg: torch.Tensor) -> torch.Tens
     return torch.stack((c * torch.cos(lon), c * torch.sin(lon), torch.sin(lat)), dim=-1)
 
 
-def _polygon_edge_seed_points(poly: SphericalPolygon, step_deg: float) -> tuple[torch.Tensor, torch.Tensor]:
+def _polygon_edge_seed_points(
+    poly: SphericalPolygon, step_deg: float
+) -> tuple[torch.Tensor, torch.Tensor]:
     lon = poly.lon_deg.to(torch.float64).reshape(-1)
     lat = poly.lat_deg.to(torch.float64).reshape(-1)
     verts = _lonlat_to_xyz_t(lon, lat)
@@ -286,8 +305,12 @@ def _polygon_edge_seed_points(poly: SphericalPolygon, step_deg: float) -> tuple[
             s = math.sin(ang)
             w0 = torch.sin((1.0 - t) * ang) / s
             w1 = torch.sin(t * ang) / s
-            edge_pts = (w0.unsqueeze(1) * a.unsqueeze(0)) + (w1.unsqueeze(1) * b.unsqueeze(0))
-            edge_pts = edge_pts / torch.linalg.norm(edge_pts, dim=-1, keepdim=True).clamp_min(1e-15)
+            edge_pts = (w0.unsqueeze(1) * a.unsqueeze(0)) + (
+                w1.unsqueeze(1) * b.unsqueeze(0)
+            )
+            edge_pts = edge_pts / torch.linalg.norm(
+                edge_pts, dim=-1, keepdim=True
+            ).clamp_min(1e-15)
         pts.append(edge_pts[:-1])
     if not pts:
         return lon, lat
@@ -331,7 +354,11 @@ def _boundary_mask_from_neighbours(
 
     neigh_ids = torch.unique(neigh[valid])
     lon_n, lat_n = hp_pix2ang(nside, neigh_ids, nest=True, lonlat=True)
-    neigh_inside = poly.contains(lon_n, lat_n, inclusive=True, atol_deg=1e-8).to(torch.bool).reshape(-1)
+    neigh_inside = (
+        poly.contains(lon_n, lat_n, inclusive=True, atol_deg=1e-8)
+        .to(torch.bool)
+        .reshape(-1)
+    )
 
     sorted_ids, order = torch.sort(neigh_ids)
     sorted_inside = neigh_inside[order]
@@ -369,25 +396,43 @@ def _estimate_intersection_area_multires(
             candidate = hp_nest_children(parents, levels=levels).reshape(-1)
 
         edge_step_deg = max(0.05, 0.75 * hp_max_pixrad(nside, degrees=True))
-        edge_a_lon, edge_a_lat = _polygon_edge_seed_points(poly_a, step_deg=edge_step_deg)
-        edge_b_lon, edge_b_lat = _polygon_edge_seed_points(poly_b, step_deg=edge_step_deg)
+        edge_a_lon, edge_a_lat = _polygon_edge_seed_points(
+            poly_a, step_deg=edge_step_deg
+        )
+        edge_b_lon, edge_b_lat = _polygon_edge_seed_points(
+            poly_b, step_deg=edge_step_deg
+        )
         seed_lon_all = torch.cat((seed_lon_deg, edge_a_lon, edge_b_lon))
         seed_lat_all = torch.cat((seed_lat_deg, edge_a_lat, edge_b_lat))
-        seed_pix = hp_ang2pix(nside, seed_lon_all, seed_lat_all, nest=True, lonlat=True).reshape(-1).to(torch.int64)
+        seed_pix = (
+            hp_ang2pix(nside, seed_lon_all, seed_lat_all, nest=True, lonlat=True)
+            .reshape(-1)
+            .to(torch.int64)
+        )
         seed_hops = 2 if hp_max_pixrad(nside, degrees=True) > 5.0 else 1
         seed_support = _expand_with_neighbours(nside, seed_pix, hops=seed_hops)
         candidate = torch.unique(torch.cat((candidate, seed_support)))
 
         lon, lat = hp_pix2ang(nside, candidate, nest=True, lonlat=True)
-        in_a = poly_a.contains(lon, lat, inclusive=True, atol_deg=1e-8).to(torch.bool).reshape(-1)
-        in_b = poly_b.contains(lon, lat, inclusive=True, atol_deg=1e-8).to(torch.bool).reshape(-1)
+        in_a = (
+            poly_a.contains(lon, lat, inclusive=True, atol_deg=1e-8)
+            .to(torch.bool)
+            .reshape(-1)
+        )
+        in_b = (
+            poly_b.contains(lon, lat, inclusive=True, atol_deg=1e-8)
+            .to(torch.bool)
+            .reshape(-1)
+        )
         overlap = in_a & in_b
 
         area = float(int(overlap.sum().item()) * hp_nside2pixarea(nside, degrees=False))
         key = str(nside)
         area_by_nside[key] = area
         eval_pixels_by_nside[key] = int(candidate.numel())
-        area_rel_err_by_nside[key] = abs(area - sg_area_sr) / max(abs(sg_area_sr), sg_area_eps)
+        area_rel_err_by_nside[key] = abs(area - sg_area_sr) / max(
+            abs(sg_area_sr), sg_area_eps
+        )
 
         if i < len(nsides) - 1:
             boundary_a = _boundary_mask_from_neighbours(nside, candidate, in_a, poly_a)
@@ -402,7 +447,13 @@ def _estimate_intersection_area_multires(
     if len(nsides) >= 2:
         prev = area_by_nside[str(nsides[-2])]
         convergence_rel = abs(final_area - prev) / max(abs(final_area), sg_area_eps)
-    return final_area, area_by_nside, eval_pixels_by_nside, area_rel_err_by_nside, convergence_rel
+    return (
+        final_area,
+        area_by_nside,
+        eval_pixels_by_nside,
+        area_rel_err_by_nside,
+        convergence_rel,
+    )
 
 
 def main() -> int:
@@ -410,15 +461,28 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=20_000)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--intersection-nside", type=int, default=512, help="nside for simple pair pixelized intersection parity")
+    parser.add_argument(
+        "--intersection-nside",
+        type=int,
+        default=512,
+        help="nside for simple pair pixelized intersection parity",
+    )
     parser.add_argument("--max-difficult-pairs", type=int, default=8)
     parser.add_argument("--sg-area-nonempty-eps", type=float, default=1e-10)
     parser.add_argument("--max-contains-mismatches-nonboundary", type=int, default=0)
     parser.add_argument("--max-pair-intersection-mismatches", type=int, default=0)
     parser.add_argument("--max-difficult-nonempty-mismatches", type=int, default=0)
-    parser.add_argument("--difficult-area-nsides", type=str, default="128,256,512,1024,2048,4096,8192,16384")
-    parser.add_argument("--max-difficult-area-rel-error-final", type=float, default=0.12)
-    parser.add_argument("--max-difficult-area-convergence-rel", type=float, default=0.10)
+    parser.add_argument(
+        "--difficult-area-nsides",
+        type=str,
+        default="128,256,512,1024,2048,4096,8192,16384",
+    )
+    parser.add_argument(
+        "--max-difficult-area-rel-error-final", type=float, default=0.12
+    )
+    parser.add_argument(
+        "--max-difficult-area-convergence-rel", type=float, default=0.10
+    )
     parser.add_argument("--max-area-rel-error", type=float, default=1e-10)
     parser.add_argument("--allow-nonrelease-distributions", action="store_true")
     parser.add_argument(
@@ -443,7 +507,9 @@ def main() -> int:
         f"({provenance['reason']}; source={provenance['source']})"
     )
     if not args.allow_nonrelease_distributions and not provenance["release_like"]:
-        print("Non-release comparator distribution detected; refusing run without --allow-nonrelease-distributions")
+        print(
+            "Non-release comparator distribution detected; refusing run without --allow-nonrelease-distributions"
+        )
         return 2
 
     contains_rows: list[ContainsRow] = []
@@ -466,27 +532,48 @@ def main() -> int:
         tf1 = SphericalPolygon(torch.from_numpy(lon1_open), torch.from_numpy(lat1_open))
         tf2 = SphericalPolygon(torch.from_numpy(lon2_open), torch.from_numpy(lat2_open))
 
-        qlon, qlat = _sample_points_for_polygon(lon1_open, lat1_open, args.n_points, seed=args.seed + i)
+        qlon, qlat = _sample_points_for_polygon(
+            lon1_open, lat1_open, args.n_points, seed=args.seed + i
+        )
         qlon_t = torch.from_numpy(qlon)
         qlat_t = torch.from_numpy(qlat)
 
-        t_tf = _time_many(lambda: spherical_polygon_contains(qlon_t, qlat_t, tf1.lon_deg, tf1.lat_deg, inclusive=False), runs=args.runs)
-        t_sg = _time_many(lambda: _sg_contains_scalar(sg1, qlon, qlat), runs=max(1, args.runs // 2))
+        t_tf = _time_many(
+            lambda: spherical_polygon_contains(
+                qlon_t, qlat_t, tf1.lon_deg, tf1.lat_deg, inclusive=False
+            ),
+            runs=args.runs,
+        )
+        t_sg = _time_many(
+            lambda: _sg_contains_scalar(sg1, qlon, qlat), runs=max(1, args.runs // 2)
+        )
 
-        tf_contains = spherical_polygon_contains(qlon_t, qlat_t, tf1.lon_deg, tf1.lat_deg, inclusive=False).cpu().numpy()
-        tf_contains_inclusive = spherical_polygon_contains(
-            qlon_t,
-            qlat_t,
-            tf1.lon_deg,
-            tf1.lat_deg,
-            inclusive=True,
-            atol_deg=1e-5,
-        ).cpu().numpy()
+        tf_contains = (
+            spherical_polygon_contains(
+                qlon_t, qlat_t, tf1.lon_deg, tf1.lat_deg, inclusive=False
+            )
+            .cpu()
+            .numpy()
+        )
+        tf_contains_inclusive = (
+            spherical_polygon_contains(
+                qlon_t,
+                qlat_t,
+                tf1.lon_deg,
+                tf1.lat_deg,
+                inclusive=True,
+                atol_deg=1e-5,
+            )
+            .cpu()
+            .numpy()
+        )
         sg_contains = _sg_contains_scalar(sg1, qlon, qlat)
 
         mismatches = int(np.sum(tf_contains != sg_contains))
         boundary_like = tf_contains_inclusive != tf_contains
-        mismatches_nonboundary = int(np.sum((tf_contains != sg_contains) & (~boundary_like)))
+        mismatches_nonboundary = int(
+            np.sum((tf_contains != sg_contains) & (~boundary_like))
+        )
 
         area_tf = float(tf1.area(degrees=False))
         area_sg = float(sg1.area())
@@ -506,11 +593,14 @@ def main() -> int:
         )
 
         sg_intersects = bool(sg1.intersects_poly(sg2))
-        tf_intersection = tf1.pixelize(args.intersection_nside, nest=False).intersection(
-            tf2.pixelize(args.intersection_nside, nest=False)
-        )
+        tf_intersection = tf1.pixelize(
+            args.intersection_nside, nest=False
+        ).intersection(tf2.pixelize(args.intersection_nside, nest=False))
         tf_intersects = bool(tf_intersection.pixels.numel() > 0)
-        mismatch = int(tf_intersects != sg_intersects or sg_intersects != bool(case["expected_intersects"]))
+        mismatch = int(
+            tf_intersects != sg_intersects
+            or sg_intersects != bool(case["expected_intersects"])
+        )
         pair_rows.append(
             PairRow(
                 case=case["name"],
@@ -530,7 +620,9 @@ def main() -> int:
                 f"{case['name']}: area rel err {area_rel_err:.3e} > {args.max_area_rel_error:.3e}"
             )
         if mismatch > 0:
-            failures.append(f"{case['name']}: intersection mismatch (expected={case['expected_intersects']}, sg={sg_intersects}, tf={tf_intersects})")
+            failures.append(
+                f"{case['name']}: intersection mismatch (expected={case['expected_intersects']}, sg={sg_intersects}, tf={tf_intersects})"
+            )
 
     difficult = _load_difficult_pairs(args.max_difficult_pairs)
     for i, (a_points, a_inside, b_points, b_inside) in enumerate(difficult):
@@ -558,8 +650,12 @@ def main() -> int:
         )
 
         tf_nonempty = bool(tf_a.intersects(tf_b))
-        seed_lon_np = np.concatenate([lon_a, lon_b, inside_a_lon, inside_b_lon]).astype(np.float64)
-        seed_lat_np = np.concatenate([lat_a, lat_b, inside_a_lat, inside_b_lat]).astype(np.float64)
+        seed_lon_np = np.concatenate([lon_a, lon_b, inside_a_lon, inside_b_lon]).astype(
+            np.float64
+        )
+        seed_lat_np = np.concatenate([lat_a, lat_b, inside_a_lat, inside_b_lat]).astype(
+            np.float64
+        )
         (
             tf_area,
             area_by_nside,
@@ -604,7 +700,10 @@ def main() -> int:
                 failures.append(
                     f"difficult[{i}]: final area rel err {final_rel_err:.3e} > {args.max_difficult_area_rel_error_final:.3e}"
                 )
-            if convergence_rel is not None and convergence_rel > args.max_difficult_area_convergence_rel:
+            if (
+                convergence_rel is not None
+                and convergence_rel > args.max_difficult_area_convergence_rel
+            ):
                 failures.append(
                     f"difficult[{i}]: area convergence rel {convergence_rel:.3e} > {args.max_difficult_area_convergence_rel:.3e}"
                 )
@@ -636,9 +735,13 @@ def main() -> int:
             eval_last = None
             area_rel_last = None
             if r.healpix_eval_pixels_by_nside:
-                eval_last = r.healpix_eval_pixels_by_nside.get(str(difficult_area_nsides[-1]))
+                eval_last = r.healpix_eval_pixels_by_nside.get(
+                    str(difficult_area_nsides[-1])
+                )
             if r.healpix_area_rel_err_by_nside:
-                area_rel_last = r.healpix_area_rel_err_by_nside.get(str(difficult_area_nsides[-1]))
+                area_rel_last = r.healpix_area_rel_err_by_nside.get(
+                    str(difficult_area_nsides[-1])
+                )
             print(
                 f"  {r.case:38s} sg_nonempty={r.comparator_nonempty} tf_nonempty={r.torchfits_nonempty} "
                 f"sg_area={r.comparator_area_sr:.3e} tf_area={r.torchfits_pixel_area_sr if r.torchfits_pixel_area_sr is not None else float('nan'):.3e} "

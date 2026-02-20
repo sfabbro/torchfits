@@ -42,7 +42,19 @@ def _time_many(fn, runs: int) -> float:
 
 def _edge_lonlat() -> tuple[np.ndarray, np.ndarray]:
     lon_base = np.array(
-        [-720.0, -360.0, -180.0, -1.0e-12, 0.0, 1.0e-12, 45.0, 180.0, 359.999999999999, 360.0, 720.0],
+        [
+            -720.0,
+            -360.0,
+            -180.0,
+            -1.0e-12,
+            0.0,
+            1.0e-12,
+            45.0,
+            180.0,
+            359.999999999999,
+            360.0,
+            720.0,
+        ],
         dtype=np.float64,
     )
     lat_base = np.array(
@@ -160,19 +172,32 @@ def main() -> int:
         pix_perf_t = torch.from_numpy(pix_perf)
 
         for nest in (False, True):
+
             def tf_w_perf() -> tuple[np.ndarray, np.ndarray]:
                 return tuple(
-                    x.cpu().numpy() for x in get_interp_weights(nside, lon_perf_t, lat_perf_t, nest=nest, lonlat=True)
+                    x.cpu().numpy()
+                    for x in get_interp_weights(
+                        nside, lon_perf_t, lat_perf_t, nest=nest, lonlat=True
+                    )
                 )
 
             def hp_w_perf() -> tuple[np.ndarray, np.ndarray]:
-                return healpy.get_interp_weights(nside, lon_perf, lat_perf, nest=nest, lonlat=True)
+                return healpy.get_interp_weights(
+                    nside, lon_perf, lat_perf, nest=nest, lonlat=True
+                )
 
             def tf_w_base() -> tuple[np.ndarray, np.ndarray]:
-                return tuple(x.cpu().numpy() for x in get_interp_weights(nside, lon_t, lat_t, nest=nest, lonlat=True))
+                return tuple(
+                    x.cpu().numpy()
+                    for x in get_interp_weights(
+                        nside, lon_t, lat_t, nest=nest, lonlat=True
+                    )
+                )
 
             def hp_w_base() -> tuple[np.ndarray, np.ndarray]:
-                return healpy.get_interp_weights(nside, lon, lat, nest=nest, lonlat=True)
+                return healpy.get_interp_weights(
+                    nside, lon, lat, nest=nest, lonlat=True
+                )
 
             t_tf = _time_many(tf_w_perf, runs=args.runs)
             t_hp = _time_many(hp_w_perf, runs=args.runs)
@@ -194,13 +219,23 @@ def main() -> int:
             )
 
             def tf_v_perf() -> np.ndarray:
-                return get_interp_val(m_t, lon_perf_t, lat_perf_t, nest=nest, lonlat=True).cpu().numpy()
+                return (
+                    get_interp_val(m_t, lon_perf_t, lat_perf_t, nest=nest, lonlat=True)
+                    .cpu()
+                    .numpy()
+                )
 
             def hp_v_perf() -> np.ndarray:
-                return healpy.get_interp_val(m, lon_perf, lat_perf, nest=nest, lonlat=True)
+                return healpy.get_interp_val(
+                    m, lon_perf, lat_perf, nest=nest, lonlat=True
+                )
 
             def tf_v_base() -> np.ndarray:
-                return get_interp_val(m_t, lon_t, lat_t, nest=nest, lonlat=True).cpu().numpy()
+                return (
+                    get_interp_val(m_t, lon_t, lat_t, nest=nest, lonlat=True)
+                    .cpu()
+                    .numpy()
+                )
 
             def hp_v_base() -> np.ndarray:
                 return healpy.get_interp_val(m, lon, lat, nest=nest, lonlat=True)
@@ -225,13 +260,18 @@ def main() -> int:
             )
 
             def tf_wp_perf() -> tuple[np.ndarray, np.ndarray]:
-                return tuple(x.cpu().numpy() for x in get_interp_weights(nside, pix_perf_t, nest=nest))
+                return tuple(
+                    x.cpu().numpy()
+                    for x in get_interp_weights(nside, pix_perf_t, nest=nest)
+                )
 
             def hp_wp_perf() -> tuple[np.ndarray, np.ndarray]:
                 return healpy.get_interp_weights(nside, pix_perf, nest=nest)
 
             def tf_wp_base() -> tuple[np.ndarray, np.ndarray]:
-                return tuple(x.cpu().numpy() for x in get_interp_weights(nside, pix_t, nest=nest))
+                return tuple(
+                    x.cpu().numpy() for x in get_interp_weights(nside, pix_t, nest=nest)
+                )
 
             def hp_wp_base() -> tuple[np.ndarray, np.ndarray]:
                 return healpy.get_interp_weights(nside, pix, nest=nest)
@@ -240,7 +280,9 @@ def main() -> int:
             t_hp = _time_many(hp_wp_perf, runs=args.runs)
             out_tf_p = tf_wp_base()
             out_hp_p = hp_wp_base()
-            mm_p = _interp_mismatch_count(out_tf_p[0], out_tf_p[1], out_hp_p[0], out_hp_p[1])
+            mm_p = _interp_mismatch_count(
+                out_tf_p[0], out_tf_p[1], out_hp_p[0], out_hp_p[1]
+            )
             rows.append(
                 Row(
                     operation="interp_weights_pix_edge",
@@ -255,7 +297,9 @@ def main() -> int:
                 )
             )
 
-    print("operation                 nside  nest  npts  mismatches   max_abs_err   tf_mpts/s  hp_mpts/s  ratio")
+    print(
+        "operation                 nside  nest  npts  mismatches   max_abs_err   tf_mpts/s  hp_mpts/s  ratio"
+    )
     for r in rows:
         print(
             f"{r.operation:24s} {r.nside:5d} {str(r.nest):5s} {r.n_points:5d}"
@@ -265,11 +309,16 @@ def main() -> int:
 
     failures: list[str] = []
     for r in rows:
-        if r.operation in {"interp_weights_edge", "interp_weights_pix_edge"} and r.mismatches > args.max_weight_mismatches:
+        if (
+            r.operation in {"interp_weights_edge", "interp_weights_pix_edge"}
+            and r.mismatches > args.max_weight_mismatches
+        ):
             failures.append(
                 f"{r.operation}@nside={r.nside},nest={r.nest}: mismatches {r.mismatches} > {args.max_weight_mismatches}"
             )
-        if r.operation == "interp_val_edge" and (not np.isfinite(r.max_abs_err) or r.max_abs_err > args.max_val_max_abs):
+        if r.operation == "interp_val_edge" and (
+            not np.isfinite(r.max_abs_err) or r.max_abs_err > args.max_val_max_abs
+        ):
             failures.append(
                 f"{r.operation}@nside={r.nside},nest={r.nest}: max_abs {r.max_abs_err:.3e} > {args.max_val_max_abs:.3e}"
             )

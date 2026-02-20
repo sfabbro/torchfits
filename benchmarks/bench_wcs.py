@@ -176,8 +176,12 @@ def _sample_allsky_pixels_from_world(
     if profile == "mixed":
         n0 = n_points // 2
         n1 = n_points - n0
-        x0, y0 = _sample_allsky_pixels_from_world(awcs, header, case, n0, rng, "interior", origin)
-        x1, y1 = _sample_allsky_pixels_from_world(awcs, header, case, n1, rng, "boundary", origin)
+        x0, y0 = _sample_allsky_pixels_from_world(
+            awcs, header, case, n0, rng, "interior", origin
+        )
+        x1, y1 = _sample_allsky_pixels_from_world(
+            awcs, header, case, n1, rng, "boundary", origin
+        )
         return np.concatenate([x0, x1]), np.concatenate([y0, y1])
 
     x_parts: list[np.ndarray] = []
@@ -196,7 +200,9 @@ def _sample_allsky_pixels_from_world(
         ra = rng.uniform(0.0, 360.0, size=batch)
 
         if profile == "interior":
-            u = rng.uniform(-np.sin(np.deg2rad(60.0)), np.sin(np.deg2rad(60.0)), size=batch)
+            u = rng.uniform(
+                -np.sin(np.deg2rad(60.0)), np.sin(np.deg2rad(60.0)), size=batch
+            )
             dec = np.rad2deg(np.arcsin(u))
         else:
             sign = np.where(rng.random(size=batch) < 0.5, -1.0, 1.0)
@@ -239,7 +245,9 @@ def _time_many(fn, runs: int, sync_device: torch.device | None = None) -> float:
     return float(np.median(samples))
 
 
-def _angular_sep_deg(ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: np.ndarray) -> np.ndarray:
+def _angular_sep_deg(
+    ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: np.ndarray
+) -> np.ndarray:
     r1 = np.deg2rad(ra1)
     d1 = np.deg2rad(dec1)
     r2 = np.deg2rad(ra2)
@@ -284,7 +292,11 @@ def _bench_case(
 
     with torch.no_grad():
         ast_fw_s = _time_many(lambda: awcs.all_pix2world(x, y, origin), runs)
-        torch_fw_s = _time_many(lambda: twcs.pixel_to_world(x_t, y_t, origin=origin), runs, sync_device=device)
+        torch_fw_s = _time_many(
+            lambda: twcs.pixel_to_world(x_t, y_t, origin=origin),
+            runs,
+            sync_device=device,
+        )
 
         ra_a, dec_a = awcs.all_pix2world(x, y, origin)
         ra_t, dec_t = twcs.pixel_to_world(x_t, y_t, origin=origin)
@@ -296,10 +308,14 @@ def _bench_case(
     valid &= np.isfinite(ra_t_np) & np.isfinite(dec_t_np)
 
     if np.any(valid):
-        ang_err_deg = _angular_sep_deg(ra_t_np[valid], dec_t_np[valid], ra_a[valid], dec_a[valid])
+        ang_err_deg = _angular_sep_deg(
+            ra_t_np[valid], dec_t_np[valid], ra_a[valid], dec_a[valid]
+        )
         max_ang_deg = float(np.max(ang_err_deg))
         med_ang_deg = float(np.median(ang_err_deg))
-        p90_ang_deg, p99_ang_deg = [float(v) for v in np.quantile(ang_err_deg, [0.9, 0.99])]
+        p90_ang_deg, p99_ang_deg = [
+            float(v) for v in np.quantile(ang_err_deg, [0.9, 0.99])
+        ]
 
         ra_valid = ra_a[valid]
         dec_valid = dec_a[valid]
@@ -340,7 +356,9 @@ def _bench_case(
             pix_err = np.hypot(x_t_inv_np - x_a_inv, y_t_inv_np - y_a_inv)
             max_pix_err = float(np.max(pix_err))
             med_pix_err = float(np.median(pix_err))
-            p90_pix_err, p99_pix_err = [float(v) for v in np.quantile(pix_err, [0.9, 0.99])]
+            p90_pix_err, p99_pix_err = [
+                float(v) for v in np.quantile(pix_err, [0.9, 0.99])
+            ]
             inverse_reference = "astropy"
         except Exception:
             ast_inv_s = float("nan")
@@ -410,9 +428,15 @@ def _parse_args() -> argparse.Namespace:
         default="TAN,SIN,ARC,AIT,MOL,HPX,CEA,MER,TAN_SIP,TPV",
         help=f"Comma-separated case names. Available: {','.join(CASES.keys())}",
     )
-    parser.add_argument("--n-points", type=int, default=200_000, help="Number of pixel samples per case")
-    parser.add_argument("--runs", type=int, default=5, help="Timing repetitions per operation")
-    parser.add_argument("--origin", type=int, default=0, choices=[0, 1], help="Pixel origin convention")
+    parser.add_argument(
+        "--n-points", type=int, default=200_000, help="Number of pixel samples per case"
+    )
+    parser.add_argument(
+        "--runs", type=int, default=5, help="Timing repetitions per operation"
+    )
+    parser.add_argument(
+        "--origin", type=int, default=0, choices=[0, 1], help="Pixel origin convention"
+    )
     parser.add_argument("--seed", type=int, default=12345, help="RNG seed")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument(
@@ -421,9 +445,17 @@ def _parse_args() -> argparse.Namespace:
         default="mixed",
         help="Pixel sampling profile: interior, boundary, or mixed",
     )
-    parser.add_argument("--torch-compile", action="store_true", help="Benchmark torch.compile()d transform")
-    parser.add_argument("--json-out", type=Path, default=None, help="Optional JSON output path")
-    parser.add_argument("--csv-out", type=Path, default=None, help="Optional CSV output path")
+    parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Benchmark torch.compile()d transform",
+    )
+    parser.add_argument(
+        "--json-out", type=Path, default=None, help="Optional JSON output path"
+    )
+    parser.add_argument(
+        "--csv-out", type=Path, default=None, help="Optional CSV output path"
+    )
     parser.add_argument(
         "--max-angular-error-arcsec",
         type=float,
@@ -549,7 +581,8 @@ def main() -> int:
         too_high = [
             r
             for r in results
-            if np.isfinite(r["max_angular_error_arcsec"]) and r["max_angular_error_arcsec"] > args.max_angular_error_arcsec
+            if np.isfinite(r["max_angular_error_arcsec"])
+            and r["max_angular_error_arcsec"] > args.max_angular_error_arcsec
         ]
         if too_high:
             print("\nError threshold exceeded for angular parity:")
@@ -561,7 +594,8 @@ def main() -> int:
         too_high = [
             r
             for r in results
-            if np.isfinite(r["max_inverse_pixel_error"]) and r["max_inverse_pixel_error"] > args.max_inverse_pixel_error
+            if np.isfinite(r["max_inverse_pixel_error"])
+            and r["max_inverse_pixel_error"] > args.max_inverse_pixel_error
         ]
         if too_high:
             print("\nError threshold exceeded for inverse parity:")
@@ -586,7 +620,8 @@ def main() -> int:
         too_high = [
             r
             for r in results
-            if np.isfinite(r["p99_angular_error_arcsec"]) and r["p99_angular_error_arcsec"] > args.p99_angular_error_arcsec
+            if np.isfinite(r["p99_angular_error_arcsec"])
+            and r["p99_angular_error_arcsec"] > args.p99_angular_error_arcsec
         ]
         if too_high:
             print("\nError threshold exceeded for p99 angular parity:")
@@ -598,7 +633,8 @@ def main() -> int:
         too_high = [
             r
             for r in results
-            if np.isfinite(r["p99_inverse_pixel_error"]) and r["p99_inverse_pixel_error"] > args.p99_inverse_pixel_error
+            if np.isfinite(r["p99_inverse_pixel_error"])
+            and r["p99_inverse_pixel_error"] > args.p99_inverse_pixel_error
         ]
         if too_high:
             print("\nError threshold exceeded for p99 inverse parity:")

@@ -1105,16 +1105,12 @@ class ExhaustiveBenchmarkSuite:
             # the C++ image read without open/close overhead; for table HDUs it
             # benchmarks the handle-based table reader.
             if file_type == "table":
-                diagnostic_methods["torchfits_cpp_open_once"] = (
-                    lambda fh=file_handle: torchfits.cpp.read_fits_table_from_handle(
-                        fh, hdu_num
-                    )
+                diagnostic_methods["torchfits_cpp_open_once"] = lambda fh=file_handle: (
+                    torchfits.cpp.read_fits_table_from_handle(fh, hdu_num)
                 )
             else:
-                diagnostic_methods["torchfits_cpp_open_once"] = (
-                    lambda fh=file_handle: torchfits.cpp.read_full(
-                        fh, hdu_num, tf_mmap_cpp
-                    )
+                diagnostic_methods["torchfits_cpp_open_once"] = lambda fh=file_handle: (
+                    torchfits.cpp.read_full(fh, hdu_num, tf_mmap_cpp)
                 )
         diagnostic_methods["torchfits_hot"] = lambda: torchfits.read(
             str(filepath),

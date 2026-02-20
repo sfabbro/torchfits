@@ -250,9 +250,7 @@ class CPPBackendBenchmark:
         self.bench_read_performance(shape, np.int16, compressed=False, scaled=True)
 
         # Test without scaling for comparison
-        self.bench_read_performance(
-            shape, np.float32, compressed=False, scaled=False
-        )
+        self.bench_read_performance(shape, np.float32, compressed=False, scaled=False)
 
     def identify_bottlenecks(self):
         """Analyze results to identify performance bottlenecks."""

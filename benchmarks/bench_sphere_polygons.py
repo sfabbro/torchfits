@@ -34,10 +34,14 @@ def _time_many(fn: Callable[[], Any], runs: int) -> float:
     return float(np.median(samples))
 
 
-def _star_polygon(center_lon: float, center_lat: float, n: int = 9) -> tuple[np.ndarray, np.ndarray]:
+def _star_polygon(
+    center_lon: float, center_lat: float, n: int = 9
+) -> tuple[np.ndarray, np.ndarray]:
     angles = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     radii = np.where((np.arange(n) % 2) == 0, 12.0, 5.0)
-    lon = center_lon + radii * np.cos(angles) / max(np.cos(np.deg2rad(center_lat)), 0.25)
+    lon = center_lon + radii * np.cos(angles) / max(
+        np.cos(np.deg2rad(center_lat)), 0.25
+    )
     lat = center_lat + radii * np.sin(angles)
     lon = (lon + 360.0) % 360.0
     lat = np.clip(lat, -85.0, 85.0)
@@ -72,7 +76,10 @@ def _sg_contains(poly: Any, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
         except Exception:
             pass
         return np.asarray(
-            [bool(poly.contains_lonlat(float(lo), float(la), degrees=True)) for lo, la in zip(lon, lat, strict=False)],
+            [
+                bool(poly.contains_lonlat(float(lo), float(la), degrees=True))
+                for lo, la in zip(lon, lat, strict=False)
+            ],
             dtype=bool,
         )
     if hasattr(poly, "contains_radec"):
@@ -83,7 +90,10 @@ def _sg_contains(poly: Any, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
         except Exception:
             pass
         return np.asarray(
-            [bool(poly.contains_radec(float(lo), float(la), degrees=True)) for lo, la in zip(lon, lat, strict=False)],
+            [
+                bool(poly.contains_radec(float(lo), float(la), degrees=True))
+                for lo, la in zip(lon, lat, strict=False)
+            ],
             dtype=bool,
         )
     raise RuntimeError("unsupported spherical_geometry API for contains")
@@ -95,7 +105,9 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/sphere_polygons.json"))
+    parser.add_argument(
+        "--json-out", type=Path, default=Path("bench_results/sphere_polygons.json")
+    )
     args = parser.parse_args()
 
     lon_poly, lat_poly = _star_polygon(center_lon=120.0, center_lat=-20.0, n=9)
@@ -154,29 +166,43 @@ def main() -> int:
 
     sg_poly = _sg_polygon_from_lonlat(lon_poly, lat_poly)
     if sg_poly is not None:
-        t_sg_contains = _time_many(lambda: _sg_contains(sg_poly, lon_q, lat_q), runs=max(2, args.runs // 2))
-        tf_contains = spherical_polygon_contains(
-            lon_q_t,
-            lat_q_t,
-            lon_poly_t,
-            lat_poly_t,
-            inclusive=False,
-        ).cpu().numpy()
-        tf_contains_inclusive = spherical_polygon_contains(
-            lon_q_t,
-            lat_q_t,
-            lon_poly_t,
-            lat_poly_t,
-            inclusive=True,
-            atol_deg=1e-5,
-        ).cpu().numpy()
+        t_sg_contains = _time_many(
+            lambda: _sg_contains(sg_poly, lon_q, lat_q), runs=max(2, args.runs // 2)
+        )
+        tf_contains = (
+            spherical_polygon_contains(
+                lon_q_t,
+                lat_q_t,
+                lon_poly_t,
+                lat_poly_t,
+                inclusive=False,
+            )
+            .cpu()
+            .numpy()
+        )
+        tf_contains_inclusive = (
+            spherical_polygon_contains(
+                lon_q_t,
+                lat_q_t,
+                lon_poly_t,
+                lat_poly_t,
+                inclusive=True,
+                atol_deg=1e-5,
+            )
+            .cpu()
+            .numpy()
+        )
         sg_contains = _sg_contains(sg_poly, lon_q, lat_q)
         mismatches = int(np.sum(tf_contains != sg_contains))
         boundary_like = tf_contains_inclusive != tf_contains
-        mismatches_nonboundary = int(np.sum((tf_contains != sg_contains) & (~boundary_like)))
+        mismatches_nonboundary = int(
+            np.sum((tf_contains != sg_contains) & (~boundary_like))
+        )
 
         sg_area = float(sg_poly.area()) if hasattr(sg_poly, "area") else float("nan")
-        rel_area_err = abs(float(poly.area(degrees=False)) - sg_area) / max(abs(sg_area), 1e-15)
+        rel_area_err = abs(float(poly.area(degrees=False)) - sg_area) / max(
+            abs(sg_area), 1e-15
+        )
 
         rows.append(
             {

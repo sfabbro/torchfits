@@ -30,7 +30,9 @@ def _resolve_device(choice: str) -> torch.device:
         return torch.device("cpu")
     if choice == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but unavailable")
-    if choice == "mps" and (not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()):
+    if choice == "mps" and (
+        not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()
+    ):
         raise RuntimeError("MPS requested but unavailable")
     return torch.device(choice)
 
@@ -42,7 +44,9 @@ def _sync(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
-def _bench(fn: Callable[[], Any], runs: int, device: torch.device | None = None) -> float:
+def _bench(
+    fn: Callable[[], Any], runs: int, device: torch.device | None = None
+) -> float:
     fn()
     if device is not None:
         _sync(device)
@@ -70,8 +74,12 @@ def main() -> int:
     parser.add_argument("--n-bands", type=int, default=8)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu")
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/sphere_core.json"))
+    parser.add_argument(
+        "--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu"
+    )
+    parser.add_argument(
+        "--json-out", type=Path, default=Path("bench_results/sphere_core.json")
+    )
     args = parser.parse_args()
 
     device = _resolve_device(args.device)
@@ -136,7 +144,11 @@ def main() -> int:
     pair_n = min(8_000, args.n_points)
     lon_small = lon_t[:pair_n]
     lat_small = lat_t[:pair_n]
-    t_pairwise = _bench(lambda: pairwise_angular_distance(lon_small, lat_small), runs=max(2, args.runs // 2), device=device)
+    t_pairwise = _bench(
+        lambda: pairwise_angular_distance(lon_small, lat_small),
+        runs=max(2, args.runs // 2),
+        device=device,
+    )
     results.append(
         {
             "operation": "pairwise_angular_distance",
@@ -147,7 +159,9 @@ def main() -> int:
     )
 
     t_query = _bench(
-        lambda: query_ellipse(args.nside, 125.0, -30.0, 7.0, 2.0, pa_deg=15.0, nest=False),
+        lambda: query_ellipse(
+            args.nside, 125.0, -30.0, 7.0, 2.0, pa_deg=15.0, nest=False
+        ),
         runs=args.runs,
         device=torch.device("cpu"),
     )
@@ -161,9 +175,12 @@ def main() -> int:
     )
 
     if healpy is not None and device.type == "cpu":
+
         def _healpy_loop_interp() -> None:
             for i in range(args.n_bands):
-                healpy.get_interp_val(cube_np[i], lon_np, lat_np, lonlat=True, nest=False)
+                healpy.get_interp_val(
+                    cube_np[i], lon_np, lat_np, lonlat=True, nest=False
+                )
 
         t_hp = _bench(_healpy_loop_interp, runs=max(2, args.runs // 2), device=None)
         results.append(

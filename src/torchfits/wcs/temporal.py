@@ -1,38 +1,39 @@
-
 from torch import Tensor
 from typing import Dict, Any, Union
 import datetime
 
+
 class TemporalWCS:
     """
     FITS Temporal WCS implementation (Paper IV).
-    
+
     Supports vectorized transformations between different time representations
     and coordinate systems.
-    
+
     Main keywords:
     - MJDREF: Reference MJD
     - TIMESYS: Time scale (UTC, TT, TAI, TDB, GPS)
     - TIMEUNIT: 's', 'd', 'a', 'cy'
     - TREFPOS: 'TOPOCENTER', 'GEOCENTER', 'BARYCENTER'
     """
+
     def __init__(self, header: Dict[str, Any]):
-        self.mjd_ref = float(header.get('MJDREF', 0.0))
+        self.mjd_ref = float(header.get("MJDREF", 0.0))
         # Handle MJDREFI and MJDREFF if present
-        if 'MJDREFI' in header and 'MJDREFF' in header:
-            self.mjd_ref = float(header['MJDREFI']) + float(header['MJDREFF'])
-            
-        self.timesys = header.get('TIMESYS', 'UTC').upper()
-        self.timeunit = header.get('TIMEUNIT', 'd').lower()
-        self.trefpos = header.get('TREFPOS', 'TOPOCENTER').upper()
-        
+        if "MJDREFI" in header and "MJDREFF" in header:
+            self.mjd_ref = float(header["MJDREFI"]) + float(header["MJDREFF"])
+
+        self.timesys = header.get("TIMESYS", "UTC").upper()
+        self.timeunit = header.get("TIMEUNIT", "d").lower()
+        self.trefpos = header.get("TREFPOS", "TOPOCENTER").upper()
+
         # Scaling factor to days
         self.to_days = 1.0
-        if self.timeunit == 's':
+        if self.timeunit == "s":
             self.to_days = 1.0 / 86400.0
-        elif self.timeunit == 'a': # Year (365.25 days)
+        elif self.timeunit == "a":  # Year (365.25 days)
             self.to_days = 365.25
-        elif self.timeunit == 'cy': # Century
+        elif self.timeunit == "cy":  # Century
             self.to_days = 36525.0
 
     def to_mjd(self, time_val: Tensor) -> Tensor:

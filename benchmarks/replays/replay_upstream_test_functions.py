@@ -102,7 +102,9 @@ class TorchFitsHealpyCompat:
         return int(tf_npix2nside(npix))
 
     @staticmethod
-    def ang2pix(nside: int, theta: Any, phi: Any, nest: bool = False, lonlat: bool = False) -> Any:
+    def ang2pix(
+        nside: int, theta: Any, phi: Any, nest: bool = False, lonlat: bool = False
+    ) -> Any:
         theta_np = _to_numpy(theta)
         phi_np = _to_numpy(phi)
         if lonlat:
@@ -148,13 +150,21 @@ class TorchFitsHealpyCompat:
     @staticmethod
     def nest2ring(nside: int, ipix: Any) -> Any:
         pix_np = _to_numpy(ipix).astype(np.int64, copy=False)
-        out = tf_nest2ring(nside, torch.from_numpy(np.ascontiguousarray(pix_np))).cpu().numpy()
+        out = (
+            tf_nest2ring(nside, torch.from_numpy(np.ascontiguousarray(pix_np)))
+            .cpu()
+            .numpy()
+        )
         return _maybe_scalar(out)
 
     @staticmethod
     def ring2nest(nside: int, ipix: Any) -> Any:
         pix_np = _to_numpy(ipix).astype(np.int64, copy=False)
-        out = tf_ring2nest(nside, torch.from_numpy(np.ascontiguousarray(pix_np))).cpu().numpy()
+        out = (
+            tf_ring2nest(nside, torch.from_numpy(np.ascontiguousarray(pix_np)))
+            .cpu()
+            .numpy()
+        )
         return _maybe_scalar(out)
 
     @staticmethod
@@ -162,25 +172,35 @@ class TorchFitsHealpyCompat:
         x_np = _to_numpy(x).astype(np.float64, copy=False)
         y_np = _to_numpy(y).astype(np.float64, copy=False)
         z_np = _to_numpy(z).astype(np.float64, copy=False)
-        out = tf_vec2pix(
-            nside,
-            torch.from_numpy(np.ascontiguousarray(x_np)),
-            torch.from_numpy(np.ascontiguousarray(y_np)),
-            torch.from_numpy(np.ascontiguousarray(z_np)),
-            nest=nest,
-        ).cpu().numpy()
+        out = (
+            tf_vec2pix(
+                nside,
+                torch.from_numpy(np.ascontiguousarray(x_np)),
+                torch.from_numpy(np.ascontiguousarray(y_np)),
+                torch.from_numpy(np.ascontiguousarray(z_np)),
+                nest=nest,
+            )
+            .cpu()
+            .numpy()
+        )
         return _maybe_scalar(out)
 
     @staticmethod
     def pix2vec(nside: int, ipix: Any, nest: bool = False) -> Any:
         pix_np = _to_numpy(ipix).astype(np.int64, copy=False)
         scalar_input = np.ndim(pix_np) == 0
-        x_t, y_t, z_t = tf_pix2vec(nside, torch.from_numpy(np.ascontiguousarray(pix_np)), nest=nest)
+        x_t, y_t, z_t = tf_pix2vec(
+            nside, torch.from_numpy(np.ascontiguousarray(pix_np)), nest=nest
+        )
         x = x_t.cpu().numpy()
         y = y_t.cpu().numpy()
         z = z_t.cpu().numpy()
         if scalar_input and x.size == 1 and y.size == 1 and z.size == 1:
-            return float(x.reshape(-1)[0]), float(y.reshape(-1)[0]), float(z.reshape(-1)[0])
+            return (
+                float(x.reshape(-1)[0]),
+                float(y.reshape(-1)[0]),
+                float(z.reshape(-1)[0]),
+            )
         return x, y, z
 
     @staticmethod
@@ -230,12 +250,23 @@ class TorchFitsHealpyCompat:
                 lonlat=False,
             )
         out = vec.cpu().numpy()
-        if theta_np.ndim == 0 and phi_np.ndim == 0 and out.ndim == 2 and out.shape[0] == 1:
+        if (
+            theta_np.ndim == 0
+            and phi_np.ndim == 0
+            and out.ndim == 2
+            and out.shape[0] == 1
+        ):
             out = out[0]
         return out
 
     @staticmethod
-    def get_interp_weights(nside: int, theta: Any, phi: Any = None, nest: bool = False, lonlat: bool = False) -> Any:
+    def get_interp_weights(
+        nside: int,
+        theta: Any,
+        phi: Any = None,
+        nest: bool = False,
+        lonlat: bool = False,
+    ) -> Any:
         if phi is None:
             theta_np = _to_numpy(theta).astype(np.int64, copy=False)
             pix_t = torch.from_numpy(np.ascontiguousarray(theta_np))
@@ -253,17 +284,23 @@ class TorchFitsHealpyCompat:
         return p_t.cpu().numpy(), w_t.cpu().numpy()
 
     @staticmethod
-    def get_interp_val(m: Any, theta: Any, phi: Any, nest: bool = False, lonlat: bool = False) -> Any:
+    def get_interp_val(
+        m: Any, theta: Any, phi: Any, nest: bool = False, lonlat: bool = False
+    ) -> Any:
         m_np = _to_numpy(m)
         theta_np = _to_numpy(theta).astype(np.float64, copy=False)
         phi_np = _to_numpy(phi).astype(np.float64, copy=False)
-        out = tf_get_interp_val(
-            torch.from_numpy(np.ascontiguousarray(m_np)),
-            torch.from_numpy(np.ascontiguousarray(theta_np)),
-            torch.from_numpy(np.ascontiguousarray(phi_np)),
-            nest=nest,
-            lonlat=lonlat,
-        ).cpu().numpy()
+        out = (
+            tf_get_interp_val(
+                torch.from_numpy(np.ascontiguousarray(m_np)),
+                torch.from_numpy(np.ascontiguousarray(theta_np)),
+                torch.from_numpy(np.ascontiguousarray(phi_np)),
+                nest=nest,
+                lonlat=lonlat,
+            )
+            .cpu()
+            .numpy()
+        )
         return _maybe_scalar(out)
 
 
@@ -272,7 +309,9 @@ def _run_named(name: str, fn: Callable[[], None]) -> ReplayResult:
         fn()
         return ReplayResult(name=name, passed=True, error=None)
     except Exception as exc:  # pragma: no cover - diagnostic path
-        return ReplayResult(name=name, passed=False, error=f"{type(exc).__name__}: {exc}")
+        return ReplayResult(
+            name=name, passed=False, error=f"{type(exc).__name__}: {exc}"
+        )
 
 
 def _time_many(fn: Callable[[], Any], runs: int) -> float:
@@ -295,12 +334,36 @@ def _microbench(nside: int, n_points: int, runs: int) -> dict[str, float]:
     out: dict[str, float] = {}
 
     for op, tf_fn, hp_fn in [
-        ("ang2pix_ring", lambda: adapter.ang2pix(nside, lon, lat, nest=False, lonlat=True), lambda: hp.ang2pix(nside, lon, lat, nest=False, lonlat=True)),
-        ("ang2pix_nested", lambda: adapter.ang2pix(nside, lon, lat, nest=True, lonlat=True), lambda: hp.ang2pix(nside, lon, lat, nest=True, lonlat=True)),
-        ("pix2ang_ring", lambda: adapter.pix2ang(nside, pix, nest=False, lonlat=True), lambda: hp.pix2ang(nside, pix, nest=False, lonlat=True)),
-        ("pix2ang_nested", lambda: adapter.pix2ang(nside, pix, nest=True, lonlat=True), lambda: hp.pix2ang(nside, pix, nest=True, lonlat=True)),
-        ("ring2nest", lambda: adapter.ring2nest(nside, pix), lambda: hp.ring2nest(nside, pix)),
-        ("nest2ring", lambda: adapter.nest2ring(nside, pix), lambda: hp.nest2ring(nside, pix)),
+        (
+            "ang2pix_ring",
+            lambda: adapter.ang2pix(nside, lon, lat, nest=False, lonlat=True),
+            lambda: hp.ang2pix(nside, lon, lat, nest=False, lonlat=True),
+        ),
+        (
+            "ang2pix_nested",
+            lambda: adapter.ang2pix(nside, lon, lat, nest=True, lonlat=True),
+            lambda: hp.ang2pix(nside, lon, lat, nest=True, lonlat=True),
+        ),
+        (
+            "pix2ang_ring",
+            lambda: adapter.pix2ang(nside, pix, nest=False, lonlat=True),
+            lambda: hp.pix2ang(nside, pix, nest=False, lonlat=True),
+        ),
+        (
+            "pix2ang_nested",
+            lambda: adapter.pix2ang(nside, pix, nest=True, lonlat=True),
+            lambda: hp.pix2ang(nside, pix, nest=True, lonlat=True),
+        ),
+        (
+            "ring2nest",
+            lambda: adapter.ring2nest(nside, pix),
+            lambda: hp.ring2nest(nside, pix),
+        ),
+        (
+            "nest2ring",
+            lambda: adapter.nest2ring(nside, pix),
+            lambda: hp.nest2ring(nside, pix),
+        ),
     ]:
         t_tf = _time_many(tf_fn, runs=runs)
         t_hp = _time_many(hp_fn, runs=runs)
@@ -318,7 +381,11 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--bench-nside", type=int, default=1024)
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/upstream_replay_test_functions.json"))
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=Path("bench_results/upstream_replay_test_functions.json"),
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(args.source_root.resolve()))
@@ -330,16 +397,45 @@ def main() -> int:
     # Parametrized deterministic tests
     for nside in mod.NSIDE_VALUES:
         for degrees in (False, True):
-            results.append(_run_named(f"test_nside2pixarea(nside={nside},degrees={degrees})", lambda nside=nside, degrees=degrees: mod.test_nside2pixarea(nside, degrees)))
+            results.append(
+                _run_named(
+                    f"test_nside2pixarea(nside={nside},degrees={degrees})",
+                    lambda nside=nside, degrees=degrees: mod.test_nside2pixarea(
+                        nside, degrees
+                    ),
+                )
+            )
     for nside in mod.NSIDE_VALUES:
         for arcmin in (False, True):
-            results.append(_run_named(f"test_nside2resol(nside={nside},arcmin={arcmin})", lambda nside=nside, arcmin=arcmin: mod.test_nside2resol(nside, arcmin)))
+            results.append(
+                _run_named(
+                    f"test_nside2resol(nside={nside},arcmin={arcmin})",
+                    lambda nside=nside, arcmin=arcmin: mod.test_nside2resol(
+                        nside, arcmin
+                    ),
+                )
+            )
     for nside in mod.NSIDE_VALUES:
-        results.append(_run_named(f"test_nside2npix(nside={nside})", lambda nside=nside: mod.test_nside2npix(nside)))
+        results.append(
+            _run_named(
+                f"test_nside2npix(nside={nside})",
+                lambda nside=nside: mod.test_nside2npix(nside),
+            )
+        )
     for level in [0, 3, 7]:
-        results.append(_run_named(f"test_order2nside(level={level})", lambda level=level: mod.test_order2nside(level)))
+        results.append(
+            _run_named(
+                f"test_order2nside(level={level})",
+                lambda level=level: mod.test_order2nside(level),
+            )
+        )
     for npix in [12 * 2 ** (2 * n) for n in range(1, 6)]:
-        results.append(_run_named(f"test_npix2nside(npix={npix})", lambda npix=npix: mod.test_npix2nside(npix)))
+        results.append(
+            _run_named(
+                f"test_npix2nside(npix={npix})",
+                lambda npix=npix: mod.test_npix2nside(npix),
+            )
+        )
 
     # Shape tests (non-hypothesis)
     results.append(_run_named("test_ang2pix_shape()", mod.test_ang2pix_shape))
@@ -357,8 +453,14 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: mod.test_ang2pix.hypothesis.inner_test(
-                                nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                                mod.test_ang2pix.hypothesis.inner_test(
+                                    nside_pow=nside_pow,
+                                    lon=lon,
+                                    lat=lat,
+                                    nest=nest,
+                                    lonlat=lonlat,
+                                )
                             ),
                         )
                     )
@@ -371,8 +473,13 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat: mod.test_pix2ang.hypothesis.inner_test(
-                                nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat
+                            lambda nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat: (
+                                mod.test_pix2ang.hypothesis.inner_test(
+                                    nside_pow=nside_pow,
+                                    frac=frac,
+                                    nest=nest,
+                                    lonlat=lonlat,
+                                )
                             ),
                         )
                     )
@@ -382,19 +489,27 @@ def main() -> int:
             results.append(
                 _run_named(
                     f"test_ring2nest.inner(nside_pow={nside_pow},frac={frac})",
-                    lambda nside_pow=nside_pow, frac=frac: mod.test_ring2nest.hypothesis.inner_test(nside_pow=nside_pow, frac=frac),
+                    lambda nside_pow=nside_pow, frac=frac: (
+                        mod.test_ring2nest.hypothesis.inner_test(
+                            nside_pow=nside_pow, frac=frac
+                        )
+                    ),
                 )
             )
             results.append(
                 _run_named(
                     f"test_nest2ring.inner(nside_pow={nside_pow},frac={frac})",
-                    lambda nside_pow=nside_pow, frac=frac: mod.test_nest2ring.hypothesis.inner_test(nside_pow=nside_pow, frac=frac),
+                    lambda nside_pow=nside_pow, frac=frac: (
+                        mod.test_nest2ring.hypothesis.inner_test(
+                            nside_pow=nside_pow, frac=frac
+                        )
+                    ),
                 )
             )
 
     for nside_pow in NSIDE_POW_CASES:
         for nest in (False, True):
-            nside = 2 ** nside_pow
+            nside = 2**nside_pow
             for frac in FRACS:
                 ipix = int(frac * 12 * nside * nside)
                 x, y, z = hp.pix2vec(nside, ipix, nest=nest)
@@ -402,7 +517,9 @@ def main() -> int:
                 results.append(
                     _run_named(
                         f"test_vec2pix.inner(nside_pow={nside_pow},nest={nest},frac={frac})",
-                        lambda vec_args=vec_args: mod.test_vec2pix.hypothesis.inner_test(args=vec_args),
+                        lambda vec_args=vec_args: (
+                            mod.test_vec2pix.hypothesis.inner_test(args=vec_args)
+                        ),
                     )
                 )
 
@@ -412,8 +529,10 @@ def main() -> int:
                 results.append(
                     _run_named(
                         f"test_pix2vec.inner(nside_pow={nside_pow},nest={nest},frac={frac})",
-                        lambda nside_pow=nside_pow, frac=frac, nest=nest: mod.test_pix2vec.hypothesis.inner_test(
-                            nside_pow=nside_pow, frac=frac, nest=nest
+                        lambda nside_pow=nside_pow, frac=frac, nest=nest: (
+                            mod.test_pix2vec.hypothesis.inner_test(
+                                nside_pow=nside_pow, frac=frac, nest=nest
+                            )
                         ),
                     )
                 )
@@ -425,8 +544,10 @@ def main() -> int:
                     results.append(
                         _run_named(
                             f"test_boundaries.inner(nside_pow={nside_pow},nest={nest},step={step},frac={frac})",
-                            lambda nside_pow=nside_pow, frac=frac, step=step, nest=nest: mod.test_boundaries.hypothesis.inner_test(
-                                nside_pow=nside_pow, frac=frac, step=step, nest=nest
+                            lambda nside_pow=nside_pow, frac=frac, step=step, nest=nest: (
+                                mod.test_boundaries.hypothesis.inner_test(
+                                    nside_pow=nside_pow, frac=frac, step=step, nest=nest
+                                )
                             ),
                         )
                     )
@@ -439,8 +560,10 @@ def main() -> int:
                 results.append(
                     _run_named(
                         name,
-                        lambda lonlat=lonlat, ndim=ndim, vec=vec: mod.test_vec2ang.hypothesis.inner_test(
-                            vectors=vec, lonlat=lonlat, ndim=ndim
+                        lambda lonlat=lonlat, ndim=ndim, vec=vec: (
+                            mod.test_vec2ang.hypothesis.inner_test(
+                                vectors=vec, lonlat=lonlat, ndim=ndim
+                            )
                         ),
                     )
                 )
@@ -450,8 +573,10 @@ def main() -> int:
             results.append(
                 _run_named(
                     f"test_ang2vec.inner(lon={lon},lat={lat},lonlat={lonlat})",
-                    lambda lon=lon, lat=lat, lonlat=lonlat: mod.test_ang2vec.hypothesis.inner_test(
-                        lon=lon, lat=lat, lonlat=lonlat
+                    lambda lon=lon, lat=lat, lonlat=lonlat: (
+                        mod.test_ang2vec.hypothesis.inner_test(
+                            lon=lon, lat=lat, lonlat=lonlat
+                        )
                     ),
                 )
             )
@@ -464,8 +589,14 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: mod.test_interp_weights.hypothesis.inner_test(
-                                nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                                mod.test_interp_weights.hypothesis.inner_test(
+                                    nside_pow=nside_pow,
+                                    lon=lon,
+                                    lat=lat,
+                                    nest=nest,
+                                    lonlat=lonlat,
+                                )
                             ),
                         )
                     )
@@ -478,8 +609,14 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: mod.test_interp_val.hypothesis.inner_test(
-                                nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                                mod.test_interp_val.hypothesis.inner_test(
+                                    nside_pow=nside_pow,
+                                    lon=lon,
+                                    lat=lat,
+                                    nest=nest,
+                                    lonlat=lonlat,
+                                )
                             ),
                         )
                     )

@@ -27,8 +27,12 @@ try:
     )
 except Exception:
     # Allow benchmarks in envs where torchfits package/extensions are not installed.
-    local_mod = Path(__file__).resolve().parents[1] / "src" / "torchfits" / "wcs" / "healpix.py"
-    spec = importlib.util.spec_from_file_location("torchfits_wcs_healpix_local", local_mod)
+    local_mod = (
+        Path(__file__).resolve().parents[1] / "src" / "torchfits" / "wcs" / "healpix.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "torchfits_wcs_healpix_local", local_mod
+    )
     if spec is None or spec.loader is None:
         raise SystemExit(f"Unable to load local HEALPix module from {local_mod}")
     healpix_local = importlib.util.module_from_spec(spec)
@@ -69,7 +73,9 @@ def _sync(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
-def _time_many(fn: Callable[[], Any], runs: int, sync_device: torch.device | None = None) -> float:
+def _time_many(
+    fn: Callable[[], Any], runs: int, sync_device: torch.device | None = None
+) -> float:
     fn()
     if sync_device is not None:
         _sync(sync_device)
@@ -92,7 +98,9 @@ def _resolve_device(choice: str) -> torch.device:
         return torch.device("cpu")
     if choice == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but no CUDA device is available")
-    if choice == "mps" and (not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()):
+    if choice == "mps" and (
+        not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()
+    ):
         raise RuntimeError("MPS requested but no MPS device is available")
     return torch.device(choice)
 
@@ -108,7 +116,9 @@ def _sample_lonlat(n: int, seed: int, profile: str) -> tuple[np.ndarray, np.ndar
     if profile == "boundary":
         ra0 = (rng.integers(0, 8, size=n) * 45.0).astype(np.float64)
         ra = np.mod(ra0 + rng.normal(0.0, 1.0e-5, size=n), 360.0)
-        block = np.array([transition, -transition, 0.0, 89.9999, -89.9999], dtype=np.float64)
+        block = np.array(
+            [transition, -transition, 0.0, 89.9999, -89.9999], dtype=np.float64
+        )
         idx = rng.integers(0, block.size, size=n)
         dec = block[idx] + rng.normal(0.0, 1.0e-5, size=n)
         dec = np.clip(dec, -90.0, 90.0)
@@ -149,7 +159,13 @@ def _angle_metrics(
     dra = np.abs(_ra_delta(ra, ra_ref))
     ddec = np.abs(dec - dec_ref)
     mismatches = int(np.sum((dra > eps) | (ddec > eps)))
-    return mismatches, float(dra.max()), float(np.quantile(dra, 0.99)), float(ddec.max()), float(np.quantile(ddec, 0.99))
+    return (
+        mismatches,
+        float(dra.max()),
+        float(np.quantile(dra, 0.99)),
+        float(ddec.max()),
+        float(np.quantile(ddec, 0.99)),
+    )
 
 
 def _write_json(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -184,7 +200,9 @@ def _parse_ratio_spec(spec: str | None) -> dict[str, float]:
         try:
             value = float(raw)
         except ValueError as exc:
-            raise ValueError(f"Invalid float ratio '{raw}' for operation '{op}'") from exc
+            raise ValueError(
+                f"Invalid float ratio '{raw}' for operation '{op}'"
+            ) from exc
         if value <= 0.0:
             raise ValueError(f"Ratio threshold must be positive for operation '{op}'")
         out[op] = value
@@ -192,7 +210,9 @@ def _parse_ratio_spec(spec: str | None) -> dict[str, float]:
 
 
 def _ratios_vs_healpy(rows: list[dict[str, Any]], library: str) -> dict[str, float]:
-    by_key = {(str(r["library"]), str(r["operation"])): float(r["mpts_s"]) for r in rows}
+    by_key = {
+        (str(r["library"]), str(r["operation"])): float(r["mpts_s"]) for r in rows
+    }
     ratios: dict[str, float] = {}
     for op in OPS:
         a = by_key.get((library, op))
@@ -221,7 +241,8 @@ def _distribution_provenance(dist_name: str) -> dict[str, Any] | None:
         "version": dist.version,
         "release_like": True,
         "source": "site-packages",
-        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower() or "unknown",
+        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower()
+        or "unknown",
         "reason": "installed from index/conda/wheel/sdist",
     }
     if meta["installer"] == "conda":
@@ -301,8 +322,12 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
-    parser.add_argument("--sample-profile", choices=["uniform", "boundary", "mixed"], default="mixed")
+    parser.add_argument(
+        "--device", choices=["auto", "cpu", "cuda", "mps"], default="auto"
+    )
+    parser.add_argument(
+        "--sample-profile", choices=["uniform", "boundary", "mixed"], default="mixed"
+    )
     parser.add_argument(
         "--libraries",
         type=str,
@@ -314,7 +339,11 @@ def main() -> int:
         action="store_true",
         help="Allow comparator libraries installed from local/editable/VCS sources",
     )
-    parser.add_argument("--strict-missing", action="store_true", help="Fail if any requested library is unavailable")
+    parser.add_argument(
+        "--strict-missing",
+        action="store_true",
+        help="Fail if any requested library is unavailable",
+    )
     parser.add_argument("--json-out", type=Path, default=None)
     parser.add_argument("--csv-out", type=Path, default=None)
     parser.add_argument("--max-index-mismatches", type=int, default=None)
@@ -356,10 +385,18 @@ def main() -> int:
 
     if healpy is not None:
         adapters["healpy"] = {
-            "ang2pix_ring": lambda lon, lat: healpy.ang2pix(nside, lon, lat, lonlat=True, nest=False),
-            "ang2pix_nested": lambda lon, lat: healpy.ang2pix(nside, lon, lat, lonlat=True, nest=True),
-            "pix2ang_ring": lambda pix: healpy.pix2ang(nside, pix, lonlat=True, nest=False),
-            "pix2ang_nested": lambda pix: healpy.pix2ang(nside, pix, lonlat=True, nest=True),
+            "ang2pix_ring": lambda lon, lat: healpy.ang2pix(
+                nside, lon, lat, lonlat=True, nest=False
+            ),
+            "ang2pix_nested": lambda lon, lat: healpy.ang2pix(
+                nside, lon, lat, lonlat=True, nest=True
+            ),
+            "pix2ang_ring": lambda pix: healpy.pix2ang(
+                nside, pix, lonlat=True, nest=False
+            ),
+            "pix2ang_nested": lambda pix: healpy.pix2ang(
+                nside, pix, lonlat=True, nest=True
+            ),
             "ring2nest": lambda pix: healpy.ring2nest(nside, pix),
             "nest2ring": lambda pix: healpy.nest2ring(nside, pix),
         }
@@ -368,10 +405,18 @@ def main() -> int:
 
     if hpgeom_compat is not None:
         adapters["hpgeom"] = {
-            "ang2pix_ring": lambda lon, lat: hpgeom_compat.ang2pix(nside, lon, lat, lonlat=True, nest=False),
-            "ang2pix_nested": lambda lon, lat: hpgeom_compat.ang2pix(nside, lon, lat, lonlat=True, nest=True),
-            "pix2ang_ring": lambda pix: hpgeom_compat.pix2ang(nside, pix, lonlat=True, nest=False),
-            "pix2ang_nested": lambda pix: hpgeom_compat.pix2ang(nside, pix, lonlat=True, nest=True),
+            "ang2pix_ring": lambda lon, lat: hpgeom_compat.ang2pix(
+                nside, lon, lat, lonlat=True, nest=False
+            ),
+            "ang2pix_nested": lambda lon, lat: hpgeom_compat.ang2pix(
+                nside, lon, lat, lonlat=True, nest=True
+            ),
+            "pix2ang_ring": lambda pix: hpgeom_compat.pix2ang(
+                nside, pix, lonlat=True, nest=False
+            ),
+            "pix2ang_nested": lambda pix: hpgeom_compat.pix2ang(
+                nside, pix, lonlat=True, nest=True
+            ),
             "ring2nest": lambda pix: hpgeom_compat.ring2nest(nside, pix),
             "nest2ring": lambda pix: hpgeom_compat.nest2ring(nside, pix),
         }
@@ -380,10 +425,18 @@ def main() -> int:
 
     if astropy_healpy is not None:
         adapters["astropy-healpix"] = {
-            "ang2pix_ring": lambda lon, lat: astropy_healpy.ang2pix(nside, lon, lat, lonlat=True, nest=False),
-            "ang2pix_nested": lambda lon, lat: astropy_healpy.ang2pix(nside, lon, lat, lonlat=True, nest=True),
-            "pix2ang_ring": lambda pix: astropy_healpy.pix2ang(nside, pix, lonlat=True, nest=False),
-            "pix2ang_nested": lambda pix: astropy_healpy.pix2ang(nside, pix, lonlat=True, nest=True),
+            "ang2pix_ring": lambda lon, lat: astropy_healpy.ang2pix(
+                nside, lon, lat, lonlat=True, nest=False
+            ),
+            "ang2pix_nested": lambda lon, lat: astropy_healpy.ang2pix(
+                nside, lon, lat, lonlat=True, nest=True
+            ),
+            "pix2ang_ring": lambda pix: astropy_healpy.pix2ang(
+                nside, pix, lonlat=True, nest=False
+            ),
+            "pix2ang_nested": lambda pix: astropy_healpy.pix2ang(
+                nside, pix, lonlat=True, nest=True
+            ),
             "ring2nest": lambda pix: astropy_healpy.ring2nest(nside, pix),
             "nest2ring": lambda pix: astropy_healpy.nest2ring(nside, pix),
         }
@@ -392,10 +445,18 @@ def main() -> int:
 
     if healpix_mod is not None:
         adapters["healpix"] = {
-            "ang2pix_ring": lambda lon, lat: healpix_mod.ang2pix(nside, lon, lat, lonlat=True, nest=False),
-            "ang2pix_nested": lambda lon, lat: healpix_mod.ang2pix(nside, lon, lat, lonlat=True, nest=True),
-            "pix2ang_ring": lambda pix: healpix_mod.pix2ang(nside, pix, lonlat=True, nest=False),
-            "pix2ang_nested": lambda pix: healpix_mod.pix2ang(nside, pix, lonlat=True, nest=True),
+            "ang2pix_ring": lambda lon, lat: healpix_mod.ang2pix(
+                nside, lon, lat, lonlat=True, nest=False
+            ),
+            "ang2pix_nested": lambda lon, lat: healpix_mod.ang2pix(
+                nside, lon, lat, lonlat=True, nest=True
+            ),
+            "pix2ang_ring": lambda pix: healpix_mod.pix2ang(
+                nside, pix, lonlat=True, nest=False
+            ),
+            "pix2ang_nested": lambda pix: healpix_mod.pix2ang(
+                nside, pix, lonlat=True, nest=True
+            ),
             "ring2nest": lambda pix: healpix_mod.ring2nest(nside, pix),
             "nest2ring": lambda pix: healpix_mod.nest2ring(nside, pix),
         }
@@ -404,10 +465,18 @@ def main() -> int:
 
     if mhealpy_single is not None:
         adapters["mhealpy"] = {
-            "ang2pix_ring": lambda lon, lat: mhealpy_single.ang2pix(nside, lon, lat, lonlat=True, nest=False),
-            "ang2pix_nested": lambda lon, lat: mhealpy_single.ang2pix(nside, lon, lat, lonlat=True, nest=True),
-            "pix2ang_ring": lambda pix: mhealpy_single.pix2ang(nside, pix, lonlat=True, nest=False),
-            "pix2ang_nested": lambda pix: mhealpy_single.pix2ang(nside, pix, lonlat=True, nest=True),
+            "ang2pix_ring": lambda lon, lat: mhealpy_single.ang2pix(
+                nside, lon, lat, lonlat=True, nest=False
+            ),
+            "ang2pix_nested": lambda lon, lat: mhealpy_single.ang2pix(
+                nside, lon, lat, lonlat=True, nest=True
+            ),
+            "pix2ang_ring": lambda pix: mhealpy_single.pix2ang(
+                nside, pix, lonlat=True, nest=False
+            ),
+            "pix2ang_nested": lambda pix: mhealpy_single.pix2ang(
+                nside, pix, lonlat=True, nest=True
+            ),
             "ring2nest": lambda pix: mhealpy_single.ring2nest(nside, pix),
             "nest2ring": lambda pix: mhealpy_single.nest2ring(nside, pix),
         }
@@ -473,8 +542,12 @@ def main() -> int:
         ra_mps_ref = ra.astype(np.float32).astype(np.float64)
         dec_mps_ref = dec.astype(np.float32).astype(np.float64)
         ref_outputs_torchfits_mps = dict(ref_outputs)
-        ref_outputs_torchfits_mps["ang2pix_ring"] = ref["ang2pix_ring"](ra_mps_ref, dec_mps_ref)
-        ref_outputs_torchfits_mps["ang2pix_nested"] = ref["ang2pix_nested"](ra_mps_ref, dec_mps_ref)
+        ref_outputs_torchfits_mps["ang2pix_ring"] = ref["ang2pix_ring"](
+            ra_mps_ref, dec_mps_ref
+        )
+        ref_outputs_torchfits_mps["ang2pix_nested"] = ref["ang2pix_nested"](
+            ra_mps_ref, dec_mps_ref
+        )
 
     rows: list[dict[str, Any]] = []
     try:
@@ -494,19 +567,29 @@ def main() -> int:
             sync_device = sync_by_lib[lib]
 
             if op in {"ang2pix_ring", "ang2pix_nested"}:
-                elapsed = _time_many(lambda: fn(ra, dec), args.runs, sync_device=sync_device)
+                elapsed = _time_many(
+                    lambda: fn(ra, dec), args.runs, sync_device=sync_device
+                )
                 out = fn(ra, dec)
             elif op in {"ring2nest"}:
-                elapsed = _time_many(lambda: fn(ring), args.runs, sync_device=sync_device)
+                elapsed = _time_many(
+                    lambda: fn(ring), args.runs, sync_device=sync_device
+                )
                 out = fn(ring)
             elif op in {"nest2ring"}:
-                elapsed = _time_many(lambda: fn(nest), args.runs, sync_device=sync_device)
+                elapsed = _time_many(
+                    lambda: fn(nest), args.runs, sync_device=sync_device
+                )
                 out = fn(nest)
             elif op == "pix2ang_ring":
-                elapsed = _time_many(lambda: fn(ring), args.runs, sync_device=sync_device)
+                elapsed = _time_many(
+                    lambda: fn(ring), args.runs, sync_device=sync_device
+                )
                 out = fn(ring)
             else:
-                elapsed = _time_many(lambda: fn(nest), args.runs, sync_device=sync_device)
+                elapsed = _time_many(
+                    lambda: fn(nest), args.runs, sync_device=sync_device
+                )
                 out = fn(nest)
 
             row: dict[str, Any] = {
@@ -526,9 +609,15 @@ def main() -> int:
             }
 
             if ref is not None and lib != "healpy":
-                ref_view = ref_outputs_torchfits_mps if (lib == "torchfits" and ref_outputs_torchfits_mps is not None) else ref_outputs
+                ref_view = (
+                    ref_outputs_torchfits_mps
+                    if (lib == "torchfits" and ref_outputs_torchfits_mps is not None)
+                    else ref_outputs
+                )
                 if op in {"ang2pix_ring", "ang2pix_nested", "ring2nest", "nest2ring"}:
-                    row["mismatches"] = _index_mismatch(np.asarray(out), np.asarray(ref_view[op]))
+                    row["mismatches"] = _index_mismatch(
+                        np.asarray(out), np.asarray(ref_view[op])
+                    )
                 else:
                     eps = eps_by_lib[lib]
                     ra_o, dec_o = out
@@ -551,7 +640,14 @@ def main() -> int:
     print(
         " ".join(
             f"{c:>14s}"
-            for c in ("library", "operation", "mpts/s", "mismatch", "max_dra", "max_ddec")
+            for c in (
+                "library",
+                "operation",
+                "mpts/s",
+                "mismatch",
+                "max_dra",
+                "max_ddec",
+            )
         )
     )
     for row in rows:
@@ -576,14 +672,17 @@ def main() -> int:
         bad = [
             r
             for r in rows
-            if r["operation"] in {"ang2pix_ring", "ang2pix_nested", "ring2nest", "nest2ring"}
+            if r["operation"]
+            in {"ang2pix_ring", "ang2pix_nested", "ring2nest", "nest2ring"}
             and np.isfinite(r["mismatches"])
             and int(r["mismatches"]) > args.max_index_mismatches
         ]
         if bad:
             print("\nIndex mismatch threshold exceeded:")
             for row in bad:
-                print(f"  {row['library']} {row['operation']}: {int(row['mismatches'])}")
+                print(
+                    f"  {row['library']} {row['operation']}: {int(row['mismatches'])}"
+                )
             return 1
 
     if args.max_pix2ang_dra_deg is not None:
@@ -597,7 +696,9 @@ def main() -> int:
         if bad:
             print("\nRA delta threshold exceeded:")
             for row in bad:
-                print(f"  {row['library']} {row['operation']}: {row['max_dra_deg']:.3e}")
+                print(
+                    f"  {row['library']} {row['operation']}: {row['max_dra_deg']:.3e}"
+                )
             return 1
 
     if args.max_pix2ang_ddec_deg is not None:
@@ -611,7 +712,9 @@ def main() -> int:
         if bad:
             print("\nDec delta threshold exceeded:")
             for row in bad:
-                print(f"  {row['library']} {row['operation']}: {row['max_ddec_deg']:.3e}")
+                print(
+                    f"  {row['library']} {row['operation']}: {row['max_ddec_deg']:.3e}"
+                )
             return 1
 
     if min_ratios and "torchfits" in requested and "healpy" in adapters:

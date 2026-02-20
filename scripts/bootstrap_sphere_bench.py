@@ -34,7 +34,9 @@ def _parse_list(raw: str | None) -> set[str] | None:
     return values or None
 
 
-def _install_with_pip(package_spec: str, no_build_isolation: bool) -> subprocess.CompletedProcess[str]:
+def _install_with_pip(
+    package_spec: str, no_build_isolation: bool
+) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, "-m", "pip", "install"]
     if no_build_isolation:
         cmd.append("--no-build-isolation")
@@ -63,7 +65,11 @@ def main() -> int:
         default="pip",
         help="Package installer backend",
     )
-    parser.add_argument("--with-harmonics", action="store_true", help="Also install harmonic/encoder ecosystem packages")
+    parser.add_argument(
+        "--with-harmonics",
+        action="store_true",
+        help="Also install harmonic/encoder ecosystem packages",
+    )
     parser.add_argument(
         "--include",
         type=str,
@@ -76,7 +82,9 @@ def main() -> int:
         default=None,
         help="Comma-separated package aliases to skip",
     )
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero if any install fails")
+    parser.add_argument(
+        "--strict", action="store_true", help="Exit non-zero if any install fails"
+    )
     parser.add_argument(
         "--build-isolation",
         action="store_true",
@@ -105,7 +113,9 @@ def main() -> int:
 
         print(f"[install] {alias}: {package_spec}")
         if args.installer == "pip":
-            proc = _install_with_pip(package_spec, no_build_isolation=not args.build_isolation)
+            proc = _install_with_pip(
+                package_spec, no_build_isolation=not args.build_isolation
+            )
         else:
             proc = _install_with_uv(package_spec)
         if proc.returncode == 0:

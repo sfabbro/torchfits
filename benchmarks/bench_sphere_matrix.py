@@ -44,8 +44,12 @@ def _parse_ratio_spec(spec: str | None) -> dict[str, float]:
     return out
 
 
-def _ratios_vs_healpy(rows: list[dict[str, Any]], library: str = "torchfits") -> dict[str, float]:
-    by_key = {(str(r["library"]), str(r["operation"])): float(r["mpts_s"]) for r in rows}
+def _ratios_vs_healpy(
+    rows: list[dict[str, Any]], library: str = "torchfits"
+) -> dict[str, float]:
+    by_key = {
+        (str(r["library"]), str(r["operation"])): float(r["mpts_s"]) for r in rows
+    }
     ratios: dict[str, float] = {}
     for op in OPS:
         a = by_key.get((library, op))
@@ -63,7 +67,9 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu")
+    parser.add_argument(
+        "--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu"
+    )
     parser.add_argument("--libraries", type=str, default="torchfits,healpy")
     parser.add_argument("--strict-missing", action="store_true")
     parser.add_argument("--allow-nonrelease-distributions", action="store_true")
@@ -144,7 +150,9 @@ def main() -> int:
         print(f"\n[profile={profile}] running: {' '.join(cmd)}", flush=True)
         proc = subprocess.run(cmd, check=False)
         if proc.returncode != 0:
-            print(f"Profile '{profile}' benchmark failed with exit code {proc.returncode}")
+            print(
+                f"Profile '{profile}' benchmark failed with exit code {proc.returncode}"
+            )
             return proc.returncode
 
         rows = json.loads(out_json.read_text(encoding="utf-8"))
@@ -155,7 +163,9 @@ def main() -> int:
 
     median_ratios: dict[str, float] = {}
     for op in OPS:
-        vals = [ratios_by_profile[p][op] for p in profiles if op in ratios_by_profile[p]]
+        vals = [
+            ratios_by_profile[p][op] for p in profiles if op in ratios_by_profile[p]
+        ]
         if vals:
             median_ratios[op] = float(statistics.median(vals))
 
@@ -179,7 +189,8 @@ def main() -> int:
         "median_ratios_torchfits_vs_healpy": median_ratios,
         "min_median_ratio_thresholds": min_median_ratios,
         "failed_thresholds": [
-            {"operation": op, "threshold": thr, "observed": got} for op, thr, got in failed
+            {"operation": op, "threshold": thr, "observed": got}
+            for op, thr, got in failed
         ],
     }
     summary_path = args.output_dir / "summary.json"

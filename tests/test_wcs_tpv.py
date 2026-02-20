@@ -63,7 +63,9 @@ def test_tpv_forward_parity_with_astropy() -> None:
     x, y = _sample_pixels()
 
     ra_ast, dec_ast = awcs.all_pix2world(x, y, 0)
-    ra_t, dec_t = twcs.pixel_to_world(torch.from_numpy(x), torch.from_numpy(y), origin=0)
+    ra_t, dec_t = twcs.pixel_to_world(
+        torch.from_numpy(x), torch.from_numpy(y), origin=0
+    )
 
     np.testing.assert_allclose(_ra_delta(ra_t.cpu().numpy(), ra_ast), 0.0, atol=1e-8)
     np.testing.assert_allclose(dec_t.cpu().numpy() - dec_ast, 0.0, atol=1e-8)

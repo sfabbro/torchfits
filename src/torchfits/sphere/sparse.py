@@ -70,14 +70,21 @@ class SparseHealpixMap:
 
     @property
     def coverage_mask(self) -> Tensor:
-        mask = torch.zeros((self.npix_total,), dtype=torch.bool, device=self.pixels.device)
+        mask = torch.zeros(
+            (self.npix_total,), dtype=torch.bool, device=self.pixels.device
+        )
         if self.pixels.numel() > 0:
             mask[self.pixels] = True
         return mask
 
     def to_dense(self) -> Tensor:
         shape = tuple(self.values.shape[:-1]) + (self.npix_total,)
-        dense = torch.full(shape, float(self.fill_value), dtype=self.values.dtype, device=self.values.device)
+        dense = torch.full(
+            shape,
+            float(self.fill_value),
+            dtype=self.values.dtype,
+            device=self.values.device,
+        )
         if self.pixels.numel() > 0:
             dense.index_copy_(-1, self.pixels, self.values)
         return dense
@@ -128,8 +135,16 @@ class SparseHealpixMap:
                 raise ValueError("valid_mask must have shape (npix,)")
 
         pixels = torch.nonzero(valid, as_tuple=False).reshape(-1).to(torch.int64)
-        sparse_vals = vals.index_select(-1, pixels) if pixels.numel() > 0 else vals[..., :0]
-        return cls(nside=ns, nest=nest, pixels=pixels, values=sparse_vals, fill_value=float(fill_value))
+        sparse_vals = (
+            vals.index_select(-1, pixels) if pixels.numel() > 0 else vals[..., :0]
+        )
+        return cls(
+            nside=ns,
+            nest=nest,
+            pixels=pixels,
+            values=sparse_vals,
+            fill_value=float(fill_value),
+        )
 
     def _global_to_local(self, pix: Tensor) -> tuple[Tensor, Tensor]:
         pix_t = torch.as_tensor(pix, dtype=torch.int64, device=self.pixels.device)
@@ -137,7 +152,9 @@ class SparseHealpixMap:
         in_bounds = idx < self.pixels.numel()
         ok = torch.zeros_like(in_bounds, dtype=torch.bool)
         if bool(in_bounds.any()):
-            ok[in_bounds] = self.pixels.index_select(0, idx[in_bounds]) == pix_t[in_bounds]
+            ok[in_bounds] = (
+                self.pixels.index_select(0, idx[in_bounds]) == pix_t[in_bounds]
+            )
         return idx, ok
 
     def interpolate(
@@ -155,10 +172,17 @@ class SparseHealpixMap:
         lat_f = lat_t.reshape(-1)
 
         if method == "nearest":
-            pix = _healpix.ang2pix(self.nside, lon_f, lat_f, nest=self.nest, lonlat=True)
+            pix = _healpix.ang2pix(
+                self.nside, lon_f, lat_f, nest=self.nest, lonlat=True
+            )
             idx, ok = self._global_to_local(pix.to(self.pixels.device))
             out_shape = tuple(self.values.shape[:-1]) + (lon_f.numel(),)
-            out = torch.full(out_shape, float(self.fill_value), dtype=self.values.dtype, device=self.values.device)
+            out = torch.full(
+                out_shape,
+                float(self.fill_value),
+                dtype=self.values.dtype,
+                device=self.values.device,
+            )
             if bool(ok.any()):
                 sel = idx[ok]
                 gathered = self.values.index_select(-1, sel)
@@ -168,12 +192,21 @@ class SparseHealpixMap:
         if method != "bilinear":
             raise ValueError("method must be one of {'nearest', 'bilinear'}")
 
-        pix4, w4 = _healpix.get_interp_weights(self.nside, lon_f, lat_f, nest=self.nest, lonlat=True)
+        pix4, w4 = _healpix.get_interp_weights(
+            self.nside, lon_f, lat_f, nest=self.nest, lonlat=True
+        )
         pix4 = pix4.to(self.pixels.device).reshape(4, -1)
-        w4 = w4.to(self.values.device, dtype=self.values.real.dtype if self.values.is_complex() else self.values.dtype).reshape(4, -1)
+        w4 = w4.to(
+            self.values.device,
+            dtype=self.values.real.dtype
+            if self.values.is_complex()
+            else self.values.dtype,
+        ).reshape(4, -1)
 
         out_shape = tuple(self.values.shape[:-1]) + (lon_f.numel(),)
-        accum = torch.zeros(out_shape, dtype=self.values.dtype, device=self.values.device)
+        accum = torch.zeros(
+            out_shape, dtype=self.values.dtype, device=self.values.device
+        )
         wsum = torch.zeros((lon_f.numel(),), dtype=w4.dtype, device=self.values.device)
 
         for k in range(4):
@@ -187,7 +220,12 @@ class SparseHealpixMap:
             accum[..., ok] = accum[..., ok] + vals * wk.reshape(wshape)
             wsum[ok] = wsum[ok] + wk
 
-        out = torch.full(out_shape, float(self.fill_value), dtype=self.values.dtype, device=self.values.device)
+        out = torch.full(
+            out_shape,
+            float(self.fill_value),
+            dtype=self.values.dtype,
+            device=self.values.device,
+        )
         nz = wsum > 0
         if bool(nz.any()):
             wshape = [1] * (accum.ndim - 1) + [int(nz.sum().item())]
@@ -233,7 +271,17 @@ class SparseHealpixMap:
                 order_out=order,
                 power=power,
             )
-            valid = torch.any(~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out), dim=tuple(range(dense_out.ndim - 1))) if dense_out.ndim > 1 else (~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out))
+            valid = (
+                torch.any(
+                    ~_healpix.mask_bad(dense_out, badval=fv)
+                    & torch.isfinite(dense_out),
+                    dim=tuple(range(dense_out.ndim - 1)),
+                )
+                if dense_out.ndim > 1
+                else (
+                    ~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out)
+                )
+            )
             return SparseHealpixMap.from_dense(
                 dense_out,
                 nside=nside_out,
@@ -255,7 +303,17 @@ class SparseHealpixMap:
                 order_out=order,
                 power=power,
             )
-            valid = torch.any(~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out), dim=tuple(range(dense_out.ndim - 1))) if dense_out.ndim > 1 else (~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out))
+            valid = (
+                torch.any(
+                    ~_healpix.mask_bad(dense_out, badval=fv)
+                    & torch.isfinite(dense_out),
+                    dim=tuple(range(dense_out.ndim - 1)),
+                )
+                if dense_out.ndim > 1
+                else (
+                    ~_healpix.mask_bad(dense_out, badval=fv) & torch.isfinite(dense_out)
+                )
+            )
             return SparseHealpixMap.from_dense(
                 dense_out,
                 nside=nside_out,
@@ -276,16 +334,24 @@ class SparseHealpixMap:
 
         pix_n = self.pixels if self.nest else _healpix.ring2nest(nside_in, self.pixels)
         val = self.values
-        scale = (float(nside_out) / float(nside_in)) ** float(power) if power is not None else 1.0
+        scale = (
+            (float(nside_out) / float(nside_in)) ** float(power)
+            if power is not None
+            else 1.0
+        )
 
         if up:
             child_mult = ratio * ratio
             offs = torch.arange(child_mult, dtype=torch.int64, device=pix_n.device)
-            out_pix_n = (pix_n.unsqueeze(1) * child_mult + offs.unsqueeze(0)).reshape(-1)
+            out_pix_n = (pix_n.unsqueeze(1) * child_mult + offs.unsqueeze(0)).reshape(
+                -1
+            )
             out_val = val.repeat_interleave(child_mult, dim=-1)
             if power is not None:
                 out_val = out_val * scale
-            out_pix = out_pix_n if self.nest else _healpix.nest2ring(nside_out, out_pix_n)
+            out_pix = (
+                out_pix_n if self.nest else _healpix.nest2ring(nside_out, out_pix_n)
+            )
             return SparseHealpixMap(
                 nside=nside_out,
                 nest=self.nest,
@@ -311,12 +377,22 @@ class SparseHealpixMap:
         )
         if val_sorted.is_floating_point() or val_sorted.is_complex():
             base = val_sorted.real if val_sorted.is_complex() else val_sorted
-            goods = torch.isfinite(val_sorted) & (~torch.isclose(base, torch.as_tensor(fv, dtype=base.dtype, device=base.device)))
+            goods = torch.isfinite(val_sorted) & (
+                ~torch.isclose(
+                    base, torch.as_tensor(fv, dtype=base.dtype, device=base.device)
+                )
+            )
         else:
             goods = torch.ones_like(val_sorted, dtype=torch.bool)
 
-        sum_vals.index_add_(-1, group_ids, val_sorted * goods.to(dtype=val_sorted.dtype))
-        nhit = torch.zeros((*val_sorted.shape[:-1], uniq.numel()), dtype=torch.float64, device=val_sorted.device)
+        sum_vals.index_add_(
+            -1, group_ids, val_sorted * goods.to(dtype=val_sorted.dtype)
+        )
+        nhit = torch.zeros(
+            (*val_sorted.shape[:-1], uniq.numel()),
+            dtype=torch.float64,
+            device=val_sorted.device,
+        )
         nhit.index_add_(-1, group_ids, goods.to(dtype=torch.float64))
 
         nhit_f = nhit

@@ -2,7 +2,12 @@ import numpy as np
 import pytest
 import torch
 
-from torchfits.sphere.geom import NativeExactSphericalRegion, SphericalCap, SphericalPolygon, to_exact_region
+from torchfits.sphere.geom import (
+    NativeExactSphericalRegion,
+    SphericalCap,
+    SphericalPolygon,
+    to_exact_region,
+)
 
 try:
     from spherical_geometry.polygon import SphericalPolygon as SGP  # type: ignore
@@ -21,7 +26,9 @@ def test_exact_region_area_matches_spherical_geometry() -> None:
     else:
         sg = SGP.from_radec(lon.numpy(), lat.numpy(), degrees=True)
 
-    np.testing.assert_allclose(reg.area(degrees=False), float(sg.area()), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        reg.area(degrees=False), float(sg.area()), rtol=0.0, atol=1e-12
+    )
 
 
 @pytest.mark.skipif(SGP is None, reason="spherical-geometry not available")
@@ -45,7 +52,9 @@ def test_exact_boolean_ops_area_ordering() -> None:
 
     assert u.area() >= p1.to_exact().area()
     assert i.area() <= p1.to_exact().area()
-    np.testing.assert_allclose(d.area() + i.area(), p1.to_exact().area(), rtol=0.0, atol=5e-8)
+    np.testing.assert_allclose(
+        d.area() + i.area(), p1.to_exact().area(), rtol=0.0, atol=5e-8
+    )
 
 
 @pytest.mark.skipif(SGP is None, reason="spherical-geometry not available")

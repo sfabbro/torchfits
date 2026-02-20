@@ -45,7 +45,9 @@ def _resolve_device(choice: str) -> torch.device:
         return torch.device("cpu")
     if choice == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but no CUDA device is available")
-    if choice == "mps" and (not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()):
+    if choice == "mps" and (
+        not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()
+    ):
         raise RuntimeError("MPS requested but no MPS device is available")
     return torch.device(choice)
 
@@ -57,7 +59,9 @@ def _sync(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
-def _time_many(fn: Callable[[], Any], runs: int, sync_device: torch.device | None = None) -> float:
+def _time_many(
+    fn: Callable[[], Any], runs: int, sync_device: torch.device | None = None
+) -> float:
     fn()
     if sync_device is not None:
         _sync(sync_device)
@@ -132,14 +136,18 @@ def main() -> int:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu")
+    parser.add_argument(
+        "--device", choices=["auto", "cpu", "cuda", "mps"], default="cpu"
+    )
     parser.add_argument(
         "--min-ratio-vs-healpy",
         type=str,
         default="",
         help="Comma-separated op=ratio thresholds for torchfits/healpy.",
     )
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/healpix_advanced.json"))
+    parser.add_argument(
+        "--json-out", type=Path, default=Path("bench_results/healpix_advanced.json")
+    )
     parser.add_argument("--csv-out", type=Path, default=None)
     args = parser.parse_args()
 
@@ -152,20 +160,35 @@ def main() -> int:
     pix_ring = _sample_pix(nside, n, args.seed + 1)
     pix_nest = _sample_pix(nside, n, args.seed + 2)
 
-    lon_t = torch.from_numpy(lon).to(device=device, dtype=torch.float32 if device.type == "mps" else torch.float64)
-    lat_t = torch.from_numpy(lat).to(device=device, dtype=torch.float32 if device.type == "mps" else torch.float64)
+    lon_t = torch.from_numpy(lon).to(
+        device=device, dtype=torch.float32 if device.type == "mps" else torch.float64
+    )
+    lat_t = torch.from_numpy(lat).to(
+        device=device, dtype=torch.float32 if device.type == "mps" else torch.float64
+    )
     pix_ring_t = torch.from_numpy(pix_ring).to(device=device, dtype=torch.int64)
     pix_nest_t = torch.from_numpy(pix_nest).to(device=device, dtype=torch.int64)
 
     rng = np.random.default_rng(args.seed + 3)
     m_ring = rng.normal(size=npix).astype(np.float64)
     m_nest = healpy.reorder(m_ring, r2n=True)
-    m_ring_t = torch.from_numpy(m_ring).to(device=device, dtype=torch.float32 if device.type == "mps" else torch.float64)
-    m_nest_t = torch.from_numpy(m_nest).to(device=device, dtype=torch.float32 if device.type == "mps" else torch.float64)
+    m_ring_t = torch.from_numpy(m_ring).to(
+        device=device, dtype=torch.float32 if device.type == "mps" else torch.float64
+    )
+    m_nest_t = torch.from_numpy(m_nest).to(
+        device=device, dtype=torch.float32 if device.type == "mps" else torch.float64
+    )
 
     rows: list[dict[str, Any]] = []
 
-    ops: list[tuple[str, Callable[[], Any], Callable[[], Any], Callable[[Any, Any], tuple[int, float]]]] = [
+    ops: list[
+        tuple[
+            str,
+            Callable[[], Any],
+            Callable[[], Any],
+            Callable[[Any, Any], tuple[int, float]],
+        ]
+    ] = [
         (
             "neighbors_ring",
             lambda: get_all_neighbours(nside, pix_ring_t, nest=False).cpu().numpy(),
@@ -180,27 +203,61 @@ def main() -> int:
         ),
         (
             "interp_weights_ring",
-            lambda: tuple(x.cpu().numpy() for x in get_interp_weights(nside, lon_t, lat_t, nest=False, lonlat=True)),
+            lambda: tuple(
+                x.cpu().numpy()
+                for x in get_interp_weights(
+                    nside, lon_t, lat_t, nest=False, lonlat=True
+                )
+            ),
             lambda: healpy.get_interp_weights(nside, lon, lat, nest=False, lonlat=True),
             lambda a, b: (_interp_mismatch_count(a[0], a[1], b[0], b[1]), float("nan")),
         ),
         (
             "interp_weights_nested",
-            lambda: tuple(x.cpu().numpy() for x in get_interp_weights(nside, lon_t, lat_t, nest=True, lonlat=True)),
+            lambda: tuple(
+                x.cpu().numpy()
+                for x in get_interp_weights(nside, lon_t, lat_t, nest=True, lonlat=True)
+            ),
             lambda: healpy.get_interp_weights(nside, lon, lat, nest=True, lonlat=True),
             lambda a, b: (_interp_mismatch_count(a[0], a[1], b[0], b[1]), float("nan")),
         ),
         (
             "interp_val_ring",
-            lambda: get_interp_val(m_ring_t, lon_t, lat_t, nest=False, lonlat=True).cpu().numpy(),
+            lambda: (
+                get_interp_val(m_ring_t, lon_t, lat_t, nest=False, lonlat=True)
+                .cpu()
+                .numpy()
+            ),
             lambda: healpy.get_interp_val(m_ring, lon, lat, nest=False, lonlat=True),
-            lambda a, b: (int(np.sum(~np.isclose(np.asarray(a), np.asarray(b), atol=1e-10, rtol=1e-10))), float(np.max(np.abs(np.asarray(a) - np.asarray(b))))),
+            lambda a, b: (
+                int(
+                    np.sum(
+                        ~np.isclose(
+                            np.asarray(a), np.asarray(b), atol=1e-10, rtol=1e-10
+                        )
+                    )
+                ),
+                float(np.max(np.abs(np.asarray(a) - np.asarray(b)))),
+            ),
         ),
         (
             "interp_val_nested",
-            lambda: get_interp_val(m_nest_t, lon_t, lat_t, nest=True, lonlat=True).cpu().numpy(),
+            lambda: (
+                get_interp_val(m_nest_t, lon_t, lat_t, nest=True, lonlat=True)
+                .cpu()
+                .numpy()
+            ),
             lambda: healpy.get_interp_val(m_nest, lon, lat, nest=True, lonlat=True),
-            lambda a, b: (int(np.sum(~np.isclose(np.asarray(a), np.asarray(b), atol=1e-10, rtol=1e-10))), float(np.max(np.abs(np.asarray(a) - np.asarray(b))))),
+            lambda a, b: (
+                int(
+                    np.sum(
+                        ~np.isclose(
+                            np.asarray(a), np.asarray(b), atol=1e-10, rtol=1e-10
+                        )
+                    )
+                ),
+                float(np.max(np.abs(np.asarray(a) - np.asarray(b)))),
+            ),
         ),
     ]
     allowed_ops = {name for name, _, _, _ in ops}
@@ -246,7 +303,9 @@ def main() -> int:
         print(f"CSV: {args.csv_out}")
 
     if min_ratios:
-        by_op = {str(r["operation"]): float(r["ratio_torchfits_vs_healpy"]) for r in rows}
+        by_op = {
+            str(r["operation"]): float(r["ratio_torchfits_vs_healpy"]) for r in rows
+        }
         failed: list[tuple[str, float, float]] = []
         for op, threshold in min_ratios.items():
             got = by_op.get(op, float("nan"))

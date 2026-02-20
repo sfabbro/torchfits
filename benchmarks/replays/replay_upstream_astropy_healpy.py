@@ -23,7 +23,9 @@ from torchfits.wcs.healpix import (
 )
 
 
-NSIDE_VALUES = [2**n for n in range(1, 6)]  # Mirrors astropy_healpix/tests/test_healpy.py
+NSIDE_VALUES = [
+    2**n for n in range(1, 6)
+]  # Mirrors astropy_healpix/tests/test_healpy.py
 EXAMPLE_LON_LAT = [
     (1.0000000028043134e-05, -41.81031451395941),
     (1.0000000028043134e-05, 1.000000000805912e-05),
@@ -72,18 +74,22 @@ def _build_lonlat(n: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     return lon, lat
 
 
-def _run_ang2pix(op: str, nside: int, lon: np.ndarray, lat: np.ndarray, nest: bool, runs: int) -> OpResult:
+def _run_ang2pix(
+    op: str, nside: int, lon: np.ndarray, lat: np.ndarray, nest: bool, runs: int
+) -> OpResult:
     lon_t = torch.from_numpy(lon).to(torch.float64)
     lat_t = torch.from_numpy(lat).to(torch.float64)
     n = lon.size
 
     if nest:
+
         def tf_fn() -> np.ndarray:
             return tf_ang2pix_nested(nside, lon_t, lat_t).cpu().numpy()
 
         def hp_fn() -> np.ndarray:
             return hp.ang2pix(nside, lon, lat, nest=True, lonlat=True)
     else:
+
         def tf_fn() -> np.ndarray:
             return tf_ang2pix_ring(nside, lon_t, lat_t).cpu().numpy()
 
@@ -108,17 +114,21 @@ def _run_ang2pix(op: str, nside: int, lon: np.ndarray, lat: np.ndarray, nest: bo
     )
 
 
-def _run_pix2ang(op: str, nside: int, pix: np.ndarray, nest: bool, runs: int) -> OpResult:
+def _run_pix2ang(
+    op: str, nside: int, pix: np.ndarray, nest: bool, runs: int
+) -> OpResult:
     pix_t = torch.from_numpy(pix)
     n = pix.size
 
     if nest:
+
         def tf_fn() -> tuple[torch.Tensor, torch.Tensor]:
             return tf_pix2ang_nested(nside, pix_t)
 
         def hp_fn() -> tuple[np.ndarray, np.ndarray]:
             return hp.pix2ang(nside, pix, nest=True, lonlat=True)
     else:
+
         def tf_fn() -> tuple[torch.Tensor, torch.Tensor]:
             return tf_pix2ang_ring(nside, pix_t)
 
@@ -148,16 +158,20 @@ def _run_pix2ang(op: str, nside: int, pix: np.ndarray, nest: bool, runs: int) ->
     )
 
 
-def _run_index_conv(op: str, nside: int, pix: np.ndarray, nest_to_ring: bool, runs: int) -> OpResult:
+def _run_index_conv(
+    op: str, nside: int, pix: np.ndarray, nest_to_ring: bool, runs: int
+) -> OpResult:
     pix_t = torch.from_numpy(pix)
     n = pix.size
     if nest_to_ring:
+
         def tf_fn() -> np.ndarray:
             return tf_nest2ring(nside, pix_t).cpu().numpy()
 
         def hp_fn() -> np.ndarray:
             return hp.nest2ring(nside, pix)
     else:
+
         def tf_fn() -> np.ndarray:
             return tf_ring2nest(nside, pix_t).cpu().numpy()
 
@@ -207,23 +221,39 @@ def main() -> int:
     for i, nside in enumerate(NSIDE_VALUES):
         lon, lat = _build_lonlat(args.n_points, seed=args.seed + i)
         npix = 12 * nside * nside
-        pix = np.random.default_rng(args.seed + 100 + i).integers(0, npix, size=args.n_points, dtype=np.int64)
+        pix = np.random.default_rng(args.seed + 100 + i).integers(
+            0, npix, size=args.n_points, dtype=np.int64
+        )
         frac_cases = np.array([int(f * npix) for f in FRACS], dtype=np.int64)
         pix[: frac_cases.size] = frac_cases
 
-        rows.append(_run_ang2pix("ang2pix_ring", nside, lon, lat, nest=False, runs=args.runs))
-        rows.append(_run_ang2pix("ang2pix_nested", nside, lon, lat, nest=True, runs=args.runs))
-        rows.append(_run_pix2ang("pix2ang_ring", nside, pix, nest=False, runs=args.runs))
-        rows.append(_run_pix2ang("pix2ang_nested", nside, pix, nest=True, runs=args.runs))
-        rows.append(_run_index_conv("ring2nest", nside, pix, nest_to_ring=False, runs=args.runs))
-        rows.append(_run_index_conv("nest2ring", nside, pix, nest_to_ring=True, runs=args.runs))
+        rows.append(
+            _run_ang2pix("ang2pix_ring", nside, lon, lat, nest=False, runs=args.runs)
+        )
+        rows.append(
+            _run_ang2pix("ang2pix_nested", nside, lon, lat, nest=True, runs=args.runs)
+        )
+        rows.append(
+            _run_pix2ang("pix2ang_ring", nside, pix, nest=False, runs=args.runs)
+        )
+        rows.append(
+            _run_pix2ang("pix2ang_nested", nside, pix, nest=True, runs=args.runs)
+        )
+        rows.append(
+            _run_index_conv("ring2nest", nside, pix, nest_to_ring=False, runs=args.runs)
+        )
+        rows.append(
+            _run_index_conv("nest2ring", nside, pix, nest_to_ring=True, runs=args.runs)
+        )
 
     agg: dict[str, dict[str, float]] = {}
     for op in ratio_thresholds:
         vals = [r.ratio_vs_healpy for r in rows if r.operation == op]
         agg[op] = {"median_ratio_vs_healpy": float(np.median(vals))}
 
-    print("operation         nside  mpts/s(tf)  mpts/s(hp)   ratio   mismatches   max_dra       max_ddec")
+    print(
+        "operation         nside  mpts/s(tf)  mpts/s(hp)   ratio   mismatches   max_dra       max_ddec"
+    )
     failures: list[str] = []
     for r in rows:
         print(
@@ -233,13 +263,22 @@ def main() -> int:
             f" {r.max_ddec_deg if r.max_ddec_deg is not None else float('nan'):11.3e}"
         )
 
-        if r.operation in {"ang2pix_ring", "ang2pix_nested", "ring2nest", "nest2ring"} and r.mismatches > args.max_index_mismatches:
-            failures.append(f"{r.operation}@nside={r.nside}: mismatches {r.mismatches} > {args.max_index_mismatches}")
+        if (
+            r.operation in {"ang2pix_ring", "ang2pix_nested", "ring2nest", "nest2ring"}
+            and r.mismatches > args.max_index_mismatches
+        ):
+            failures.append(
+                f"{r.operation}@nside={r.nside}: mismatches {r.mismatches} > {args.max_index_mismatches}"
+            )
         if r.operation in {"pix2ang_ring", "pix2ang_nested"}:
             if (r.max_dra_deg or 0.0) > args.max_pix2ang_dra_deg:
-                failures.append(f"{r.operation}@nside={r.nside}: max_dra {r.max_dra_deg:.3e} > {args.max_pix2ang_dra_deg:.3e}")
+                failures.append(
+                    f"{r.operation}@nside={r.nside}: max_dra {r.max_dra_deg:.3e} > {args.max_pix2ang_dra_deg:.3e}"
+                )
             if (r.max_ddec_deg or 0.0) > args.max_pix2ang_ddec_deg:
-                failures.append(f"{r.operation}@nside={r.nside}: max_ddec {r.max_ddec_deg:.3e} > {args.max_pix2ang_ddec_deg:.3e}")
+                failures.append(
+                    f"{r.operation}@nside={r.nside}: max_ddec {r.max_ddec_deg:.3e} > {args.max_pix2ang_ddec_deg:.3e}"
+                )
 
     print("\nMedian ratio vs healpy across NSIDE_VALUES:")
     for op, info in agg.items():

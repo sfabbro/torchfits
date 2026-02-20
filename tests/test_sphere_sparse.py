@@ -39,7 +39,9 @@ def test_sparse_bilinear_matches_dense_when_fully_covered() -> None:
     sp = SparseHealpixMap.from_dense(dense, nside=nside, nest=False)
 
     lon = torch.from_numpy(rng.uniform(0.0, 360.0, size=64)).to(torch.float64)
-    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=64)))).to(torch.float64)
+    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=64)))).to(
+        torch.float64
+    )
 
     got = sp.interpolate(lon, lat, method="bilinear")
     exp = hp.get_interp_val(dense, lon, lat, nest=False, lonlat=True)
@@ -51,7 +53,9 @@ def test_sparse_ud_grade_workflow() -> None:
     npix = hp.nside2npix(nside)
     rng = np.random.default_rng(17)
     dense = torch.full((npix,), float(hp.UNSEEN), dtype=torch.float64)
-    keep = torch.from_numpy(rng.choice(npix, size=npix // 3, replace=False)).to(torch.int64)
+    keep = torch.from_numpy(rng.choice(npix, size=npix // 3, replace=False)).to(
+        torch.int64
+    )
     dense[keep] = torch.from_numpy(rng.normal(size=keep.numel())).to(torch.float64)
 
     sp = SparseHealpixMap.from_dense(dense, nside=nside, nest=False)
@@ -106,17 +110,27 @@ def test_sparse_ud_grade_partial_coverage_pess_semantics() -> None:
     sp = SparseHealpixMap(nside=4, nest=True, pixels=pixels, values=values)
 
     got = sp.ud_grade(2, pess=False)
-    torch.testing.assert_close(got.pixels, torch.tensor([3, 7], dtype=torch.int64), atol=0, rtol=0)
-    torch.testing.assert_close(got.values, torch.tensor([2.0, 16.0], dtype=torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        got.pixels, torch.tensor([3, 7], dtype=torch.int64), atol=0, rtol=0
+    )
+    torch.testing.assert_close(
+        got.values, torch.tensor([2.0, 16.0], dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
 
     got_pess = sp.ud_grade(2, pess=True)
-    torch.testing.assert_close(got_pess.pixels, torch.tensor([7], dtype=torch.int64), atol=0, rtol=0)
-    torch.testing.assert_close(got_pess.values, torch.tensor([16.0], dtype=torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        got_pess.pixels, torch.tensor([7], dtype=torch.int64), atol=0, rtol=0
+    )
+    torch.testing.assert_close(
+        got_pess.values, torch.tensor([16.0], dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
 
     got_power = sp.ud_grade(2, pess=False, power=1.0)
     torch.testing.assert_close(
         got_power.values,
-        torch.tensor([1.0, 8.0], dtype=torch.float64),  # scale by (nside_out/nside_in)^power = 0.5
+        torch.tensor(
+            [1.0, 8.0], dtype=torch.float64
+        ),  # scale by (nside_out/nside_in)^power = 0.5
         atol=1e-12,
         rtol=0.0,
     )
@@ -129,11 +143,17 @@ def test_sparse_coverage_mask_and_any_coverage_mode() -> None:
     dense[0, 3] = 1.0
     dense[1, 7] = 2.0
 
-    sp_all = SparseHealpixMap.from_dense(dense, nside=nside, nest=True, coverage_mode="all")
+    sp_all = SparseHealpixMap.from_dense(
+        dense, nside=nside, nest=True, coverage_mode="all"
+    )
     assert sp_all.pixels.numel() == 0
 
-    sp_any = SparseHealpixMap.from_dense(dense, nside=nside, nest=True, coverage_mode="any")
-    torch.testing.assert_close(sp_any.pixels, torch.tensor([3, 7], dtype=torch.int64), atol=0, rtol=0)
+    sp_any = SparseHealpixMap.from_dense(
+        dense, nside=nside, nest=True, coverage_mode="any"
+    )
+    torch.testing.assert_close(
+        sp_any.pixels, torch.tensor([3, 7], dtype=torch.int64), atol=0, rtol=0
+    )
     cov = sp_any.coverage_mask
     assert cov.dtype == torch.bool
     assert bool(cov[3]) and bool(cov[7]) and (int(cov.sum().item()) == 2)
@@ -147,12 +167,18 @@ def test_sparse_ud_grade_dense_equivalence_with_bad_values() -> None:
     rng = np.random.default_rng(91)
 
     dense = torch.full((2, npix), bad, dtype=torch.float64)
-    keep = torch.from_numpy(rng.choice(npix, size=npix // 2, replace=False)).to(torch.int64)
-    dense[:, keep] = torch.from_numpy(rng.normal(size=(2, keep.numel()))).to(torch.float64)
+    keep = torch.from_numpy(rng.choice(npix, size=npix // 2, replace=False)).to(
+        torch.int64
+    )
+    dense[:, keep] = torch.from_numpy(rng.normal(size=(2, keep.numel()))).to(
+        torch.float64
+    )
     dense[0, keep[:20]] = torch.nan
     dense[1, keep[20:40]] = torch.inf
 
-    sp = SparseHealpixMap.from_dense(dense, nside=nside_in, nest=False, fill_value=bad, coverage_mode="any")
+    sp = SparseHealpixMap.from_dense(
+        dense, nside=nside_in, nest=False, fill_value=bad, coverage_mode="any"
+    )
     got = sp.ud_grade(nside_out, pess=False, power=2.0).to_dense()
     exp = hp.ud_grade(
         dense,

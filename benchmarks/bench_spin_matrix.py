@@ -46,7 +46,9 @@ def _parse_bucket_ratio_spec(spec: str) -> dict[tuple[str, str], float]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case-set", choices=("default", "extended"), default="extended")
+    parser.add_argument(
+        "--case-set", choices=("default", "extended"), default="extended"
+    )
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--n-points", type=int, default=200_000)
@@ -177,7 +179,9 @@ def main() -> int:
             return 2
         baseline_raw = baseline_payload.get("median_ratio_by_bucket")
         if not isinstance(baseline_raw, dict):
-            print(f"\nInvalid baseline JSON {baseline_path}: missing median_ratio_by_bucket")
+            print(
+                f"\nInvalid baseline JSON {baseline_path}: missing median_ratio_by_bucket"
+            )
             return 2
         baseline_medians = {}
         for bucket in BUCKETS:
@@ -197,8 +201,12 @@ def main() -> int:
                 if base is None:
                     continue
                 if got is None:
-                    failures.append(f"{bucket}:{op} missing current median for baseline comparison")
-                    print(f"  {bucket:6s} {op:12s} missing current (baseline {base:.3f}x)")
+                    failures.append(
+                        f"{bucket}:{op} missing current median for baseline comparison"
+                    )
+                    print(
+                        f"  {bucket:6s} {op:12s} missing current (baseline {base:.3f}x)"
+                    )
                     continue
                 allowed = base * (1.0 - args.max_regression_frac)
                 print(

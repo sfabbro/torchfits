@@ -56,7 +56,9 @@ def _ra_delta_deg(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def test_lonlat_xyz_roundtrip() -> None:
     rng = np.random.default_rng(123)
     ra = torch.from_numpy(rng.uniform(0.0, 360.0, size=10000)).to(torch.float64)
-    dec = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=10000)))).to(torch.float64)
+    dec = torch.from_numpy(
+        np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=10000)))
+    ).to(torch.float64)
 
     x, y, z = lonlat_to_xyz(ra, dec)
     ra2, dec2 = xyz_to_lonlat(x, y, z)
@@ -68,17 +70,31 @@ def test_lonlat_xyz_roundtrip() -> None:
 
 
 def test_angular_distance_known_points() -> None:
-    d0 = angular_distance_deg(torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0))
-    d1 = angular_distance_deg(torch.tensor(0.0), torch.tensor(0.0), torch.tensor(90.0), torch.tensor(0.0))
-    d2 = angular_distance_deg(torch.tensor(0.0), torch.tensor(0.0), torch.tensor(180.0), torch.tensor(0.0))
-    torch.testing.assert_close(d0, torch.tensor(0.0, dtype=torch.float64), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(d1, torch.tensor(90.0, dtype=torch.float64), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(d2, torch.tensor(180.0, dtype=torch.float64), atol=1e-12, rtol=0.0)
+    d0 = angular_distance_deg(
+        torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
+    )
+    d1 = angular_distance_deg(
+        torch.tensor(0.0), torch.tensor(0.0), torch.tensor(90.0), torch.tensor(0.0)
+    )
+    d2 = angular_distance_deg(
+        torch.tensor(0.0), torch.tensor(0.0), torch.tensor(180.0), torch.tensor(0.0)
+    )
+    torch.testing.assert_close(
+        d0, torch.tensor(0.0, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
+    torch.testing.assert_close(
+        d1, torch.tensor(90.0, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
+    torch.testing.assert_close(
+        d2, torch.tensor(180.0, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
 
 
 def test_spherical_fourier_features_shape_and_grad() -> None:
     ra = torch.linspace(0.0, 359.0, steps=257, dtype=torch.float64, requires_grad=True)
-    dec = torch.linspace(-80.0, 80.0, steps=257, dtype=torch.float64, requires_grad=True)
+    dec = torch.linspace(
+        -80.0, 80.0, steps=257, dtype=torch.float64, requires_grad=True
+    )
     feats = spherical_fourier_features(
         ra,
         dec,
@@ -135,8 +151,12 @@ def test_nside_scalar_helpers() -> None:
     assert resol > 0.0
     assert resol_arcmin > 0.0
     assert max_pixrad(16) == max_pixel_radius(16)
-    np.testing.assert_allclose(area_deg, area * (180.0 / np.pi) ** 2, rtol=0.0, atol=1e-14)
-    np.testing.assert_allclose(resol_arcmin, resol * 60.0 * 180.0 / np.pi, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        area_deg, area * (180.0 / np.pi) ** 2, rtol=0.0, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        resol_arcmin, resol * 60.0 * 180.0 / np.pi, rtol=0.0, atol=1e-12
+    )
 
 
 def test_map_helpers_and_ud_grade_shapes() -> None:
@@ -165,7 +185,9 @@ def test_map_helpers_and_ud_grade_shapes() -> None:
 def test_ang2pix_pix2ang_compat_wrappers() -> None:
     rng = np.random.default_rng(99)
     ra = torch.from_numpy(rng.uniform(0.0, 360.0, size=4096)).to(torch.float64)
-    dec = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(torch.float64)
+    dec = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(
+        torch.float64
+    )
 
     theta = torch.deg2rad(90.0 - dec)
     phi = torch.deg2rad(ra)
@@ -176,8 +198,15 @@ def test_ang2pix_pix2ang_compat_wrappers() -> None:
 
     theta2, phi2 = pix2ang(64, pix_a, nest=False, lonlat=False)
     ra2, dec2 = pix2ang_ring(64, pix_a)
-    np.testing.assert_allclose(theta2.cpu().numpy(), np.deg2rad(90.0 - dec2.cpu().numpy()), atol=1e-12, rtol=0.0)
-    np.testing.assert_allclose(phi2.cpu().numpy(), np.deg2rad(ra2.cpu().numpy()), atol=1e-12, rtol=0.0)
+    np.testing.assert_allclose(
+        theta2.cpu().numpy(),
+        np.deg2rad(90.0 - dec2.cpu().numpy()),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    np.testing.assert_allclose(
+        phi2.cpu().numpy(), np.deg2rad(ra2.cpu().numpy()), atol=1e-12, rtol=0.0
+    )
 
 
 def test_cpp_torch_bindings_core_healpix_match_python() -> None:
@@ -196,20 +225,27 @@ def test_cpp_torch_bindings_core_healpix_match_python() -> None:
     nside = 64
     rng = np.random.default_rng(321)
     ra = torch.from_numpy(rng.uniform(0.0, 360.0, size=1024)).to(torch.float64)
-    dec = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=1024)))).to(torch.float64)
+    dec = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=1024)))).to(
+        torch.float64
+    )
 
     pix_ring_cpp = cpp.healpix_ang2pix_ring_torch_cpu(nside, ra, dec)
     pix_ring_py = ang2pix_ring(nside, ra, dec)
     torch.testing.assert_close(pix_ring_cpp, pix_ring_py)
 
     pix_nest_cpp = cpp.healpix_ang2pix_nested_torch_cpu(nside, ra, dec)
-    pix_nest_py = ang2pix(nside, torch.deg2rad(90.0 - dec), torch.deg2rad(ra), nest=True, lonlat=False)
+    pix_nest_py = ang2pix(
+        nside, torch.deg2rad(90.0 - dec), torch.deg2rad(ra), nest=True, lonlat=False
+    )
     torch.testing.assert_close(pix_nest_cpp, pix_nest_py)
 
     pix_nest_from_ring_cpp = cpp.healpix_ring2nest_torch_cpu(nside, pix_ring_cpp)
     pix_nest_from_ring_py = ring2nest(nside, pix_ring_cpp)
     torch.testing.assert_close(pix_nest_from_ring_cpp, pix_nest_from_ring_py)
-    torch.testing.assert_close(cpp.healpix_nest2ring_torch_cpu(nside, pix_nest_cpp), nest2ring(nside, pix_nest_cpp))
+    torch.testing.assert_close(
+        cpp.healpix_nest2ring_torch_cpu(nside, pix_nest_cpp),
+        nest2ring(nside, pix_nest_cpp),
+    )
 
     ra_r_cpp, dec_r_cpp = cpp.healpix_pix2ang_ring_torch_cpu(nside, pix_ring_cpp)
     ra_r_py, dec_r_py = pix2ang_ring(nside, pix_ring_cpp)
@@ -235,7 +271,9 @@ def test_cpp_torch_bindings_interp_val_match_python() -> None:
     npix = nside2npix(nside)
     rng = np.random.default_rng(987)
     lon = torch.from_numpy(rng.uniform(0.0, 360.0, size=256)).to(torch.float64)
-    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=256)))).to(torch.float64)
+    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=256)))).to(
+        torch.float64
+    )
     m_ring = torch.from_numpy(rng.normal(size=npix)).to(torch.float64)
     m_nest = m_ring[ring2nest(nside, torch.arange(npix, dtype=torch.int64))]
 
@@ -266,7 +304,9 @@ def test_vec2pix_pix2vec_center_roundtrip() -> None:
 def test_ang2vec_vec2ang_roundtrip() -> None:
     rng = np.random.default_rng(13)
     lon = torch.from_numpy(rng.uniform(0.0, 360.0, size=4096)).to(torch.float64)
-    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(torch.float64)
+    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(
+        torch.float64
+    )
     vec = ang2vec(lon, lat, lonlat=True)
     lon2, lat2 = vec2ang(vec, lonlat=True)
 
@@ -311,10 +351,18 @@ def test_query_vec_helpers_match_hpgeom() -> None:
     vec = torch.stack([x, y, z]).to(torch.float64)
 
     got = query_circle_vec(nside, vec, np.deg2rad(4.0), inclusive=False, nest=True)
-    exp = torch.as_tensor(hpg.query_circle_vec(nside, vec.numpy(), np.deg2rad(4.0), inclusive=False, nest=True))
+    exp = torch.as_tensor(
+        hpg.query_circle_vec(
+            nside, vec.numpy(), np.deg2rad(4.0), inclusive=False, nest=True
+        )
+    )
     torch.testing.assert_close(got, exp.to(torch.int64))
     got_inc = query_circle_vec(nside, vec, np.deg2rad(4.0), inclusive=True, nest=True)
-    exp_inc = torch.as_tensor(hpg.query_circle_vec(nside, vec.numpy(), np.deg2rad(4.0), inclusive=True, nest=True))
+    exp_inc = torch.as_tensor(
+        hpg.query_circle_vec(
+            nside, vec.numpy(), np.deg2rad(4.0), inclusive=True, nest=True
+        )
+    )
     assert set(exp_inc.to(torch.int64).tolist()).issubset(set(got_inc.tolist()))
 
     verts = torch.tensor(
@@ -323,7 +371,9 @@ def test_query_vec_helpers_match_hpgeom() -> None:
     )
     verts = verts / torch.linalg.norm(verts, dim=1, keepdim=True)
     got_poly = query_polygon_vec(nside, verts, inclusive=False, nest=False)
-    exp_poly = torch.as_tensor(hpg.query_polygon_vec(nside, verts.numpy(), inclusive=False, nest=False))
+    exp_poly = torch.as_tensor(
+        hpg.query_polygon_vec(nside, verts.numpy(), inclusive=False, nest=False)
+    )
     torch.testing.assert_close(got_poly, exp_poly.to(torch.int64))
 
 
@@ -337,14 +387,22 @@ def test_query_disc_cpp_matches_python_fallback() -> None:
     lat = -21.2
     radius_deg = 6.0
 
-    got_ring = query_circle(nside, lon, lat, radius_deg, degrees=True, nest=False, inclusive=True)
-    got_nest = query_circle(nside, lon, lat, radius_deg, degrees=True, nest=True, inclusive=False)
+    got_ring = query_circle(
+        nside, lon, lat, radius_deg, degrees=True, nest=False, inclusive=True
+    )
+    got_nest = query_circle(
+        nside, lon, lat, radius_deg, degrees=True, nest=True, inclusive=False
+    )
 
     old_cpp = healpix_mod._cpp
     healpix_mod._cpp = None
     try:
-        exp_ring = query_circle(nside, lon, lat, radius_deg, degrees=True, nest=False, inclusive=True)
-        exp_nest = query_circle(nside, lon, lat, radius_deg, degrees=True, nest=True, inclusive=False)
+        exp_ring = query_circle(
+            nside, lon, lat, radius_deg, degrees=True, nest=False, inclusive=True
+        )
+        exp_nest = query_circle(
+            nside, lon, lat, radius_deg, degrees=True, nest=True, inclusive=False
+        )
     finally:
         healpix_mod._cpp = old_cpp
 
@@ -357,18 +415,26 @@ def test_pixel_ranges_helpers_match_hpgeom() -> None:
     ranges = torch.tensor([[10, 13], [20, 22]], dtype=torch.int64)
     got_excl = pixel_ranges_to_pixels(ranges, inclusive=False)
     got_incl = pixel_ranges_to_pixels(ranges, inclusive=True)
-    exp_excl = torch.as_tensor(hpg.pixel_ranges_to_pixels(ranges.numpy(), inclusive=False), dtype=torch.int64)
-    exp_incl = torch.as_tensor(hpg.pixel_ranges_to_pixels(ranges.numpy(), inclusive=True), dtype=torch.int64)
+    exp_excl = torch.as_tensor(
+        hpg.pixel_ranges_to_pixels(ranges.numpy(), inclusive=False), dtype=torch.int64
+    )
+    exp_incl = torch.as_tensor(
+        hpg.pixel_ranges_to_pixels(ranges.numpy(), inclusive=True), dtype=torch.int64
+    )
     torch.testing.assert_close(got_excl, exp_excl)
     torch.testing.assert_close(got_incl, exp_incl)
 
     up = upgrade_pixel_ranges(2, ranges, 8)
-    exp_up = torch.as_tensor(hpg.upgrade_pixel_ranges(2, ranges.numpy(), 8), dtype=torch.int64)
+    exp_up = torch.as_tensor(
+        hpg.upgrade_pixel_ranges(2, ranges.numpy(), 8), dtype=torch.int64
+    )
     torch.testing.assert_close(up, exp_up)
 
     pix = torch.tensor([7, 8, 9, 15, 16, 18], dtype=torch.int64)
     got_ranges = pixels_to_pixel_ranges(pix)
-    torch.testing.assert_close(got_ranges, torch.tensor([[7, 10], [15, 17], [18, 19]], dtype=torch.int64))
+    torch.testing.assert_close(
+        got_ranges, torch.tensor([[7, 10], [15, 17], [18, 19]], dtype=torch.int64)
+    )
 
 
 def test_neighbors_and_interp_shapes() -> None:
@@ -383,7 +449,9 @@ def test_neighbors_and_interp_shapes() -> None:
     ip, w = get_interp_weights(nside, ra, dec, nest=False, lonlat=True)
     assert ip.shape == (4, 3)
     assert w.shape == (4, 3)
-    torch.testing.assert_close(w.sum(dim=0), torch.ones(3, dtype=torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        w.sum(dim=0), torch.ones(3, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
 
     m = torch.arange(12 * nside * nside, dtype=torch.float64)
     vals = get_interp_val(m, ra, dec, nest=False, lonlat=True)
@@ -395,7 +463,9 @@ def test_neighbors_and_interp_shapes() -> None:
 def test_lonlat_xyz_cuda_matches_cpu() -> None:
     rng = np.random.default_rng(7)
     ra_cpu = torch.from_numpy(rng.uniform(0.0, 360.0, size=4096)).to(torch.float64)
-    dec_cpu = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(torch.float64)
+    dec_cpu = torch.from_numpy(
+        np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))
+    ).to(torch.float64)
     ra_gpu = ra_cpu.cuda()
     dec_gpu = dec_cpu.cuda()
 
@@ -413,12 +483,20 @@ def test_lonlat_xyz_cuda_matches_cpu() -> None:
 def test_lonlat_xyz_mps_matches_cpu() -> None:
     rng = np.random.default_rng(8)
     ra_cpu = torch.from_numpy(rng.uniform(0.0, 360.0, size=4096)).to(torch.float64)
-    dec_cpu = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))).to(torch.float64)
+    dec_cpu = torch.from_numpy(
+        np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))
+    ).to(torch.float64)
     ra_mps = ra_cpu.to(torch.float32).to("mps")
     dec_mps = dec_cpu.to(torch.float32).to("mps")
 
     x_cpu, y_cpu, z_cpu = lonlat_to_xyz(ra_cpu, dec_cpu)
     x_mps, y_mps, z_mps = lonlat_to_xyz(ra_mps, dec_mps)
-    torch.testing.assert_close(x_mps.cpu(), x_cpu.to(torch.float32), atol=5e-6, rtol=0.0)
-    torch.testing.assert_close(y_mps.cpu(), y_cpu.to(torch.float32), atol=5e-6, rtol=0.0)
-    torch.testing.assert_close(z_mps.cpu(), z_cpu.to(torch.float32), atol=5e-6, rtol=0.0)
+    torch.testing.assert_close(
+        x_mps.cpu(), x_cpu.to(torch.float32), atol=5e-6, rtol=0.0
+    )
+    torch.testing.assert_close(
+        y_mps.cpu(), y_cpu.to(torch.float32), atol=5e-6, rtol=0.0
+    )
+    torch.testing.assert_close(
+        z_mps.cpu(), z_cpu.to(torch.float32), atol=5e-6, rtol=0.0
+    )

@@ -23,7 +23,9 @@ def test_temporal_mjdrefi_mjdreff_support() -> None:
     t = torch.tensor([0.0, 2.0], dtype=torch.float64)
     mjd = twcs.to_mjd(t)
 
-    np.testing.assert_allclose(mjd.cpu().numpy(), np.array([58000.125, 58002.125]), atol=1e-12)
+    np.testing.assert_allclose(
+        mjd.cpu().numpy(), np.array([58000.125, 58002.125]), atol=1e-12
+    )
 
 
 def test_temporal_year_and_century_units() -> None:
@@ -33,7 +35,9 @@ def test_temporal_year_and_century_units() -> None:
     one_year = torch.tensor([1.0], dtype=torch.float64)
     one_century = torch.tensor([1.0], dtype=torch.float64)
 
-    np.testing.assert_allclose(year_wcs.to_mjd(one_year).cpu().numpy(), np.array([365.25]), atol=1e-12)
+    np.testing.assert_allclose(
+        year_wcs.to_mjd(one_year).cpu().numpy(), np.array([365.25]), atol=1e-12
+    )
     np.testing.assert_allclose(
         century_wcs.to_mjd(one_century).cpu().numpy(),
         np.array([36525.0]),

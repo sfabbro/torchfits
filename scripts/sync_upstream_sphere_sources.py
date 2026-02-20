@@ -156,7 +156,9 @@ def _find_fixture_dirs(root: Path) -> dict[str, list[str]]:
 def _snapshot_from_installed(dist_name: str, dst_root: Path) -> None:
     roots = _installed_package_roots(dist_name)
     if not roots:
-        raise RuntimeError("no importable package roots found in installed distribution")
+        raise RuntimeError(
+            "no importable package roots found in installed distribution"
+        )
     if dst_root.exists():
         shutil.rmtree(dst_root)
     dst_root.mkdir(parents=True, exist_ok=True)
@@ -175,7 +177,15 @@ def _download_artifact(
     prefer_sdist: bool,
 ) -> Path:
     before = {p.name for p in download_dir.glob("*")}
-    base_cmd = [sys.executable, "-m", "pip", "download", "--no-deps", "--dest", str(download_dir)]
+    base_cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "download",
+        "--no-deps",
+        "--dest",
+        str(download_dir),
+    ]
     spec = f"{dist_name}=={version}"
 
     attempted: list[list[str]] = []
@@ -191,10 +201,15 @@ def _download_artifact(
             new_files = sorted((after - before))
             if not new_files:
                 # Might already exist from previous run; use newest matching spec.
-                candidates = sorted(download_dir.glob(f"{dist_name.replace('-', '_')}*"), key=lambda p: p.stat().st_mtime)
+                candidates = sorted(
+                    download_dir.glob(f"{dist_name.replace('-', '_')}*"),
+                    key=lambda p: p.stat().st_mtime,
+                )
                 if candidates:
                     return candidates[-1]
-                candidates = sorted(download_dir.glob("*"), key=lambda p: p.stat().st_mtime)
+                candidates = sorted(
+                    download_dir.glob("*"), key=lambda p: p.stat().st_mtime
+                )
                 if candidates:
                     return candidates[-1]
                 last_err = "download succeeded but no artifact found"
@@ -204,7 +219,11 @@ def _download_artifact(
             return candidates[-1]
         stderr = (proc.stderr or "").strip().splitlines()
         stdout = (proc.stdout or "").strip().splitlines()
-        tail = stderr[-1] if stderr else (stdout[-1] if stdout else "unknown pip download error")
+        tail = (
+            stderr[-1]
+            if stderr
+            else (stdout[-1] if stdout else "unknown pip download error")
+        )
         last_err = f"cmd={' '.join(cmd)} :: {tail}"
 
     raise RuntimeError(last_err or f"Failed to download {dist_name}=={version}")
@@ -218,9 +237,21 @@ def main() -> int:
         default=Path("benchmark_results/upstream_fixtures"),
         help="Root directory for artifacts, extracted sources, and manifest",
     )
-    parser.add_argument("--include", type=str, default=None, help="Comma-separated package aliases to include")
-    parser.add_argument("--exclude", type=str, default=None, help="Comma-separated package aliases to exclude")
-    parser.add_argument("--prefer-sdist", action="store_true", help="Try source distributions first")
+    parser.add_argument(
+        "--include",
+        type=str,
+        default=None,
+        help="Comma-separated package aliases to include",
+    )
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=None,
+        help="Comma-separated package aliases to exclude",
+    )
+    parser.add_argument(
+        "--prefer-sdist", action="store_true", help="Try source distributions first"
+    )
     parser.add_argument(
         "--no-installed-fallback",
         action="store_true",
@@ -231,7 +262,9 @@ def main() -> int:
         action="store_true",
         help="Allow syncing versions from local/editable/VCS installed distributions",
     )
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero on missing/failed packages")
+    parser.add_argument(
+        "--strict", action="store_true", help="Exit non-zero on missing/failed packages"
+    )
     args = parser.parse_args()
 
     include = _parse_aliases(args.include)
@@ -259,7 +292,9 @@ def main() -> int:
             failures.append(f"{alias}: not installed in current environment")
             continue
         if not args.allow_nonrelease_installed and not meta.release_like:
-            failures.append(f"{alias}: installed distribution is non-release ({meta.reason}: {meta.source})")
+            failures.append(
+                f"{alias}: installed distribution is non-release ({meta.reason}: {meta.source})"
+            )
             continue
 
         print(f"[sync] {alias}=={meta.version}")

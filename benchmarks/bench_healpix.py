@@ -31,8 +31,12 @@ try:
     )
 except Exception:
     # Allow benchmarks in envs where torchfits package/extensions are not installed.
-    local_mod = Path(__file__).resolve().parents[1] / "src" / "torchfits" / "wcs" / "healpix.py"
-    spec = importlib.util.spec_from_file_location("torchfits_wcs_healpix_local", local_mod)
+    local_mod = (
+        Path(__file__).resolve().parents[1] / "src" / "torchfits" / "wcs" / "healpix.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "torchfits_wcs_healpix_local", local_mod
+    )
     if spec is None or spec.loader is None:
         raise SystemExit(f"Unable to load local HEALPix module from {local_mod}")
     healpix_local = importlib.util.module_from_spec(spec)
@@ -55,7 +59,8 @@ def _healpy_provenance() -> dict[str, Any] | None:
         "version": dist.version,
         "release_like": True,
         "source": "site-packages",
-        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower() or "unknown",
+        "installer": (dist.read_text("INSTALLER") or "unknown").strip().lower()
+        or "unknown",
         "reason": "installed from index/conda/wheel/sdist",
     }
     if meta["installer"] == "conda":
@@ -188,17 +193,33 @@ def _run_benchmark(
         nest_tc = nest_t.cpu()
         cpu_device = torch.device("cpu")
         cpu_ops = {
-            "ang2pix_ring": _time_many(lambda: ang2pix_ring(nside, ra_tc, dec_tc), runs, sync_device=cpu_device),
-            "ang2pix_nested": _time_many(lambda: ang2pix_nested(nside, ra_tc, dec_tc), runs, sync_device=cpu_device),
-            "pix2ang_ring": _time_many(lambda: pix2ang_ring(nside, ring_tc), runs, sync_device=cpu_device),
-            "pix2ang_nested": _time_many(lambda: pix2ang_nested(nside, nest_tc), runs, sync_device=cpu_device),
-            "ring2nest": _time_many(lambda: ring2nest(nside, ring_tc), runs, sync_device=cpu_device),
-            "nest2ring": _time_many(lambda: nest2ring(nside, nest_tc), runs, sync_device=cpu_device),
+            "ang2pix_ring": _time_many(
+                lambda: ang2pix_ring(nside, ra_tc, dec_tc), runs, sync_device=cpu_device
+            ),
+            "ang2pix_nested": _time_many(
+                lambda: ang2pix_nested(nside, ra_tc, dec_tc),
+                runs,
+                sync_device=cpu_device,
+            ),
+            "pix2ang_ring": _time_many(
+                lambda: pix2ang_ring(nside, ring_tc), runs, sync_device=cpu_device
+            ),
+            "pix2ang_nested": _time_many(
+                lambda: pix2ang_nested(nside, nest_tc), runs, sync_device=cpu_device
+            ),
+            "ring2nest": _time_many(
+                lambda: ring2nest(nside, ring_tc), runs, sync_device=cpu_device
+            ),
+            "nest2ring": _time_many(
+                lambda: nest2ring(nside, nest_tc), runs, sync_device=cpu_device
+            ),
         }
 
     rows: list[dict[str, Any]] = []
 
-    t_torch = _time_many(lambda: ang2pix_ring(nside, ra_t, dec_t), runs, sync_device=device)
+    t_torch = _time_many(
+        lambda: ang2pix_ring(nside, ra_t, dec_t), runs, sync_device=device
+    )
     t_hp = _time_many(lambda: hp.ang2pix(nside, ra, dec, lonlat=True, nest=False), runs)
     p_t = ang2pix_ring(nside, ra_t, dec_t).cpu().numpy()
     p_h = hp.ang2pix(nside, ra, dec, lonlat=True, nest=False)
@@ -216,7 +237,9 @@ def _run_benchmark(
             "torch_mpts_s": (n / t_torch) / 1e6,
             "healpy_mpts_s": (n / t_hp) / 1e6,
             "speedup_vs_healpy": t_hp / t_torch if t_torch > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["ang2pix_ring"] / t_torch) if cpu_ops is not None and t_torch > 0 else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["ang2pix_ring"] / t_torch)
+            if cpu_ops is not None and t_torch > 0
+            else float("nan"),
             "mismatches": int(np.sum(p_t != p_h)),
             "max_dra_deg": float("nan"),
             "p99_dra_deg": float("nan"),
@@ -225,8 +248,12 @@ def _run_benchmark(
         }
     )
 
-    t_torch_n = _time_many(lambda: ang2pix_nested(nside, ra_t, dec_t), runs, sync_device=device)
-    t_hp_n = _time_many(lambda: hp.ang2pix(nside, ra, dec, lonlat=True, nest=True), runs)
+    t_torch_n = _time_many(
+        lambda: ang2pix_nested(nside, ra_t, dec_t), runs, sync_device=device
+    )
+    t_hp_n = _time_many(
+        lambda: hp.ang2pix(nside, ra, dec, lonlat=True, nest=True), runs
+    )
     pn_t = ang2pix_nested(nside, ra_t, dec_t).cpu().numpy()
     pn_h = hp.ang2pix(nside, ra, dec, lonlat=True, nest=True)
     rows.append(
@@ -241,7 +268,9 @@ def _run_benchmark(
             "torch_mpts_s": (n / t_torch_n) / 1e6,
             "healpy_mpts_s": (n / t_hp_n) / 1e6,
             "speedup_vs_healpy": t_hp_n / t_torch_n if t_torch_n > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["ang2pix_nested"] / t_torch_n) if cpu_ops is not None and t_torch_n > 0 else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["ang2pix_nested"] / t_torch_n)
+            if cpu_ops is not None and t_torch_n > 0
+            else float("nan"),
             "mismatches": int(np.sum(pn_t != pn_h)),
             "max_dra_deg": float("nan"),
             "p99_dra_deg": float("nan"),
@@ -250,8 +279,12 @@ def _run_benchmark(
         }
     )
 
-    t_torch_p2a_r = _time_many(lambda: pix2ang_ring(nside, ring_t), runs, sync_device=device)
-    t_hp_p2a_r = _time_many(lambda: hp.pix2ang(nside, ring, nest=False, lonlat=True), runs)
+    t_torch_p2a_r = _time_many(
+        lambda: pix2ang_ring(nside, ring_t), runs, sync_device=device
+    )
+    t_hp_p2a_r = _time_many(
+        lambda: hp.pix2ang(nside, ring, nest=False, lonlat=True), runs
+    )
     ra_r_t, dec_r_t = pix2ang_ring(nside, ring_t)
     ra_r_h, dec_r_h = hp.pix2ang(nside, ring, nest=False, lonlat=True)
     dra_r = np.abs(_ra_delta(ra_r_t.cpu().numpy(), ra_r_h))
@@ -267,8 +300,12 @@ def _run_benchmark(
             "healpy_ms": t_hp_p2a_r * 1000.0,
             "torch_mpts_s": (n / t_torch_p2a_r) / 1e6,
             "healpy_mpts_s": (n / t_hp_p2a_r) / 1e6,
-            "speedup_vs_healpy": t_hp_p2a_r / t_torch_p2a_r if t_torch_p2a_r > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["pix2ang_ring"] / t_torch_p2a_r) if cpu_ops is not None and t_torch_p2a_r > 0 else float("nan"),
+            "speedup_vs_healpy": t_hp_p2a_r / t_torch_p2a_r
+            if t_torch_p2a_r > 0
+            else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["pix2ang_ring"] / t_torch_p2a_r)
+            if cpu_ops is not None and t_torch_p2a_r > 0
+            else float("nan"),
             "mismatches": int(np.sum((dra_r > pix2ang_eps) | (ddec_r > pix2ang_eps))),
             "max_dra_deg": float(dra_r.max()),
             "p99_dra_deg": float(np.quantile(dra_r, 0.99)),
@@ -277,8 +314,12 @@ def _run_benchmark(
         }
     )
 
-    t_torch_p2a_n = _time_many(lambda: pix2ang_nested(nside, nest_t), runs, sync_device=device)
-    t_hp_p2a_n = _time_many(lambda: hp.pix2ang(nside, nest, nest=True, lonlat=True), runs)
+    t_torch_p2a_n = _time_many(
+        lambda: pix2ang_nested(nside, nest_t), runs, sync_device=device
+    )
+    t_hp_p2a_n = _time_many(
+        lambda: hp.pix2ang(nside, nest, nest=True, lonlat=True), runs
+    )
     ra_n_t, dec_n_t = pix2ang_nested(nside, nest_t)
     ra_n_h, dec_n_h = hp.pix2ang(nside, nest, nest=True, lonlat=True)
     dra_n = np.abs(_ra_delta(ra_n_t.cpu().numpy(), ra_n_h))
@@ -294,8 +335,12 @@ def _run_benchmark(
             "healpy_ms": t_hp_p2a_n * 1000.0,
             "torch_mpts_s": (n / t_torch_p2a_n) / 1e6,
             "healpy_mpts_s": (n / t_hp_p2a_n) / 1e6,
-            "speedup_vs_healpy": t_hp_p2a_n / t_torch_p2a_n if t_torch_p2a_n > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["pix2ang_nested"] / t_torch_p2a_n) if cpu_ops is not None and t_torch_p2a_n > 0 else float("nan"),
+            "speedup_vs_healpy": t_hp_p2a_n / t_torch_p2a_n
+            if t_torch_p2a_n > 0
+            else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["pix2ang_nested"] / t_torch_p2a_n)
+            if cpu_ops is not None and t_torch_p2a_n > 0
+            else float("nan"),
             "mismatches": int(np.sum((dra_n > pix2ang_eps) | (ddec_n > pix2ang_eps))),
             "max_dra_deg": float(dra_n.max()),
             "p99_dra_deg": float(np.quantile(dra_n, 0.99)),
@@ -319,8 +364,12 @@ def _run_benchmark(
             "healpy_ms": t_hp_r2n * 1000.0,
             "torch_mpts_s": (n / t_torch_r2n) / 1e6,
             "healpy_mpts_s": (n / t_hp_r2n) / 1e6,
-            "speedup_vs_healpy": t_hp_r2n / t_torch_r2n if t_torch_r2n > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["ring2nest"] / t_torch_r2n) if cpu_ops is not None and t_torch_r2n > 0 else float("nan"),
+            "speedup_vs_healpy": t_hp_r2n / t_torch_r2n
+            if t_torch_r2n > 0
+            else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["ring2nest"] / t_torch_r2n)
+            if cpu_ops is not None and t_torch_r2n > 0
+            else float("nan"),
             "mismatches": int(np.sum(r2n_t != r2n_h)),
             "max_dra_deg": float("nan"),
             "p99_dra_deg": float("nan"),
@@ -344,8 +393,12 @@ def _run_benchmark(
             "healpy_ms": t_hp_n2r * 1000.0,
             "torch_mpts_s": (n / t_torch_n2r) / 1e6,
             "healpy_mpts_s": (n / t_hp_n2r) / 1e6,
-            "speedup_vs_healpy": t_hp_n2r / t_torch_n2r if t_torch_n2r > 0 else float("nan"),
-            "speedup_vs_torch_cpu": (cpu_ops["nest2ring"] / t_torch_n2r) if cpu_ops is not None and t_torch_n2r > 0 else float("nan"),
+            "speedup_vs_healpy": t_hp_n2r / t_torch_n2r
+            if t_torch_n2r > 0
+            else float("nan"),
+            "speedup_vs_torch_cpu": (cpu_ops["nest2ring"] / t_torch_n2r)
+            if cpu_ops is not None and t_torch_n2r > 0
+            else float("nan"),
             "mismatches": int(np.sum(n2r_t != n2r_h)),
             "max_dra_deg": float("nan"),
             "p99_dra_deg": float("nan"),
@@ -406,15 +459,23 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
-    parser.add_argument("--sample-profile", choices=["uniform", "boundary", "mixed"], default="mixed")
+    parser.add_argument(
+        "--device", choices=["auto", "cpu", "cuda", "mps"], default="auto"
+    )
+    parser.add_argument(
+        "--sample-profile", choices=["uniform", "boundary", "mixed"], default="mixed"
+    )
     parser.add_argument(
         "--compare-cpu",
         action="store_true",
         help="When running on CUDA/MPS, also benchmark Torch CPU and report accelerator speedup",
     )
-    parser.add_argument("--json-out", type=Path, default=None, help="Optional JSON output path")
-    parser.add_argument("--csv-out", type=Path, default=None, help="Optional CSV output path")
+    parser.add_argument(
+        "--json-out", type=Path, default=None, help="Optional JSON output path"
+    )
+    parser.add_argument(
+        "--csv-out", type=Path, default=None, help="Optional CSV output path"
+    )
     parser.add_argument(
         "--max-index-mismatches",
         type=int,
@@ -475,7 +536,9 @@ def main() -> int:
         compare_cpu=args.compare_cpu,
     )
 
-    print(f"NSIDE={args.nside} N={args.n_points} runs={args.runs} device={device.type} profile={args.sample_profile}")
+    print(
+        f"NSIDE={args.nside} N={args.n_points} runs={args.runs} device={device.type} profile={args.sample_profile}"
+    )
     _print_rows(rows)
 
     if args.json_out is not None:
@@ -515,11 +578,16 @@ def main() -> int:
             )
         return 1
 
-    if args.min_cuda_speedup_vs_cpu is not None and device.type in {"cuda", "mps"} and args.compare_cpu:
+    if (
+        args.min_cuda_speedup_vs_cpu is not None
+        and device.type in {"cuda", "mps"}
+        and args.compare_cpu
+    ):
         bad_speed = [
             r
             for r in rows
-            if np.isfinite(r["speedup_vs_torch_cpu"]) and r["speedup_vs_torch_cpu"] < args.min_cuda_speedup_vs_cpu
+            if np.isfinite(r["speedup_vs_torch_cpu"])
+            and r["speedup_vs_torch_cpu"] < args.min_cuda_speedup_vs_cpu
         ]
         if bad_speed:
             print("\nAccelerator speedup threshold not met:")

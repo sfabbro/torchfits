@@ -45,7 +45,9 @@ def _random_lonlat(n: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
     return ra, dec
 
 
-def _random_convex_polygon_xyz(rng: np.random.Generator, n_vertices: int = 5) -> np.ndarray:
+def _random_convex_polygon_xyz(
+    rng: np.random.Generator, n_vertices: int = 5
+) -> np.ndarray:
     ra = float(rng.uniform(0.0, 360.0))
     dec = float(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0))))
     center = np.array(healpy.ang2vec(ra, dec, lonlat=True), dtype=np.float64)
@@ -66,35 +68,49 @@ def _random_convex_polygon_xyz(rng: np.random.Generator, n_vertices: int = 5) ->
     return np.asarray(verts, dtype=np.float64)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 5000), (2, 5000), (8, 20000), (64, 20000), (1024, 20000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 5000), (2, 5000), (8, 20000), (64, 20000), (1024, 20000)]
+)
 def test_ang2pix_ring_matches_healpy(nside: int, n: int) -> None:
     ra, dec = _random_lonlat(n, seed=11 + nside)
 
-    got = ang2pix_ring(
-        nside,
-        torch.from_numpy(ra).to(torch.float64),
-        torch.from_numpy(dec).to(torch.float64),
-    ).cpu().numpy()
+    got = (
+        ang2pix_ring(
+            nside,
+            torch.from_numpy(ra).to(torch.float64),
+            torch.from_numpy(dec).to(torch.float64),
+        )
+        .cpu()
+        .numpy()
+    )
     expected = healpy.ang2pix(nside, ra, dec, lonlat=True, nest=False)
 
     np.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 5000), (2, 5000), (8, 20000), (64, 20000), (1024, 20000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 5000), (2, 5000), (8, 20000), (64, 20000), (1024, 20000)]
+)
 def test_ang2pix_nested_matches_healpy(nside: int, n: int) -> None:
     ra, dec = _random_lonlat(n, seed=97 + nside)
 
-    got = ang2pix_nested(
-        nside,
-        torch.from_numpy(ra).to(torch.float64),
-        torch.from_numpy(dec).to(torch.float64),
-    ).cpu().numpy()
+    got = (
+        ang2pix_nested(
+            nside,
+            torch.from_numpy(ra).to(torch.float64),
+            torch.from_numpy(dec).to(torch.float64),
+        )
+        .cpu()
+        .numpy()
+    )
     expected = healpy.ang2pix(nside, ra, dec, lonlat=True, nest=True)
 
     np.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)]
+)
 def test_pix2ang_ring_matches_healpy(nside: int, n: int) -> None:
     rng = np.random.default_rng(123 + nside)
     pix = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -109,7 +125,9 @@ def test_pix2ang_ring_matches_healpy(nside: int, n: int) -> None:
     np.testing.assert_allclose(ddec, 0.0, atol=1e-10)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)]
+)
 def test_pix2ang_nested_matches_healpy(nside: int, n: int) -> None:
     rng = np.random.default_rng(321 + nside)
     pix = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -124,7 +142,9 @@ def test_pix2ang_nested_matches_healpy(nside: int, n: int) -> None:
     np.testing.assert_allclose(ddec, 0.0, atol=1e-10)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 2000), (2, 2000), (8, 20000), (64, 20000), (1024, 20000)]
+)
 def test_ring_nest_conversions_match_healpy(nside: int, n: int) -> None:
     rng = np.random.default_rng(777 + nside)
     ring = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -146,7 +166,9 @@ def test_scalar_validators_and_order_match_healpy(nside: int) -> None:
     npix = 12 * nside * nside
     assert bool(isnpixok(npix)) == bool(healpy.isnpixok(npix))
     assert nside2order(nside) == healpy.nside2order(nside)
-    np.testing.assert_allclose(max_pixrad(nside), healpy.max_pixrad(nside), atol=1e-12, rtol=0.0)
+    np.testing.assert_allclose(
+        max_pixrad(nside), healpy.max_pixrad(nside), atol=1e-12, rtol=0.0
+    )
 
 
 def test_vector_angle_wrappers_match_healpy() -> None:
@@ -154,7 +176,9 @@ def test_vector_angle_wrappers_match_healpy() -> None:
     lon = rng.uniform(0.0, 360.0, size=4096)
     lat = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=4096)))
 
-    vec_t = ang2vec(torch.from_numpy(lon), torch.from_numpy(lat), lonlat=True).cpu().numpy()
+    vec_t = (
+        ang2vec(torch.from_numpy(lon), torch.from_numpy(lat), lonlat=True).cpu().numpy()
+    )
     vec_h = healpy.ang2vec(lon, lat, lonlat=True)
     np.testing.assert_allclose(vec_t, vec_h, atol=1e-12, rtol=0.0)
 
@@ -184,14 +208,20 @@ def test_ud_grade_matches_healpy(
     if order_in.upper().startswith("NEST"):
         m = healpy.reorder(m, r2n=True)
 
-    got = ud_grade(
-        torch.from_numpy(m),
-        nside_out=nside_out,
-        order_in=order_in,
-        order_out=order_out,
-        power=power,
-    ).cpu().numpy()
-    expected = healpy.ud_grade(m, nside_out, order_in=order_in, order_out=order_out, power=power)
+    got = (
+        ud_grade(
+            torch.from_numpy(m),
+            nside_out=nside_out,
+            order_in=order_in,
+            order_out=order_out,
+            power=power,
+        )
+        .cpu()
+        .numpy()
+    )
+    expected = healpy.ud_grade(
+        m, nside_out, order_in=order_in, order_out=order_out, power=power
+    )
 
     np.testing.assert_allclose(got, expected, atol=1e-10, rtol=1e-10)
     assert get_nside(torch.from_numpy(got)) == nside_out
@@ -205,14 +235,24 @@ def test_ud_grade_multimap_matches_healpy() -> None:
     npix = 12 * nside_in * nside_in
     mm = rng.normal(size=(2, npix)).astype(np.float64)
 
-    got = ud_grade(torch.from_numpy(mm), nside_out=nside_out, order_in="RING", order_out="RING").cpu().numpy()
+    got = (
+        ud_grade(
+            torch.from_numpy(mm), nside_out=nside_out, order_in="RING", order_out="RING"
+        )
+        .cpu()
+        .numpy()
+    )
     expected = healpy.ud_grade(mm, nside_out, order_in="RING", order_out="RING")
     np.testing.assert_allclose(got, expected, atol=1e-10, rtol=1e-10)
 
 
 @pytest.mark.parametrize("pess", [False, True])
-@pytest.mark.parametrize("order_in,order_out", [("RING", "RING"), ("RING", "NEST"), ("NEST", "RING")])
-def test_ud_grade_badmask_and_pess_matches_healpy(pess: bool, order_in: str, order_out: str) -> None:
+@pytest.mark.parametrize(
+    "order_in,order_out", [("RING", "RING"), ("RING", "NEST"), ("NEST", "RING")]
+)
+def test_ud_grade_badmask_and_pess_matches_healpy(
+    pess: bool, order_in: str, order_out: str
+) -> None:
     rng = np.random.default_rng(2190 + int(pess))
     nside_in = 16
     nside_out = 4
@@ -226,14 +266,18 @@ def test_ud_grade_badmask_and_pess_matches_healpy(pess: bool, order_in: str, ord
     if order_in == "NEST":
         m = healpy.reorder(m, r2n=True)
 
-    got = ud_grade(
-        torch.from_numpy(m),
-        nside_out=nside_out,
-        order_in=order_in,
-        order_out=order_out,
-        pess=pess,
-        power=2.0,
-    ).cpu().numpy()
+    got = (
+        ud_grade(
+            torch.from_numpy(m),
+            nside_out=nside_out,
+            order_in=order_in,
+            order_out=order_out,
+            pess=pess,
+            power=2.0,
+        )
+        .cpu()
+        .numpy()
+    )
     expected = healpy.ud_grade(
         m,
         nside_out,
@@ -255,14 +299,18 @@ def test_ud_grade_custom_badval_is_respected() -> None:
     m = np.ones(npix_in, dtype=np.float64)
     m[:4] = custom_bad  # one degraded output pixel gets only bad inputs
 
-    out = ud_grade(
-        torch.from_numpy(m),
-        nside_out=nside_out,
-        order_in="NEST",
-        order_out="NEST",
-        pess=False,
-        badval=custom_bad,
-    ).cpu().numpy()
+    out = (
+        ud_grade(
+            torch.from_numpy(m),
+            nside_out=nside_out,
+            order_in="NEST",
+            order_out="NEST",
+            pess=False,
+            badval=custom_bad,
+        )
+        .cpu()
+        .numpy()
+    )
     assert out[0] == custom_bad
     np.testing.assert_allclose(out[1:], 1.0, atol=0.0, rtol=0.0)
 
@@ -277,8 +325,12 @@ def test_query_disc_matches_healpy(nside: int) -> None:
             radius = float(rng.uniform(0.01, 0.5))
             x, y, z = healpy.ang2vec(ra, dec, lonlat=True)
 
-            got = query_disc(nside, np.array([x, y, z]), radius, nest=nest).cpu().numpy()
-            expected = healpy.query_disc(nside, np.array([x, y, z]), radius, nest=nest, inclusive=False)
+            got = (
+                query_disc(nside, np.array([x, y, z]), radius, nest=nest).cpu().numpy()
+            )
+            expected = healpy.query_disc(
+                nside, np.array([x, y, z]), radius, nest=nest, inclusive=False
+            )
             np.testing.assert_array_equal(got, expected)
 
 
@@ -289,7 +341,12 @@ def test_query_polygon_matches_healpy(nside: int) -> None:
     sample_pix = rng.integers(0, npix, size=24, dtype=np.int64)
     for nest in (False, True):
         for pix in sample_pix:
-            verts = boundaries(nside, torch.tensor(int(pix)), step=1, nest=nest).cpu().numpy().T
+            verts = (
+                boundaries(nside, torch.tensor(int(pix)), step=1, nest=nest)
+                .cpu()
+                .numpy()
+                .T
+            )
             got = query_polygon(nside, verts, nest=nest).cpu().numpy()
             expected = healpy.query_polygon(nside, verts, nest=nest, inclusive=False)
             np.testing.assert_array_equal(got, expected)
@@ -314,7 +371,11 @@ def test_query_strip_matches_healpy(nside: int) -> None:
             t1 = float(rng.uniform(0.0, np.pi))
             t2 = float(rng.uniform(0.0, np.pi))
             got = np.sort(query_strip(nside, t1, t2, nest=nest).cpu().numpy())
-            expected = np.sort(healpy.query_strip(nside, min(t1, t2), max(t1, t2), nest=nest, inclusive=False))
+            expected = np.sort(
+                healpy.query_strip(
+                    nside, min(t1, t2), max(t1, t2), nest=nest, inclusive=False
+                )
+            )
             np.testing.assert_array_equal(got, expected)
 
 
@@ -331,13 +392,17 @@ def test_get_all_neighbours_matches_healpy(nside: int, n: int) -> None:
 
         ra = rng.uniform(0.0, 360.0, size=n)
         dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=n)))
-        got_ang = get_all_neighbours(
-            nside,
-            torch.from_numpy(ra).to(torch.float64),
-            torch.from_numpy(dec).to(torch.float64),
-            nest=nest,
-            lonlat=True,
-        ).cpu().numpy()
+        got_ang = (
+            get_all_neighbours(
+                nside,
+                torch.from_numpy(ra).to(torch.float64),
+                torch.from_numpy(dec).to(torch.float64),
+                nest=nest,
+                lonlat=True,
+            )
+            .cpu()
+            .numpy()
+        )
         exp_ang = healpy.get_all_neighbours(nside, ra, dec, nest=nest, lonlat=True)
         np.testing.assert_array_equal(got_ang, exp_ang)
 
@@ -400,7 +465,19 @@ def test_interp_edge_cases_match_healpy(nside: int) -> None:
     m = rng.normal(size=npix).astype(np.float64)
 
     lon_base = np.array(
-        [-720.0, -360.0, -180.0, -1.0e-12, 0.0, 1.0e-12, 45.0, 180.0, 359.999999999999, 360.0, 720.0],
+        [
+            -720.0,
+            -360.0,
+            -180.0,
+            -1.0e-12,
+            0.0,
+            1.0e-12,
+            45.0,
+            180.0,
+            359.999999999999,
+            360.0,
+            720.0,
+        ],
         dtype=np.float64,
     )
     lat_base = np.array(
@@ -435,7 +512,9 @@ def test_interp_edge_cases_match_healpy(nside: int) -> None:
 
     for nest in (False, True):
         got_p, got_w = get_interp_weights(nside, lon_t, lat_t, nest=nest, lonlat=True)
-        exp_p, exp_w = healpy.get_interp_weights(nside, lon, lat, nest=nest, lonlat=True)
+        exp_p, exp_w = healpy.get_interp_weights(
+            nside, lon, lat, nest=nest, lonlat=True
+        )
         got_p_np = got_p.cpu().numpy()
         got_w_np = got_w.cpu().numpy()
         for j in range(lon.size):
@@ -470,6 +549,7 @@ def test_interp_edge_cases_match_healpy(nside: int) -> None:
             np.testing.assert_array_equal(idx_g[order_g], idx_e[order_e])
             np.testing.assert_allclose(w_g[order_g], w_e[order_e], atol=1e-6, rtol=0.0)
 
+
 @pytest.mark.parametrize("nside", [1, 8, 32])
 def test_reorder_matches_healpy(nside: int) -> None:
     rng = np.random.default_rng(505 + nside)
@@ -486,7 +566,9 @@ def test_reorder_matches_healpy(nside: int) -> None:
     np.testing.assert_allclose(got_n2r, exp_n2r, atol=0.0, rtol=0.0)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 1000), (2, 1000), (8, 10000), (64, 10000), (1024, 10000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 1000), (2, 1000), (8, 10000), (64, 10000), (1024, 10000)]
+)
 def test_vec2pix_matches_healpy(nside: int, n: int) -> None:
     rng = np.random.default_rng(555 + nside)
     pix = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -502,7 +584,9 @@ def test_vec2pix_matches_healpy(nside: int, n: int) -> None:
         np.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("nside,n", [(1, 1000), (2, 1000), (8, 10000), (64, 10000), (1024, 10000)])
+@pytest.mark.parametrize(
+    "nside,n", [(1, 1000), (2, 1000), (8, 10000), (64, 10000), (1024, 10000)]
+)
 def test_pix2vec_matches_healpy(nside: int, n: int) -> None:
     rng = np.random.default_rng(7770 + nside)
     pix = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -516,7 +600,10 @@ def test_pix2vec_matches_healpy(nside: int, n: int) -> None:
         np.testing.assert_allclose(z_t.cpu().numpy(), z_h, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.parametrize("nside,step,n", [(1, 1, 64), (1, 4, 64), (8, 1, 256), (8, 4, 256), (64, 1, 512), (64, 4, 512)])
+@pytest.mark.parametrize(
+    "nside,step,n",
+    [(1, 1, 64), (1, 4, 64), (8, 1, 256), (8, 4, 256), (64, 1, 512), (64, 4, 512)],
+)
 def test_boundaries_matches_healpy(nside: int, step: int, n: int) -> None:
     rng = np.random.default_rng(8890 + nside + step)
     pix = rng.integers(0, 12 * nside * nside, size=n, dtype=np.int64)
@@ -576,7 +663,9 @@ def test_cuda_matches_cpu_small_sample() -> None:
     nside = 256
     n = 20000
     ra, dec = _random_lonlat(n, seed=2718)
-    ring = np.random.default_rng(2719).integers(0, 12 * nside * nside, size=n, dtype=np.int64)
+    ring = np.random.default_rng(2719).integers(
+        0, 12 * nside * nside, size=n, dtype=np.int64
+    )
 
     ra_cpu = torch.from_numpy(ra).to(torch.float64)
     dec_cpu = torch.from_numpy(dec).to(torch.float64)
@@ -608,7 +697,9 @@ def test_mps_matches_cpu_small_sample() -> None:
     nside = 256
     n = 20000
     ra, dec = _random_lonlat(n, seed=4242)
-    ring = np.random.default_rng(4243).integers(0, 12 * nside * nside, size=n, dtype=np.int64)
+    ring = np.random.default_rng(4243).integers(
+        0, 12 * nside * nside, size=n, dtype=np.int64
+    )
 
     ra_cpu = torch.from_numpy(ra).to(torch.float64)
     dec_cpu = torch.from_numpy(dec).to(torch.float64)
@@ -628,5 +719,9 @@ def test_mps_matches_cpu_small_sample() -> None:
 
     ra_r_cpu, dec_r_cpu = pix2ang_ring(nside, ring_cpu)
     ra_r_mps, dec_r_mps = pix2ang_ring(nside, ring_mps)
-    torch.testing.assert_close(ra_r_mps.cpu(), ra_r_cpu.to(torch.float32), atol=1e-4, rtol=0.0)
-    torch.testing.assert_close(dec_r_mps.cpu(), dec_r_cpu.to(torch.float32), atol=1e-4, rtol=0.0)
+    torch.testing.assert_close(
+        ra_r_mps.cpu(), ra_r_cpu.to(torch.float32), atol=1e-4, rtol=0.0
+    )
+    torch.testing.assert_close(
+        dec_r_mps.cpu(), dec_r_cpu.to(torch.float32), atol=1e-4, rtol=0.0
+    )

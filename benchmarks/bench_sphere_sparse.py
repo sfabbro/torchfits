@@ -29,7 +29,9 @@ def _time_many(fn: Callable[[], Any], runs: int) -> float:
 def _sample_lonlat(n: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     rng = np.random.default_rng(seed)
     lon = torch.from_numpy(rng.uniform(0.0, 360.0, size=n)).to(torch.float64)
-    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=n)))).to(torch.float64)
+    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=n)))).to(
+        torch.float64
+    )
     return lon, lat
 
 
@@ -40,7 +42,9 @@ def main() -> int:
     parser.add_argument("--n-queries", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/sphere_sparse.json"))
+    parser.add_argument(
+        "--json-out", type=Path, default=Path("bench_results/sphere_sparse.json")
+    )
     parser.add_argument("--min-ratio-sparse-udgrade-vs-dense", type=float, default=1.0)
     args = parser.parse_args()
 
@@ -53,7 +57,9 @@ def main() -> int:
 
     dense = torch.full((npix,), float(hp.UNSEEN), dtype=torch.float64)
     n_keep = max(1, int(round(npix * args.coverage_frac)))
-    keep = torch.from_numpy(rng.choice(npix, size=n_keep, replace=False)).to(torch.int64)
+    keep = torch.from_numpy(rng.choice(npix, size=n_keep, replace=False)).to(
+        torch.int64
+    )
     dense[keep] = torch.from_numpy(rng.normal(size=n_keep)).to(torch.float64)
 
     sparse = SparseHealpixMap.from_dense(dense, nside=nside, nest=False)
@@ -61,7 +67,9 @@ def main() -> int:
 
     rows: list[dict[str, Any]] = []
 
-    t_sparse_nearest = _time_many(lambda: sparse.interpolate(lon, lat, method="nearest"), args.runs)
+    t_sparse_nearest = _time_many(
+        lambda: sparse.interpolate(lon, lat, method="nearest"), args.runs
+    )
     rows.append(
         {
             "operation": "sparse_interpolate_nearest",
@@ -72,7 +80,9 @@ def main() -> int:
         }
     )
 
-    t_sparse_bilinear = _time_many(lambda: sparse.interpolate(lon, lat, method="bilinear"), args.runs)
+    t_sparse_bilinear = _time_many(
+        lambda: sparse.interpolate(lon, lat, method="bilinear"), args.runs
+    )
     rows.append(
         {
             "operation": "sparse_interpolate_bilinear",
@@ -127,4 +137,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

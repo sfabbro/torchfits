@@ -69,7 +69,9 @@ def _time_many(fn, runs: int) -> float:
     return float(np.median(vals))
 
 
-def _random_spin_alms(lmax: int, mmax: int, spin: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+def _random_spin_alms(
+    lmax: int, mmax: int, spin: int, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     nalm = alm_size(lmax, mmax)
     a_e = np.zeros(nalm, dtype=np.complex128)
@@ -96,19 +98,31 @@ def _map2alm_case(case: Case, n_points: int, runs: int, seed: int) -> Row:
 
     qu_ring = rng.normal(size=(2, npix))
     if case.nest:
-        qu_in = np.stack([hp.reorder(qu_ring[0], r2n=True), hp.reorder(qu_ring[1], r2n=True)], axis=0)
+        qu_in = np.stack(
+            [hp.reorder(qu_ring[0], r2n=True), hp.reorder(qu_ring[1], r2n=True)], axis=0
+        )
     else:
         qu_in = qu_ring
 
     qu_t = torch.from_numpy(qu_in).to(torch.float64)
 
     def tf_fn():
-        return map2alm_spin(qu_t, spin=case.spin, nside=case.nside, lmax=case.lmax, mmax=mm, nest=case.nest, backend="torch")
+        return map2alm_spin(
+            qu_t,
+            spin=case.spin,
+            nside=case.nside,
+            lmax=case.lmax,
+            mmax=mm,
+            nest=case.nest,
+            backend="torch",
+        )
 
     def hp_fn():
         arr = qu_in
         if case.nest:
-            arr = np.stack([hp.reorder(arr[0], n2r=True), hp.reorder(arr[1], n2r=True)], axis=0)
+            arr = np.stack(
+                [hp.reorder(arr[0], n2r=True), hp.reorder(arr[1], n2r=True)], axis=0
+            )
         return hp.map2alm_spin(arr, spin=case.spin, lmax=case.lmax, mmax=mm)
 
     t_tf = _time_many(tf_fn, runs=runs)
@@ -121,7 +135,12 @@ def _map2alm_case(case: Case, n_points: int, runs: int, seed: int) -> Row:
 
     tf_cat = torch.cat([tf_ae, tf_ab], dim=0)
     hp_cat = torch.cat([hp_ae_t, hp_ab_t], dim=0)
-    rel = float((torch.linalg.norm(tf_cat - hp_cat) / torch.linalg.norm(hp_cat).clamp_min(1e-15)).item())
+    rel = float(
+        (
+            torch.linalg.norm(tf_cat - hp_cat)
+            / torch.linalg.norm(hp_cat).clamp_min(1e-15)
+        ).item()
+    )
     max_abs = float(torch.max(torch.abs(tf_cat - hp_cat)).item())
     n = min(int(n_points), npix)
 
@@ -160,9 +179,13 @@ def _alm2map_case(case: Case, n_points: int, runs: int, seed: int) -> Row:
         )
 
     def hp_fn():
-        out = hp.alm2map_spin([ae_np, ab_np], nside=case.nside, spin=case.spin, lmax=case.lmax, mmax=mm)
+        out = hp.alm2map_spin(
+            [ae_np, ab_np], nside=case.nside, spin=case.spin, lmax=case.lmax, mmax=mm
+        )
         if case.nest:
-            out = np.stack([hp.reorder(out[0], r2n=True), hp.reorder(out[1], r2n=True)], axis=0)
+            out = np.stack(
+                [hp.reorder(out[0], r2n=True), hp.reorder(out[1], r2n=True)], axis=0
+            )
         return out
 
     t_tf = _time_many(tf_fn, runs=runs)
@@ -172,7 +195,12 @@ def _alm2map_case(case: Case, n_points: int, runs: int, seed: int) -> Row:
     hp_qu = hp_fn()
     hp_qu_t = torch.from_numpy(np.asarray(hp_qu)).to(torch.float64)
 
-    rel = float((torch.linalg.norm(tf_qu - hp_qu_t) / torch.linalg.norm(hp_qu_t).clamp_min(1e-15)).item())
+    rel = float(
+        (
+            torch.linalg.norm(tf_qu - hp_qu_t)
+            / torch.linalg.norm(hp_qu_t).clamp_min(1e-15)
+        ).item()
+    )
     max_abs = float(torch.max(torch.abs(tf_qu - hp_qu_t)).item())
     n = min(int(n_points), npix)
 
@@ -197,7 +225,9 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--n-points", type=int, default=200_000)
-    parser.add_argument("--case-set", choices=("default", "extended"), default="default")
+    parser.add_argument(
+        "--case-set", choices=("default", "extended"), default="default"
+    )
     parser.add_argument("--max-map2alm-rel-error", type=float, default=1.0e-9)
     parser.add_argument("--max-alm2map-rel-error", type=float, default=1.0e-9)
     parser.add_argument(
@@ -211,7 +241,11 @@ def main() -> int:
         action="store_true",
         help="Report replay metrics without enforcing thresholds.",
     )
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/upstream_replay_healpy_spin.json"))
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=Path("bench_results/upstream_replay_healpy_spin.json"),
+    )
     args = parser.parse_args()
 
     # Default to the validated torch ring profile for reproducible spin replay.
@@ -231,10 +265,23 @@ def main() -> int:
 
     rows: list[Row] = []
     for i, case in enumerate(cases):
-        rows.append(_map2alm_case(case, n_points=args.n_points, runs=args.runs, seed=args.seed + 10 * i))
-        rows.append(_alm2map_case(case, n_points=args.n_points, runs=args.runs, seed=args.seed + 10 * i + 1))
+        rows.append(
+            _map2alm_case(
+                case, n_points=args.n_points, runs=args.runs, seed=args.seed + 10 * i
+            )
+        )
+        rows.append(
+            _alm2map_case(
+                case,
+                n_points=args.n_points,
+                runs=args.runs,
+                seed=args.seed + 10 * i + 1,
+            )
+        )
 
-    print("operation      nside  lmax  mmax  nest  rel_l2       max_abs      tf_mpts/s  hp_mpts/s  ratio")
+    print(
+        "operation      nside  lmax  mmax  nest  rel_l2       max_abs      tf_mpts/s  hp_mpts/s  ratio"
+    )
     failures: list[str] = []
     for r in rows:
         print(
@@ -242,12 +289,18 @@ def main() -> int:
             f" {r.rel_l2_error:11.3e} {r.max_abs_error:11.3e}"
             f" {r.torchfits_mpts_s:10.3f} {r.healpy_mpts_s:10.3f} {r.ratio_vs_healpy:7.3f}"
         )
-        if r.operation == "map2alm_spin" and r.rel_l2_error > args.max_map2alm_rel_error:
+        if (
+            r.operation == "map2alm_spin"
+            and r.rel_l2_error > args.max_map2alm_rel_error
+        ):
             failures.append(
                 f"{r.operation}@nside={r.nside},lmax={r.lmax},mmax={r.mmax},nest={r.nest}:"
                 f" rel_l2 {r.rel_l2_error:.3e} > {args.max_map2alm_rel_error:.3e}"
             )
-        if r.operation == "alm2map_spin" and r.rel_l2_error > args.max_alm2map_rel_error:
+        if (
+            r.operation == "alm2map_spin"
+            and r.rel_l2_error > args.max_alm2map_rel_error
+        ):
             failures.append(
                 f"{r.operation}@nside={r.nside},lmax={r.lmax},mmax={r.mmax},nest={r.nest}:"
                 f" rel_l2 {r.rel_l2_error:.3e} > {args.max_alm2map_rel_error:.3e}"

@@ -10,7 +10,9 @@ from torchfits.wcs import healpix as hp
 def test_compat_ang2pix_pix2ang_roundtrip_matches_healpix() -> None:
     rng = np.random.default_rng(123)
     lon = torch.from_numpy(rng.uniform(0.0, 360.0, size=1024)).to(torch.float64)
-    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=1024)))).to(torch.float64)
+    lat = torch.from_numpy(np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=1024)))).to(
+        torch.float64
+    )
 
     pix = compat.ang2pix(64, lon, lat, nest=False, lonlat=True)
     expected = hp.ang2pix(64, lon, lat, nest=False, lonlat=True)
@@ -40,9 +42,21 @@ def test_compat_neighbors_angle_form_matches_healpix() -> None:
 def test_compat_query_circle_strict_mode_matches_hpgeom() -> None:
     hpg = pytest.importorskip("hpgeom")
     with compat.strict_mode(True):
-        out = compat.query_circle(32, 25.0, -15.0, 5.0, degrees=True, inclusive=True, nest=True, fact=4)
+        out = compat.query_circle(
+            32, 25.0, -15.0, 5.0, degrees=True, inclusive=True, nest=True, fact=4
+        )
     expected = torch.as_tensor(
-        hpg.query_circle(32, 25.0, -15.0, 5.0, inclusive=True, fact=4, nest=True, lonlat=True, degrees=True),
+        hpg.query_circle(
+            32,
+            25.0,
+            -15.0,
+            5.0,
+            inclusive=True,
+            fact=4,
+            nest=True,
+            lonlat=True,
+            degrees=True,
+        ),
         dtype=torch.int64,
     )
     torch.testing.assert_close(out, expected)
@@ -56,13 +70,22 @@ def test_compat_query_circle_vec_strict_mode_matches_hpgeom() -> None:
     x, y, z = hp.lonlat_to_xyz(torch.tensor(lon), torch.tensor(lat))
     vec = torch.stack([x, y, z]).to(torch.float64)
     with compat.strict_mode(True):
-        out = compat.query_circle_vec(32, vec, radius, inclusive=True, nest=True, fact=4)
-    expected = torch.as_tensor(hpg.query_circle_vec(32, vec.numpy(), radius, inclusive=True, fact=4, nest=True), dtype=torch.int64)
+        out = compat.query_circle_vec(
+            32, vec, radius, inclusive=True, nest=True, fact=4
+        )
+    expected = torch.as_tensor(
+        hpg.query_circle_vec(
+            32, vec.numpy(), radius, inclusive=True, fact=4, nest=True
+        ),
+        dtype=torch.int64,
+    )
     torch.testing.assert_close(out, expected)
 
 
 def test_compat_query_ellipse_calls_geometry_implementation() -> None:
-    out_compat = compat.query_ellipse(32, 10.0, -20.0, 6.0, 2.5, pa_deg=35.0, nest=False, backend="torch")
+    out_compat = compat.query_ellipse(
+        32, 10.0, -20.0, 6.0, 2.5, pa_deg=35.0, nest=False, backend="torch"
+    )
     out_geom = geom_query_ellipse(32, 10.0, -20.0, 6.0, 2.5, pa_deg=35.0, nest=False)
     torch.testing.assert_close(out_compat, out_geom)
 
@@ -92,7 +115,9 @@ def test_compat_query_ellipse_strict_mode_matches_hpgeom() -> None:
 
 def test_compat_query_ellipse_auto_backend_matches_hpgeom_when_available() -> None:
     hpg = pytest.importorskip("hpgeom")
-    out = compat.query_ellipse(32, 10.0, -20.0, 6.0, 2.5, pa_deg=35.0, nest=True, inclusive=True, fact=4)
+    out = compat.query_ellipse(
+        32, 10.0, -20.0, 6.0, 2.5, pa_deg=35.0, nest=True, inclusive=True, fact=4
+    )
     expected = torch.as_tensor(
         hpg.query_ellipse(
             32,
@@ -185,7 +210,9 @@ def test_compat_query_ellipse_return_ranges_and_theta_phi_units() -> None:
         dtype=torch.int64,
     )
     # Torch backend should stay near-canonical even without hpgeom dispatch.
-    sym = len(set(got_tf.cpu().tolist()).symmetric_difference(set(exp_tf.cpu().tolist())))
+    sym = len(
+        set(got_tf.cpu().tolist()).symmetric_difference(set(exp_tf.cpu().tolist()))
+    )
     assert sym <= 8
 
 
@@ -198,8 +225,12 @@ def test_compat_query_ellipse_inclusive_fact_refines_overlap() -> None:
     minor = 0.44602023784123124
     pa = 159.9907917472977
 
-    coarse = compat.query_ellipse(nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=1)
-    fine = compat.query_ellipse(nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=8)
+    coarse = compat.query_ellipse(
+        nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=1
+    )
+    fine = compat.query_ellipse(
+        nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=8
+    )
     assert fine.numel() != coarse.numel()
     hpg = pytest.importorskip("hpgeom")
     exp = torch.as_tensor(
@@ -218,7 +249,9 @@ def test_compat_query_ellipse_inclusive_fact_refines_overlap() -> None:
         ),
         dtype=torch.int64,
     )
-    c_sym = len(set(coarse.cpu().tolist()).symmetric_difference(set(exp.cpu().tolist())))
+    c_sym = len(
+        set(coarse.cpu().tolist()).symmetric_difference(set(exp.cpu().tolist()))
+    )
     f_sym = len(set(fine.cpu().tolist()).symmetric_difference(set(exp.cpu().tolist())))
     assert f_sym <= c_sym
 
@@ -232,7 +265,9 @@ def test_compat_query_ellipse_native_reasonable_vs_hpgeom_on_hard_case() -> None
     minor = 11.918411640241988
     pa = -43.690581832574374
 
-    got = compat.query_ellipse(nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=8)
+    got = compat.query_ellipse(
+        nside, lon, lat, major, minor, pa_deg=pa, nest=False, inclusive=True, fact=8
+    )
     exp = torch.as_tensor(
         hpg.query_ellipse(
             nside,
@@ -297,7 +332,9 @@ def test_compat_map2alm_lsq_scalar_api() -> None:
     expected_nalm = (lmax + 1) * (lmax + 2) // 2
     rng = np.random.default_rng(507)
     m = torch.from_numpy(rng.normal(size=npix)).to(torch.float64)
-    alm, rel_res, n_iter = compat.map2alm_lsq(m, lmax=lmax, mmax=lmax, pol=False, maxiter=4, nside=nside)
+    alm, rel_res, n_iter = compat.map2alm_lsq(
+        m, lmax=lmax, mmax=lmax, pol=False, maxiter=4, nside=nside
+    )
     assert alm.shape == (expected_nalm,)
     assert isinstance(rel_res, float)
     assert np.isfinite(rel_res)
@@ -366,10 +403,18 @@ def test_compat_hpgeom_vec_queries_and_ranges() -> None:
     vec = torch.stack([x, y, z]).to(torch.float64)
 
     got_circle = compat.query_circle_vec(nside, vec, radius, nest=True, inclusive=False)
-    exp_circle = torch.as_tensor(hpg.query_circle_vec(nside, vec.numpy(), radius, inclusive=False, nest=True), dtype=torch.int64)
+    exp_circle = torch.as_tensor(
+        hpg.query_circle_vec(nside, vec.numpy(), radius, inclusive=False, nest=True),
+        dtype=torch.int64,
+    )
     torch.testing.assert_close(got_circle, exp_circle)
-    got_circle_inc = compat.query_circle_vec(nside, vec, radius, nest=True, inclusive=True)
-    exp_circle_inc = torch.as_tensor(hpg.query_circle_vec(nside, vec.numpy(), radius, inclusive=True, nest=True), dtype=torch.int64)
+    got_circle_inc = compat.query_circle_vec(
+        nside, vec, radius, nest=True, inclusive=True
+    )
+    exp_circle_inc = torch.as_tensor(
+        hpg.query_circle_vec(nside, vec.numpy(), radius, inclusive=True, nest=True),
+        dtype=torch.int64,
+    )
     assert set(exp_circle_inc.tolist()).issubset(set(got_circle_inc.tolist()))
 
     v_lon = np.array([10.0, 20.0, 20.0, 10.0])
@@ -377,7 +422,10 @@ def test_compat_hpgeom_vec_queries_and_ranges() -> None:
     vx, vy, vz = hp.lonlat_to_xyz(torch.as_tensor(v_lon), torch.as_tensor(v_lat))
     vxyz = torch.stack([vx, vy, vz], dim=1).to(torch.float64)
     got_poly = compat.query_polygon_vec(nside, vxyz, nest=False, inclusive=False)
-    exp_poly = torch.as_tensor(hpg.query_polygon_vec(nside, vxyz.numpy(), inclusive=False, nest=False), dtype=torch.int64)
+    exp_poly = torch.as_tensor(
+        hpg.query_polygon_vec(nside, vxyz.numpy(), inclusive=False, nest=False),
+        dtype=torch.int64,
+    )
     torch.testing.assert_close(got_poly, exp_poly)
 
     ranges = torch.tensor([[10, 13], [20, 22]], dtype=torch.int64)
@@ -391,16 +439,22 @@ def test_compat_hpgeom_vec_queries_and_ranges() -> None:
     )
     torch.testing.assert_close(
         compat.upgrade_pixel_ranges(2, ranges, 8),
-        torch.as_tensor(hpg.upgrade_pixel_ranges(2, ranges.numpy(), 8), dtype=torch.int64),
+        torch.as_tensor(
+            hpg.upgrade_pixel_ranges(2, ranges.numpy(), 8), dtype=torch.int64
+        ),
     )
 
 
 def test_compat_pixels_to_ranges_roundtrip() -> None:
     pixels = torch.tensor([8, 9, 10, 15, 17, 18, 18], dtype=torch.int64)
     ranges = compat.pixels_to_pixel_ranges(pixels)
-    torch.testing.assert_close(ranges, torch.tensor([[8, 11], [15, 16], [17, 19]], dtype=torch.int64))
+    torch.testing.assert_close(
+        ranges, torch.tensor([[8, 11], [15, 16], [17, 19]], dtype=torch.int64)
+    )
     restored = compat.pixel_ranges_to_pixels(ranges, inclusive=False)
-    torch.testing.assert_close(restored, torch.tensor([8, 9, 10, 15, 17, 18], dtype=torch.int64))
+    torch.testing.assert_close(
+        restored, torch.tensor([8, 9, 10, 15, 17, 18], dtype=torch.int64)
+    )
 
 
 def test_compat_fit_remove_monopole_matches_healpy() -> None:
@@ -413,10 +467,15 @@ def test_compat_fit_remove_monopole_matches_healpy() -> None:
     m[5] = hp.UNSEEN
 
     got = compat.fit_monopole(m, nest=False, bad=hp.UNSEEN, gal_cut=10.0)
-    exp = torch.tensor(float(healpy.fit_monopole(m.numpy(), nest=False, bad=hp.UNSEEN, gal_cut=10.0)), dtype=torch.float64)
+    exp = torch.tensor(
+        float(healpy.fit_monopole(m.numpy(), nest=False, bad=hp.UNSEEN, gal_cut=10.0)),
+        dtype=torch.float64,
+    )
     torch.testing.assert_close(got, exp, atol=1e-12, rtol=0.0)
 
-    got_removed, got_fit = compat.remove_monopole(m, nest=False, bad=hp.UNSEEN, gal_cut=10.0, fitval=True, copy=True)
+    got_removed, got_fit = compat.remove_monopole(
+        m, nest=False, bad=hp.UNSEEN, gal_cut=10.0, fitval=True, copy=True
+    )
     exp_removed, exp_fit = healpy.remove_monopole(
         m.numpy(),
         nest=False,
@@ -426,7 +485,9 @@ def test_compat_fit_remove_monopole_matches_healpy() -> None:
         copy=True,
         verbose=False,
     )
-    torch.testing.assert_close(got_fit, torch.tensor(float(exp_fit), dtype=torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        got_fit, torch.tensor(float(exp_fit), dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
     torch.testing.assert_close(
         got_removed,
         torch.as_tensor(exp_removed, dtype=torch.float64),
@@ -445,9 +506,18 @@ def test_compat_fit_remove_dipole_matches_healpy() -> None:
     m[7] = hp.UNSEEN
 
     got_mono, got_dip = compat.fit_dipole(m, nest=False, bad=hp.UNSEEN, gal_cut=12.0)
-    exp_mono, exp_dip = healpy.fit_dipole(m.numpy(), nest=False, bad=hp.UNSEEN, gal_cut=12.0)
-    torch.testing.assert_close(got_mono, torch.tensor(float(exp_mono), dtype=torch.float64), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(got_dip, torch.as_tensor(exp_dip, dtype=torch.float64), atol=1e-12, rtol=0.0)
+    exp_mono, exp_dip = healpy.fit_dipole(
+        m.numpy(), nest=False, bad=hp.UNSEEN, gal_cut=12.0
+    )
+    torch.testing.assert_close(
+        got_mono,
+        torch.tensor(float(exp_mono), dtype=torch.float64),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        got_dip, torch.as_tensor(exp_dip, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )
 
     got_removed, got_mono2, got_dip2 = compat.remove_dipole(
         m,
@@ -468,5 +538,12 @@ def test_compat_fit_remove_dipole_matches_healpy() -> None:
     )
     exp_removed_t = torch.as_tensor(exp_removed.filled(hp.UNSEEN), dtype=torch.float64)
     torch.testing.assert_close(got_removed, exp_removed_t, atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(got_mono2, torch.tensor(float(exp_mono2), dtype=torch.float64), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(got_dip2, torch.as_tensor(exp_dip2, dtype=torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        got_mono2,
+        torch.tensor(float(exp_mono2), dtype=torch.float64),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        got_dip2, torch.as_tensor(exp_dip2, dtype=torch.float64), atol=1e-12, rtol=0.0
+    )

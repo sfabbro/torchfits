@@ -91,8 +91,8 @@ def main():
             "torchfits_cpp_read_full": lambda p=path: torchfits.cpp.read_full(
                 str(p), 0, True
             ),
-            "torchfits_cpp_read_full_nocache": lambda p=path: torchfits.cpp.read_full_nocache(
-                str(p), 0, True
+            "torchfits_cpp_read_full_nocache": lambda p=path: (
+                torchfits.cpp.read_full_nocache(str(p), 0, True)
             ),
             "fitsio_read": lambda p=path: fitsio.read(str(p)),
         }
@@ -125,8 +125,8 @@ def main():
         "torchfits_cpp_read_full_ext1": lambda p=mef_path: torchfits.cpp.read_full(
             str(p), 1, True
         ),
-        "torchfits_cpp_read_nocache_ext1": lambda p=mef_path: torchfits.cpp.read_full_nocache(
-            str(p), 1, True
+        "torchfits_cpp_read_nocache_ext1": lambda p=mef_path: (
+            torchfits.cpp.read_full_nocache(str(p), 1, True)
         ),
         "fitsio_read_ext1": lambda p=mef_path: fitsio.read(str(p), ext=1),
     }

@@ -59,7 +59,9 @@ def test_cd_matrix_takes_priority_over_cdelt() -> None:
 
     wcs = WCS(header)
 
-    assert torch.allclose(wcs.cd, torch.tensor([[-0.01, 0.0], [0.0, 0.01]], dtype=torch.float64))
+    assert torch.allclose(
+        wcs.cd, torch.tensor([[-0.01, 0.0], [0.0, 0.01]], dtype=torch.float64)
+    )
 
 
 def test_world_to_pixel_default_origin_zero() -> None:
@@ -126,7 +128,9 @@ def test_origin_zero_and_one_consistent_shift() -> None:
     y = np.array([120.0, 140.0], dtype=np.float64)
 
     w0 = wcs.pixel_to_world(torch.from_numpy(x), torch.from_numpy(y), origin=0)
-    w1 = wcs.pixel_to_world(torch.from_numpy(x + 1.0), torch.from_numpy(y + 1.0), origin=1)
+    w1 = wcs.pixel_to_world(
+        torch.from_numpy(x + 1.0), torch.from_numpy(y + 1.0), origin=1
+    )
 
     np.testing.assert_allclose(w0[0].cpu().numpy(), w1[0].cpu().numpy(), atol=1e-12)
     np.testing.assert_allclose(w0[1].cpu().numpy(), w1[1].cpu().numpy(), atol=1e-12)

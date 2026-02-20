@@ -45,7 +45,9 @@ def _make_header(projection: str) -> fits.Header:
     return header
 
 
-def _sample_pixels(header: fits.Header, n_side: int = 7) -> tuple[np.ndarray, np.ndarray]:
+def _sample_pixels(
+    header: fits.Header, n_side: int = 7
+) -> tuple[np.ndarray, np.ndarray]:
     x = np.linspace(96.0, header["NAXIS1"] - 96.0, n_side, dtype=np.float64)
     y = np.linspace(96.0, header["NAXIS2"] - 96.0, n_side, dtype=np.float64)
     xx, yy = np.meshgrid(x, y, indexing="xy")

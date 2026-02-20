@@ -43,7 +43,9 @@ def lonlat_to_unit_xyz(lon_deg: Tensor | float, lat_deg: Tensor | float) -> Tens
     return torch.stack((x, y, z), dim=-1)
 
 
-def unit_xyz_to_lonlat(vectors: Tensor, *, wrap_center_deg: float = 180.0) -> tuple[Tensor, Tensor]:
+def unit_xyz_to_lonlat(
+    vectors: Tensor, *, wrap_center_deg: float = 180.0
+) -> tuple[Tensor, Tensor]:
     """Convert unit Cartesian vectors [..., 3] to longitude/latitude in degrees."""
     if vectors.shape[-1] != 3:
         raise ValueError("vectors must have last dimension size 3")
@@ -124,8 +126,12 @@ def slerp_lonlat(
     v1, v2 = torch.broadcast_tensors(v1, v2)
 
     near = sin_omega.abs() < 1e-12
-    coeff1 = torch.sin((1.0 - t_t) * omega) / torch.where(near, torch.ones_like(sin_omega), sin_omega)
-    coeff2 = torch.sin(t_t * omega) / torch.where(near, torch.ones_like(sin_omega), sin_omega)
+    coeff1 = torch.sin((1.0 - t_t) * omega) / torch.where(
+        near, torch.ones_like(sin_omega), sin_omega
+    )
+    coeff2 = torch.sin(t_t * omega) / torch.where(
+        near, torch.ones_like(sin_omega), sin_omega
+    )
     interp = coeff1.unsqueeze(-1) * v1 + coeff2.unsqueeze(-1) * v2
 
     if near.any():
@@ -156,10 +162,16 @@ def sample_healpix_map(
 
     expected_npix = _healpix.nside2npix(nside)
     if values.shape[-1] != expected_npix:
-        raise ValueError(f"values last dimension must be npix={expected_npix} for nside={nside}")
+        raise ValueError(
+            f"values last dimension must be npix={expected_npix} for nside={nside}"
+        )
 
-    lon_t = _as_float_tensor(lon_deg).to(device=values.device, dtype=_float_dtype(values.device))
-    lat_t = _as_float_tensor(lat_deg).to(device=values.device, dtype=_float_dtype(values.device))
+    lon_t = _as_float_tensor(lon_deg).to(
+        device=values.device, dtype=_float_dtype(values.device)
+    )
+    lat_t = _as_float_tensor(lat_deg).to(
+        device=values.device, dtype=_float_dtype(values.device)
+    )
     lon_t, lat_t = torch.broadcast_tensors(lon_t, lat_t)
     coord_shape = lon_t.shape
     lon_flat = lon_t.reshape(-1)
@@ -170,8 +182,12 @@ def sample_healpix_map(
         pix = _healpix.ang2pix(nside, lon_flat, lat_flat, nest=nest, lonlat=True)
         out = vals[:, pix]
     else:
-        pix4, w4 = _healpix.get_interp_weights(nside, lon_flat, lat_flat, nest=nest, lonlat=True)
-        gathered = vals[:, pix4.reshape(-1)].reshape(vals.shape[0], 4, lon_flat.shape[0])
+        pix4, w4 = _healpix.get_interp_weights(
+            nside, lon_flat, lat_flat, nest=nest, lonlat=True
+        )
+        gathered = vals[:, pix4.reshape(-1)].reshape(
+            vals.shape[0], 4, lon_flat.shape[0]
+        )
         weights = w4.to(device=gathered.device, dtype=gathered.dtype)
         out = (gathered * weights.unsqueeze(0)).sum(dim=1)
 
@@ -270,7 +286,9 @@ def sample_multiwavelength_healpix(
     if target_wavelength is None:
         return sampled
     if source_wavelength is None:
-        raise ValueError("source_wavelength is required when target_wavelength is provided")
+        raise ValueError(
+            "source_wavelength is required when target_wavelength is provided"
+        )
 
     lon_t = _as_float_tensor(lon_deg)
     lat_t = _as_float_tensor(lat_deg)
@@ -303,7 +321,9 @@ def fit_monopole_dipole(
     npix = vals.shape[0]
     expected = _healpix.nside2npix(nside)
     if npix != expected:
-        raise ValueError(f"map_values length {npix} does not match nside={nside} (npix={expected})")
+        raise ValueError(
+            f"map_values length {npix} does not match nside={nside} (npix={expected})"
+        )
 
     vals = vals.to(dtype=torch.float64)
     pix = torch.arange(npix, dtype=torch.int64, device=vals.device)
@@ -320,7 +340,9 @@ def fit_monopole_dipole(
     if int(valid.sum().item()) < 4:
         raise ValueError("need at least 4 valid pixels to fit monopole+dipole")
 
-    sol = torch.linalg.lstsq(design[valid], vals[valid].unsqueeze(1)).solution.squeeze(1)
+    sol = torch.linalg.lstsq(design[valid], vals[valid].unsqueeze(1)).solution.squeeze(
+        1
+    )
     return sol[0], sol[1:4]
 
 
@@ -338,7 +360,9 @@ def remove_monopole_dipole(
     npix = vals.shape[0]
     expected = _healpix.nside2npix(nside)
     if npix != expected:
-        raise ValueError(f"map_values length {npix} does not match nside={nside} (npix={expected})")
+        raise ValueError(
+            f"map_values length {npix} does not match nside={nside} (npix={expected})"
+        )
 
     mono, dip = fit_monopole_dipole(vals, nside, nest=nest, valid_mask=valid_mask)
     pix = torch.arange(npix, dtype=torch.int64, device=vals.device)

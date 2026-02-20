@@ -61,11 +61,15 @@ def _resolve_strict(strict: bool | None) -> bool:
     return bool(strict)
 
 
-def ang2pix(nside: int, theta: Tensor, phi: Tensor, nest: bool = False, lonlat: bool = False) -> Tensor:
+def ang2pix(
+    nside: int, theta: Tensor, phi: Tensor, nest: bool = False, lonlat: bool = False
+) -> Tensor:
     return _healpix.ang2pix(nside, theta, phi, nest=nest, lonlat=lonlat)
 
 
-def pix2ang(nside: int, ipix: Tensor, nest: bool = False, lonlat: bool = False) -> tuple[Tensor, Tensor]:
+def pix2ang(
+    nside: int, ipix: Tensor, nest: bool = False, lonlat: bool = False
+) -> tuple[Tensor, Tensor]:
     return _healpix.pix2ang(nside, ipix, nest=nest, lonlat=lonlat)
 
 
@@ -93,7 +97,9 @@ def _require_hpgeom_for_strict(func_name: str):
     try:
         import hpgeom as hpg
     except Exception as exc:  # pragma: no cover - optional dependency
-        raise ImportError(f"strict compat.{func_name} requires optional dependency 'hpgeom'") from exc
+        raise ImportError(
+            f"strict compat.{func_name} requires optional dependency 'hpgeom'"
+        ) from exc
     return hpg
 
 
@@ -204,6 +210,7 @@ def query_ellipse(
     elif backend == "auto":
         try:
             import hpgeom as hpg
+
             use_hpgeom = True
         except Exception:
             use_hpgeom = False
@@ -212,7 +219,9 @@ def query_ellipse(
         raise ValueError("set only one of alpha/pa_deg")
     if alpha is None:
         alpha_in = 0.0 if pa_deg is None else float(pa_deg)
-        alpha_units = math.radians(alpha_in) if (not lonlat or not degrees) else alpha_in
+        alpha_units = (
+            math.radians(alpha_in) if (not lonlat or not degrees) else alpha_in
+        )
         pa_deg_eff = alpha_in
     else:
         alpha_units = float(alpha)
@@ -275,10 +284,20 @@ def query_ellipse(
                 inclusive=True,
             )
             if pix_hi.numel() == 0:
-                return _healpix.pixels_to_pixel_ranges(pix_hi) if return_pixel_ranges else pix_hi
-            parent_nest = torch.unique(torch.div(pix_hi, fact_i * fact_i, rounding_mode="floor"))
+                return (
+                    _healpix.pixels_to_pixel_ranges(pix_hi)
+                    if return_pixel_ranges
+                    else pix_hi
+                )
+            parent_nest = torch.unique(
+                torch.div(pix_hi, fact_i * fact_i, rounding_mode="floor")
+            )
             parent_nest = torch.sort(parent_nest).values
-            pix = parent_nest if nest else torch.sort(_healpix.nest2ring(nside, parent_nest)).values
+            pix = (
+                parent_nest
+                if nest
+                else torch.sort(_healpix.nest2ring(nside, parent_nest)).values
+            )
             return _healpix.pixels_to_pixel_ranges(pix) if return_pixel_ranges else pix
     pix = _query_ellipse(
         nside,
@@ -477,7 +496,9 @@ def alm2cl(
     lmax_out: int | None = None,
     nspec: int | None = None,
 ) -> Tensor:
-    return _alm2cl(alms1, alms2=alms2, lmax=lmax, mmax=mmax, lmax_out=lmax_out, nspec=nspec)
+    return _alm2cl(
+        alms1, alms2=alms2, lmax=lmax, mmax=mmax, lmax_out=lmax_out, nspec=nspec
+    )
 
 
 def alm2map(
@@ -546,7 +567,9 @@ def gauss_beam(fwhm: float, lmax: int = 512, pol: bool = False) -> Tensor:
     return _gaussian_beam(fwhm, lmax, pol=pol)
 
 
-def pixwin(nside: int, pol: bool = False, lmax: int | None = None) -> Tensor | tuple[Tensor, Tensor]:
+def pixwin(
+    nside: int, pol: bool = False, lmax: int | None = None
+) -> Tensor | tuple[Tensor, Tensor]:
     return _pixwin(nside, pol=pol, lmax=lmax)
 
 
@@ -559,7 +582,9 @@ def beam2bl(beam: Tensor, theta: Tensor, lmax: int) -> Tensor:
 
 
 def synalm(
-    cls: Tensor | list[Tensor | list[float] | None] | tuple[Tensor | list[float] | None, ...],
+    cls: Tensor
+    | list[Tensor | list[float] | None]
+    | tuple[Tensor | list[float] | None, ...],
     lmax: int | None = None,
     mmax: int | None = None,
     *,
@@ -570,7 +595,9 @@ def synalm(
 
 
 def synfast(
-    cls: Tensor | list[Tensor | list[float] | None] | tuple[Tensor | list[float] | None, ...],
+    cls: Tensor
+    | list[Tensor | list[float] | None]
+    | tuple[Tensor | list[float] | None, ...],
     nside: int,
     lmax: int | None = None,
     mmax: int | None = None,
@@ -607,7 +634,9 @@ def smoothalm(
     beam: Tensor | None = None,
     pol: bool = False,
 ) -> Tensor:
-    return _smoothalm(alm_values, lmax=lmax, mmax=mmax, fwhm_rad=fwhm_rad, beam=beam, pol=pol)
+    return _smoothalm(
+        alm_values, lmax=lmax, mmax=mmax, fwhm_rad=fwhm_rad, beam=beam, pol=pol
+    )
 
 
 def smoothmap(
@@ -692,7 +721,9 @@ def map2alm_spin(
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
 ) -> tuple[Tensor, Tensor]:
-    return _map2alm_spin(maps, spin, nside=nside, lmax=lmax, mmax=mmax, nest=nest, backend=backend)
+    return _map2alm_spin(
+        maps, spin, nside=nside, lmax=lmax, mmax=mmax, nest=nest, backend=backend
+    )
 
 
 def alm2map_spin(
@@ -705,7 +736,9 @@ def alm2map_spin(
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
 ) -> Tensor:
-    return _alm2map_spin(alms, nside, spin, lmax=lmax, mmax=mmax, nest=nest, backend=backend)
+    return _alm2map_spin(
+        alms, nside, spin, lmax=lmax, mmax=mmax, nest=nest, backend=backend
+    )
 
 
 # Re-export common APIs with familiar naming.

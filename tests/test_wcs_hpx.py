@@ -41,7 +41,9 @@ def test_hpx_forward_matches_astropy_across_equatorial_and_polar_samples() -> No
     py = yy.ravel()
 
     ra_ast, dec_ast = awcs.all_pix2world(px, py, 0)
-    ra_t, dec_t = twcs.pixel_to_world(torch.from_numpy(px), torch.from_numpy(py), origin=0)
+    ra_t, dec_t = twcs.pixel_to_world(
+        torch.from_numpy(px), torch.from_numpy(py), origin=0
+    )
 
     ra_t_np = ra_t.cpu().numpy()
     dec_t_np = dec_t.cpu().numpy()

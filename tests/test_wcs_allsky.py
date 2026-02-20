@@ -49,7 +49,9 @@ def test_allsky_forward_matches_astropy(proj: str) -> None:
     x, y = _grid()
 
     ra_ast, dec_ast = awcs.all_pix2world(x, y, 0)
-    ra_t, dec_t = twcs.pixel_to_world(torch.from_numpy(x), torch.from_numpy(y), origin=0)
+    ra_t, dec_t = twcs.pixel_to_world(
+        torch.from_numpy(x), torch.from_numpy(y), origin=0
+    )
 
     ra_t_np = ra_t.cpu().numpy()
     dec_t_np = dec_t.cpu().numpy()
@@ -84,7 +86,12 @@ def test_allsky_inverse_matches_astropy_interior(proj: str) -> None:
 
     x_t_np = x_t.cpu().numpy()
     y_t_np = y_t.cpu().numpy()
-    finite = np.isfinite(x_ast) & np.isfinite(y_ast) & np.isfinite(x_t_np) & np.isfinite(y_t_np)
+    finite = (
+        np.isfinite(x_ast)
+        & np.isfinite(y_ast)
+        & np.isfinite(x_t_np)
+        & np.isfinite(y_t_np)
+    )
     assert np.any(finite), f"No finite inverse overlap for {proj}"
 
     np.testing.assert_allclose(x_t_np[finite], x_ast[finite], atol=1e-6)

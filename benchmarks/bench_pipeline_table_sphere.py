@@ -47,7 +47,9 @@ def _write_synth_table(path: Path, n_rows: int, seed: int) -> None:
     dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, size=n_rows))).astype(np.float64)
     mag = rng.uniform(0.0, 1.0, size=n_rows).astype(np.float32)
     band = rng.integers(0, 6, size=n_rows, dtype=np.int16)
-    flux = (rng.normal(loc=1.0, scale=0.2, size=n_rows) * (1.0 + 0.1 * band)).astype(np.float32)
+    flux = (rng.normal(loc=1.0, scale=0.2, size=n_rows) * (1.0 + 0.1 * band)).astype(
+        np.float32
+    )
 
     hdu = fits.BinTableHDU.from_columns(
         [
@@ -87,8 +89,17 @@ def _sphere_reduce(ra_deg: np.ndarray, dec_deg: np.ndarray, nside: int) -> int:
     return checksum
 
 
-def _apply_filter_mask(mag: np.ndarray, band: np.ndarray, dec: np.ndarray) -> np.ndarray:
-    return (mag > 0.25) & (mag < 0.75) & (band > 0) & (band < 4) & (dec > -30.0) & (dec < 30.0)
+def _apply_filter_mask(
+    mag: np.ndarray, band: np.ndarray, dec: np.ndarray
+) -> np.ndarray:
+    return (
+        (mag > 0.25)
+        & (mag < 0.75)
+        & (band > 0)
+        & (band < 4)
+        & (dec > -30.0)
+        & (dec < 30.0)
+    )
 
 
 def _run_read_where(path: Path, where: str, backend: str, runs: int) -> Row:
@@ -104,7 +115,9 @@ def _run_read_where(path: Path, where: str, backend: str, runs: int) -> Row:
 
     def _fn() -> tuple[int, int]:
         if backend == "torch":
-            table = torchfits.table.read(str(path), hdu=1, columns=cols, where=None, backend="torch")
+            table = torchfits.table.read(
+                str(path), hdu=1, columns=cols, where=None, backend="torch"
+            )
             mag = _arrow_col_to_numpy(table, "MAG")
             band = _arrow_col_to_numpy(table, "BAND")
             dec = _arrow_col_to_numpy(table, "DEC")
@@ -131,7 +144,9 @@ def _run_read_where(path: Path, where: str, backend: str, runs: int) -> Row:
     )
 
 
-def _run_pipeline_where(path: Path, where: str, backend: str, nside: int, runs: int) -> Row:
+def _run_pipeline_where(
+    path: Path, where: str, backend: str, nside: int, runs: int
+) -> Row:
     cols = ["RA", "DEC", "MAG", "BAND"]
     filters = [
         ("MAG", ">", 0.25),
@@ -144,7 +159,9 @@ def _run_pipeline_where(path: Path, where: str, backend: str, nside: int, runs: 
 
     def _fn() -> tuple[int, int]:
         if backend == "torch":
-            table = torchfits.table.read(str(path), hdu=1, columns=cols, where=None, backend="torch")
+            table = torchfits.table.read(
+                str(path), hdu=1, columns=cols, where=None, backend="torch"
+            )
             ra_all = _arrow_col_to_numpy(table, "RA")
             dec_all = _arrow_col_to_numpy(table, "DEC")
             mag = _arrow_col_to_numpy(table, "MAG")
@@ -177,7 +194,9 @@ def _run_pipeline_no_pushdown(path: Path, nside: int, runs: int) -> Row:
     cols = ["RA", "DEC", "MAG", "BAND"]
 
     def _fn() -> tuple[int, int]:
-        table = torchfits.table.read(str(path), hdu=1, columns=cols, where=None, backend="cpp_numpy")
+        table = torchfits.table.read(
+            str(path), hdu=1, columns=cols, where=None, backend="cpp_numpy"
+        )
         ra = _arrow_col_to_numpy(table, "RA")
         dec = _arrow_col_to_numpy(table, "DEC")
         mag = _arrow_col_to_numpy(table, "MAG")
@@ -207,10 +226,20 @@ def _n_rows_in_table(path: Path) -> int:
 
 def _run_all_rows(table_path: Path, where: str, nside: int, runs: int) -> list[Row]:
     rows: list[Row] = []
-    rows.append(_run_read_where(table_path, where=where, backend="cpp_filtered", runs=runs))
+    rows.append(
+        _run_read_where(table_path, where=where, backend="cpp_filtered", runs=runs)
+    )
     rows.append(_run_read_where(table_path, where=where, backend="torch", runs=runs))
-    rows.append(_run_pipeline_where(table_path, where=where, backend="cpp_filtered", nside=nside, runs=runs))
-    rows.append(_run_pipeline_where(table_path, where=where, backend="torch", nside=nside, runs=runs))
+    rows.append(
+        _run_pipeline_where(
+            table_path, where=where, backend="cpp_filtered", nside=nside, runs=runs
+        )
+    )
+    rows.append(
+        _run_pipeline_where(
+            table_path, where=where, backend="torch", nside=nside, runs=runs
+        )
+    )
     rows.append(_run_pipeline_no_pushdown(table_path, nside=nside, runs=runs))
     return rows
 
@@ -222,20 +251,40 @@ def _compute_ratios_and_failures(
     min_pipeline_ratio_filtered_vs_no_pushdown: float,
     min_pipeline_ratio_torch_vs_no_pushdown: float,
 ) -> tuple[dict[str, float], list[str]]:
-    read_cpp = next(r for r in rows if r.operation == "read_where" and r.backend == "cpp_filtered")
-    read_torch = next(r for r in rows if r.operation == "read_where" and r.backend == "torch")
-    pipe_cpp = next(r for r in rows if r.operation == "pipeline_where" and r.backend == "cpp_filtered")
-    pipe_torch = next(r for r in rows if r.operation == "pipeline_where" and r.backend == "torch")
+    read_cpp = next(
+        r for r in rows if r.operation == "read_where" and r.backend == "cpp_filtered"
+    )
+    read_torch = next(
+        r for r in rows if r.operation == "read_where" and r.backend == "torch"
+    )
+    pipe_cpp = next(
+        r
+        for r in rows
+        if r.operation == "pipeline_where" and r.backend == "cpp_filtered"
+    )
+    pipe_torch = next(
+        r for r in rows if r.operation == "pipeline_where" and r.backend == "torch"
+    )
     pipe_no = next(r for r in rows if r.operation == "pipeline_no_pushdown")
 
     if read_cpp.n_rows_selected != read_torch.n_rows_selected:
         raise RuntimeError("row-count mismatch between cpp_numpy and torch where paths")
     if pipe_cpp.checksum != pipe_torch.checksum:
-        raise RuntimeError("pipeline checksum mismatch between cpp_numpy and torch where paths")
+        raise RuntimeError(
+            "pipeline checksum mismatch between cpp_numpy and torch where paths"
+        )
 
-    read_ratio = (read_cpp.mrows_s / read_torch.mrows_s) if read_torch.mrows_s > 0 else float("nan")
-    pipe_cpp_ratio = (pipe_cpp.mrows_s / pipe_no.mrows_s) if pipe_no.mrows_s > 0 else float("nan")
-    pipe_torch_ratio = (pipe_torch.mrows_s / pipe_no.mrows_s) if pipe_no.mrows_s > 0 else float("nan")
+    read_ratio = (
+        (read_cpp.mrows_s / read_torch.mrows_s)
+        if read_torch.mrows_s > 0
+        else float("nan")
+    )
+    pipe_cpp_ratio = (
+        (pipe_cpp.mrows_s / pipe_no.mrows_s) if pipe_no.mrows_s > 0 else float("nan")
+    )
+    pipe_torch_ratio = (
+        (pipe_torch.mrows_s / pipe_no.mrows_s) if pipe_no.mrows_s > 0 else float("nan")
+    )
 
     failures: list[str] = []
     if read_ratio < min_read_ratio_filtered_vs_torch:
@@ -263,15 +312,23 @@ def _compute_ratios_and_failures(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--table-path", type=Path, default=Path("bench_results/pipeline_table_sphere.fits"))
+    parser.add_argument(
+        "--table-path",
+        type=Path,
+        default=Path("bench_results/pipeline_table_sphere.fits"),
+    )
     parser.add_argument("--n-rows", type=int, default=1_000_000)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--nside", type=int, default=256)
     parser.add_argument("--regen", action="store_true")
     parser.add_argument("--min-read-ratio-filtered-vs-torch", type=float, default=0.2)
-    parser.add_argument("--min-pipeline-ratio-filtered-vs-no-pushdown", type=float, default=0.7)
-    parser.add_argument("--min-pipeline-ratio-torch-vs-no-pushdown", type=float, default=0.7)
+    parser.add_argument(
+        "--min-pipeline-ratio-filtered-vs-no-pushdown", type=float, default=0.7
+    )
+    parser.add_argument(
+        "--min-pipeline-ratio-torch-vs-no-pushdown", type=float, default=0.7
+    )
     parser.add_argument(
         "--retry-borderline-frac",
         type=float,
@@ -284,7 +341,11 @@ def main() -> int:
         default=7,
         help="Runs used for automatic borderline recheck.",
     )
-    parser.add_argument("--json-out", type=Path, default=Path("bench_results/pipeline_table_sphere.json"))
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=Path("bench_results/pipeline_table_sphere.json"),
+    )
     args = parser.parse_args()
 
     args.table_path.parent.mkdir(parents=True, exist_ok=True)
@@ -294,7 +355,9 @@ def main() -> int:
     if must_regen:
         _write_synth_table(args.table_path, n_rows=args.n_rows, seed=args.seed)
 
-    where = "MAG > 0.25 AND MAG < 0.75 AND BAND > 0 AND BAND < 4 AND DEC > -30 AND DEC < 30"
+    where = (
+        "MAG > 0.25 AND MAG < 0.75 AND BAND > 0 AND BAND < 4 AND DEC > -30 AND DEC < 30"
+    )
 
     rows = _run_all_rows(args.table_path, where=where, nside=args.nside, runs=args.runs)
     ratios, failures = _compute_ratios_and_failures(
@@ -324,7 +387,9 @@ def main() -> int:
                 "\nBorderline gate miss detected; re-running with "
                 f"{args.retry_runs} runs for stability check..."
             )
-            rows = _run_all_rows(args.table_path, where=where, nside=args.nside, runs=args.retry_runs)
+            rows = _run_all_rows(
+                args.table_path, where=where, nside=args.nside, runs=args.retry_runs
+            )
             ratios, failures = _compute_ratios_and_failures(
                 rows,
                 min_read_ratio_filtered_vs_torch=args.min_read_ratio_filtered_vs_torch,
@@ -332,7 +397,9 @@ def main() -> int:
                 min_pipeline_ratio_torch_vs_no_pushdown=args.min_pipeline_ratio_torch_vs_no_pushdown,
             )
 
-    print("operation              backend    selected_rows   mrows/s   time(s)   checksum")
+    print(
+        "operation              backend    selected_rows   mrows/s   time(s)   checksum"
+    )
     for r in rows:
         print(
             f"{r.operation:21s} {r.backend:9s} {r.n_rows_selected:13d}"

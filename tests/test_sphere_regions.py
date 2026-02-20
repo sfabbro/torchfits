@@ -117,9 +117,11 @@ def test_chained_boolean_regions() -> None:
     region = p1.union(p2).intersection(cap)
     assert isinstance(region, SphericalBooleanRegion)
 
-    vals = np.array([
-        bool(region.contains(-2.0, 0.0)),
-        bool(region.contains(2.0, 0.0)),
-        bool(region.contains(9.0, 0.0)),
-    ])
+    vals = np.array(
+        [
+            bool(region.contains(-2.0, 0.0)),
+            bool(region.contains(2.0, 0.0)),
+            bool(region.contains(9.0, 0.0)),
+        ]
+    )
     assert vals.tolist() == [True, True, False]

@@ -33,7 +33,9 @@ def test_spherical_polygon_signed_area_orientation() -> None:
     lon = torch.tensor([0.0, 90.0, 0.0], dtype=torch.float64)
     lat = torch.tensor([0.0, 0.0, 90.0], dtype=torch.float64)
     a_pos = spherical_polygon_signed_area(lon, lat)
-    a_neg = spherical_polygon_signed_area(torch.flip(lon, dims=[0]), torch.flip(lat, dims=[0]))
+    a_neg = spherical_polygon_signed_area(
+        torch.flip(lon, dims=[0]), torch.flip(lat, dims=[0])
+    )
     np.testing.assert_allclose(float(a_pos), math.pi / 2.0, atol=1e-12, rtol=0.0)
     np.testing.assert_allclose(float(a_neg), -math.pi / 2.0, atol=1e-12, rtol=0.0)
 
@@ -108,7 +110,9 @@ def test_spherical_polygon_area_units() -> None:
     lat = torch.tensor([0.0, 0.0, 90.0], dtype=torch.float64)
     sr = spherical_polygon_area(lon, lat, degrees=False)
     deg2 = spherical_polygon_area(lon, lat, degrees=True)
-    np.testing.assert_allclose(float(deg2), float(sr) * (180.0 / math.pi) ** 2, atol=1e-10, rtol=0.0)
+    np.testing.assert_allclose(
+        float(deg2), float(sr) * (180.0 / math.pi) ** 2, atol=1e-10, rtol=0.0
+    )
 
 
 def test_spherical_polygons_intersect_basic_cases() -> None:
@@ -168,8 +172,13 @@ def test_spherical_polygon_intersects_method_and_multipolygon() -> None:
 
 @pytest.mark.skipif(SGP is None, reason="spherical-geometry not available")
 def test_spherical_polygon_contains_matches_spherical_geometry() -> None:
-    lon_poly = np.array([106.0, 114.0, 130.0, 114.0, 106.0, 98.0, 82.0, 98.0, 106.0], dtype=np.float64)
-    lat_poly = np.array([-20.0, -15.0, -20.0, -25.0, -32.0, -25.0, -20.0, -15.0, -20.0], dtype=np.float64)
+    lon_poly = np.array(
+        [106.0, 114.0, 130.0, 114.0, 106.0, 98.0, 82.0, 98.0, 106.0], dtype=np.float64
+    )
+    lat_poly = np.array(
+        [-20.0, -15.0, -20.0, -25.0, -32.0, -25.0, -20.0, -15.0, -20.0],
+        dtype=np.float64,
+    )
     rng = np.random.default_rng(123)
     q_lon = rng.uniform(70.0, 140.0, size=2000)
     q_lat = rng.uniform(-40.0, -8.0, size=2000)
@@ -177,23 +186,33 @@ def test_spherical_polygon_contains_matches_spherical_geometry() -> None:
     if hasattr(SGP, "from_lonlat"):
         sg_poly = SGP.from_lonlat(lon_poly, lat_poly, degrees=True)
         sg_contains = np.asarray(
-            [sg_poly.contains_lonlat(float(lo), float(la), degrees=True) for lo, la in zip(q_lon, q_lat, strict=False)],
+            [
+                sg_poly.contains_lonlat(float(lo), float(la), degrees=True)
+                for lo, la in zip(q_lon, q_lat, strict=False)
+            ],
             dtype=bool,
         )
     elif hasattr(SGP, "from_radec"):
         sg_poly = SGP.from_radec(lon_poly, lat_poly, degrees=True)
         sg_contains = np.asarray(
-            [sg_poly.contains_radec(float(lo), float(la), degrees=True) for lo, la in zip(q_lon, q_lat, strict=False)],
+            [
+                sg_poly.contains_radec(float(lo), float(la), degrees=True)
+                for lo, la in zip(q_lon, q_lat, strict=False)
+            ],
             dtype=bool,
         )
     else:
         pytest.skip("unsupported spherical-geometry API")
 
-    tf_contains = spherical_polygon_contains(
-        torch.from_numpy(q_lon),
-        torch.from_numpy(q_lat),
-        torch.from_numpy(lon_poly),
-        torch.from_numpy(lat_poly),
-        inclusive=False,
-    ).cpu().numpy()
+    tf_contains = (
+        spherical_polygon_contains(
+            torch.from_numpy(q_lon),
+            torch.from_numpy(q_lat),
+            torch.from_numpy(lon_poly),
+            torch.from_numpy(lat_poly),
+            inclusive=False,
+        )
+        .cpu()
+        .numpy()
+    )
     np.testing.assert_array_equal(tf_contains, sg_contains)

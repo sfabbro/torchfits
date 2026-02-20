@@ -38,7 +38,9 @@ def _has_cpp_ring_fourier() -> bool:
         from torchfits import cpp as _cpp  # type: ignore
     except Exception:
         return False
-    return hasattr(_cpp, "_healpix_ring_fourier_modes_cpu") and hasattr(_cpp, "_healpix_ring_fourier_synthesis_cpu")
+    return hasattr(_cpp, "_healpix_ring_fourier_modes_cpu") and hasattr(
+        _cpp, "_healpix_ring_fourier_synthesis_cpu"
+    )
 
 
 def _has_cpp_spin_concat() -> bool:
@@ -46,7 +48,9 @@ def _has_cpp_spin_concat() -> bool:
         from torchfits import cpp as _cpp  # type: ignore
     except Exception:
         return False
-    return hasattr(_cpp, "_healpix_spin_interpolate_concat_cpu") and hasattr(_cpp, "_healpix_spin_integrate_concat_cpu")
+    return hasattr(_cpp, "_healpix_spin_interpolate_concat_cpu") and hasattr(
+        _cpp, "_healpix_spin_integrate_concat_cpu"
+    )
 
 
 def _has_cpp_spin_ring_fused() -> bool:
@@ -54,7 +58,9 @@ def _has_cpp_spin_ring_fused() -> bool:
         from torchfits import cpp as _cpp  # type: ignore
     except Exception:
         return False
-    return hasattr(_cpp, "_healpix_spin_map2alm_ring_concat_cpu") and hasattr(_cpp, "_healpix_spin_ring_finalize_cpu")
+    return hasattr(_cpp, "_healpix_spin_map2alm_ring_concat_cpu") and hasattr(
+        _cpp, "_healpix_spin_ring_finalize_cpu"
+    )
 
 
 def _random_alm(lmax: int, seed: int = 0) -> torch.Tensor:
@@ -71,7 +77,9 @@ def _random_alm(lmax: int, seed: int = 0) -> torch.Tensor:
     return torch.from_numpy(arr)
 
 
-def _random_spin_alms(lmax: int, spin: int = 2, seed: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
+def _random_spin_alms(
+    lmax: int, spin: int = 2, seed: int = 0
+) -> tuple[torch.Tensor, torch.Tensor]:
     rng = np.random.default_rng(seed)
     a_e = np.zeros(alm_size(lmax), dtype=np.complex128)
     a_b = np.zeros(alm_size(lmax), dtype=np.complex128)
@@ -159,12 +167,16 @@ def test_alm2cl_matches_healpy_scalar_and_pol() -> None:
     a_b = _random_alm(lmax, seed=33)
 
     got_s = alm2cl(a_t, lmax=lmax, mmax=lmax)
-    exp_s = torch.from_numpy(_hp.alm2cl(a_t.numpy(), lmax=lmax, mmax=lmax)).to(torch.float64)
+    exp_s = torch.from_numpy(_hp.alm2cl(a_t.numpy(), lmax=lmax, mmax=lmax)).to(
+        torch.float64
+    )
     torch.testing.assert_close(got_s, exp_s, atol=1e-12, rtol=0.0)
 
     alms = torch.stack([a_t, a_e, a_b], dim=0)
     got_p = alm2cl(alms, lmax=lmax, mmax=lmax)
-    exp_p = torch.from_numpy(_hp.alm2cl(alms.numpy(), lmax=lmax, mmax=lmax)).to(torch.float64)
+    exp_p = torch.from_numpy(_hp.alm2cl(alms.numpy(), lmax=lmax, mmax=lmax)).to(
+        torch.float64
+    )
     torch.testing.assert_close(got_p, exp_p, atol=1e-12, rtol=0.0)
 
 
@@ -173,13 +185,25 @@ def test_pixwin_matches_healpy() -> None:
     nside = 16
     lmax = 12
     got = pixwin(nside, pol=False, lmax=lmax)
-    exp = torch.from_numpy(_hp.pixwin(nside, pol=False, lmax=lmax).astype("float64").copy()).to(torch.float64)
+    exp = torch.from_numpy(
+        _hp.pixwin(nside, pol=False, lmax=lmax).astype("float64").copy()
+    ).to(torch.float64)
     torch.testing.assert_close(got, exp, atol=1e-12, rtol=0.0)
 
     got_t, got_p = pixwin(nside, pol=True, lmax=lmax)
     exp_t, exp_p = _hp.pixwin(nside, pol=True, lmax=lmax)
-    torch.testing.assert_close(got_t, torch.from_numpy(exp_t.astype(float)).to(torch.float64), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(got_p, torch.from_numpy(exp_p.astype(float)).to(torch.float64), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        got_t,
+        torch.from_numpy(exp_t.astype(float)).to(torch.float64),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        got_p,
+        torch.from_numpy(exp_p.astype(float)).to(torch.float64),
+        atol=1e-12,
+        rtol=0.0,
+    )
 
 
 @pytest.mark.skipif(_hp is None, reason="healpy not available")
@@ -193,7 +217,9 @@ def test_bl2beam_and_beam2bl_close_to_healpy() -> None:
     torch.testing.assert_close(beam_tf, beam_hp, atol=2e-6, rtol=2e-6)
 
     bl_tf = beam2bl(beam_tf, theta, lmax=lmax)
-    bl_hp = torch.from_numpy(_hp.beam2bl(beam_hp.numpy(), theta.numpy(), lmax=lmax)).to(torch.float64)
+    bl_hp = torch.from_numpy(_hp.beam2bl(beam_hp.numpy(), theta.numpy(), lmax=lmax)).to(
+        torch.float64
+    )
     torch.testing.assert_close(bl_tf, bl_hp, atol=1e-4, rtol=2e-4)
 
 
@@ -219,7 +245,9 @@ def test_synfast_pol_and_alm_output_shapes() -> None:
     lmax = 6
     z = torch.zeros((lmax + 1,), dtype=torch.float64)
     cls4 = [torch.ones_like(z), z.clone(), torch.ones_like(z), z.clone()]
-    maps, alms = synfast(cls4, nside=nside, lmax=lmax, mmax=lmax, alm=True, pol=True, new=False)
+    maps, alms = synfast(
+        cls4, nside=nside, lmax=lmax, mmax=lmax, alm=True, pol=True, new=False
+    )
     assert maps.shape == (3, hp.nside2npix(nside))
     assert alms.shape == (3, alm_size(lmax))
 
@@ -275,7 +303,9 @@ def test_map2alm_lsq_maxiter_zero_matches_single_pass() -> None:
         maxiter=0,
         backend="torch",
     )
-    rec = alm2map(alm_lsq, nside=nside, lmax=lmax, mmax=lmax, pol=False, backend="torch")
+    rec = alm2map(
+        alm_lsq, nside=nside, lmax=lmax, mmax=lmax, pol=False, backend="torch"
+    )
     rel_ref = float(torch.linalg.norm(m - rec) / torch.linalg.norm(m).clamp_min(1e-15))
     torch.testing.assert_close(alm_lsq, alm_ref, atol=1e-12, rtol=0.0)
     assert rel_res == pytest.approx(rel_ref, abs=1e-12)
@@ -322,7 +352,9 @@ def test_map2alm_lsq_torch_residual_close_to_healpy_on_random_map() -> None:
         maxiter=3,
         backend="torch",
     )
-    _, rel_hp, _ = _hp.map2alm_lsq(m.numpy(), lmax=lmax, mmax=lmax, pol=False, tol=1e-12, maxiter=3)
+    _, rel_hp, _ = _hp.map2alm_lsq(
+        m.numpy(), lmax=lmax, mmax=lmax, pol=False, tol=1e-12, maxiter=3
+    )
     assert rel_tf == pytest.approx(float(rel_hp), rel=0.0, abs=1e-8)
 
 
@@ -334,12 +366,16 @@ def test_healpy_backend_parity_small_case() -> None:
 
     map_tf = alm2map(alm, nside=nside, lmax=lmax, backend="torch")
     map_hp = alm2map(alm, nside=nside, lmax=lmax, backend="healpy")
-    diff = torch.linalg.norm(map_tf - map_hp) / torch.linalg.norm(map_hp).clamp_min(1e-15)
+    diff = torch.linalg.norm(map_tf - map_hp) / torch.linalg.norm(map_hp).clamp_min(
+        1e-15
+    )
     assert float(diff.item()) < 1.5e-1
 
     rec_tf = map2alm(map_hp, nside=nside, lmax=lmax, backend="torch")
     rec_hp = map2alm(map_hp, nside=nside, lmax=lmax, backend="healpy")
-    adiff = torch.linalg.norm(rec_tf - rec_hp) / torch.linalg.norm(rec_hp).clamp_min(1e-15)
+    adiff = torch.linalg.norm(rec_tf - rec_hp) / torch.linalg.norm(rec_hp).clamp_min(
+        1e-15
+    )
     assert float(adiff.item()) < 1.5e-1
 
 
@@ -352,7 +388,9 @@ def test_alm2map_infer_lmax() -> None:
 
 
 @pytest.mark.parametrize("nest", [False, True])
-def test_alm2map_scalar_cpp_direct_parity(monkeypatch: pytest.MonkeyPatch, nest: bool) -> None:
+def test_alm2map_scalar_cpp_direct_parity(
+    monkeypatch: pytest.MonkeyPatch, nest: bool
+) -> None:
     try:
         from torchfits import cpp as _cpp_mod
     except Exception:
@@ -400,7 +438,9 @@ def test_alm2map_scalar_ring_torch_autograd(monkeypatch: pytest.MonkeyPatch) -> 
     assert float(torch.linalg.norm(alm.grad)) > 0.0
 
 
-def test_alm2map_scalar_ring_torch_float32_finite(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_alm2map_scalar_ring_torch_float32_finite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     nside = 32
     lmax = 32
     nalm = alm_size(lmax)
@@ -444,7 +484,9 @@ def test_map2alm_scalar_ring_torch_autograd(monkeypatch: pytest.MonkeyPatch) -> 
     assert float(torch.linalg.norm(m.grad)) > 0.0
 
 
-def test_map2alm_scalar_ring_torch_float32_finite(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_map2alm_scalar_ring_torch_float32_finite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     nside = 32
     lmax = 32
     npix = hp.nside2npix(nside)
@@ -457,7 +499,9 @@ def test_map2alm_scalar_ring_torch_float32_finite(monkeypatch: pytest.MonkeyPatc
     assert torch.isfinite(alm.imag).all()
 
 
-def test_alm2map_scalar_cpp_flag_keeps_autograd(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_alm2map_scalar_cpp_flag_keeps_autograd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     nside = 8
     lmax = 6
     nalm = alm_size(lmax)
@@ -511,7 +555,14 @@ def test_smoothalm_reduces_high_l_power() -> None:
 
 def test_smoothalm_pol_component_beams() -> None:
     lmax = 10
-    alms = torch.stack([_random_alm(lmax, seed=11), _random_alm(lmax, seed=12), _random_alm(lmax, seed=13)], dim=0)
+    alms = torch.stack(
+        [
+            _random_alm(lmax, seed=11),
+            _random_alm(lmax, seed=12),
+            _random_alm(lmax, seed=13),
+        ],
+        dim=0,
+    )
     beam = torch.stack(
         [
             torch.linspace(1.0, 0.8, lmax + 1),
@@ -524,9 +575,24 @@ def test_smoothalm_pol_component_beams() -> None:
     assert sm.shape == alms.shape
     idx = alm_index(lmax, min(lmax, 3), lmax)
     ell = lmax
-    torch.testing.assert_close(sm[0, idx], alms[0, idx] * beam[ell, 0].to(torch.complex128), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(sm[1, idx], alms[1, idx] * beam[ell, 1].to(torch.complex128), atol=1e-12, rtol=0.0)
-    torch.testing.assert_close(sm[2, idx], alms[2, idx] * beam[ell, 2].to(torch.complex128), atol=1e-12, rtol=0.0)
+    torch.testing.assert_close(
+        sm[0, idx],
+        alms[0, idx] * beam[ell, 0].to(torch.complex128),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        sm[1, idx],
+        alms[1, idx] * beam[ell, 1].to(torch.complex128),
+        atol=1e-12,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        sm[2, idx],
+        alms[2, idx] * beam[ell, 2].to(torch.complex128),
+        atol=1e-12,
+        rtol=0.0,
+    )
 
 
 def test_smoothmap_variance_decreases() -> None:
@@ -534,7 +600,9 @@ def test_smoothmap_variance_decreases() -> None:
     npix = hp.nside2npix(nside)
     rng = np.random.default_rng(11)
     m = torch.from_numpy(rng.normal(size=npix)).to(torch.float64)
-    sm = smoothmap(m, nside=nside, lmax=24, fwhm_rad=math.radians(30.0 / 60.0), backend="torch")
+    sm = smoothmap(
+        m, nside=nside, lmax=24, fwhm_rad=math.radians(30.0 / 60.0), backend="torch"
+    )
     assert sm.shape == m.shape
     assert float(torch.var(sm)) < float(torch.var(m))
 
@@ -550,18 +618,24 @@ def test_pol_map2alm_alm2map_and_anafast_paths() -> None:
     alm_tf = map2alm(maps, nside=nside, lmax=lmax, pol=True, backend="torch")
     alm_hp = map2alm(maps, nside=nside, lmax=lmax, pol=True, backend="healpy")
     assert alm_tf.shape == alm_hp.shape == (3, alm_size(lmax))
-    rel_alm = torch.linalg.norm(alm_tf - alm_hp) / torch.linalg.norm(alm_hp).clamp_min(1e-15)
+    rel_alm = torch.linalg.norm(alm_tf - alm_hp) / torch.linalg.norm(alm_hp).clamp_min(
+        1e-15
+    )
     assert float(rel_alm) < 2.5e-1
 
     maps_tf = alm2map(alm_tf, nside=nside, lmax=lmax, pol=True, backend="torch")
     maps_hp = alm2map(alm_tf, nside=nside, lmax=lmax, pol=True, backend="healpy")
-    rel_map = torch.linalg.norm(maps_tf - maps_hp) / torch.linalg.norm(maps_hp).clamp_min(1e-15)
+    rel_map = torch.linalg.norm(maps_tf - maps_hp) / torch.linalg.norm(
+        maps_hp
+    ).clamp_min(1e-15)
     assert float(rel_map) < 2.5e-1
 
     cl_tf = anafast(maps, nside=nside, lmax=lmax, pol=True, backend="torch")
     cl_hp = anafast(maps, nside=nside, lmax=lmax, pol=True, backend="healpy")
     assert cl_tf.shape == cl_hp.shape == (6, lmax + 1)
-    rel_cl = torch.linalg.norm(cl_tf - cl_hp) / torch.linalg.norm(cl_hp).clamp_min(1e-15)
+    rel_cl = torch.linalg.norm(cl_tf - cl_hp) / torch.linalg.norm(cl_hp).clamp_min(
+        1e-15
+    )
     assert float(rel_cl) < 3.0e-1
 
 
@@ -570,7 +644,14 @@ def test_smoothmap_pol_torch_shapes() -> None:
     npix = hp.nside2npix(nside)
     rng = np.random.default_rng(777)
     maps = torch.from_numpy(rng.normal(size=(3, npix))).to(torch.float64)
-    sm = smoothmap(maps, nside=nside, lmax=12, sigma=math.radians(20.0 / 60.0), pol=True, backend="torch")
+    sm = smoothmap(
+        maps,
+        nside=nside,
+        lmax=12,
+        sigma=math.radians(20.0 / 60.0),
+        pol=True,
+        backend="torch",
+    )
     assert sm.shape == maps.shape
 
 
@@ -588,11 +669,20 @@ def test_spin_map2alm_alm2map_parity(spin: int) -> None:
     assert qu_rec.shape == qu.shape
 
     hp_a1, hp_a2 = _hp.map2alm_spin(qu.numpy(), spin=spin, lmax=lmax)
-    torch.testing.assert_close(a1, torch.from_numpy(hp_a1).to(torch.complex128), atol=3e-10, rtol=0.0)
-    torch.testing.assert_close(a2, torch.from_numpy(hp_a2).to(torch.complex128), atol=3e-10, rtol=0.0)
+    torch.testing.assert_close(
+        a1, torch.from_numpy(hp_a1).to(torch.complex128), atol=3e-10, rtol=0.0
+    )
+    torch.testing.assert_close(
+        a2, torch.from_numpy(hp_a2).to(torch.complex128), atol=3e-10, rtol=0.0
+    )
 
     hp_qu = _hp.alm2map_spin([hp_a1, hp_a2], nside=nside, spin=spin, lmax=lmax)
-    torch.testing.assert_close(qu_rec, torch.from_numpy(np.asarray(hp_qu)).to(torch.float64), atol=5e-10, rtol=0.0)
+    torch.testing.assert_close(
+        qu_rec,
+        torch.from_numpy(np.asarray(hp_qu)).to(torch.float64),
+        atol=5e-10,
+        rtol=0.0,
+    )
 
 
 @pytest.mark.skipif(_hp is None, reason="healpy not available")
@@ -608,15 +698,23 @@ def test_spin_high_l_parity_spotcheck() -> None:
     hp_ae, hp_ab = _hp.map2alm_spin(qu.numpy(), spin=spin, lmax=lmax)
     hp_ae_t = torch.from_numpy(hp_ae).to(torch.complex128)
     hp_ab_t = torch.from_numpy(hp_ab).to(torch.complex128)
-    rel_ae = torch.linalg.norm(ae - hp_ae_t) / torch.linalg.norm(hp_ae_t).clamp_min(1e-15)
-    rel_ab = torch.linalg.norm(ab - hp_ab_t) / torch.linalg.norm(hp_ab_t).clamp_min(1e-15)
+    rel_ae = torch.linalg.norm(ae - hp_ae_t) / torch.linalg.norm(hp_ae_t).clamp_min(
+        1e-15
+    )
+    rel_ab = torch.linalg.norm(ab - hp_ab_t) / torch.linalg.norm(hp_ab_t).clamp_min(
+        1e-15
+    )
     assert float(rel_ae) < 5e-10
     assert float(rel_ab) < 5e-10
 
     rec = alm2map_spin((ae, ab), nside=nside, spin=spin, lmax=lmax, backend="torch")
-    hp_rec = _hp.alm2map_spin([ae.numpy(), ab.numpy()], nside=nside, spin=spin, lmax=lmax)
+    hp_rec = _hp.alm2map_spin(
+        [ae.numpy(), ab.numpy()], nside=nside, spin=spin, lmax=lmax
+    )
     hp_rec_t = torch.from_numpy(np.asarray(hp_rec)).to(torch.float64)
-    rel_rec = torch.linalg.norm(rec - hp_rec_t) / torch.linalg.norm(hp_rec_t).clamp_min(1e-15)
+    rel_rec = torch.linalg.norm(rec - hp_rec_t) / torch.linalg.norm(hp_rec_t).clamp_min(
+        1e-15
+    )
     assert float(rel_rec) < 5e-10
 
 
@@ -640,7 +738,9 @@ def test_compat_spin_and_smoothing() -> None:
     npix = hp.nside2npix(nside)
     rng = np.random.default_rng(13)
     m = torch.from_numpy(rng.normal(size=npix)).to(torch.float64)
-    sm = compat.smoothmap(m, nside=nside, lmax=12, fwhm_rad=math.radians(20.0 / 60.0), backend="healpy")
+    sm = compat.smoothmap(
+        m, nside=nside, lmax=12, fwhm_rad=math.radians(20.0 / 60.0), backend="healpy"
+    )
     assert sm.shape == m.shape
 
     qu = torch.from_numpy(rng.normal(size=(2, npix))).to(torch.float64)
@@ -657,7 +757,9 @@ def test_spin_autograd_fallback_paths(spin: int) -> None:
 
     qu = torch.randn((2, npix), dtype=torch.float64, requires_grad=True)
     ae, ab = map2alm_spin(qu, spin=spin, nside=nside, lmax=lmax, backend="torch")
-    loss_map2 = (ae.real.square() + ae.imag.square() + ab.real.square() + ab.imag.square()).sum()
+    loss_map2 = (
+        ae.real.square() + ae.imag.square() + ab.real.square() + ab.imag.square()
+    ).sum()
     loss_map2.backward()
     assert qu.grad is not None
     assert torch.isfinite(qu.grad).all()
@@ -666,7 +768,9 @@ def test_spin_autograd_fallback_paths(spin: int) -> None:
     nalm = alm_size(lmax)
     ae_in = torch.randn((nalm,), dtype=torch.complex128, requires_grad=True)
     ab_in = torch.randn((nalm,), dtype=torch.complex128, requires_grad=True)
-    qu_rec = alm2map_spin((ae_in, ab_in), nside=nside, spin=spin, lmax=lmax, backend="torch")
+    qu_rec = alm2map_spin(
+        (ae_in, ab_in), nside=nside, spin=spin, lmax=lmax, backend="torch"
+    )
     loss_alm2 = qu_rec.square().sum()
     loss_alm2.backward()
     assert ae_in.grad is not None and ab_in.grad is not None
@@ -699,18 +803,26 @@ def test_map2alm_spin_ring_torch_parity_nested(monkeypatch: pytest.MonkeyPatch) 
     npix = hp.nside2npix(nside)
     rng = np.random.default_rng(1231)
     qu_ring = torch.from_numpy(rng.normal(size=(2, npix))).to(torch.float64)
-    qu_nest = torch.stack([hp.reorder(qu_ring[0], r2n=True), hp.reorder(qu_ring[1], r2n=True)], dim=0)
+    qu_nest = torch.stack(
+        [hp.reorder(qu_ring[0], r2n=True), hp.reorder(qu_ring[1], r2n=True)], dim=0
+    )
 
     monkeypatch.setenv("TORCHFITS_SPIN_MAP2ALM_RING_TORCH", "0")
-    a0, b0 = map2alm_spin(qu_nest, spin=spin, nside=nside, lmax=lmax, nest=True, backend="torch")
+    a0, b0 = map2alm_spin(
+        qu_nest, spin=spin, nside=nside, lmax=lmax, nest=True, backend="torch"
+    )
     monkeypatch.setenv("TORCHFITS_SPIN_MAP2ALM_RING_TORCH", "force")
-    a1, b1 = map2alm_spin(qu_nest, spin=spin, nside=nside, lmax=lmax, nest=True, backend="torch")
+    a1, b1 = map2alm_spin(
+        qu_nest, spin=spin, nside=nside, lmax=lmax, nest=True, backend="torch"
+    )
 
     torch.testing.assert_close(a1, a0, atol=1e-10, rtol=0.0)
     torch.testing.assert_close(b1, b0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_ring_fourier(), reason="C++ ring Fourier kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_ring_fourier(), reason="C++ ring Fourier kernels not available"
+)
 def test_map2alm_spin_ring_fourier_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -728,7 +840,9 @@ def test_map2alm_spin_ring_fourier_cpp_parity(monkeypatch: pytest.MonkeyPatch) -
     torch.testing.assert_close(b1, b0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_spin_concat(), reason="C++ spin concat kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_spin_concat(), reason="C++ spin concat kernels not available"
+)
 def test_map2alm_spin_concat_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -746,7 +860,9 @@ def test_map2alm_spin_concat_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None
     torch.testing.assert_close(b1, b0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_spin_ring_fused(), reason="C++ fused spin ring kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_spin_ring_fused(), reason="C++ fused spin ring kernels not available"
+)
 def test_map2alm_spin_ring_fused_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -773,7 +889,9 @@ def test_map2alm_spin_ring_torch_autograd(monkeypatch: pytest.MonkeyPatch) -> No
     npix = hp.nside2npix(nside)
     qu = torch.randn((2, npix), dtype=torch.float64, requires_grad=True)
     ae, ab = map2alm_spin(qu, spin=spin, nside=nside, lmax=lmax, backend="torch")
-    loss = (ae.real.square() + ae.imag.square() + ab.real.square() + ab.imag.square()).sum()
+    loss = (
+        ae.real.square() + ae.imag.square() + ab.real.square() + ab.imag.square()
+    ).sum()
     loss.backward()
     assert qu.grad is not None
     assert torch.isfinite(qu.grad).all()
@@ -800,13 +918,19 @@ def test_alm2map_spin_ring_torch_parity_nested(monkeypatch: pytest.MonkeyPatch) 
     a_e, a_b = _random_spin_alms(lmax, spin=spin, seed=1321)
 
     monkeypatch.setenv("TORCHFITS_SPIN_ALM2MAP_RING_TORCH", "0")
-    qu0 = alm2map_spin((a_e, a_b), nside=nside, spin=spin, lmax=lmax, nest=True, backend="torch")
+    qu0 = alm2map_spin(
+        (a_e, a_b), nside=nside, spin=spin, lmax=lmax, nest=True, backend="torch"
+    )
     monkeypatch.setenv("TORCHFITS_SPIN_ALM2MAP_RING_TORCH", "force")
-    qu1 = alm2map_spin((a_e, a_b), nside=nside, spin=spin, lmax=lmax, nest=True, backend="torch")
+    qu1 = alm2map_spin(
+        (a_e, a_b), nside=nside, spin=spin, lmax=lmax, nest=True, backend="torch"
+    )
     torch.testing.assert_close(qu1, qu0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_ring_fourier(), reason="C++ ring Fourier kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_ring_fourier(), reason="C++ ring Fourier kernels not available"
+)
 def test_alm2map_spin_ring_fourier_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -821,7 +945,9 @@ def test_alm2map_spin_ring_fourier_cpp_parity(monkeypatch: pytest.MonkeyPatch) -
     torch.testing.assert_close(qu1, qu0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_spin_concat(), reason="C++ spin concat kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_spin_concat(), reason="C++ spin concat kernels not available"
+)
 def test_alm2map_spin_concat_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -836,7 +962,9 @@ def test_alm2map_spin_concat_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None
     torch.testing.assert_close(qu1, qu0, atol=1e-10, rtol=0.0)
 
 
-@pytest.mark.skipif(not _has_cpp_spin_ring_fused(), reason="C++ fused spin ring kernels not available")
+@pytest.mark.skipif(
+    not _has_cpp_spin_ring_fused(), reason="C++ fused spin ring kernels not available"
+)
 def test_alm2map_spin_ring_finalize_cpp_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     nside = 16
     lmax = 12
@@ -860,7 +988,9 @@ def test_alm2map_spin_ring_torch_autograd(monkeypatch: pytest.MonkeyPatch) -> No
     nalm = alm_size(lmax)
     ae_in = torch.randn((nalm,), dtype=torch.complex128, requires_grad=True)
     ab_in = torch.randn((nalm,), dtype=torch.complex128, requires_grad=True)
-    qu_rec = alm2map_spin((ae_in, ab_in), nside=nside, spin=spin, lmax=lmax, backend="torch")
+    qu_rec = alm2map_spin(
+        (ae_in, ab_in), nside=nside, spin=spin, lmax=lmax, backend="torch"
+    )
     loss = qu_rec.square().sum()
     loss.backward()
     assert ae_in.grad is not None and ab_in.grad is not None
