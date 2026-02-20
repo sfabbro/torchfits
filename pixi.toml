@@ -82,12 +82,12 @@ bench-table-arrow = "python benchmarks/bench_arrow_tables.py"
 bench-table-arrow-diverse = "python benchmarks/bench_arrow_tables_diverse.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "python benchmarks/bench_all.py --profile user --include-tables"
-bench-all-keep = "python benchmarks/bench_all.py --profile user --include-tables --no-cleanup"
+bench-all = "python benchmarks/bench_all.py --profile user --include-tables --include-wcs --include-sphere"
+bench-all-keep = "python benchmarks/bench_all.py --profile user --include-tables --include-wcs --include-sphere --no-cleanup"
 
 # Comprehensive benchmark runner
-bench-all-runner = "python benchmarks/bench_all.py --profile user --include-tables"
-bench-all-force = "python benchmarks/bench_all.py --profile lab --include-tables"
+bench-all-runner = "python benchmarks/bench_all.py --profile user --include-tables --include-wcs --include-sphere"
+bench-all-force = "python benchmarks/bench_all.py --profile lab --include-tables --include-wcs --include-sphere"
 bench-transforms = "python benchmarks/bench_transforms.py"
 bench-buffer = "python benchmarks/bench_buffer.py"
 bench-cache = "python benchmarks/bench_cache.py"

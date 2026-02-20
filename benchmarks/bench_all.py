@@ -39,8 +39,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from astropy.io import fits as astropy_fits
 from astropy.io.fits import CompImageHDU
+try:
+    from astropy.wcs import WCS as AstropyWCS
+except ImportError:
+    AstropyWCS = None
 
 import torchfits
+try:
+    from torchfits.wcs.core import WCS as TorchWCS
+except ImportError:
+    TorchWCS = None
 
 
 class ExhaustiveBenchmarkSuite:
@@ -53,6 +61,8 @@ class ExhaustiveBenchmarkSuite:
         output_dir: Optional[Path] = None,
         use_mmap: bool = True,
         include_tables: bool = False,
+        include_wcs: bool = False,
+        include_sphere: bool = False,
         cache_capacity: int = 10,
         hot_cache_capacity: int = 10,
         handle_cache_capacity: int = 16,
@@ -70,6 +80,8 @@ class ExhaustiveBenchmarkSuite:
         self.focused_summary_file = self.output_dir / "focused_summary.md"
         self.use_mmap = use_mmap
         self.include_tables = include_tables
+        self.include_wcs = include_wcs
+        self.include_sphere = include_sphere
         self.cache_capacity = cache_capacity
         self.hot_cache_capacity = hot_cache_capacity
         self.handle_cache_capacity = handle_cache_capacity
@@ -558,6 +570,14 @@ class ExhaustiveBenchmarkSuite:
         # Table out-of-core scan benchmark (Arrow streaming)
         scan_results = self._bench_table_scan_arrow(files)
         detailed_results.extend(scan_results)
+
+        # WCS benchmark
+        wcs_results = self._bench_wcs(files)
+        detailed_results.extend(wcs_results)
+
+        # Sphere benchmark
+        sphere_results = self._bench_sphere(files)
+        detailed_results.extend(sphere_results)
 
         # Write CSV results
         with open(self.csv_file, "w", newline="") as f:
@@ -1934,6 +1954,208 @@ class ExhaustiveBenchmarkSuite:
 
         return [row]
 
+    def _bench_wcs(self, files: Dict[str, Path]) -> List[Dict]:
+        """Benchmark WCS performance against Astropy."""
+        if not self.include_wcs or AstropyWCS is None or TorchWCS is None:
+            if self.include_wcs:
+                print("⚠️ Skipping WCS benchmarks: astropy.wcs or torchfits.wcs not available")
+            return []
+
+        print("\n" + "=" * 100)
+        print("WCS PERFORMANCE BENCHMARK (pixel_to_world)")
+        print("=" * 100)
+
+        results = []
+        n_points = 200_000
+        runs = 5
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Create a representative WCS (TAN projection with SIP)
+        header = {
+            "NAXIS": 2,
+            "CTYPE1": "RA---TAN-SIP",
+            "CTYPE2": "DEC--TAN-SIP",
+            "CRVAL1": 180.0,
+            "CRVAL2": 0.0,
+            "CRPIX1": 2048.0,
+            "CRPIX2": 2048.0,
+            "CD1_1": -2.8e-4,
+            "CD1_2": 0.0,
+            "CD2_1": 0.0,
+            "CD2_2": 2.8e-4,
+            "A_ORDER": 2,
+            "A_2_0": 1e-6,
+            "B_ORDER": 2,
+            "B_0_2": 1e-6,
+        }
+
+        awcs = AstropyWCS(header)
+        twcs = TorchWCS(header).to(device)
+
+        rng = np.random.default_rng(42)
+        x = rng.uniform(0, 4096, n_points)
+        y = rng.uniform(0, 4096, n_points)
+        x_t = torch.from_numpy(x).to(device)
+        y_t = torch.from_numpy(y).to(device)
+
+        def tf_wcs():
+            with torch.no_grad():
+                return twcs.pixel_to_world(x_t, y_t)
+
+        def astropy_wcs():
+            return awcs.all_pix2world(x, y, 0)
+
+        tf_res = self._time_method(tf_wcs, "torchfits", runs=runs, use_median=True)
+        ast_res = self._time_method(astropy_wcs, "astropy", runs=runs, use_median=True)
+
+        row = {
+            "filename": "WCS_TAN_SIP",
+            "operation": "wcs_pixel_to_world",
+            "file_type": "wcs",
+            "size_mb": 0.0,
+            "data_type": "float64",
+            "dimensions": "2d",
+            "compression": "uncompressed",
+        }
+
+        if tf_res:
+            row["torchfits_mean"] = tf_res["mean"]
+            row["torchfits_std"] = tf_res["std"]
+            row["torchfits_median"] = tf_res["median"]
+            row["torchfits_mb_s"] = (n_points / 1e6) / tf_res["median"] # Using Mpts/s in mb_s column
+            row["torchfits_memory"] = tf_res["memory"]
+            row["torchfits_peak_memory"] = tf_res["peak_memory"]
+            row["torchfits_payload_mb"] = tf_res.get("payload_memory", 0.0)
+
+        if ast_res:
+            row["astropy_mean"] = ast_res["mean"]
+            row["astropy_std"] = ast_res["std"]
+            row["astropy_median"] = ast_res["median"]
+            row["astropy_mb_s"] = (n_points / 1e6) / ast_res["median"]
+            row["astropy_memory"] = ast_res["memory"]
+            row["astropy_peak_memory"] = ast_res["peak_memory"]
+            row["astropy_payload_mb"] = ast_res.get("payload_memory", 0.0)
+
+        if tf_res and ast_res:
+            row["best_method"] = "torchfits" if tf_res["median"] < ast_res["median"] else "astropy"
+            row["torchfits_rank"] = 1 if tf_res["median"] < ast_res["median"] else 2
+            row["speedup_vs_best"] = ast_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / ast_res["median"]
+
+        # Fill missing columns
+        for prefix in ["torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
+            for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
+                row.setdefault(f"{prefix}_{suffix}", None)
+        row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
+        row.setdefault("torchfits_rank_torch", 1 if tf_res and "torchfits" in row["best_method"] else 2)
+        row.setdefault("speedup_vs_best_torch", row["speedup_vs_best"] if tf_res and "torchfits" in row["best_method"] else None)
+        row.setdefault("best_method_numpy", "none")
+        row.setdefault("torchfits_numpy_rank", 999)
+        row.setdefault("speedup_vs_best_numpy", None)
+
+        print(f"torchfits (WCS): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
+        print(f"astropy (WCS):   {ast_res['median']:.6f}s (median, {(n_points/1e6)/ast_res['median']:.2f} Mpts/s)")
+        print(f"Speedup: {ast_res['median']/tf_res['median']:.2f}x")
+
+        results.append(row)
+        return results
+
+    def _bench_sphere(self, files: Dict[str, Path]) -> List[Dict]:
+        """Benchmark Sphere/HEALPix performance against healpy."""
+        try:
+            import healpy
+        except ImportError:
+            healpy = None
+
+        try:
+            import torchfits.wcs.healpix as tfhp
+        except ImportError:
+            tfhp = None
+
+        if not self.include_sphere or healpy is None or tfhp is None:
+            if self.include_sphere:
+                print("⚠️ Skipping Sphere benchmarks: healpy or torchfits.wcs.healpix not available")
+            return []
+
+        print("\n" + "=" * 100)
+        print("SPHERE/HEALPIX PERFORMANCE BENCHMARK (ang2pix_ring)")
+        print("=" * 100)
+
+        results = []
+        nside = 1024
+        n_points = 200_000
+        runs = 5
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        rng = np.random.default_rng(123)
+        ra = rng.uniform(0.0, 360.0, n_points)
+        dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, n_points)))
+        
+        ra_t = torch.from_numpy(ra).to(device)
+        dec_t = torch.from_numpy(dec).to(device)
+
+        def tf_sphere():
+            with torch.no_grad():
+                return tfhp.ang2pix_ring(nside, ra_t, dec_t)
+
+        def healpy_sphere():
+            return healpy.ang2pix(nside, ra, dec, lonlat=True, nest=False)
+
+        tf_res = self._time_method(tf_sphere, "torchfits", runs=runs, use_median=True)
+        hp_res = self._time_method(healpy_sphere, "healpy", runs=runs, use_median=True)
+
+        row = {
+            "filename": "HEALPix_NSIDE1024",
+            "operation": "sphere_ang2pix_ring",
+            "file_type": "sphere",
+            "size_mb": 0.0,
+            "data_type": "int64",
+            "dimensions": "1d",
+            "compression": "uncompressed",
+        }
+
+        if tf_res:
+            row["torchfits_mean"] = tf_res["mean"]
+            row["torchfits_std"] = tf_res["std"]
+            row["torchfits_median"] = tf_res["median"]
+            row["torchfits_mb_s"] = (n_points / 1e6) / tf_res["median"] # Using Mpts/s
+            row["torchfits_memory"] = tf_res["memory"]
+            row["torchfits_peak_memory"] = tf_res["peak_memory"]
+            row["torchfits_payload_mb"] = tf_res.get("payload_memory", 0.0)
+
+        # Mapping healpy to astropy columns for reporting consistency in this report
+        if hp_res:
+            row["astropy_mean"] = hp_res["mean"] # Reuse astropy column for healpy baseline
+            row["astropy_std"] = hp_res["std"]
+            row["astropy_median"] = hp_res["median"]
+            row["astropy_mb_s"] = (n_points / 1e6) / hp_res["median"]
+            row["astropy_memory"] = hp_res["memory"]
+            row["astropy_peak_memory"] = hp_res["peak_memory"]
+            row["astropy_payload_mb"] = hp_res.get("payload_memory", 0.0)
+
+        if tf_res and hp_res:
+            row["best_method"] = "torchfits" if tf_res["median"] < hp_res["median"] else "healpy"
+            row["torchfits_rank"] = 1 if tf_res["median"] < hp_res["median"] else 2
+            row["speedup_vs_best"] = hp_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / hp_res["median"]
+
+        # Fill missing columns
+        for prefix in ["torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
+            for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
+                row.setdefault(f"{prefix}_{suffix}", None)
+        row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
+        row.setdefault("torchfits_rank_torch", 1 if tf_res and "torchfits" in row["best_method"] else 2)
+        row.setdefault("speedup_vs_best_torch", row["speedup_vs_best"] if tf_res and "torchfits" in row["best_method"] else None)
+        row.setdefault("best_method_numpy", "none")
+        row.setdefault("torchfits_numpy_rank", 999)
+        row.setdefault("speedup_vs_best_numpy", None)
+
+        print(f"torchfits (Sphere): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
+        print(f"healpy (Sphere):    {hp_res['median']:.6f}s (median, {(n_points/1e6)/hp_res['median']:.2f} Mpts/s)")
+        print(f"Speedup: {hp_res['median']/tf_res['median']:.2f}x")
+
+        results.append(row)
+        return results
+
+
     def _astropy_cutout(self, path, hdu, x1, y1, x2, y2):
         try:
             with self._astropy_open(path, True) as hdul:
@@ -2432,20 +2654,20 @@ class ExhaustiveBenchmarkSuite:
             )
             f.write("\n")
 
-            # Test coverage summary
-            f.write("## Test Coverage Summary\n\n")
             f.write(f"- Total benchmark rows: {len(df)}\n")
             f.write(f"- Primary read benchmarks: {len(primary_df)}\n")
             f.write(f"- Additional operation benchmarks: {len(additional_df)}\n")
+            
+            if primary_df.empty and additional_df.empty:
+                f.write("\nNo benchmarks matched the current filter.\n")
+                return
+
             if primary_df.empty:
                 f.write("\nNo primary read benchmarks matched the current filter.\n")
-                f.write(
-                    "Tip: some cases are intentionally not generated (e.g. 'large_*_3d' is skipped "
-                    "to avoid large memory usage). Adjust --filter accordingly.\n"
-                )
-                return
-            f.write(f"- File types tested: {_format_unique(primary_df['file_type'])}\n")
-            f.write(f"- Data types tested: {_format_unique(primary_df['data_type'])}\n")
+            else:
+                f.write(f"- File types tested: {_format_unique(primary_df['file_type'])}\n")
+                f.write(f"- Data types tested: {_format_unique(primary_df['data_type'])}\n")
+            
             f.write(f"- MMap enabled: {self.use_mmap}\n")
             f.write(f"- TorchFits mmap mode: {self._torchfits_mmap_mode()}\n")
             f.write(f"- Tables included: {self.include_tables}\n")
@@ -2455,48 +2677,81 @@ class ExhaustiveBenchmarkSuite:
             f.write(f"- Cache capacity (hot): {self.hot_cache_capacity}\n\n")
             f.write(f"- Payload sanity min ratio: {self.payload_min_ratio:.2f}\n\n")
 
-            # Winner summary (avoids misreading 'torchfits_rank' when multiple TorchFits variants exist)
-            f.write("## Winner Summary\n\n")
-            best_overall = primary_df["best_method"].fillna("none").astype(str)
-            best_torch = primary_df["best_method_torch"].fillna("none").astype(str)
-            best_numpy = primary_df["best_method_numpy"].fillna("none").astype(str)
+            # Winner summary
+            if not primary_df.empty:
+                f.write("## Winner Summary\n\n")
+                best_overall = primary_df["best_method"].fillna("none").astype(str)
+                best_torch = primary_df["best_method_torch"].fillna("none").astype(str)
+                best_numpy = primary_df["best_method_numpy"].fillna("none").astype(str)
 
-            tf_family_wins = int(best_overall.str.startswith("torchfits").sum())
-            tf_default_wins = int((best_overall == "torchfits").sum())
-            tf_torch_wins = int((best_torch == "torchfits").sum())
-            tf_numpy_wins = int((best_numpy == "torchfits_numpy").sum())
-            n_primary = len(primary_df)
+                tf_family_wins = int(best_overall.str.startswith("torchfits").sum())
+                tf_default_wins = int((best_overall == "torchfits").sum())
+                tf_torch_wins = int((best_torch == "torchfits").sum())
+                tf_numpy_wins = int((best_numpy == "torchfits_numpy").sum())
+                n_primary = len(primary_df)
 
-            f.write(
-                f"- TorchFits family best overall: {tf_family_wins}/{n_primary} ({(tf_family_wins / max(n_primary, 1)):.1%})\n"
-            )
-            f.write(
-                f"- TorchFits (torch return) best: {tf_torch_wins}/{n_primary} ({(tf_torch_wins / max(n_primary, 1)):.1%})\n"
-            )
-            f.write(
-                f"- TorchFits (numpy return) best: {tf_numpy_wins}/{n_primary} ({(tf_numpy_wins / max(n_primary, 1)):.1%})\n"
-            )
-            f.write(
-                f"- TorchFits default (`torchfits`) best overall: {tf_default_wins}/{n_primary} ({(tf_default_wins / max(n_primary, 1)):.1%})\n"
-            )
-
-            # Show torch-returning misses explicitly (these are the true gaps vs fitsio_torch/astropy_torch)
-            misses = primary_df[best_torch != "torchfits"].copy()
-            if not misses.empty:
-                misses = misses.sort_values("speedup_vs_best_torch").head(10)
-                f.write("\nTop cases where TorchFits (torch) is not best:\n\n")
                 f.write(
-                    "| File | Type | Size (MB) | Best (torch) | Speedup vs Best (torch) |\n"
+                    f"- TorchFits family best overall: {tf_family_wins}/{n_primary} ({(tf_family_wins / max(n_primary, 1)):.1%})\n"
                 )
-                f.write("|---|---|---:|---|---:|\n")
-                for _, r in misses.iterrows():
-                    speedup = r.get("speedup_vs_best_torch")
-                    speedup_str = (
-                        f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
-                    )
+                f.write(
+                    f"- TorchFits (torch return) best: {tf_torch_wins}/{n_primary} ({(tf_torch_wins / max(n_primary, 1)):.1%})\n"
+                )
+                f.write(
+                    f"- TorchFits (numpy return) best: {tf_numpy_wins}/{n_primary} ({(tf_numpy_wins / max(n_primary, 1)):.1%})\n"
+                )
+                f.write(
+                    f"- TorchFits default (`torchfits`) best overall: {tf_default_wins}/{n_primary} ({(tf_default_wins / max(n_primary, 1)):.1%})\n"
+                )
+
+                # Show torch-returning misses explicitly
+                misses = primary_df[best_torch != "torchfits"].copy()
+                if not misses.empty:
+                    misses = misses.sort_values("speedup_vs_best_torch").head(10)
+                    f.write("\nTop cases where TorchFits (torch) is not best:\n\n")
                     f.write(
-                        f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r.get('best_method_torch', '-')} | {speedup_str} |\n"
+                        "| File | Type | Size (MB) | Best (torch) | Speedup vs Best (torch) |\n"
                     )
+                    f.write("|---|---|---:|---|---:|\n")
+                    for _, r in misses.iterrows():
+                        speedup = r.get("speedup_vs_best_torch")
+                        speedup_str = (
+                            f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
+                        )
+                        f.write(
+                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r.get('best_method_torch', '-')} | {speedup_str} |\n"
+                        )
+                f.write("\n")
+            
+            # WCS results
+            wcs_df = additional_df[additional_df["file_type"] == "wcs"]
+            if not wcs_df.empty:
+                f.write("## WCS Performance Summary\n\n")
+                f.write("| Operation | Best | torchfits (Mpts/s) | astropy (Mpts/s) | Speedup |\n")
+                f.write("|---|---|---|---|---:|\n")
+                for _, r in wcs_df.iterrows():
+                    tf_mpts = r.get("torchfits_mb_s", 0)
+                    ast_mpts = r.get("astropy_mb_s", 0)
+                    speedup = r.get("speedup_vs_best")
+                    f.write(
+                        f"| {r['operation']} | {r['best_method']} | {tf_mpts:.2f} | {ast_mpts:.2f} | {speedup:.2f}x |\n"
+                    )
+                f.write("\n")
+
+            # Sphere results
+            sphere_df = additional_df[additional_df["file_type"] == "sphere"]
+            if not sphere_df.empty:
+                f.write("## Sphere/HEALPix Performance Summary\n\n")
+                f.write("| Operation | Best | torchfits (Mpts/s) | healpy (Mpts/s) | Speedup |\n")
+                f.write("|---|---|---|---|---:|\n")
+                for _, r in sphere_df.iterrows():
+                    tf_mpts = r.get("torchfits_mb_s", 0)
+                    hp_mpts = r.get("astropy_mb_s", 0) # Mapped to astropy column in _bench_sphere
+                    speedup = r.get("speedup_vs_best")
+                    f.write(
+                        f"| {r['operation']} | {r['best_method']} | {tf_mpts:.2f} | {hp_mpts:.2f} | {speedup:.2f}x |\n"
+                    )
+                f.write("\n")
+
             f.write("\n\n")
 
             # Performance Summary Table
@@ -2506,7 +2761,7 @@ class ExhaustiveBenchmarkSuite:
             )
             f.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
 
-            for _, r in primary_df.iterrows():
+            for _, r in df.iterrows():
                 name = r["filename"]
                 operation = (
                     r.get("operation") if pd.notna(r.get("operation")) else "read_full"
@@ -3162,6 +3417,16 @@ def main():
         help="Include table benchmarks (off by default)",
     )
     parser.add_argument(
+        "--include-wcs",
+        action="store_true",
+        help="Include WCS benchmarks (off by default)",
+    )
+    parser.add_argument(
+        "--include-sphere",
+        action="store_true",
+        help="Include Sphere/HEALPix benchmarks (off by default)",
+    )
+    parser.add_argument(
         "--focused-only",
         action="store_true",
         help="Run only focused benchmarks (skip full suite)",
@@ -3264,6 +3529,8 @@ def main():
         output_dir=args.output_dir,
         use_mmap=use_mmap,
         include_tables=args.include_tables,
+        include_wcs=args.include_wcs,
+        include_sphere=args.include_sphere,
         cache_capacity=cache_capacity,
         hot_cache_capacity=hot_cache_capacity,
         handle_cache_capacity=handle_cache_capacity,
