@@ -17,16 +17,16 @@ Confirm changelog entry is finalized in `docs/changelog.md`.
 Run exhaustive benchmark:
 
 ```bash
-pixi run python benchmarks/benchmark_all.py \
+pixi run python benchmarks/bench_all.py \
   --profile user \
   --include-tables \
-  --output-dir benchmark_results/release_<version>_$(date +%Y%m%d_%H%M%S)
+  --output-dir bench_results/release_<version>_$(date +%Y%m%d_%H%M%S)
 ```
 
 Run ML loader benchmark:
 
 ```bash
-pixi run python benchmarks/benchmark_ml_loader.py \
+pixi run python benchmarks/bench_ml_loader.py \
   --device cpu \
   --shape 2048,2048 \
   --n-files 50 \

@@ -129,7 +129,7 @@ jobs:
     
     - name: Run performance benchmarks
       run: |
-        python benchmarks/benchmark_cpp_backend.py
+        python benchmarks/bench_cpp_backend.py
     
     - name: Generate performance report
       run: |

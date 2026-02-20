@@ -84,7 +84,7 @@ Benchmark tasks currently defined in `pixi.toml`:
 
 Additional benchmark script:
 
-- `pixi run python benchmarks/benchmark_ml_loader.py --device cpu`
+- `pixi run python benchmarks/bench_ml_loader.py --device cpu`
 
 Suggested regression workflow:
 
