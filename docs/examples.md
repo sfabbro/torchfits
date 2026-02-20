@@ -34,6 +34,13 @@ This directory contains examples of common `torchfits` workflows.
 | `example_phase2_features.py` | Feature-oriented workflow examples. |
 | `example_table_recipes.py` | Practical table mutation/scan recipes. |
 
+## Spherical Geometry & HEALPix
+
+| Example | Description |
+|---------|-------------|
+| `example_healpix.py` | Coordinates to pixels, disc queries, and map sampling. |
+| `example_spectral_sht.py` | Spherical Harmonic Transforms, smoothing, and GPU acceleration. |
+
 ## Running Examples
 
 All examples are executable Python scripts:

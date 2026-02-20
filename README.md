@@ -55,9 +55,9 @@ for batch in torchfits.table.scan("survey.fits", batch_size=50_000):
    process(batch)
 ```
 
-## Performance Snapshot (v0.2.1)
+## Performance Snapshot (v0.3.0 Readiness)
 
-TorchFits is designed to saturate modern IO subsystems, achieving a 100% win rate against standard baselines across our 88-case exhaustive benchmark suite. It delivers median speedups of **~2.5x** over `fitsio` and **>30x** over `astropy` for image I/O, while maintaining strict memory safety for massively large files. For machine learning pipelines, the custom `FITSDataset` and loader implementations match or exceed the throughput of optimized NumPy-based data loaders.
+TorchFits is designed to saturate modern IO subsystems, achieving a **97.6% win rate** against standard baselines across our exhaustive benchmark suite. It delivers median speedups of **~2.5x** over `fitsio` and **>30x** over `astropy` for image I/O, while maintaining strict memory safety for massively large files. For machine learning pipelines, the custom `FITSDataset` and loader implementations match or exceed the throughput of optimized NumPy-based data loaders.
 
 Full benchmarks: [`docs/benchmarks.md`](docs/benchmarks.md)
 

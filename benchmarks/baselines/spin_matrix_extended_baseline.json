@@ -1,0 +1,22 @@
+{
+  "name": "spin-matrix-extended-baseline",
+  "description": "Baseline medians for replay_upstream_healpy_spin extended case set on the torch ring path.",
+  "source": "/tmp/spin_matrix_pass3.json",
+  "case_set": "extended",
+  "runs": 3,
+  "seed": 123,
+  "median_ratio_by_bucket": {
+    "small": {
+      "map2alm_spin": 0.6109703319715867,
+      "alm2map_spin": 0.4590505174997611
+    },
+    "medium": {
+      "map2alm_spin": 0.12159971079357819,
+      "alm2map_spin": 0.06672467988383876
+    },
+    "large": {
+      "map2alm_spin": 0.07061000407913585,
+      "alm2map_spin": 0.035856712981403714
+    }
+  }
+}

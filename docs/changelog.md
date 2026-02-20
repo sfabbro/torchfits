@@ -5,6 +5,17 @@ All notable changes to torchfits will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0-dev] - 2026-02-20
+
+### Removed
+- **External Dependency Removal (WCSLIB)**: Completely removed `wcslib` C++ dependency. All coordinate transformations are now performed using a pure-PyTorch implementation (`torchfits.wcs`), significantly reducing binary size and simplifying the build process.
+- **Legacy Components**: Removed obsolete monolithic `wcs.py` and the redundant `torchfits.fits` namespace.
+- **Developmental Artifacts**: Cleaned up transient test artifacts, empty example data directories, and local tool metadata.
+
+### Changed
+- **WCS Resolution**: `torchfits.get_wcs` now consistently resolves to the PyTorch-native implementation.
+- **Build System**: Removed all `WCSLIB` detection and linking logic from `CMakeLists.txt`, `pixi.toml`, and `pyproject.toml`.
+
 ## [0.2.1] - 2026-02-14
 
 ### Performance Improvements
@@ -138,21 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Historical note for `0.1.0` at release time:
 - Python ≥ 3.11
 - PyTorch ≥ 2.0
-- pytorch-frame ≥ 0.2.0
 - NumPy ≥ 1.20
-- cfitsio (bundled as submodule)
-- wcslib (system dependency)
-
----
-
-## [Unreleased]
-
-### Planned
-- Additional compression algorithms (GZIP, HCOMPRESS)
-- Improved VLA column support
-- Async I/O for remote files
-- More WCS projection types
-- Performance optimizations for MPS device
+- cfitsio (bundled)
 
 [0.1.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.1.0
 [0.1.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.1.1

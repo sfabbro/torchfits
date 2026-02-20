@@ -34,14 +34,14 @@ To build `torchfits` from source, you'll need a C++ compiler and CMake.
 
 2.  **Vendor Dependencies:**
 
-    `torchfits` vendors its C dependencies (`cfitsio` and `wcslib`) to simplify installation. Run the vendoring script to prepare the source tree:
+    `torchfits` vendors its C dependency (`cfitsio`) to simplify installation. Run the vendoring script to prepare the source tree:
 
     ```bash
     ./extern/vendor.sh
     ```
 
-    This script downloads the required versions of `cfitsio` and `wcslib` and places them in the `extern/` directory.
-    It resolves latest tags by default; pin versions with `--cfitsio-version` and `--wcslib-version` for reproducible builds.
+    This script downloads the required version of `cfitsio` and places it in the `extern/` directory.
+    It resolves latest tags by default; pin version with `--cfitsio-version` for reproducible builds.
 
 3.  **Install:**
 
@@ -59,7 +59,7 @@ To build `torchfits` from source, you'll need a C++ compiler and CMake.
 
 ### Troubleshooting
 
-- **Missing `wcslib` or `cfitsio`?**
+- **Missing `cfitsio`?**
   Ensure you ran `./extern/vendor.sh` before installing. The build system expects these sources to be present in `extern/`.
 
 - **Compiler Errors?**

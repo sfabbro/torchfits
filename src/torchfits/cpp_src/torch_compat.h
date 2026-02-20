@@ -2,6 +2,7 @@
 
 #include <nanobind/nanobind.h>
 #include "torchfits_torch.h"
+#include <ATen/DLConvertor.h>
 #include <Python.h>
 
 namespace nb = nanobind;
@@ -17,22 +18,8 @@ inline bool THPVariable_Check(PyObject* obj) {
     return PyObject_IsInstance(obj, THPVariableClass);
 }
 
-// THPVariable struct definition (must match torch/csrc/autograd/python_variable.h)
-// This is necessary because THPVariable_Unpack is inline and accesses members directly.
-struct THPVariable {
-    PyObject_HEAD
-    c10::MaybeOwned<at::Tensor> cdata;
-    PyObject* backward_hooks;
-    PyObject* post_accumulate_grad_hooks;
-};
-
 // Extern declaration for THPVariable_Wrap (exported by libtorch_python)
 extern PyObject* THPVariable_Wrap(const at::TensorBase& var);
-
-// Unpack helper
-inline const at::Tensor& THPVariable_Unpack(PyObject* obj) {
-    return *(((THPVariable*)obj)->cdata);
-}
 
 // Helper function to convert torch::Tensor to Python object - FAST PATH
 inline nb::object tensor_to_python(const torch::Tensor& tensor) {
@@ -45,8 +32,27 @@ inline nb::object tensor_to_python(const torch::Tensor& tensor) {
 
 // Helper function to convert Python object to torch::Tensor - FAST PATH
 inline torch::Tensor python_to_tensor(nb::object obj) {
-    if (!THPVariable_Check(obj.ptr())) {
-        throw std::runtime_error("Object is not a PyTorch tensor");
+    if (!PyObject_HasAttrString(obj.ptr(), "__dlpack__")) {
+        throw std::runtime_error("Object does not implement __dlpack__");
     }
-    return THPVariable_Unpack(obj.ptr());
+    PyObject* capsule_obj = PyObject_CallMethod(obj.ptr(), "__dlpack__", nullptr);
+    if (!capsule_obj) {
+        throw nb::python_error();
+    }
+    nb::object capsule = nb::steal(capsule_obj);
+
+    auto* dl_managed = static_cast<DLManagedTensor*>(
+        PyCapsule_GetPointer(capsule.ptr(), "dltensor")
+    );
+    if (!dl_managed) {
+        throw nb::python_error();
+    }
+    auto t = at::fromDLPack(dl_managed);
+
+    // Mark the capsule as consumed to avoid the capsule destructor calling deleter
+    // a second time after ATen takes ownership.
+    if (PyCapsule_SetName(capsule.ptr(), "used_dltensor") != 0) {
+        PyErr_Clear();
+    }
+    return t;
 }

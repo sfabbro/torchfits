@@ -5,7 +5,7 @@ platforms = ["osx-arm64"]
 
 [package]
 name = "torchfits"
-version = "0.2.0"
+version = "0.3.0.dev0"
 description = "High-performance FITS I/O for PyTorch"
 authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 
@@ -19,19 +19,16 @@ nanobind = ">=2.10.2"
 scikit-build-core = ">=0.11.6"
 cmake = ">=3.21"
 ninja = ">=1.10"
-python = ">=3.11"
+python = ">=3.13"
 pytorch = ">=2.0"
 cfitsio = ">=4"
-wcslib = ">=7.11"
 
 # Host dependencies - libraries that will be linked into the package
 [package.host-dependencies]
-python = ">=3.11"
+python = ">=3.13"
 pytorch = ">=2.0"
 cfitsio = ">=4"
-wcslib = ">=7.11"
 nanobind = ">=2.10.2"
-
 
 # Run dependencies - packages needed at runtime
 [package.run-dependencies]
@@ -39,7 +36,6 @@ pytorch = ">=2.0"
 
 psutil = ">=5.0"  # For system resource monitoring
 cfitsio = ">=4"
-wcslib = ">=7.11"
 
 # Workspace dependencies - development environment
 [dependencies]
@@ -60,11 +56,10 @@ cmake = ">=3.21"
 ninja = ">=1.10"
 nanobind = ">=2.10.2"
 polars = ">=0.20"
-python = ">=3.11"
+python = ">=3.13"
 pytorch = ">=2.0"
 
 cfitsio = ">=4.4"
-wcslib = ">=8.0"
 tabulate = ">=0.9.0"
 twine = ">=5.0"
 
@@ -78,25 +73,25 @@ verify = "python verify_setup.py"
 release-manual = "twine upload release_0.2.1/*"
 
 # Core benchmarks (essential)
-bench = "python benchmarks/benchmark_all.py --output-dir benchmark_results --include-tables && python benchmarks/benchmark_table.py && python benchmarks/benchmark_arrow_tables.py --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --output benchmark_results/table_arrow_diverse_results.csv"
-bench-fast = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
-bench-fast-stable = "python benchmarks/benchmark_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3 && python benchmarks/benchmark_table.py --quick && python benchmarks/benchmark_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/benchmark_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
-bench-core = "python benchmarks/benchmark_fast.py"
-bench-table = "python benchmarks/benchmark_table.py"
-bench-table-arrow = "python benchmarks/benchmark_arrow_tables.py"
-bench-table-arrow-diverse = "python benchmarks/benchmark_arrow_tables_diverse.py"
+bench = "python benchmarks/bench_all.py --output-dir benchmark_results --include-tables && python benchmarks/bench_table.py && python benchmarks/bench_arrow_tables.py --output benchmark_results/table_arrow_results.csv && python benchmarks/bench_arrow_tables_diverse.py --output benchmark_results/table_arrow_diverse_results.csv"
+bench-fast = "python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv && python benchmarks/bench_table.py --quick && python benchmarks/bench_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/bench_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
+bench-fast-stable = "python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3 && python benchmarks/bench_table.py --quick && python benchmarks/bench_arrow_tables.py --rows 100000 --iterations 3 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_results.csv && python benchmarks/bench_arrow_tables_diverse.py --rows 50000 --iterations 2 --warmup 1 --batch-size 50000 --output benchmark_results/table_arrow_diverse_results.csv"
+bench-core = "python benchmarks/bench_fast.py"
+bench-table = "python benchmarks/bench_table.py"
+bench-table-arrow = "python benchmarks/bench_arrow_tables.py"
+bench-table-arrow-diverse = "python benchmarks/bench_arrow_tables_diverse.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "python benchmarks/benchmark_all.py --profile user --include-tables"
-bench-all-keep = "python benchmarks/benchmark_all.py --profile user --include-tables --no-cleanup"
+bench-all = "python benchmarks/bench_all.py --profile user --include-tables"
+bench-all-keep = "python benchmarks/bench_all.py --profile user --include-tables --no-cleanup"
 
 # Comprehensive benchmark runner
-bench-all-runner = "python benchmarks/benchmark_all.py --profile user --include-tables"
-bench-all-force = "python benchmarks/benchmark_all.py --profile lab --include-tables"
-bench-transforms = "python benchmarks/benchmark_transforms.py"
-bench-buffer = "python benchmarks/benchmark_buffer.py"
-bench-cache = "python benchmarks/benchmark_cache.py"
-bench-focused = "python benchmarks/benchmark_transforms.py && python benchmarks/benchmark_buffer.py && python benchmarks/benchmark_cache.py"
+bench-all-runner = "python benchmarks/bench_all.py --profile user --include-tables"
+bench-all-force = "python benchmarks/bench_all.py --profile lab --include-tables"
+bench-transforms = "python benchmarks/bench_transforms.py"
+bench-buffer = "python benchmarks/bench_buffer.py"
+bench-cache = "python benchmarks/bench_cache.py"
+bench-focused = "python benchmarks/bench_transforms.py && python benchmarks/bench_buffer.py && python benchmarks/bench_cache.py"
 
 # Pytest-based benchmarking
 bench-pytest = "pytest benchmarks/ --benchmark-only"
@@ -110,6 +105,43 @@ test-comprehensive = "python examples/example_ml_pipeline.py"
 test-transforms = "python -m pytest tests/test_transforms.py -v"
 test-dataloader = "python -m pytest tests/test_dataloader.py -v"
 test-buffer = "python -m pytest tests/test_buffer.py -v"
+sphere-bench-bootstrap = "python scripts/bootstrap_sphere_bench.py --installer pip"
+sphere-bench-bootstrap-core = "python scripts/bootstrap_sphere_bench.py --installer pip --include astropy-healpix,hpgeom,healpix,mhealpy"
+sphere-bench-bootstrap-harmonics = "python scripts/bootstrap_sphere_bench.py --installer pip --with-harmonics"
+sphere-upstream-sync = "python scripts/sync_upstream_sphere_sources.py --prefer-sdist --include healpy,astropy-healpix,healpix,mhealpy,spherical-geometry --output-dir benchmark_results/upstream_fixtures"
+sphere-upstream-replay = "python benchmarks/replay_upstream_astropy_healpy.py --n-points 200000 --runs 5 --json-out benchmark_results/upstream_replay_astropy_healpy.json"
+sphere-upstream-gate = "python benchmarks/replay_upstream_astropy_healpy.py --n-points 200000 --runs 5 --max-index-mismatches 0 --max-pix2ang-dra-deg 1e-10 --max-pix2ang-ddec-deg 1e-10 --min-ratio-vs-healpy ang2pix_ring=1.8,ang2pix_nested=1.35,pix2ang_ring=1.1,pix2ang_nested=1.0,ring2nest=1.05,nest2ring=1.0 --json-out benchmark_results/upstream_replay_astropy_healpy.json"
+sphere-upstream-test-replay = "python benchmarks/replay_upstream_test_functions.py --json-out benchmark_results/upstream_replay_test_functions.json"
+sphere-upstream-test-gate = "python benchmarks/replay_upstream_test_functions.py --json-out benchmark_results/upstream_replay_test_functions.json"
+sphere-upstream-spin-replay = "python benchmarks/replay_upstream_healpy_spin.py --runs 5 --json-out benchmark_results/upstream_replay_healpy_spin.json"
+sphere-upstream-spin-gate = "python benchmarks/replay_upstream_healpy_spin.py --runs 5 --max-map2alm-rel-error 1e-9 --max-alm2map-rel-error 1e-9 --min-ratio-vs-healpy map2alm_spin=0.20,alm2map_spin=0.15 --json-out benchmark_results/upstream_replay_healpy_spin.json"
+sphere-upstream-spin-replay-extended = "python benchmarks/replay_upstream_healpy_spin.py --case-set extended --runs 5 --disable-gates --json-out benchmark_results/upstream_replay_healpy_spin_extended.json"
+sphere-upstream-spin-gate-extended = "python benchmarks/benchmark_spin_matrix.py --case-set extended --runs 5 --seed 123 --json-out benchmark_results/upstream_replay_healpy_spin_matrix.json --raw-json-out benchmark_results/upstream_replay_healpy_spin_extended_raw.json --baseline-json benchmarks/baselines/spin_matrix_extended_baseline.json --max-regression-frac 0.20"
+sphere-upstream-spin-matrix = "python benchmarks/benchmark_spin_matrix.py --case-set extended --runs 5 --json-out benchmark_results/upstream_replay_healpy_spin_matrix.json --raw-json-out benchmark_results/upstream_replay_healpy_spin_extended_raw.json"
+sphere-upstream-spin-matrix-gate = "python benchmarks/benchmark_spin_matrix.py --case-set extended --runs 5 --seed 123 --json-out benchmark_results/upstream_replay_healpy_spin_matrix.json --raw-json-out benchmark_results/upstream_replay_healpy_spin_extended_raw.json --baseline-json benchmarks/baselines/spin_matrix_extended_baseline.json --max-regression-frac 0.20"
+sphere-upstream-interp-edge-replay = "python benchmarks/replay_upstream_healpy_interp_edges.py --runs 7 --json-out benchmark_results/upstream_replay_healpy_interp_edges.json"
+sphere-upstream-interp-edge-gate = "python benchmarks/replay_upstream_healpy_interp_edges.py --runs 7 --max-weight-mismatches 0 --max-val-max-abs 1e-9 --min-ratio-vs-healpy interp_weights_edge=0.8,interp_val_edge=0.7,interp_weights_pix_edge=1.0 --json-out benchmark_results/upstream_replay_healpy_interp_edges.json"
+sphere-upstream-polygon-replay = "python benchmarks/replay_upstream_spherical_geometry_polygons.py --n-points 20000 --runs 3 --intersection-nside 512 --difficult-area-nsides 128,256,512,1024,2048,4096,8192,16384 --json-out benchmark_results/upstream_replay_spherical_geometry_polygons.json"
+sphere-upstream-polygon-gate = "python benchmarks/replay_upstream_spherical_geometry_polygons.py --n-points 20000 --runs 3 --intersection-nside 512 --difficult-area-nsides 128,256,512,1024,2048,4096,8192,16384 --max-contains-mismatches-nonboundary 0 --max-pair-intersection-mismatches 0 --max-difficult-nonempty-mismatches 0 --max-area-rel-error 1e-10 --max-difficult-area-rel-error-final 0.12 --max-difficult-area-convergence-rel 0.10 --json-out benchmark_results/upstream_replay_spherical_geometry_polygons.json"
+sphere-bench-geometry = "python benchmarks/bench_sphere_geometry.py --nside 1024 --n-points 200000 --runs 5 --device auto --sample-profile mixed --json-out benchmark_results/sphere_geometry.json --csv-out benchmark_results/sphere_geometry.csv"
+sphere-bench-geometry-ecosystem = "python benchmarks/bench_sphere_geometry.py --device cpu --sample-profile mixed --nside 1024 --n-points 200000 --runs 5 --libraries torchfits,healpy,hpgeom,astropy-healpix,healpix,mhealpy --json-out benchmark_results/sphere_geometry_ecosystem.json --csv-out benchmark_results/sphere_geometry_ecosystem.csv"
+sphere-bench-geometry-fast = "python benchmarks/bench_sphere_geometry.py --nside 256 --n-points 50000 --runs 3 --device auto --sample-profile mixed"
+sphere-bench-geometry-matrix = "python benchmarks/bench_sphere_matrix.py --device cpu --nside 1024 --n-points 200000 --runs 5 --strict-missing --output-dir benchmark_results/sphere_matrix_latest"
+sphere-bench-geometry-gate = "python benchmarks/bench_sphere_matrix.py --device cpu --nside 1024 --n-points 200000 --runs 5 --strict-missing --output-dir benchmark_results/sphere_matrix_latest --min-median-ratio-vs-healpy ang2pix_ring=1.8,ang2pix_nested=1.35,pix2ang_ring=1.15,pix2ang_nested=1.0,ring2nest=1.05,nest2ring=1.35"
+sphere-bench-geometry-matrix-small = "python benchmarks/bench_sphere_matrix.py --device cpu --nside 1024 --n-points 20000 --runs 9 --strict-missing --output-dir benchmark_results/sphere_matrix_small_latest"
+sphere-bench-geometry-gate-small = "python benchmarks/bench_sphere_matrix.py --device cpu --nside 1024 --n-points 20000 --runs 9 --strict-missing --output-dir benchmark_results/sphere_matrix_small_latest --min-median-ratio-vs-healpy ang2pix_ring=1.6,ang2pix_nested=1.25,pix2ang_ring=1.1,pix2ang_nested=0.95,ring2nest=1.05,nest2ring=1.3"
+sphere-bench-healpix-cpu = "python benchmarks/bench_healpix.py --device cpu --sample-profile mixed --nside 1024 --n-points 200000 --runs 5 --max-index-mismatches 0 --max-pix2ang-dra-deg 1e-10 --max-pix2ang-ddec-deg 1e-10"
+sphere-bench-healpix-mps = "python benchmarks/bench_healpix.py --device mps --compare-cpu --sample-profile uniform --nside 1024 --n-points 200000 --runs 5 --max-index-mismatches 10 --max-pix2ang-dra-deg 5e-4 --max-pix2ang-ddec-deg 5e-4"
+sphere-bench-healpix-advanced = "python benchmarks/bench_healpix_advanced.py --device cpu --nside 1024 --n-points 200000 --runs 5 --json-out benchmark_results/healpix_advanced.json"
+sphere-bench-healpix-advanced-gate = "python benchmarks/bench_healpix_advanced.py --device cpu --nside 1024 --n-points 200000 --runs 5 --min-ratio-vs-healpy neighbors_ring=1.0,neighbors_nested=0.9,interp_weights_ring=1.1,interp_weights_nested=1.1,interp_val_ring=0.9,interp_val_nested=0.95 --json-out benchmark_results/healpix_advanced.json"
+sphere-bench-healpix-advanced-gate-small = "python benchmarks/bench_healpix_advanced.py --device cpu --nside 1024 --n-points 20000 --runs 9 --min-ratio-vs-healpy neighbors_ring=0.85,neighbors_nested=0.4,interp_weights_ring=1.1,interp_weights_nested=1.1,interp_val_ring=0.85,interp_val_nested=1.0 --json-out benchmark_results/healpix_advanced_small.json"
+sphere-bench-core = "python benchmarks/bench_sphere_core.py --device auto --nside 256 --n-points 100000 --n-bands 8 --runs 5 --json-out benchmark_results/sphere_core.json"
+sphere-bench-polygons = "python benchmarks/bench_sphere_polygons.py --nside 512 --n-points 200000 --runs 5 --json-out benchmark_results/sphere_polygons.json"
+sphere-bench-spectral = "python benchmarks/bench_sphere_spectral.py --nside 32 --lmax 32 --runs 7 --json-out benchmark_results/sphere_spectral.json"
+sphere-bench-sparse = "python benchmarks/bench_sphere_sparse.py --nside 512 --coverage-frac 0.1 --n-queries 200000 --runs 5 --json-out benchmark_results/sphere_sparse.json"
+sphere-bench-sparse-gate = "python benchmarks/bench_sphere_sparse.py --nside 512 --coverage-frac 0.1 --n-queries 200000 --runs 5 --min-ratio-sparse-udgrade-vs-dense 1.0 --json-out benchmark_results/sphere_sparse.json"
+sphere-bench-pipeline = "python benchmarks/bench_pipeline_table_sphere.py --n-rows 1000000 --runs 3 --nside 256 --json-out benchmark_results/pipeline_table_sphere.json"
+sphere-bench-pipeline-gate = "python benchmarks/bench_pipeline_table_sphere.py --n-rows 1000000 --runs 3 --nside 256 --min-read-ratio-filtered-vs-torch 0.2 --min-pipeline-ratio-filtered-vs-no-pushdown 0.7 --min-pipeline-ratio-torch-vs-no-pushdown 0.7 --json-out benchmark_results/pipeline_table_sphere.json"
 
 # Test feature with comparison libraries
 [feature.test.dependencies]
@@ -126,8 +158,16 @@ pandas = ">=2.2"
 psutil = ">=5.9"
 pytest-benchmark = ">=4.0"
 
+[feature.sphere-bench.dependencies]
+healpy = ">=1.19.0,<2"
+spherical-geometry = ">=1.2"
+cython = ">=3.0"
+pybind11 = ">=2.12"
+hypothesis = ">=6.0"
+
 # Environment definitions
 [environments]
 default = { solve-group = "default" }
 test = { features = ["test"], solve-group = "default" }
 bench = { features = ["bench"], solve-group = "default" }
+sphere-bench = { features = ["bench", "sphere-bench"], solve-group = "default" }

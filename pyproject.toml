@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "0.2.1"
+version = "0.3.0.dev0"
 description = "High-performance FITS I/O for PyTorch"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
@@ -83,16 +83,18 @@ cmake.source-dir = "src/torchfits/cpp_src"
 cmake.build-type = "Release"
 cmake.args = [
     "-DTORCHFITS_USE_VENDORED_CFITSIO=ON",
-    "-DTORCHFITS_USE_VENDORED_WCSLIB=ON",
     "-DTORCHFITS_NIOBUF=80",
     "-DTORCHFITS_MINDIRECT=16384",
     "-DUSE_CUDA=OFF",
+    "-DCMAKE_C_FLAGS=-march=native -O3",
+    "-DCMAKE_CXX_FLAGS=-march=native -O3",
 ]
 
 # Configures the install directory for the compiled extension.
 # This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.
 install.strip = false
 wheel.packages = ["src/torchfits"]
+sdist.include = ["src/torchfits/sphere/data/pixel_window_functions/*.fits"]
 
 # This setting enables CMake's incremental build feature. When you re-run the build,
 # CMake and Ninja will automatically detect which C++ files have changed and only
