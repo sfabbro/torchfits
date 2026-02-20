@@ -19,8 +19,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from torchfits.wcs.core import WCS as TorchWCS
-from bench_wcs import CASES, _make_header, _sample_pixels
+from torchfits.wcs.core import WCS as TorchWCS  # noqa: E402
+from bench_wcs import CASES, _make_header, _sample_pixels  # noqa: E402
 
 try:
     import starlink.Ast as Ast  # type: ignore
@@ -45,7 +45,9 @@ def _time_one(fn) -> float:
     return time.perf_counter() - t0
 
 
-def _angular_sep_deg(ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: np.ndarray) -> np.ndarray:
+def _angular_sep_deg(
+    ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: np.ndarray
+) -> np.ndarray:
     r1 = np.deg2rad(ra1)
     d1 = np.deg2rad(dec1)
     r2 = np.deg2rad(ra2)
@@ -56,7 +58,9 @@ def _angular_sep_deg(ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: n
     return np.rad2deg(2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0))))
 
 
-def _run_pyast(header: dict[str, Any], x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray, np.ndarray] | None:
+def _run_pyast(
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray
+) -> tuple[float, np.ndarray, np.ndarray] | None:
     if not HAS_PYAST:
         return None
 
@@ -82,7 +86,9 @@ def _run_pyast(header: dict[str, Any], x: np.ndarray, y: np.ndarray) -> tuple[fl
         return None
 
 
-def _run_kapteyn(header: dict[str, Any], x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray, np.ndarray] | None:
+def _run_kapteyn(
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray
+) -> tuple[float, np.ndarray, np.ndarray] | None:
     if not HAS_KAPTEYN:
         return None
 
@@ -102,7 +108,9 @@ def _run_kapteyn(header: dict[str, Any], x: np.ndarray, y: np.ndarray) -> tuple[
         return None
 
 
-def run_case(case_name: str, n_points: int, origin: int, seed: int, profile: str) -> dict[str, Any]:
+def run_case(
+    case_name: str, n_points: int, origin: int, seed: int, profile: str
+) -> dict[str, Any]:
     case = CASES[case_name]
     header = _make_header(case)
     header_dict = dict(header)
@@ -136,7 +144,14 @@ def run_case(case_name: str, n_points: int, origin: int, seed: int, profile: str
         "astropy_ms": ast_dt * 1000.0,
         "torchfits_ms": torch_dt * 1000.0,
         "torchfits_speedup": ast_dt / torch_dt,
-        "torchfits_max_angular_error_arcsec": float(np.max(_angular_sep_deg(ra_t_np[valid], dec_t_np[valid], ra_ast[valid], dec_ast[valid])) * 3600.0),
+        "torchfits_max_angular_error_arcsec": float(
+            np.max(
+                _angular_sep_deg(
+                    ra_t_np[valid], dec_t_np[valid], ra_ast[valid], dec_ast[valid]
+                )
+            )
+            * 3600.0
+        ),
     }
 
     pyast = _run_pyast(header_dict, x, y)
@@ -146,7 +161,12 @@ def run_case(case_name: str, n_points: int, origin: int, seed: int, profile: str
         result["pyast_ms"] = pyast_dt * 1000.0
         result["pyast_speedup"] = ast_dt / pyast_dt
         result["pyast_max_angular_error_arcsec"] = float(
-            np.max(_angular_sep_deg(ra_p[valid_p], dec_p[valid_p], ra_ast[valid_p], dec_ast[valid_p])) * 3600.0
+            np.max(
+                _angular_sep_deg(
+                    ra_p[valid_p], dec_p[valid_p], ra_ast[valid_p], dec_ast[valid_p]
+                )
+            )
+            * 3600.0
         )
     else:
         result["pyast_ms"] = float("nan")
@@ -160,7 +180,12 @@ def run_case(case_name: str, n_points: int, origin: int, seed: int, profile: str
         result["kapteyn_ms"] = kap_dt * 1000.0
         result["kapteyn_speedup"] = ast_dt / kap_dt
         result["kapteyn_max_angular_error_arcsec"] = float(
-            np.max(_angular_sep_deg(ra_k[valid_k], dec_k[valid_k], ra_ast[valid_k], dec_ast[valid_k])) * 3600.0
+            np.max(
+                _angular_sep_deg(
+                    ra_k[valid_k], dec_k[valid_k], ra_ast[valid_k], dec_ast[valid_k]
+                )
+            )
+            * 3600.0
         )
     else:
         result["kapteyn_ms"] = float("nan")
