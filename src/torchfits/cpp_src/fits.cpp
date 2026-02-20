@@ -27,6 +27,7 @@
 #include <nanobind/stl/unordered_map.h>
 #include "torchfits_torch.h"
 #include <fitsio.h>
+#include <fitsio2.h> // Internal CFITSIO routines (fits_rdecomp)
 
 #include "hardware.h"
 

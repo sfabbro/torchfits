@@ -1,7 +1,7 @@
 
 import torch
 from torch import Tensor
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 class SIP:
     """
@@ -49,83 +49,70 @@ class SIP:
 
     def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         """
-        Apply forward distortion: (u, v) -> (u + f(u,v), v + g(u,v))
-        
-        u, v: Relative pixel coordinates (typically x - CRPIX, y - CRPIX)
+        Apply forward distortion with power caches.
         """
-        # Optimized implementation could use Horner's method or precomputed powers
-        # For now, explicit summation
+        if u.numel() == 0:
+            return u, v
+            
+        # For large N, chunking is handle at the caller level in WCS if needed,
+        # but here we just optimize the impl.
         
-        # Compute powers of u and v once if needed, or just compute on the fly
-        # Since order is typically small (2-5), we can just loop.
+        # Max order across all polynomials
+        max_order = max(self.a_order, self.b_order, 1)
+        
+        def make_pow_cache(base, order):
+            pows = [torch.ones_like(base)]
+            if order >= 1:
+                pows.append(base)
+            curr = base
+            for _ in range(2, order + 1):
+                curr = curr * base
+                pows.append(curr)
+            return torch.stack(pows, dim=0)
+            
+        u_p = make_pow_cache(u, max_order)
+        v_p = make_pow_cache(v, max_order)
         
         f_uv = torch.zeros_like(u)
         g_uv = torch.zeros_like(v)
         
-        # Apply A coefficients to u
         for (p, q), coeff in self.a_coeffs.items():
-            # Term is coeff * u^p * v^q
-            # Optimization: 
-            term = coeff * torch.pow(u, p) * torch.pow(v, q)
-            f_uv += term
+            f_uv += coeff * u_p[p] * v_p[q]
             
-        # Apply B coefficients to v
         for (p, q), coeff in self.b_coeffs.items():
-            term = coeff * torch.pow(u, p) * torch.pow(v, q)
-            g_uv += term
+            g_uv += coeff * u_p[p] * v_p[q]
             
         return u + f_uv, v + g_uv
 
     def undistort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         """
-        Apply inverse distortion (AP/BP): (u_distorted, v_distorted) -> (u_linear, v_linear)
-        
-        This uses the AP/BP polynomials to map from distorted (focal plane) coordinates 
-        back to linear intermediate coordinates? 
-        The SIP paper convention is:
-        U = u + A(u, v)  (distorted -> rectified) ??
-        Actually:
-        "The SIP convention defines a transformation from pixel coordinates (u, v)
-        to intermediate world coordinates (x, y)." (Shupe et al.)
-        
-        Let's clarify:
-        u, v = pixel coordinates relative to CRPIX
-        x, y = "intermediate world coordinates" (linearized)
-        
-        Forward (Pix -> World):
-        x = u + A(u, v) ?? 
-        Or:
-        [x, y] = CD * [u + f(u,v), v + g(u,v)] 
-        
-        Let's check Astropy WCS documentation/behavior.
-        Astropy: `all_pix2world` applies SIP.
-        Logic:
-        1. u = pixel - crpix
-        2. Apply distortion: u' = u + f(u, v), v' = v + g(u, v)
-        3. Apply linear CD/PC: [xi, eta] = CD * [u', v']
-        
-        So my `distort` method above calculates u', v'.
-        
-        Inverse (World -> Pix):
-        1. [xi, eta] from world coords
-        2. [u', v'] = CD_inv * [xi, eta]
-        3. Apply reverse distortion: u = u' + AP(u', v'), v = v' + BP(u', v')
-           (Note: AP/BP are polynomials of the *linear* coordinates u', v', evaluating to the correction to get back to u, v)
-        
-        So `undistort` inputs are u', v' (linear/intermediate), outputs u, v (pixel).
+        Apply inverse distortion using power caches.
         """
+        if u.numel() == 0:
+            return u, v
+            
+        max_order = max(self.ap_order, self.bp_order, 1)
+        
+        def make_pow_cache(base, order):
+            pows = [torch.ones_like(base)]
+            if order >= 1:
+                pows.append(base)
+            curr = base
+            for _ in range(2, order + 1):
+                curr = curr * base
+                pows.append(curr)
+            return torch.stack(pows, dim=0)
+            
+        u_p = make_pow_cache(u, max_order)
+        v_p = make_pow_cache(v, max_order)
         
         delta_u = torch.zeros_like(u)
         delta_v = torch.zeros_like(v)
         
-        # Apply AP coefficients
         for (p, q), coeff in self.ap_coeffs.items():
-            term = coeff * torch.pow(u, p) * torch.pow(v, q)
-            delta_u += term
+            delta_u += coeff * u_p[p] * v_p[q]
             
-        # Apply BP coefficients
         for (p, q), coeff in self.bp_coeffs.items():
-            term = coeff * torch.pow(u, p) * torch.pow(v, q)
-            delta_v += term
+            delta_v += coeff * u_p[p] * v_p[q]
             
         return u + delta_u, v + delta_v

@@ -27,6 +27,7 @@ from .frame import read_tensor_frame, to_tensor_frame, write_tensor_frame
 from .hdu import HDUList, Header, TableHDU, TableHDURef, TensorHDU
 from .interop import to_arrow, to_pandas
 from . import table
+from . import sphere
 from .header_parser import fast_parse_header
 from . import io
 from .transforms import (
@@ -129,7 +130,7 @@ try:
 except Exception:
     pass
 
-__version__ = "0.2.1"
+__version__ = "0.3.0.dev0"
 __all__ = [
     # Core I/O functions
     "read",
@@ -212,6 +213,9 @@ __all__ = [
     "to_pandas",
     "to_arrow",
     "table",
+    # Split-ready namespaces
+    "fits",
+    "sphere",
 ]
 
 

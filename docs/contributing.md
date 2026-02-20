@@ -21,7 +21,7 @@ pixi run lint
 
 - Python package: `src/torchfits/`
 - Native extension: `src/torchfits/cpp_src/`
-- Vendored native deps: `extern/cfitsio/`, `extern/wcslib/`
+- Vendored native deps: `extern/cfitsio/`
 - Tests: `tests/`
 - Benchmarks: `benchmarks/`
 - Docs: `docs/`
@@ -39,13 +39,12 @@ By default, this resolves the latest published dependency tags.
 Pin explicit versions when needed:
 
 ```bash
-./extern/vendor.sh --cfitsio-version cfitsio-4.6.2 --wcslib-version 8.5
+./extern/vendor.sh --cfitsio-version cfitsio-4.6.2
 ```
 
 Optional system-library mode:
 
 - `-DTORCHFITS_USE_VENDORED_CFITSIO=OFF`
-- `-DTORCHFITS_USE_VENDORED_WCSLIB=OFF`
 
 ## Test Expectations
 

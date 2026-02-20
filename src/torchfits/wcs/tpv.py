@@ -1,7 +1,7 @@
 
 import torch
 from torch import Tensor
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 class TPV:
     """
@@ -35,145 +35,117 @@ class TPV:
     ... and so on.
     """
     def __init__(self, header: Dict[str, Any]):
-        self.pv1 = self._parse_pv(header, 1)
-        self.pv2 = self._parse_pv(header, 2)
+        self.power_map = self._build_power_map()
+        self.idx1, self.c1 = self._parse_pv(header, 1)
+        self.idx2, self.c2 = self._parse_pv(header, 2)
         
-    def _parse_pv(self, header: Dict[str, Any], axis: int) -> Dict[int, float]:
-        """Parse PV{axis}_{j} keywords."""
-        coeffs = {}
-        # TPV coeffs typically go up to j=39 (degree 7?)
+    def _build_power_map(self):
+        # Map j (0-39) to (px, py, pr)
+        # Degree 0
+        mapping = {0: (0,0,0)}
+        idx = 1
+        for deg in range(1, 8):
+            # Normal terms: x^{deg-k} y^k
+            for k in range(deg + 1):
+                mapping[idx] = (deg - k, k, 0)
+                idx += 1
+            # Radial term if odd
+            if deg % 2 == 1:
+                mapping[idx] = (0, 0, deg)
+                idx += 1
+        return mapping
+        
+    def _parse_pv(self, header: Dict[str, Any], axis: int):
+        """Parse PV keywords into tensors."""
+        indices = []
+        coeffs = []
+        
         for j in range(40):
             key = f'PV{axis}_{j}'
             if key in header:
-                coeffs[j] = float(header[key])
-        return coeffs
+                val = float(header[key])
+                if val != 0:
+                    if j in self.power_map:
+                        indices.append(self.power_map[j])
+                        coeffs.append(val)
+                    
+        if not indices:
+            return torch.empty((0, 3), dtype=torch.long), torch.empty((0), dtype=torch.float64)
+            
+        return torch.tensor(indices, dtype=torch.long), torch.tensor(coeffs, dtype=torch.float64)
 
+    def to(self, device: torch.device) -> "TPV":
+        """Move TPV coefficient tensors to device."""
+        self.idx1 = self.idx1.to(device)
+        self.idx2 = self.idx2.to(device)
+        self.c1 = self.c1.to(device)
+        self.c2 = self.c2.to(device)
+        return self
+
+        
     def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         """
-        Apply TPV distortion.
-        u, v: Linear intermediate coordinates (relative to CRPIX, scaled by CD?)
-        Actually, TPV is usually defined on the "pixel coordinates" (relative to CRPIX)
-        OR on the "intermediate coordinates" (after CD matrix).
-        
-        Most sources (e.g., astropy.wcs) implementation of TPV:
-        It's a "Projection" type.
-        1. (pixel - CRPIX) -> (U, V) [applying CD if present, or just CDELT]
-           Wait, TPV usually *replaces* the standard TAN projection steps.
-           
-           SCAMP description:
-           xi = P_xi(x, y)
-           eta = P_eta(x, y)
-           where (x,y) are relative pixel coordinates?
-           
-           Let's verify standard TPV behavior.
-           In WCSLIB, TPV is implemented via `dis.c`/`tab.c`? No, it's often a separate registration.
-           
-           According to SCAMP:
-           "TPV... polynomial distortion of the tangent plane."
-           Inputs to polynomial are "projected coordinates" x, y ??
-           Usually inputs are (u, v) = CD * (pix - crpix).
-           
-           Let's implement the polynomial evaluator assuming inputs `x, y` are 
-           intermediate coordinates.
+        Apply TPV distortion with chunking to optimize memory usage.
         """
+        if u.numel() == 0:
+            return torch.zeros_like(u), torch.zeros_like(v)
+            
+        # For small N, run directly
+        if u.numel() <= 256000:
+            return self._distort_impl(u, v)
+            
+        # Process in chunks to stay within memory/cache limits
+        xi = torch.empty_like(u)
+        eta = torch.empty_like(v)
+        chunk_size = 256000
         
-        # Precompute powers 
-        x = u
-        y = v
-        r = torch.sqrt(x*x + y*y)
-        
-        x2 = x*x
-        y2 = y*y
-        xy = x*y
-        
-        # 0: 1
-        # 1: x
-        # 2: y
-        # 3: r
-        # 4: x^2
-        # 5: xy
-        # 6: y^2
-        # 7: x^3
-        # 8: x^2y
-        # 9: xy^2
-        # 10: y^3
-        # 11: r^3
-        
-        # We need a robust way to map j -> term.
-        # This is a fixed mapping for TPV.
-        
-        # Let's construct the specialized polynomial evaluator for the standard terms.
-        
-        
-        # Standard TPV mapping (SCAMP/SWarp convention)
-        # 0: 1
-        # 1: x
-        # 2: y
-        # 3: r
-        # 4: x^2
-        # 5: xy
-        # 6: y^2
-        # 7: x^3
-        # 8: x^2y
-        # 9: xy^2
-        # 10: y^3
-        # 11: r^3
-        # 12: x^4
-        # 13: x^3y
-        # 14: x^2y^2
-        # 15: xy^3
-        # 16: y^4
-        # 17: r^4 ... ? No, typically r terms are specific indices
-        # Let's simple list based on polynomial order
-        
-        xi = torch.zeros_like(x)
-        eta = torch.zeros_like(y)
-        
-        # Helper to add term
-        def add(out, coeffs, term, j):
-            if j in coeffs:
-                out += coeffs[j] * term
+        for i in range(0, u.numel(), chunk_size):
+            end = min(i + chunk_size, u.numel())
+            u_c = u[i:end]
+            v_c = v[i:end]
+            xi_c, eta_c = self._distort_impl(u_c, v_c)
+            xi[i:end] = xi_c
+            eta[i:end] = eta_c
+            
+        return xi, eta
 
-        # Precompute powers
-        x2 = x*x
-        y2 = y*y
-        xy = x*y
-        r = torch.sqrt(x2 + y2)
+    def _distort_impl(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
+        """Internal distortion implementation."""
+        # Precompute powers and r
+        r = torch.sqrt(u*u + v*v)
         
-        x3 = x2*x
-        y3 = y2*y
-        x2y = x2*y
-        xy2 = x*y2
-        r3 = r*r*r
+        def make_pow_cache(base, max_deg=7):
+            pows = [torch.ones_like(base)]
+            curr = base
+            pows.append(curr)
+            for _ in range(2, max_deg + 1):
+                curr = curr * base
+                pows.append(curr)
+            return torch.stack(pows, dim=0)
+            
+        x_p_cache = make_pow_cache(u) # (8, N)
+        y_p_cache = make_pow_cache(v) # (8, N)
+        r_p_cache = make_pow_cache(r) # (8, N)
         
-        # Loop for both axes
-        for axis_tensor, coeffs in [(xi, self.pv1), (eta, self.pv2)]:
-            # 0: 1
-            add(axis_tensor, coeffs, 1.0, 0)
-            # 1: x
-            add(axis_tensor, coeffs, x, 1)
-            # 2: y
-            add(axis_tensor, coeffs, y, 2)
-            # 3: r
-            add(axis_tensor, coeffs, r, 3)
-            # 4: x^2
-            add(axis_tensor, coeffs, x2, 4)
-            # 5: xy
-            add(axis_tensor, coeffs, xy, 5)
-            # 6: y^2
-            add(axis_tensor, coeffs, y2, 6)
-            # 7: x^3
-            add(axis_tensor, coeffs, x3, 7)
-            # 8: x^2y
-            add(axis_tensor, coeffs, x2y, 8)
-            # 9: xy^2
-            add(axis_tensor, coeffs, xy2, 9)
-            # 10: y^3
-            add(axis_tensor, coeffs, y3, 10)
-            # 11: r^3
-            add(axis_tensor, coeffs, r3, 11)
+        def eval_poly(p_indices, p_coeffs, xc, yc):
+            if len(p_coeffs) == 0:
+                return torch.zeros_like(u)
+                
+            px = p_indices[:, 0]
+            py = p_indices[:, 1]
+            pr = p_indices[:, 2]
             
-            # Higher orders (up to 39 implemented sparsely for now)
-            # We can expand this list as needed for specific benchmarks
+            # Gather terms: x^px * y^py * r^pr
+            term_val = xc[px] * yc[py] * r_p_cache[pr]
             
+            # Dot product (ensure dtypes match)
+            coeffs = p_coeffs.to(device=term_val.device, dtype=term_val.dtype)
+            return torch.einsum('k, kn -> n', coeffs, term_val)
+
+        # TPV Convention: 
+        # Axis 1 uses (u, v)
+        # Axis 2 uses (v, u) <-- SWAPPED
+        xi = eval_poly(self.idx1, self.c1, x_p_cache, y_p_cache)
+        eta = eval_poly(self.idx2, self.c2, y_p_cache, x_p_cache)
+
         return xi, eta

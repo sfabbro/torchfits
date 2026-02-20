@@ -126,6 +126,22 @@ struct ColumnInfo {
     bool scaled = false;
 };
 
+
+    // Filter operations
+    enum class FilterOp {
+        EQ, NE, GT, LT, GE, LE
+    };
+
+    struct TableFilter {
+        std::string col_name;
+        FilterOp op;
+        double val_d = 0.0;
+        int64_t val_i = 0;
+        std::string val_s;
+        // 0=double, 1=int, 2=string
+        int type_idx = 0; 
+    };
+
 class TableReader {
 public:
     TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num) {
@@ -988,6 +1004,293 @@ public:
         return result;
     }
 
+    // Filtered reading
+    std::unordered_map<std::string, torch::Tensor> read_columns_mmap_filtered(
+        const std::vector<std::string>& column_names,
+        const std::vector<TableFilter>& filters) {
+        
+        if (filters.empty()) {
+            // Need to convert read_columns_mmap result (nb::dict) to map<string, Tensor>?
+            // Or just throw error -> filters shouldn't be empty here if called correctly.
+            // But for robustness:
+             throw std::runtime_error("Filters cannot be empty in read_columns_mmap_filtered");
+        }
+        
+        // Map file
+        int fd = open(filename_.c_str(), O_RDONLY);
+        if (fd == -1) throw std::runtime_error("Failed to open file");
+        
+        struct stat sb;
+        if (fstat(fd, &sb) == -1) { close(fd); throw std::runtime_error("Failed to stat file"); }
+        
+        void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+        if (map_ptr == MAP_FAILED) { close(fd); throw std::runtime_error("Failed to mmap"); }
+        
+        // Auto-cleanup wrapper
+        struct MapGuard {
+            void* p; size_t s; int f;
+            ~MapGuard() { munmap(p, s); close(f); }
+        } guard{map_ptr, (size_t)sb.st_size, fd};
+        
+        uint8_t* base_ptr = static_cast<uint8_t*>(map_ptr);
+        
+        // fast-forward to data
+        int status = 0;
+        LONGLONG headstart, data_start, data_end;
+        fits_get_hduaddrll(fptr_, &headstart, &data_start, &data_end, &status);
+        if (status) throw std::runtime_error("Failed to get HDU address");
+        
+        uint8_t* data_ptr = base_ptr + data_start;
+
+        // Resolve filter columns
+        struct FilterContext {
+            const TableFilter* filter;
+            const ColumnInfo* col_info;
+            size_t offset;
+            // Cached types for fast switch
+            bool is_float = false;
+            bool is_double = false;
+            bool is_int = false;
+            bool is_long = false;
+            bool is_short = false;
+            bool is_byte = false;
+        };
+        
+        std::vector<FilterContext> ctxs;
+        for (const auto& f : filters) {
+            bool found = false;
+            for (const auto& c : columns_) {
+                if (c.name == f.col_name) {
+                    FilterContext ctx;
+                    ctx.filter = &f;
+                    ctx.col_info = &c;
+                    ctx.offset = c.byte_offset;
+                    
+                    if (c.type == FITSColumnType::FLOAT) ctx.is_float = true;
+                    else if (c.type == FITSColumnType::DOUBLE) ctx.is_double = true;
+                    else if (c.type == FITSColumnType::INT) ctx.is_int = true;
+                    else if (c.type == FITSColumnType::LONG) ctx.is_long = true;
+                    else if (c.type == FITSColumnType::SHORT) ctx.is_short = true;
+                    else if (c.type == FITSColumnType::BYTE) ctx.is_byte = true;
+                    
+                    ctxs.push_back(ctx);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) throw std::runtime_error("Filter column not found: " + f.col_name);
+        }
+        
+        // Scan rows
+        std::vector<long> valid_indices;
+        valid_indices.reserve(nrows_ / 4); // Guess 25% selectivity
+        
+        
+        for (long i = 0; i < nrows_; i++) {
+            uint8_t* row_ptr = data_ptr + i * row_width_bytes_;
+            bool row_match = true;
+            
+            
+            for (const auto& ctx : ctxs) {
+                uint8_t* val_ptr = row_ptr + ctx.offset;
+                bool match = false;
+                
+                
+                // Templated comparison helper would be nicer, but expanding inline for raw speed
+                // Note: strict type matching for now, relying on C++ type conversions
+                
+                if (ctx.is_double) {
+                    double val;
+                    uint64_t tmp;
+                    std::memcpy(&tmp, val_ptr, 8);
+                    tmp = __builtin_bswap64(tmp);
+                    std::memcpy(&val, &tmp, 8);
+                    
+                    double target = ctx.filter->val_d;
+                    switch (ctx.filter->op) {
+                       case FilterOp::EQ: match = (val == target); break;
+                       case FilterOp::NE: match = (val != target); break;
+                       case FilterOp::GT: match = (val > target); break;
+                       case FilterOp::LT: match = (val < target); break;
+                       case FilterOp::GE: match = (val >= target); break;
+                       case FilterOp::LE: match = (val <= target); break;
+                    }
+                } else if (ctx.is_float) {
+                    float val;
+                    uint32_t tmp;
+                    std::memcpy(&tmp, val_ptr, 4);
+                    tmp = __builtin_bswap32(tmp);
+                    std::memcpy(&val, &tmp, 4);
+                    
+                    float target = (float)ctx.filter->val_d;
+                    switch (ctx.filter->op) {
+                       case FilterOp::EQ: match = (val == target); break;
+                       case FilterOp::NE: match = (val != target); break;
+                       case FilterOp::GT: match = (val > target); break;
+                       case FilterOp::LT: match = (val < target); break;
+                       case FilterOp::GE: match = (val >= target); break;
+                       case FilterOp::LE: match = (val <= target); break;
+                    }
+                } else if (ctx.is_long) {
+                   int64_t val;
+                   uint64_t tmp;
+                   memcpy(&tmp, val_ptr, 8);
+                   tmp = __builtin_bswap64(tmp);
+                   memcpy(&val, &tmp, 8);
+                   
+                   int64_t target = ctx.filter->val_i;
+                   switch (ctx.filter->op) {
+                       case FilterOp::EQ: match = (val == target); break;
+                       case FilterOp::NE: match = (val != target); break;
+                       case FilterOp::GT: match = (val > target); break;
+                       case FilterOp::LT: match = (val < target); break;
+                       case FilterOp::GE: match = (val >= target); break;
+                       case FilterOp::LE: match = (val <= target); break;
+                   }
+                } else if (ctx.is_int) {
+                   int32_t val;
+                   uint32_t tmp;
+                   memcpy(&tmp, val_ptr, 4);
+                   tmp = __builtin_bswap32(tmp);
+                   memcpy(&val, &tmp, 4);
+                   
+                   int64_t target = ctx.filter->val_i;
+                   switch (ctx.filter->op) {
+                       case FilterOp::EQ: match = (val == target); break;
+                       case FilterOp::NE: match = (val != target); break;
+                       case FilterOp::GT: match = (val > target); break;
+                       case FilterOp::LT: match = (val < target); break;
+                       case FilterOp::GE: match = (val >= target); break;
+                       case FilterOp::LE: match = (val <= target); break;
+                   }
+                } else if (ctx.is_short) {
+                   int16_t val;
+                   uint16_t tmp;
+                   memcpy(&tmp, val_ptr, 2);
+                   tmp = __builtin_bswap16(tmp);
+                   memcpy(&val, &tmp, 2);
+                   
+                   int64_t target = ctx.filter->val_i;
+                   switch (ctx.filter->op) {
+                       case FilterOp::EQ: match = (val == target); break;
+                       case FilterOp::NE: match = (val != target); break;
+                       case FilterOp::GT: match = (val > target); break;
+                       case FilterOp::LT: match = (val < target); break;
+                       case FilterOp::GE: match = (val >= target); break;
+                       case FilterOp::LE: match = (val <= target); break;
+                   }
+                } else if (ctx.is_byte) {
+                   uint8_t val = *val_ptr;
+                   // ...
+                }
+                
+
+                if (!match) {
+                    row_match = false;
+                    break;
+                }
+            }
+            
+            if (row_match) {
+                valid_indices.push_back(i);
+            }
+        }
+        
+        // Gather results
+        std::unordered_map<std::string, torch::Tensor> result;
+        long num_valid = valid_indices.size();
+        
+        std::vector<int> out_col_indices;
+        if (column_names.empty()) {
+            for(int i=0; i<ncols_; ++i) out_col_indices.push_back(i);
+        } else {
+             for(const auto& name : column_names) {
+                 for(int i=0; i<ncols_; ++i) {
+                     if(columns_[i].name == name) {
+                         out_col_indices.push_back(i);
+                         break;
+                     }
+                 }
+             }
+        }
+        
+        for (int col_idx : out_col_indices) {
+            const auto& col = columns_[col_idx];
+            if (col.type == FITSColumnType::VARIABLE) continue; // Skip VLA for now
+            
+            // Allocate output tensor
+            std::vector<int64_t> shape;
+            shape.push_back(num_valid);
+             if (col.type == FITSColumnType::STRING) {
+                shape.push_back(is_ascii_ ? col.width : col.repeat);
+            } else if (col.repeat > 1) {
+                shape.push_back(col.repeat);
+            }
+            
+            auto options = torch::TensorOptions().dtype(col.torch_type);
+            torch::Tensor out_tensor = torch::empty(shape, options);
+            
+            // Gather loop (Parallelize?)
+            // Simple byte copy first
+            int item_size = 0;
+            if (col.type == FITSColumnType::DOUBLE || col.type == FITSColumnType::LONG) item_size = 8;
+            else if (col.type == FITSColumnType::FLOAT || col.type == FITSColumnType::INT) item_size = 4;
+            else if (col.type == FITSColumnType::SHORT) item_size = 2;
+            else item_size = 1;
+            
+            size_t cell_size = item_size * ( (col.type == FITSColumnType::STRING) ? (is_ascii_ ? col.width : col.repeat) : std::max(1, col.repeat));
+            
+            uint8_t* out_ptr = (uint8_t*)out_tensor.data_ptr();
+            
+            // at::parallel_for(0, num_valid, 1024, [&](long begin, long end) {
+            // Serial for debug
+            {
+                long begin = 0;
+                long end = num_valid;
+                for (long k=begin; k<end; ++k) {
+                    long row_idx = valid_indices[k];
+                    const uint8_t* src = data_ptr + row_idx * row_width_bytes_ + col.byte_offset;
+                    uint8_t* dst = out_ptr + k * cell_size;
+                    
+                    // Copy and swap
+                    if (item_size == 1) {
+                        memcpy(dst, src, cell_size);
+                    } else if (item_size == 2) {
+                        int n_items = cell_size / 2;
+                        uint16_t* d = (uint16_t*)dst;
+                        // src might be unaligned
+                        for(int j=0; j<n_items; ++j) {
+                            uint16_t val;
+                            std::memcpy(&val, src + j*2, 2);
+                            d[j] = __builtin_bswap16(val);
+                        }
+                    } else if (item_size == 4) {
+                        int n_items = cell_size / 4;
+                        uint32_t* d = (uint32_t*)dst;
+                        for(int j=0; j<n_items; ++j) {
+                            uint32_t val;
+                            std::memcpy(&val, src + j*4, 4);
+                            d[j] = __builtin_bswap32(val);
+                        }
+                    } else if (item_size == 8) {
+                        int n_items = cell_size / 8;
+                        uint64_t* d = (uint64_t*)dst;
+                        for(int j=0; j<n_items; ++j) {
+                            uint64_t val;
+                            std::memcpy(&val, src + j*8, 8);
+                            d[j] = __builtin_bswap64(val);
+                        }
+                    }
+                }
+            } // );
+            
+            result[col.name] = out_tensor;
+        }
+        
+        return result;
+    }
+
+
     void update_rows_mmap(nb::dict tensor_dict, long start_row, long num_rows) {
         if (num_rows == -1) {
             num_rows = nrows_ - start_row + 1;
@@ -1590,6 +1893,8 @@ public:
 private:
     TableMemoryPool() = default;
 };
+
+
 
 } // namespace torchfits
 

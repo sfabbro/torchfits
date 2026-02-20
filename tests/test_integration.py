@@ -143,13 +143,14 @@ class TestRealDataIntegration:
 
             # Create table HDU
             table_file = self.create_test_table(10000)
-            with fits.open(table_file) as table_hdul:
-                table_hdu = table_hdul[1]
-                table_hdu.name = "CATALOG"
+            table_hdul = fits.open(table_file)
+            table_hdu = table_hdul[1]
+            table_hdu.name = "CATALOG"
 
-                # Write MEF while table file is still open
-                hdul = fits.HDUList([primary, image_hdu, table_hdu])
-                hdul.writeto(f.name, overwrite=True)
+            # Write MEF while table file is still open
+            hdul = fits.HDUList([primary, image_hdu, table_hdu])
+            hdul.writeto(f.name, overwrite=True)
+            table_hdul.close()
 
             try:
                 # Test torchfits MEF handling

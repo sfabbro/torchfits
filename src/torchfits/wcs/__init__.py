@@ -1,1 +1,1 @@
-from .core import WCS
+from .core import WCS as WCS

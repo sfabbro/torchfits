@@ -55,7 +55,8 @@ def create_test_files(data_dir: str) -> None:
 
 def _show_roundtrip(path: str) -> None:
     wcs = torchfits.get_wcs(path, hdu="auto")
-    print(f"{os.path.basename(path)}: naxis={wcs.naxis}, ctype={wcs.ctype}")
+    ctypes = [wcs.wcs_params.get(f"CTYPE{i}", "") for i in range(1, wcs.naxis + 1)]
+    print(f"{os.path.basename(path)}: naxis={wcs.naxis}, ctype={ctypes}")
 
     if wcs.naxis == 1:
         pixels = torch.tensor([[0.0], [10.0], [100.0]], dtype=torch.float64)

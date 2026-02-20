@@ -799,18 +799,56 @@ def _where_columns_from_ast(ast) -> list[str]:
             if name not in seen:
                 seen.add(name)
                 out.append(name)
-            return
-        if kind in {"and", "or"}:
+        elif kind == "and" or kind == "or":
             _visit(node[1])
             _visit(node[2])
-            return
-        if kind == "not":
+        elif kind == "not":
             _visit(node[1])
-            return
-        raise ValueError("Invalid where AST")
+        else:
+            raise ValueError("Invalid where AST")
 
     _visit(ast)
     return out
+
+
+def _compile_where_to_simple_predicates(where: str) -> Optional[list[tuple[str, str, Any]]]:
+    """
+    Compile a restricted where expression into C++ predicate tuples.
+
+    Returns `None` when expression cannot be represented as a pure conjunction
+    of simple binary comparisons.
+    """
+    try:
+        ast = _parse_where_expression(where)
+    except Exception:
+        return None
+
+    predicates: list[tuple[str, str, Any]] = []
+
+    def _visit(node) -> bool:
+        kind = node[0]
+        if kind == "cmp":
+            _, col, op, literal = node
+            if op not in {"==", "!=", ">", ">=", "<", "<="}:
+                return False
+            if literal is None:
+                return False
+            predicates.append((col, op, literal))
+            return True
+        if kind == "between":
+            _, col, low, high, negate = node
+            if bool(negate) or low is None or high is None:
+                return False
+            predicates.append((col, ">=", low))
+            predicates.append((col, "<=", high))
+            return True
+        if kind == "and":
+            return _visit(node[1]) and _visit(node[2])
+        return False
+
+    if not _visit(ast):
+        return None
+    return predicates
 
 
 def _where_mask_for_table(table, where: str, parsed_ast=None) -> np.ndarray:
@@ -1606,6 +1644,56 @@ def read(
             return single
 
     if where is not None:
+        # Try fast path: Predicate Pushdown
+        import torchfits.cpp as cpp
+        if hasattr(cpp, "read_fits_table_filtered"):
+            filters = _compile_where_to_simple_predicates(where)
+            if filters is not None:
+                # Use fast path
+                try:
+                    # columns=None in C++ means all columns? No, usually means return empty?
+                    # read_columns_mmap checks empty.
+                    # If columns is None here, we need to fetch all columns from header?
+                    # Or pass empty list?
+                    # If columns is None, we need schema to know ALL columns.
+                    # Better to let fallback handle 'columns=None' or fetch schema first.
+                    # But fetching schema defeats the purpose of speed if not careful.
+                    
+                    target_cols = columns
+                    if target_cols is None:
+                        # Fetch all column names quickly
+                         schema_ = schema(path, hdu=hdu, backend="cpp_numpy") # Minimal read?
+                         target_cols = list(schema_.names)
+                    
+                    data_dict = cpp.read_fits_table_filtered(path, hdu, target_cols, filters)
+                    
+                    # Convert to Arrow Table
+                    arrays = []
+                    names_out = []
+                    for name in target_cols:
+                        if name in data_dict:
+                            # Convert tensor to arrow
+                            val = data_dict[name]
+                            if isinstance(val, torch.Tensor):
+                                # Ensure cpu/contiguous
+                                if val.device.type != "cpu":
+                                    val = val.cpu()
+                                if not val.is_contiguous():
+                                    val = val.contiguous()
+                                arr = _numpy_to_arrow_array(
+                                    pa, val.numpy(), decode_bytes, encoding, strip
+                                )
+                                arrays.append(arr)
+                                names_out.append(name)
+                    
+                    if not arrays:
+                        return pa.table({})
+                    return pa.Table.from_arrays(arrays, names=names_out)
+                    
+                except Exception:
+                    # If fast path fails (e.g. type mismatch), fall back to slow path
+                    pass
+
         base = read(
             path,
             hdu=hdu,

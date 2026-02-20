@@ -8,8 +8,12 @@ __pycache__/
 .claude/
 verify_fix.py
 
-# Editor
+# Editor / Tools
 .vscode/
+.jules/
+.qoder/
+.claude/
+.benchmarks/
 
 # Build
 build/
@@ -30,6 +34,7 @@ extern/VERSIONS.txt
 # Data
 *.fits
 examples/data_*/
+data_wcs_examples/
 
 # Logs/Temp
 benchmark_full_output.txt
@@ -39,7 +44,19 @@ benchmarks/benchmark_results/
 bench*.log
 bench*.log*
 benchmark*.log
-benchmarks/debug_sip.py
-fitsio.setup.py
-package-lock.json
+# diagnostic scripts
+benchmark_all_wcs.py
+benchmark_compile.py
+debug_*.py
+reproduce_*.py
+stress_test_sky.py
+verify_inverse.py
+
+# benchmarks
+benchmarks/benchmark_competitors.py
+
+# native build artifacts
+wcslib.tar.bz2
+wcslib_src/
+
 .DS_Store

@@ -143,7 +143,6 @@ endif()
 
 get_filename_component(TORCHFITS_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(CFITSIO_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/cfitsio")
-set(WCSLIB_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/wcslib")
 set(TORCHFITS_VENDOR_SCRIPT "${TORCHFITS_REPO_ROOT}/extern/vendor.sh")
 option(TORCHFITS_AUTO_VENDOR_DEPS "Auto-run extern/vendor.sh when vendored deps are missing" ON)
 set(TORCHFITS_VENDOR_RAN FALSE)
@@ -277,41 +276,6 @@ else()
     message(WARNING "DLPack headers not found - DLPack-based zero-copy will fail to compile until headers are available")
 endif()
 
-# Find WCSLIB
-option(TORCHFITS_USE_VENDORED_WCSLIB "Use vendored WCSLIB" ON)
-
-if(NOT TORCHFITS_USE_VENDORED_WCSLIB)
-    find_package(PkgConfig QUIET)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(WCSLIB QUIET wcslib)
-    endif()
-
-    if(NOT WCSLIB_FOUND)
-        find_path(WCSLIB_INCLUDE_DIR wcslib/wcs.h)
-        find_library(WCSLIB_LIBRARY wcs)
-        if(WCSLIB_INCLUDE_DIR AND WCSLIB_LIBRARY)
-            set(WCSLIB_FOUND TRUE)
-        endif()
-    endif()
-endif()
-
-if(NOT WCSLIB_FOUND)
-    if(NOT EXISTS "${WCSLIB_SOURCE_DIR}/CMakeLists.txt")
-        torchfits_run_vendor_once()
-    endif()
-    if(EXISTS "${WCSLIB_SOURCE_DIR}/CMakeLists.txt")
-        message(STATUS "Building vendored WCSLIB from ${WCSLIB_SOURCE_DIR}")
-        add_subdirectory("${WCSLIB_SOURCE_DIR}" wcslib_build)
-        set(WCSLIB_LIBRARY wcs)
-        # Support both <wcs.h> and <wcslib/wcs.h> include styles.
-        set(WCSLIB_INCLUDE_DIRS "${WCSLIB_SOURCE_DIR}")
-        get_filename_component(WCSLIB_PARENT_DIR "${WCSLIB_SOURCE_DIR}" DIRECTORY)
-        list(APPEND WCSLIB_INCLUDE_DIRS "${WCSLIB_PARENT_DIR}")
-        set(WCSLIB_FOUND TRUE)
-    else()
-        message(FATAL_ERROR "WCSLIB not found in environment and vendored version not found at ${WCSLIB_SOURCE_DIR}. Run ./extern/vendor.sh")
-    endif()
-endif()
 
 # Source files
 set(SOURCES
@@ -361,30 +325,6 @@ if(DLPACK_INCLUDE_DIR)
 endif()
 target_compile_definitions(cpp PRIVATE HAS_CFITSIO)
 
-if(WCSLIB_FOUND)
-    if(WCSLIB_LIBRARY_DIRS)
-        target_link_directories(cpp PRIVATE ${WCSLIB_LIBRARY_DIRS})
-    endif()
-
-    if(WCSLIB_LIBRARIES)
-        target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARIES})
-    else()
-        target_link_libraries(cpp PRIVATE ${WCSLIB_LIBRARY})
-    endif()
-
-    if(WCSLIB_INCLUDE_DIRS)
-        target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIRS})
-        # Add parent directory of include dirs to support <wcslib/wcs.h> style includes
-        foreach(DIR ${WCSLIB_INCLUDE_DIRS})
-             get_filename_component(PARENT_DIR ${DIR} DIRECTORY)
-             target_include_directories(cpp PRIVATE ${PARENT_DIR})
-        endforeach()
-    else()
-        target_include_directories(cpp PRIVATE ${WCSLIB_INCLUDE_DIR})
-    endif()
-
-    target_compile_definitions(cpp PRIVATE HAS_WCSLIB)
-endif()
 
 # Compiler flags
 target_compile_definitions(cpp PRIVATE VERSION_INFO="")

@@ -1694,6 +1694,11 @@ class HDUList:
             for info in hdu_infos:
                 # Read header
                 header = Header(info.header)
+                if not hasattr(header, "_cards"):
+                    header._cards = []
+                for k, v in info.header.items():
+                    if k in ("HISTORY", "COMMENT"):
+                        header._cards.append((k, v, ""))
 
                 # Determine HDU type
                 hdu_type = info.type
