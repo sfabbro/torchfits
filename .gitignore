@@ -39,8 +39,10 @@ data_wcs_examples/
 # Logs/Temp
 benchmark_full_output.txt
 benchmark_results/
+bench_results/
 benchmark_results_*/
 benchmarks/benchmark_results/
+benchmarks/bench_results/
 bench*.log
 bench*.log*
 benchmark*.log
