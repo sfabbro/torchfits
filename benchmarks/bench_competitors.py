@@ -141,6 +141,10 @@ def run_case(
         "sample_profile": profile,
         "n_points": int(n_points),
         "n_valid": int(np.sum(valid)),
+        "torchfits_mode": "smart",
+        "astropy_mode": "smart",
+        "pyast_mode": "specialized",
+        "kapteyn_mode": "specialized",
         "astropy_ms": ast_dt * 1000.0,
         "torchfits_ms": torch_dt * 1000.0,
         "torchfits_speedup": ast_dt / torch_dt,
@@ -192,6 +196,42 @@ def run_case(
         result["kapteyn_speedup"] = float("nan")
         result["kapteyn_max_angular_error_arcsec"] = float("nan")
 
+    # Compare only like-for-like mode families.
+    smart_times = {
+        "torchfits": float(result["torchfits_ms"]),
+        "astropy": float(result["astropy_ms"]),
+    }
+    best_smart = min(smart_times, key=smart_times.get)
+    sorted_smart = sorted(smart_times.items(), key=lambda kv: kv[1])
+    tf_rank_smart = next(
+        (i + 1 for i, (name, _) in enumerate(sorted_smart) if name == "torchfits"),
+        len(sorted_smart) + 1,
+    )
+    if best_smart == "torchfits":
+        other = [v for k, v in smart_times.items() if k != "torchfits"]
+        speedup_vs_best_smart = (
+            float(result["torchfits_ms"]) / min(other) if other else float("nan")
+        )
+    else:
+        speedup_vs_best_smart = smart_times[best_smart] / float(result["torchfits_ms"])
+
+    result["best_method_smart"] = best_smart
+    result["torchfits_rank_smart"] = tf_rank_smart
+    result["speedup_vs_best_smart"] = speedup_vs_best_smart
+
+    specialized_times = {}
+    if np.isfinite(result["pyast_ms"]):
+        specialized_times["pyast"] = float(result["pyast_ms"])
+    if np.isfinite(result["kapteyn_ms"]):
+        specialized_times["kapteyn"] = float(result["kapteyn_ms"])
+    if specialized_times:
+        best_specialized = min(specialized_times, key=specialized_times.get)
+        result["best_method_specialized"] = best_specialized
+        result["best_specialized_ms"] = specialized_times[best_specialized]
+    else:
+        result["best_method_specialized"] = "none"
+        result["best_specialized_ms"] = float("nan")
+
     return result
 
 
@@ -228,6 +268,8 @@ def main() -> int:
     )
     cols = [
         "case",
+        "best_method_smart",
+        "best_method_specialized",
         "astropy_ms",
         "torchfits_ms",
         "torchfits_speedup",
@@ -239,6 +281,8 @@ def main() -> int:
     for r in results:
         print(
             f"{r['case']:>16s}"
+            f"{r['best_method_smart']:>16s}"
+            f"{r['best_method_specialized']:>16s}"
             f"{r['astropy_ms']:16.3f}"
             f"{r['torchfits_ms']:16.3f}"
             f"{r['torchfits_speedup']:16.2f}"

@@ -14,11 +14,6 @@ from typing import Any, Dict
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mpl_config import configure
-
-configure()
-
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import torch  # noqa: E402
@@ -108,6 +103,10 @@ class TransformBenchmark:
     def generate_plots(self, results: Dict[str, Any]):
         """Generate transform performance plots."""
         print("  📊 Generating transform plots...")
+        from mpl_config import configure
+
+        configure()
+        import matplotlib.pyplot as plt
 
         # Prepare data for plotting
         plot_data = []
@@ -184,9 +183,38 @@ class TransformBenchmark:
 
 def main():
     """Run transform benchmarks."""
-    benchmark = TransformBenchmark()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run transform benchmarks")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("bench_results"),
+        help="Output directory",
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Generate plots (opt-in)",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip plot generation",
+    )
+    args = parser.parse_args()
+
+    if args.no_plots:
+        generate_plots = False
+    elif args.plots:
+        generate_plots = True
+    else:
+        generate_plots = False
+
+    benchmark = TransformBenchmark(output_dir=args.output_dir)
     results = benchmark.run_benchmarks()
-    benchmark.generate_plots(results)
+    if generate_plots:
+        benchmark.generate_plots(results)
     benchmark.save_results(results)
     # Ranked console view for quick comparison (lower is better).
     try:

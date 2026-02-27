@@ -14,11 +14,6 @@ from typing import Any, Dict
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mpl_config import configure
-
-configure()
-
-import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from torchfits import cache  # noqa: E402
@@ -172,6 +167,10 @@ class CacheBenchmark:
     def generate_plots(self, results: Dict[str, Any]):
         """Generate cache performance plots."""
         print("  📊 Generating cache plots...")
+        from mpl_config import configure
+
+        configure()
+        import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         fig.suptitle("Cache Performance Analysis", fontsize=16)
@@ -315,9 +314,38 @@ class CacheBenchmark:
 
 def main():
     """Run cache benchmarks."""
-    benchmark = CacheBenchmark()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run cache benchmarks")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("bench_results"),
+        help="Output directory",
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Generate plots (opt-in)",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip plot generation",
+    )
+    args = parser.parse_args()
+
+    if args.no_plots:
+        generate_plots = False
+    elif args.plots:
+        generate_plots = True
+    else:
+        generate_plots = False
+
+    benchmark = CacheBenchmark(output_dir=args.output_dir)
     results = benchmark.run_benchmarks()
-    benchmark.generate_plots(results)
+    if generate_plots:
+        benchmark.generate_plots(results)
     benchmark.save_results(results)
     # Ranked console view for quick comparison (lower is better).
     try:

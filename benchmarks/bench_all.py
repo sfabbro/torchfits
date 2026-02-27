@@ -11,6 +11,7 @@ Produces comprehensive tables, plots, and summaries.
 
 import csv
 import gc
+import json
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -35,8 +36,6 @@ import numpy as np
 import pandas as pd
 import psutil
 import torch
-import matplotlib.pyplot as plt
-import seaborn as sns
 from astropy.io import fits as astropy_fits
 from astropy.io.fits import CompImageHDU
 try:
@@ -59,10 +58,11 @@ class ExhaustiveBenchmarkSuite:
     def __init__(
         self,
         output_dir: Optional[Path] = None,
+        diagnostic_json_out: Optional[Path] = None,
         use_mmap: bool = True,
-        include_tables: bool = False,
-        include_wcs: bool = False,
-        include_sphere: bool = False,
+        include_tables: bool = True,
+        include_wcs: bool = True,
+        include_sphere: bool = True,
         cache_capacity: int = 10,
         hot_cache_capacity: int = 10,
         handle_cache_capacity: int = 16,
@@ -78,6 +78,11 @@ class ExhaustiveBenchmarkSuite:
         self.summary_file = self.output_dir / "exhaustive_summary.md"
         self.focused_csv_file = self.output_dir / "focused_results.csv"
         self.focused_summary_file = self.output_dir / "focused_summary.md"
+        self.additional_diag_file = (
+            diagnostic_json_out
+            if diagnostic_json_out is not None
+            else self.output_dir / "additional_diagnostics.json"
+        )
         self.use_mmap = use_mmap
         self.include_tables = include_tables
         self.include_wcs = include_wcs
@@ -439,12 +444,8 @@ class ExhaustiveBenchmarkSuite:
         print("=" * 100)
         print(
             "Methods:\n"
-            "- torchfits: torchfits.read -> torch.Tensor\n"
-            "- torchfits_numpy: torchfits.read -> numpy (fair compare vs numpy libs)\n"
-            "- fitsio: fitsio.read -> numpy\n"
-            "- fitsio_torch: fitsio.read -> numpy -> torch.Tensor\n"
-            "- astropy: astropy fits -> numpy\n"
-            "- astropy_torch: astropy fits -> numpy -> torch.Tensor\n"
+            "- smart/tensor: torchfits, astropy_torch, fitsio_torch\n"
+            "- specialized/direct: torchfits_specialized, torchfits_numpy, astropy, fitsio\n"
             "- torchfits_hot [diag]: torchfits.read with hot torchfits cache\n"
             "- torchfits_handle_cache [diag]: torchfits.read with data cache OFF but handle cache ON\n"
             "- torchfits_cpp_open_once [diag]: reuse open C++ FITS handle"
@@ -472,6 +473,13 @@ class ExhaustiveBenchmarkSuite:
             "torchfits_memory",
             "torchfits_peak_memory",
             "torchfits_payload_mb",
+            "torchfits_specialized_mean",
+            "torchfits_specialized_std",
+            "torchfits_specialized_median",
+            "torchfits_specialized_mb_s",
+            "torchfits_specialized_memory",
+            "torchfits_specialized_peak_memory",
+            "torchfits_specialized_payload_mb",
             "torchfits_numpy_mean",
             "torchfits_numpy_std",
             "torchfits_numpy_median",
@@ -544,6 +552,10 @@ class ExhaustiveBenchmarkSuite:
             "best_method_numpy",
             "torchfits_numpy_rank",
             "speedup_vs_best_numpy",
+            "best_method_specialized",
+            "torchfits_specialized_rank",
+            "speedup_vs_best_specialized",
+            "speedup_specialized_vs_smart",
         ]
 
         detailed_results = []
@@ -613,13 +625,16 @@ class ExhaustiveBenchmarkSuite:
                 continue
 
             size_mb = path.stat().st_size / 1024 / 1024
-            use_median = size_mb < 0.1
-            runs = 30 if size_mb < 0.1 else 10 if size_mb < 1.0 else 3
+            # Keep focused diagnostics stable across runs.
+            use_median = True
+            runs = 40 if size_mb < 0.1 else 20 if size_mb < 1.0 else 8
 
             file_type = self._get_file_type(name)
             hdu_num = (
                 1 if file_type in {"compressed", "table", "mef", "multi_mef"} else 0
             )
+            if file_type in {"compressed", "scaled"}:
+                runs = max(runs, 30)
             tf_mmap_mode = self._torchfits_mmap_mode()
             tf_mmap_cpp = self._torchfits_effective_mmap_bool(path, hdu_num)
 
@@ -645,6 +660,7 @@ class ExhaustiveBenchmarkSuite:
                     str(path),
                     hdu=hdu_num,
                     mmap=tf_mmap_mode,
+                    policy="smart",
                     scale_on_device=True,
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
@@ -672,6 +688,7 @@ class ExhaustiveBenchmarkSuite:
                     str(path),
                     hdu=hdu_num,
                     mmap=tf_mmap_mode,
+                    policy="smart",
                     raw_scale=True,
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
@@ -682,6 +699,7 @@ class ExhaustiveBenchmarkSuite:
                     str(path),
                     hdu=hdu_num,
                     mmap=tf_mmap_mode,
+                    policy="smart",
                     raw_scale=True,
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
@@ -704,6 +722,7 @@ class ExhaustiveBenchmarkSuite:
                     str(path),
                     hdu=hdu_num,
                     mmap=False,
+                    policy="smart",
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
                 )
@@ -725,7 +744,9 @@ class ExhaustiveBenchmarkSuite:
             }
 
             per_file = []
-            for method_name, method_func in methods.items():
+            method_items = list(methods.items())
+            random.shuffle(method_items)
+            for method_name, method_func in method_items:
                 method_result = self._time_method(
                     method_func, method_name, runs=runs, use_median=use_median
                 )
@@ -765,7 +786,7 @@ class ExhaustiveBenchmarkSuite:
             ranked.sort(key=lambda x: x[1])
             if ranked:
                 best_m, best_t, _ = ranked[0]
-                stat_label = "median" if use_median else "mean"
+                stat_label = "median"
                 print(f"\nRanked (focused, {stat_label}, fastest first):")
                 for i, (m, t, s) in enumerate(ranked, start=1):
                     ratio = t / best_t if best_t else float("inf")
@@ -905,14 +926,34 @@ class ExhaustiveBenchmarkSuite:
         methods = {}
         diagnostic_methods = {}
 
-        # Always test torchfits
+        # High-level smart path (fair against high-level astropy/fitsio wrappers).
         methods["torchfits"] = lambda: torchfits.read(
             str(filepath),
             hdu=hdu_num,
             mmap=tf_mmap_mode,
+            policy="smart",
             cache_capacity=self.cache_capacity,
             handle_cache_capacity=self.handle_cache_capacity,
         )
+        # Direct specialized path (fair against low-level/direct variants).
+        def _torchfits_specialized():
+            if file_type == "table":
+                return torchfits.read_table(
+                    str(filepath),
+                    hdu=hdu_num,
+                    mmap=tf_mmap_mode,
+                    cache_capacity=self.cache_capacity,
+                    handle_cache_capacity=self.handle_cache_capacity,
+                    policy="default",
+                )
+            return torchfits.read_image(
+                str(filepath),
+                hdu=hdu_num,
+                mmap=tf_mmap_cpp,
+                handle_cache=self.handle_cache_capacity > 0,
+            )
+
+        methods["torchfits_specialized"] = _torchfits_specialized
         # Fair comparison against numpy-returning methods (fitsio/astropy):
         # return a numpy payload (CPU) instead of a torch.Tensor.
         try:
@@ -968,6 +1009,7 @@ class ExhaustiveBenchmarkSuite:
                         str(filepath),
                         hdu=hdu_num,
                         mmap=tf_mmap_mode,
+                        policy="smart",
                         cache_capacity=self.cache_capacity,
                         handle_cache_capacity=self.handle_cache_capacity,
                     ).numpy()
@@ -977,6 +1019,7 @@ class ExhaustiveBenchmarkSuite:
                     str(filepath),
                     hdu=hdu_num,
                     mmap=tf_mmap_mode,
+                    policy="smart",
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
                 ).numpy()
@@ -987,6 +1030,7 @@ class ExhaustiveBenchmarkSuite:
                     str(filepath),
                     hdu=hdu_num,
                     mmap=tf_mmap_mode,
+                    policy="smart",
                     cache_capacity=self.cache_capacity,
                     handle_cache_capacity=self.handle_cache_capacity,
                 )
@@ -1016,6 +1060,7 @@ class ExhaustiveBenchmarkSuite:
                 str(filepath),
                 hdu=hdu_num,
                 mmap=True,
+                policy="smart",
                 cache_capacity=self.cache_capacity,
                 handle_cache_capacity=self.handle_cache_capacity,
             )
@@ -1136,6 +1181,7 @@ class ExhaustiveBenchmarkSuite:
             str(filepath),
             hdu=hdu_num,
             mmap=tf_mmap_mode,
+            policy="smart",
             cache_capacity=self.hot_cache_capacity,
             handle_cache_capacity=self.handle_cache_capacity,
         )
@@ -1143,6 +1189,7 @@ class ExhaustiveBenchmarkSuite:
             str(filepath),
             hdu=hdu_num,
             mmap=tf_mmap_mode,
+            policy="smart",
             cache_capacity=0,
             handle_cache_capacity=self.hot_cache_capacity,
         )
@@ -1275,9 +1322,47 @@ class ExhaustiveBenchmarkSuite:
         for k, v in method_results.items():
             if v and v["mean"] is not None:
                 valid_methods[k] = v["median"] if use_median else v["mean"]
-        if valid_methods:
-            best_method = min(valid_methods.keys(), key=lambda k: valid_methods[k])
-            sorted_methods = sorted(valid_methods.items(), key=lambda x: x[1])
+        valid_diag_methods = {}
+        for k, v in diagnostic_results.items():
+            if v and v["mean"] is not None:
+                valid_diag_methods[k] = v["median"] if use_median else v["mean"]
+
+        smart_overall_methods = {
+            "torchfits",
+            "astropy_torch",
+            "fitsio_torch",
+            # Optional aliases for future external smart adapters.
+            "pyast_torch",
+            "kapteyn_torch",
+        }
+        numpy_methods = {
+            "torchfits_numpy",
+            "astropy",
+            "fitsio",
+            # Optional aliases for future external direct adapters.
+            "pyast",
+            "kapteyn",
+        }
+        specialized_methods = {
+            "torchfits_specialized",
+            "torchfits_mmap",
+            "torchfits_cpp_open_once",
+            "torchfits_numpy",
+            "astropy",
+            "fitsio",
+            # Optional aliases for future external direct adapters.
+            "pyast",
+            "kapteyn",
+        }
+        comparison_methods = {
+            k: v for k, v in valid_methods.items() if k in smart_overall_methods
+        }
+        if not comparison_methods:
+            comparison_methods = dict(valid_methods)
+
+        if comparison_methods:
+            best_method = min(comparison_methods.keys(), key=lambda k: comparison_methods[k])
+            sorted_methods = sorted(comparison_methods.items(), key=lambda x: x[1])
             torchfits_rank = next(
                 (i + 1 for i, (k, v) in enumerate(sorted_methods) if k == "torchfits"),
                 len(sorted_methods) + 1,
@@ -1287,14 +1372,18 @@ class ExhaustiveBenchmarkSuite:
             result["torchfits_rank"] = torchfits_rank
 
             # Calculate speedup vs best
-            if "torchfits" in valid_methods:
-                best_time = valid_methods[best_method]
-                tf_time = valid_methods["torchfits"]
+            if "torchfits" in comparison_methods:
+                best_time = comparison_methods[best_method]
+                tf_time = comparison_methods["torchfits"]
                 speedup = (
                     best_time / tf_time
                     if best_method != "torchfits"
-                    else tf_time
-                    / min(v for k, v in valid_methods.items() if k != "torchfits")
+                    else (
+                        tf_time
+                        / min(v for k, v in comparison_methods.items() if k != "torchfits")
+                        if any(k != "torchfits" for k in comparison_methods)
+                        else None
+                    )
                 )
                 result["speedup_vs_best"] = speedup
 
@@ -1303,8 +1392,7 @@ class ExhaustiveBenchmarkSuite:
                 result["speedup_vs_best"] = None
 
             # Split rankings by return type (torch tensor vs numpy array) for fair comparisons.
-            torch_methods = {"torchfits", "fitsio_torch", "astropy_torch"}
-            numpy_methods = {"torchfits_numpy", "fitsio", "astropy"}
+            torch_methods = set(smart_overall_methods)
 
             torch_valid = {k: v for k, v in valid_methods.items() if k in torch_methods}
             if torch_valid:
@@ -1356,7 +1444,41 @@ class ExhaustiveBenchmarkSuite:
                 result["torchfits_numpy_rank"] = 999
                 result["speedup_vs_best_numpy"] = None
 
-            # Explicitly report the "switch to torch" goal metric in the CSV only.
+            # Specialized/direct family comparison (all direct/specialized methods).
+            specialized_valid = {
+                k: v for k, v in {**valid_methods, **valid_diag_methods}.items() if k in specialized_methods
+            }
+            if specialized_valid and "torchfits_specialized" in specialized_valid:
+                best_spec = min(specialized_valid.keys(), key=lambda k: specialized_valid[k])
+                sorted_spec = sorted(specialized_valid.items(), key=lambda x: x[1])
+                tf_spec_rank = next(
+                    (
+                        i + 1
+                        for i, (k, _) in enumerate(sorted_spec)
+                        if k == "torchfits_specialized"
+                    ),
+                    len(sorted_spec) + 1,
+                )
+                result["best_method_specialized"] = best_spec
+                result["torchfits_specialized_rank"] = tf_spec_rank
+                result["speedup_vs_best_specialized"] = (
+                    specialized_valid[best_spec]
+                    / specialized_valid["torchfits_specialized"]
+                )
+            else:
+                result["best_method_specialized"] = "none"
+                result["torchfits_specialized_rank"] = 999
+                result["speedup_vs_best_specialized"] = None
+
+            if (
+                "torchfits" in comparison_methods
+                and "torchfits_specialized" in valid_methods
+            ):
+                result["speedup_specialized_vs_smart"] = (
+                    comparison_methods["torchfits"] / valid_methods["torchfits_specialized"]
+                )
+            else:
+                result["speedup_specialized_vs_smart"] = None
         else:
             result["best_method"] = "none"
             result["torchfits_rank"] = 999
@@ -1367,6 +1489,10 @@ class ExhaustiveBenchmarkSuite:
             result["best_method_numpy"] = "none"
             result["torchfits_numpy_rank"] = 999
             result["speedup_vs_best_numpy"] = None
+            result["best_method_specialized"] = "none"
+            result["torchfits_specialized_rank"] = 999
+            result["speedup_vs_best_specialized"] = None
+            result["speedup_specialized_vs_smart"] = None
 
         return result
 
@@ -1768,6 +1894,7 @@ class ExhaustiveBenchmarkSuite:
                     str(target),
                     hdu=ext,
                     mmap=ext_use_mmap,
+                    policy="smart",
                     cache_capacity=0,
                     handle_cache_capacity=self.handle_cache_capacity,
                 )
@@ -1919,6 +2046,7 @@ class ExhaustiveBenchmarkSuite:
 
         # Fill other columns with None.
         for prefix in [
+            "torchfits_specialized",
             "torchfits_numpy",
             "torchfits_hot",
             "torchfits_handle_cache",
@@ -1948,6 +2076,10 @@ class ExhaustiveBenchmarkSuite:
         row.setdefault("best_method_numpy", "none")
         row.setdefault("torchfits_numpy_rank", 999)
         row.setdefault("speedup_vs_best_numpy", None)
+        row.setdefault("best_method_specialized", "none")
+        row.setdefault("torchfits_specialized_rank", 999)
+        row.setdefault("speedup_vs_best_specialized", None)
+        row.setdefault("speedup_specialized_vs_smart", None)
 
         if res:
             print(f"torchfits (scan count): {res['median']:.6f}s (median)")
@@ -2042,7 +2174,7 @@ class ExhaustiveBenchmarkSuite:
             row["speedup_vs_best"] = ast_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / ast_res["median"]
 
         # Fill missing columns
-        for prefix in ["torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
+        for prefix in ["torchfits_specialized", "torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
             for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
                 row.setdefault(f"{prefix}_{suffix}", None)
         row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
@@ -2051,6 +2183,10 @@ class ExhaustiveBenchmarkSuite:
         row.setdefault("best_method_numpy", "none")
         row.setdefault("torchfits_numpy_rank", 999)
         row.setdefault("speedup_vs_best_numpy", None)
+        row.setdefault("best_method_specialized", "none")
+        row.setdefault("torchfits_specialized_rank", 999)
+        row.setdefault("speedup_vs_best_specialized", None)
+        row.setdefault("speedup_specialized_vs_smart", None)
 
         print(f"torchfits (WCS): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
         print(f"astropy (WCS):   {ast_res['median']:.6f}s (median, {(n_points/1e6)/ast_res['median']:.2f} Mpts/s)")
@@ -2138,7 +2274,7 @@ class ExhaustiveBenchmarkSuite:
             row["speedup_vs_best"] = hp_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / hp_res["median"]
 
         # Fill missing columns
-        for prefix in ["torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
+        for prefix in ["torchfits_specialized", "torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
             for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
                 row.setdefault(f"{prefix}_{suffix}", None)
         row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
@@ -2147,6 +2283,10 @@ class ExhaustiveBenchmarkSuite:
         row.setdefault("best_method_numpy", "none")
         row.setdefault("torchfits_numpy_rank", 999)
         row.setdefault("speedup_vs_best_numpy", None)
+        row.setdefault("best_method_specialized", "none")
+        row.setdefault("torchfits_specialized_rank", 999)
+        row.setdefault("speedup_vs_best_specialized", None)
+        row.setdefault("speedup_specialized_vs_smart", None)
 
         print(f"torchfits (Sphere): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
         print(f"healpy (Sphere):    {hp_res['median']:.6f}s (median, {(n_points/1e6)/hp_res['median']:.2f} Mpts/s)")
@@ -2609,11 +2749,21 @@ class ExhaustiveBenchmarkSuite:
         tf_col = (
             "torchfits_median" if "torchfits_median" in df.columns else "torchfits_mean"
         )
+        tf_np_col = (
+            "torchfits_numpy_median"
+            if "torchfits_numpy_median" in df.columns
+            else "torchfits_numpy_mean"
+        )
         fi_col = "fitsio_median" if "fitsio_median" in df.columns else "fitsio_mean"
         tf_hot_col = (
             "torchfits_hot_median"
             if "torchfits_hot_median" in df.columns
             else "torchfits_hot_mean"
+        )
+        tf_spec_col = (
+            "torchfits_specialized_median"
+            if "torchfits_specialized_median" in df.columns
+            else "torchfits_specialized_mean"
         )
 
         # Keep the core summary focused on full-read benchmarks.
@@ -2683,11 +2833,19 @@ class ExhaustiveBenchmarkSuite:
                 best_overall = primary_df["best_method"].fillna("none").astype(str)
                 best_torch = primary_df["best_method_torch"].fillna("none").astype(str)
                 best_numpy = primary_df["best_method_numpy"].fillna("none").astype(str)
+                best_specialized = (
+                    primary_df["best_method_specialized"]
+                    .fillna("none")
+                    .astype(str)
+                    if "best_method_specialized" in primary_df.columns
+                    else pd.Series(["none"] * len(primary_df), index=primary_df.index)
+                )
 
                 tf_family_wins = int(best_overall.str.startswith("torchfits").sum())
-                tf_default_wins = int((best_overall == "torchfits").sum())
+                tf_smart_wins = int((best_overall == "torchfits").sum())
                 tf_torch_wins = int((best_torch == "torchfits").sum())
                 tf_numpy_wins = int((best_numpy == "torchfits_numpy").sum())
+                tf_specialized_wins = int((best_specialized == "torchfits_specialized").sum())
                 n_primary = len(primary_df)
 
                 f.write(
@@ -2700,14 +2858,17 @@ class ExhaustiveBenchmarkSuite:
                     f"- TorchFits (numpy return) best: {tf_numpy_wins}/{n_primary} ({(tf_numpy_wins / max(n_primary, 1)):.1%})\n"
                 )
                 f.write(
-                    f"- TorchFits default (`torchfits`) best overall: {tf_default_wins}/{n_primary} ({(tf_default_wins / max(n_primary, 1)):.1%})\n"
+                    f"- TorchFits smart (`torchfits`) best overall: {tf_smart_wins}/{n_primary} ({(tf_smart_wins / max(n_primary, 1)):.1%})\n"
+                )
+                f.write(
+                    f"- TorchFits specialized (`torchfits_specialized`) best specialized: {tf_specialized_wins}/{n_primary} ({(tf_specialized_wins / max(n_primary, 1)):.1%})\n"
                 )
 
                 # Show torch-returning misses explicitly
                 misses = primary_df[best_torch != "torchfits"].copy()
                 if not misses.empty:
                     misses = misses.sort_values("speedup_vs_best_torch").head(10)
-                    f.write("\nTop cases where TorchFits (torch) is not best:\n\n")
+                    f.write("\nTop cases where TorchFits (smart torch) is not best:\n\n")
                     f.write(
                         "| File | Type | Size (MB) | Best (torch) | Speedup vs Best (torch) |\n"
                     )
@@ -2757,9 +2918,9 @@ class ExhaustiveBenchmarkSuite:
             # Performance Summary Table
             f.write("## Performance Table\n\n")
             f.write(
-                "| File | Operation | Type | Size (MB) | TorchFits (s) | TorchFits Hot (s) | Best (torch) | Rank (torch) | Best (numpy) | Rank (numpy) | Fitsio / TorchFits |\n"
+                "| File | Operation | Type | Size (MB) | TorchFits Smart (s) | TorchFits Specialized (s) | TorchFits Hot (s) | Best (smart) | Rank (smart) | Best (specialized) | Rank (specialized) | Best (numpy) | Rank (numpy) | Fitsio Direct / TorchFits Specialized |\n"
             )
-            f.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
+            f.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 
             for _, r in df.iterrows():
                 name = r["filename"]
@@ -2770,31 +2931,38 @@ class ExhaustiveBenchmarkSuite:
                 size = f"{r['size_mb']:.2f}"
 
                 tf_time = r.get(tf_col)
+                tf_spec = r.get(tf_spec_col)
                 tf_hot = r.get(tf_hot_col)
                 if not _is_valid_number(tf_time):
                     tf_str = "FAIL"
+                    tf_spec_str = "-"
                     tf_hot_str = "-"
                     best_torch = "-"
                     rank_torch = "-"
+                    best_spec = "-"
+                    rank_spec = "-"
                     best_numpy = "-"
                     rank_numpy = "-"
                     fitsio_over_tf = "-"
                 else:
                     tf_str = f"{tf_time:.4f}"
+                    tf_spec_str = f"{tf_spec:.4f}" if _is_valid_number(tf_spec) else "-"
                     tf_hot_str = f"{tf_hot:.4f}" if _is_valid_number(tf_hot) else "-"
                     best_torch = r.get("best_method_torch", "-")
                     rank_torch = r.get("torchfits_rank_torch", "-")
+                    best_spec = r.get("best_method_specialized", "-")
+                    rank_spec = r.get("torchfits_specialized_rank", "-")
                     best_numpy = r.get("best_method_numpy", "-")
                     rank_numpy = r.get("torchfits_numpy_rank", "-")
                     fitsio_time = r.get(fi_col)
                     fitsio_over_tf = (
-                        f"{fitsio_time / tf_time:.2f}x"
-                        if _is_valid_number(fitsio_time)
+                        f"{fitsio_time / tf_spec:.2f}x"
+                        if _is_valid_number(fitsio_time) and _is_valid_number(tf_spec)
                         else "-"
                     )
 
                 f.write(
-                    f"| {name} | {operation} | {ftype} | {size} | {tf_str} | {tf_hot_str} | {best_torch} | {rank_torch} | {best_numpy} | {rank_numpy} | {fitsio_over_tf} |\n"
+                    f"| {name} | {operation} | {ftype} | {size} | {tf_str} | {tf_spec_str} | {tf_hot_str} | {best_torch} | {rank_torch} | {best_spec} | {rank_spec} | {best_numpy} | {rank_numpy} | {fitsio_over_tf} |\n"
                 )
 
             f.write("\n")
@@ -2866,51 +3034,60 @@ class ExhaustiveBenchmarkSuite:
                     rank3_plus = sum(rank_counts[rank_counts.index >= 3])
 
                     f.write(
-                        f"- Times torchfits ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0) / total_valid * 100:.1f}%)\n"
+                        f"- Times torchfits smart ranked #1: {rank_counts.get(1, 0)} ({rank_counts.get(1, 0) / total_valid * 100:.1f}%)\n"
                     )
                     f.write(
-                        f"- Times torchfits ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0) / total_valid * 100:.1f}%)\n"
+                        f"- Times torchfits smart ranked #2: {rank_counts.get(2, 0)} ({rank_counts.get(2, 0) / total_valid * 100:.1f}%)\n"
                     )
                     f.write(
-                        f"- Times torchfits ranked #3+: {rank3_plus} ({rank3_plus / total_valid * 100:.1f}%)\n"
+                        f"- Times torchfits smart ranked #3+: {rank3_plus} ({rank3_plus / total_valid * 100:.1f}%)\n"
                     )
-                    f.write(f"- Average ranking: {rank_series.mean():.2f}\n")
+                    f.write(f"- Average smart ranking: {rank_series.mean():.2f}\n")
                 else:
                     f.write("- No valid ranking data available.\n")
                 f.write("\n")
 
-            # Top regressions vs best
-            if "speedup_vs_best" in df.columns and "best_method" in df.columns:
-                f.write("## Top Regressions (torchfits vs best)\n\n")
-                regressions = primary_df.copy()
-                regressions["torchfits_rank"] = pd.to_numeric(
-                    regressions["torchfits_rank"], errors="coerce"
+            # Informational conversion overhead (not a cross-library regression table).
+            if tf_col in df.columns and tf_np_col in df.columns:
+                f.write("## Informational: Tensor Conversion Overhead vs `torchfits_numpy`\n\n")
+                overhead = primary_df.copy()
+                overhead["torchfits_smart_time"] = pd.to_numeric(
+                    overhead[tf_col], errors="coerce"
                 )
-                regressions["speedup_vs_best"] = pd.to_numeric(
-                    regressions["speedup_vs_best"], errors="coerce"
+                overhead["torchfits_numpy_time"] = pd.to_numeric(
+                    overhead[tf_np_col], errors="coerce"
                 )
-                regressions = regressions[
-                    regressions["speedup_vs_best"].notna()
-                    & (regressions["torchfits_rank"] > 1)
+                overhead["smart_over_numpy"] = (
+                    overhead["torchfits_smart_time"] / overhead["torchfits_numpy_time"]
+                )
+                overhead = overhead[
+                    overhead["smart_over_numpy"].notna()
+                    & np.isfinite(overhead["smart_over_numpy"])
+                    & (overhead["smart_over_numpy"] > 1.0)
                 ].copy()
-                if not regressions.empty:
-                    regressions = regressions.sort_values("speedup_vs_best").head(10)
-                    f.write("| File | Type | Size (MB) | Best | Speedup vs Best |\n")
-                    f.write("|---|---|---|---|---|\n")
-                    for _, r in regressions.iterrows():
+                if not overhead.empty:
+                    overhead = overhead.sort_values("smart_over_numpy", ascending=False).head(10)
+                    f.write(
+                        "These rows compare `torchfits` tensor-return overhead against "
+                        "`torchfits_numpy`; use the method-family sections below for "
+                        "true regression interpretation.\n\n"
+                    )
+                    f.write("| File | Type | Size (MB) | Speedup vs `torchfits_numpy` |\n")
+                    f.write("|---|---|---|---|\n")
+                    for _, r in overhead.iterrows():
                         f.write(
-                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['best_method']} | {r['speedup_vs_best']:.2f}x |\n"
+                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['smart_over_numpy']:.2f}x |\n"
                         )
                     f.write("\n")
                 else:
-                    f.write("No regressions found.\n\n")
+                    f.write("No meaningful tensor-conversion overhead rows detected.\n\n")
 
-            # Top regressions vs best (torch-returning methods only)
+            # Top regressions vs best (smart/tensor methods only)
             if (
                 "speedup_vs_best_torch" in df.columns
                 and "best_method_torch" in df.columns
             ):
-                f.write("## Top Regressions (torch-returning methods)\n\n")
+                f.write("## Top Regressions (smart/tensor methods)\n\n")
                 regressions = primary_df.copy()
                 regressions["torchfits_rank_torch"] = pd.to_numeric(
                     regressions["torchfits_rank_torch"], errors="coerce"
@@ -2926,9 +3103,7 @@ class ExhaustiveBenchmarkSuite:
                     regressions = regressions.sort_values("speedup_vs_best_torch").head(
                         10
                     )
-                    f.write(
-                        "| File | Type | Size (MB) | Best (torch) | Speedup vs Best |\n"
-                    )
+                    f.write("| File | Type | Size (MB) | Best (smart) | Speedup vs Best |\n")
                     f.write("|---|---|---|---|---|\n")
                     for _, r in regressions.iterrows():
                         f.write(
@@ -2966,6 +3141,39 @@ class ExhaustiveBenchmarkSuite:
                     for _, r in regressions.iterrows():
                         f.write(
                             f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['best_method_numpy']} | {r['speedup_vs_best_numpy']:.2f}x |\n"
+                        )
+                    f.write("\n")
+                else:
+                    f.write("No regressions found.\n\n")
+
+            # Top regressions vs best (specialized/direct methods)
+            if (
+                "speedup_vs_best_specialized" in df.columns
+                and "best_method_specialized" in df.columns
+            ):
+                f.write("## Top Regressions (specialized/direct methods)\n\n")
+                regressions = primary_df.copy()
+                regressions["torchfits_specialized_rank"] = pd.to_numeric(
+                    regressions["torchfits_specialized_rank"], errors="coerce"
+                )
+                regressions["speedup_vs_best_specialized"] = pd.to_numeric(
+                    regressions["speedup_vs_best_specialized"], errors="coerce"
+                )
+                regressions = regressions[
+                    regressions["speedup_vs_best_specialized"].notna()
+                    & (regressions["torchfits_specialized_rank"] > 1)
+                ].copy()
+                if not regressions.empty:
+                    regressions = regressions.sort_values(
+                        "speedup_vs_best_specialized"
+                    ).head(10)
+                    f.write(
+                        "| File | Type | Size (MB) | Best (specialized) | Speedup vs Best |\n"
+                    )
+                    f.write("|---|---|---|---|---|\n")
+                    for _, r in regressions.iterrows():
+                        f.write(
+                            f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r['best_method_specialized']} | {r['speedup_vs_best_specialized']:.2f}x |\n"
                         )
                     f.write("\n")
                 else:
@@ -3155,169 +3363,225 @@ class ExhaustiveBenchmarkSuite:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         print(f"✓ Cleaned up temporary directory: {self.temp_dir}")
 
-    def run_additional_benchmarks(self):
-        """Run additional focused benchmarks for new features."""
+    def _append_diagnostic(
+        self,
+        report: Dict[str, Any],
+        *,
+        name: str,
+        status: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        report.setdefault("benchmarks", []).append(
+            {
+                "name": name,
+                "status": status,
+                "details": details or {},
+            }
+        )
+
+    def _run_subprocess_diagnostic(
+        self,
+        *,
+        name: str,
+        command: List[str],
+        emit_stdout: bool = False,
+    ) -> Dict[str, Any]:
+        import re
+        import subprocess
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent,
+        )
+        details: Dict[str, Any] = {"command": command, "returncode": result.returncode}
+        speedups = []
+        for line in result.stdout.splitlines():
+            if "Speedup" in line:
+                match = re.search(r"([0-9]+(?:\\.[0-9]+)?)x", line)
+                if match:
+                    try:
+                        speedups.append(float(match.group(1)))
+                    except Exception:
+                        pass
+        if speedups:
+            details["speedups_x"] = speedups
+        if result.stderr.strip():
+            details["stderr"] = result.stderr.strip()
+
+        if result.returncode == 0:
+            print(f"[diagnostic][non-gating] PASS: {name}")
+            if emit_stdout and result.stdout.strip():
+                print(result.stdout)
+            return {"status": "PASS", "details": details}
+
+        print(f"[diagnostic][non-gating] WARN: {name} failed")
+        if result.stderr.strip():
+            print(result.stderr.strip())
+        return {"status": "WARN", "details": details}
+
+    def _write_additional_diagnostics(self, report: Dict[str, Any]) -> None:
+        self.additional_diag_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.additional_diag_file, "w") as f:
+            json.dump(report, f, indent=2)
+        print(
+            "[diagnostic][non-gating] Wrote additional diagnostics: "
+            f"{self.additional_diag_file}"
+        )
+
+    def run_additional_benchmarks(
+        self,
+        report: Optional[Dict[str, Any]] = None,
+        *,
+        generate_plots: bool = True,
+    ) -> Dict[str, Any]:
+        """Run additional focused diagnostics (non-gating)."""
+        diagnostic_report = report or {
+            "policy": "informational_non_gating",
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "benchmarks": [],
+        }
         print("\n" + "=" * 60)
-        print("RUNNING ADDITIONAL FEATURE BENCHMARKS")
+        print("[diagnostic][non-gating] RUNNING ADDITIONAL FEATURE BENCHMARKS")
         print("=" * 60)
 
-        # Run C++ backend performance benchmark
+        # C++ backend diagnostic benchmark
         try:
-            print("\n🎯 Running C++ Backend Performance Benchmark...")
+            print("\n[diagnostic][non-gating] C++ backend benchmark...")
             from bench_cpp_backend import CPPBackendBenchmark
 
+            cpp_json = self.output_dir / "cpp_backend_results.json"
             cpp_benchmark = CPPBackendBenchmark()
-            cpp_benchmark.run_comprehensive_benchmark()
-            print("✅ C++ backend benchmark completed")
+            cpp_out = cpp_benchmark.run_comprehensive_benchmark(json_out=cpp_json)
+            details = {
+                "json_out": cpp_out.get("json_out"),
+                "stable_issue_count": len(
+                    cpp_out.get("summary", {}).get("stable_issues", [])
+                ),
+            }
+            self._append_diagnostic(
+                diagnostic_report,
+                name="cpp_backend",
+                status=cpp_out.get("status", "PASS"),
+                details=details,
+            )
         except Exception as e:
-            print(f"⚠️  C++ backend benchmark failed: {e}")
+            print(f"[diagnostic][non-gating] WARN: C++ backend benchmark error: {e}")
+            self._append_diagnostic(
+                diagnostic_report,
+                name="cpp_backend",
+                status="WARN",
+                details={"error": str(e)},
+            )
 
-        # Run GPU memory validation
+        # GPU memory validation
         try:
-            print("\n🚀 Running GPU Memory Validation...")
+            print("\n[diagnostic][non-gating] GPU memory benchmark...")
             from bench_gpu_memory import GPUMemoryBenchmark
 
             gpu_benchmark = GPUMemoryBenchmark()
-            gpu_benchmark.run_comprehensive_benchmark()
-            print("✅ GPU memory benchmark completed")
-        except Exception as e:
-            print(f"⚠️  GPU memory benchmark failed: {e}")
-
-        # Run transform benchmarks
-        try:
-            print("\n🎨 Running Transform Benchmarks...")
-            import subprocess
-
-            result = subprocess.run(
-                [sys.executable, "bench_transforms.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
+            gpu_out = gpu_benchmark.run_comprehensive_benchmark()
+            gpu_status = gpu_out.get("status", "PASS") if gpu_out else "PASS"
+            self._append_diagnostic(
+                diagnostic_report,
+                name="gpu_memory",
+                status=gpu_status,
+                details=gpu_out or {},
             )
-            if result.returncode == 0:
-                print("✅ Transform benchmarks completed")
-            else:
-                print(f"⚠️  Transform benchmarks failed: {result.stderr}")
         except Exception as e:
-            print(f"⚠️  Transform benchmarks not available: {e}")
-
-        # Run buffer benchmarks
-        try:
-            print("\n💾 Running Buffer Benchmarks...")
-            import subprocess
-
-            result = subprocess.run(
-                [sys.executable, "bench_buffer.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
+            print(f"[diagnostic][non-gating] WARN: GPU memory benchmark error: {e}")
+            self._append_diagnostic(
+                diagnostic_report,
+                name="gpu_memory",
+                status="WARN",
+                details={"error": str(e)},
             )
-            if result.returncode == 0:
-                print("✅ Buffer benchmarks completed")
-            else:
-                print(f"⚠️  Buffer benchmarks failed: {result.stderr}")
-        except Exception as e:
-            print(f"⚠️  Buffer benchmarks not available: {e}")
 
-        # Run cache benchmarks
-        try:
-            print("\n🗄️  Running Cache Benchmarks...")
-            import subprocess
+        plot_args = [] if generate_plots else ["--no-plots"]
+        subprocess_targets = [
+            ("transforms", [sys.executable, "bench_transforms.py", *plot_args], False),
+            ("buffer", [sys.executable, "bench_buffer.py", *plot_args], False),
+            ("cache", [sys.executable, "bench_cache.py", *plot_args], False),
+            ("cold_targets", [sys.executable, "bench_cold_targets.py"], True),
+        ]
+        for name, command, emit_stdout in subprocess_targets:
+            try:
+                print(f"\n[diagnostic][non-gating] {name} benchmark...")
+                out = self._run_subprocess_diagnostic(
+                    name=name, command=command, emit_stdout=emit_stdout
+                )
+                self._append_diagnostic(
+                    diagnostic_report,
+                    name=name,
+                    status=out["status"],
+                    details=out["details"],
+                )
+            except Exception as e:
+                print(f"[diagnostic][non-gating] WARN: {name} benchmark error: {e}")
+                self._append_diagnostic(
+                    diagnostic_report,
+                    name=name,
+                    status="WARN",
+                    details={"error": str(e)},
+                )
 
-            result = subprocess.run(
-                [sys.executable, "bench_cache.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
-            )
-            if result.returncode == 0:
-                print("✅ Cache benchmarks completed")
-            else:
-                print(f"⚠️  Cache benchmarks failed: {result.stderr}")
-        except Exception as e:
-            print(f"⚠️  Cache benchmarks not available: {e}")
+        return diagnostic_report
 
-        # Run focused cold-target benchmarks
-        try:
-            print("\n🧊 Running Cold Target Benchmarks...")
-            import subprocess
+    def run_phase3_benchmarks(
+        self, report: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Run Phase 3 diagnostics (Scaled Data & Parallel I/O)."""
+        diagnostic_report = report or {
+            "policy": "informational_non_gating",
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "benchmarks": [],
+        }
+        print("\n[diagnostic][non-gating] Running Phase 3 Benchmarks...")
 
-            result = subprocess.run(
-                [sys.executable, "bench_cold_targets.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
-            )
-            if result.returncode == 0:
-                print("✅ Cold target benchmarks completed")
-                print(result.stdout)
-            else:
-                print(f"⚠️  Cold target benchmarks failed: {result.stderr}")
-        except Exception as e:
-            print(f"⚠️  Cold target benchmarks not available: {e}")
+        phase3_targets = [
+            (
+                "phase3_scaled",
+                [sys.executable, "bench_scaled.py", "--runs", "15", "--warmup", "3"],
+            ),
+            (
+                "phase3_parallel",
+                [sys.executable, "bench_parallel.py", "--runs", "9", "--warmup", "2"],
+            ),
+            (
+                "phase3_mmap_safety",
+                [sys.executable, "bench_mmap.py", "--runs", "15", "--warmup", "3"],
+            ),
+        ]
+        for name, command in phase3_targets:
+            try:
+                out = self._run_subprocess_diagnostic(
+                    name=name, command=command, emit_stdout=True
+                )
+                self._append_diagnostic(
+                    diagnostic_report,
+                    name=name,
+                    status=out["status"],
+                    details=out["details"],
+                )
+            except Exception as e:
+                print(f"[diagnostic][non-gating] WARN: {name} benchmark error: {e}")
+                self._append_diagnostic(
+                    diagnostic_report,
+                    name=name,
+                    status="WARN",
+                    details={"error": str(e)},
+                )
 
-    def run_phase3_benchmarks(self):
-        """Run Phase 3 benchmarks (Scaled Data & Parallel I/O)."""
-        print("\n🚀 Running Phase 3 Benchmarks (Scaled & Parallel)...")
-        import subprocess
-
-        # Scaled Data
-        try:
-            print("  Running Scaled Data Benchmark...")
-            result = subprocess.run(
-                [sys.executable, "bench_scaled.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
-            )
-            if result.returncode == 0:
-                print("  ✅ Scaled Data Benchmark Passed")
-                print(result.stdout)
-            else:
-                print(f"  ⚠️  Scaled Data Benchmark Failed: {result.stderr}")
-        except Exception as e:
-            print(f"  ⚠️  Scaled Data Benchmark Error: {e}")
-
-        # Parallel I/O
-        try:
-            print("  Running Parallel I/O Benchmark...")
-            result = subprocess.run(
-                [sys.executable, "bench_parallel.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
-            )
-            if result.returncode == 0:
-                print("  ✅ Parallel I/O Benchmark Passed")
-                print(result.stdout)
-            else:
-                print(f"  ⚠️  Parallel I/O Benchmark Failed: {result.stderr}")
-        except Exception as e:
-            print(f"  ⚠️  Parallel I/O Benchmark Error: {e}")
-
-        # MMap & Safety
-        try:
-            print("  Running MMap & Safety Benchmark...")
-            result = subprocess.run(
-                [sys.executable, "bench_mmap.py"],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).parent,
-            )
-            if result.returncode == 0:
-                print("  ✅ MMap & Safety Benchmark Passed")
-                print(result.stdout)
-            else:
-                print(f"  ⚠️  MMap & Safety Benchmark Failed: {result.stderr}")
-        except Exception as e:
-            print(f"  ⚠️  MMap & Safety Benchmark Error: {e}")
+        return diagnostic_report
 
     def run_full_suite(
         self,
         *,
         filter_regex: str = "",
+        scope: str = "all",
         core_only: bool = False,
-        generate_plots: bool = True,
+        generate_plots: bool = False,
     ):
         """Run the complete exhaustive benchmark suite."""
         try:
@@ -3331,7 +3595,9 @@ class ExhaustiveBenchmarkSuite:
                 f"payload_min_ratio={self.payload_min_ratio:.2f})",
                 flush=True,
             )
-            configure()
+            print(f"Benchmark scope: {scope}", flush=True)
+            if generate_plots:
+                configure()
 
             # Create test files
             files = self.create_test_files()
@@ -3341,17 +3607,45 @@ class ExhaustiveBenchmarkSuite:
                 rx = re.compile(filter_regex)
                 files = {k: v for k, v in files.items() if rx.search(k)}
 
+            # Scope-level file filtering
+            if scope == "fits":
+                files = {
+                    k: v
+                    for k, v in files.items()
+                    if (not k.startswith("table_")) and ("wcs" not in k.lower())
+                }
+            elif scope == "table":
+                files = {k: v for k, v in files.items() if k.startswith("table_")}
+            elif scope == "wcs":
+                files = {k: v for k, v in files.items() if "wcs" in k.lower()}
+            elif scope == "sphere":
+                # Sphere benchmarks are not file-driven; keep file set empty.
+                files = {}
+
             # Run core benchmarks
             results = self.run_exhaustive_benchmarks(files)
 
             # Run focused benchmarks
             self.run_focused_benchmarks(files)
 
-            # Optional: run extra feature/phase3 benches (these are informative, but slow).
-            # Keep core I/O results stable by defaulting to core-only in CI-like workflows.
+            # Optional diagnostics: extra feature/phase3 benches (non-gating).
+            diagnostic_report = {
+                "policy": "informational_non_gating",
+                "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "benchmarks": [],
+            }
             if not core_only:
-                self.run_additional_benchmarks()
-                self.run_phase3_benchmarks()
+                self.run_additional_benchmarks(
+                    diagnostic_report,
+                    generate_plots=generate_plots,
+                )
+                self.run_phase3_benchmarks(diagnostic_report)
+                self._write_additional_diagnostics(diagnostic_report)
+            else:
+                print(
+                    "[diagnostic][non-gating] SKIPPED: additional diagnostics "
+                    "(core-only run)"
+                )
 
             # Generate visualizations (optional; expensive during iteration)
             if generate_plots:
@@ -3368,6 +3662,8 @@ class ExhaustiveBenchmarkSuite:
             print(f"- Summary: {self.summary_file}")
             print(f"- Focused CSV: {self.focused_csv_file}")
             print(f"- Focused Summary: {self.focused_summary_file}")
+            if not core_only:
+                print(f"- Additional diagnostics: {self.additional_diag_file}")
             if generate_plots:
                 print(f"- Plots: {self.output_dir}/*.png")
 
@@ -3399,6 +3695,15 @@ def main():
         help="Output directory",
     )
     parser.add_argument(
+        "--diagnostic-json-out",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path for additional diagnostics JSON "
+            "(default: <output-dir>/additional_diagnostics.json)"
+        ),
+    )
+    parser.add_argument(
         "--mmap",
         action="store_true",
         help="Enable memory mapping (default)",
@@ -3413,18 +3718,50 @@ def main():
     )
     parser.add_argument(
         "--include-tables",
-        action="store_true",
-        help="Include table benchmarks (off by default)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include table benchmarks (default: on)",
     )
     parser.add_argument(
         "--include-wcs",
-        action="store_true",
-        help="Include WCS benchmarks (off by default)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include WCS benchmarks (default: on)",
     )
     parser.add_argument(
         "--include-sphere",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include Sphere/HEALPix benchmarks (default: on)",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=["all", "fits", "table", "wcs", "sphere"],
+        default="all",
+        help=(
+            "Benchmark subset scope. 'all' runs everything; other modes run only that "
+            "subset (and apply matching include defaults)."
+        ),
+    )
+    parser.add_argument(
+        "--fits-only",
         action="store_true",
-        help="Include Sphere/HEALPix benchmarks (off by default)",
+        help="Alias for --scope fits",
+    )
+    parser.add_argument(
+        "--table-only",
+        action="store_true",
+        help="Alias for --scope table",
+    )
+    parser.add_argument(
+        "--wcs-only",
+        action="store_true",
+        help="Alias for --scope wcs",
+    )
+    parser.add_argument(
+        "--sphere-only",
+        action="store_true",
+        help="Alias for --scope sphere",
     )
     parser.add_argument(
         "--focused-only",
@@ -3481,7 +3818,7 @@ def main():
     parser.add_argument(
         "--plots",
         action="store_true",
-        help="Generate plots (slow). Defaults to off when using --filter.",
+        help="Generate plots (slow, opt-in)",
     )
     parser.add_argument(
         "--no-plots",
@@ -3525,12 +3862,43 @@ def main():
         else defaults["hot_cache_capacity"]
     )
 
+    scope = args.scope
+    if args.fits_only:
+        scope = "fits"
+    elif args.table_only:
+        scope = "table"
+    elif args.wcs_only:
+        scope = "wcs"
+    elif args.sphere_only:
+        scope = "sphere"
+
+    include_tables = bool(args.include_tables)
+    include_wcs = bool(args.include_wcs)
+    include_sphere = bool(args.include_sphere)
+    if scope == "fits":
+        include_tables = False
+        include_wcs = False
+        include_sphere = False
+    elif scope == "table":
+        include_tables = True
+        include_wcs = False
+        include_sphere = False
+    elif scope == "wcs":
+        include_tables = False
+        include_wcs = True
+        include_sphere = False
+    elif scope == "sphere":
+        include_tables = False
+        include_wcs = False
+        include_sphere = True
+
     suite = ExhaustiveBenchmarkSuite(
         output_dir=args.output_dir,
+        diagnostic_json_out=args.diagnostic_json_out,
         use_mmap=use_mmap,
-        include_tables=args.include_tables,
-        include_wcs=args.include_wcs,
-        include_sphere=args.include_sphere,
+        include_tables=include_tables,
+        include_wcs=include_wcs,
+        include_sphere=include_sphere,
         cache_capacity=cache_capacity,
         hot_cache_capacity=hot_cache_capacity,
         handle_cache_capacity=handle_cache_capacity,
@@ -3539,16 +3907,14 @@ def main():
     )
 
     # Plot policy:
+    # - Defaults to no plots (faster and avoids matplotlib init/warmup).
     # - If user explicitly sets a flag, honor it.
-    # - Otherwise, skip plots when running filtered iterations.
     if args.no_plots:
         generate_plots = False
     elif args.plots:
         generate_plots = True
-    elif args.filter:
-        generate_plots = False
     else:
-        generate_plots = True
+        generate_plots = False
 
     if args.no_cleanup:
         # Override cleanup method (monkey patch)
@@ -3575,6 +3941,7 @@ def main():
     else:
         suite.run_full_suite(
             filter_regex=args.filter,
+            scope=scope,
             core_only=args.core_only,
             generate_plots=generate_plots,
         )

@@ -1,15 +1,19 @@
 """
 C++ Backend Performance Benchmark
 
-Focused benchmark to identify and fix C++ backend performance issues.
-Compares current implementation against astropy/fitsio to find bottlenecks.
+Diagnostic microbenchmark for C++/image read paths.
+This script is informational (non-gating) and uses robust timing statistics.
 """
 
+import argparse
+import json
 import os
+import random
 import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -21,7 +25,7 @@ try:
     import torchfits
     from torchfits.core import FITSCore  # noqa: F401
 except ImportError as e:
-    print(f"⚠️  torchfits import failed: {e}")
+    print(f"[diagnostic] torchfits import failed: {e}")
     torchfits = None
 
 try:
@@ -35,299 +39,543 @@ except ImportError:
     fitsio = None
 
 
+def _to_native_endian(array: np.ndarray) -> np.ndarray:
+    if array.dtype.byteorder not in ("=", "|"):
+        return array.astype(array.dtype.newbyteorder("="))
+    return array
+
+
 class CPPBackendBenchmark:
     """Benchmark C++ backend performance against reference implementations."""
 
-    def __init__(self):
-        self.results = []
+    def __init__(
+        self,
+        runs: int = 9,
+        warmup: int = 3,
+        seed: int = 123,
+        issue_ratio_threshold: float = 0.97,
+        max_relative_spread: float = 0.25,
+    ):
+        self.results: List[Dict[str, Any]] = []
+        self.runs = max(3, int(runs))
+        self.warmup = max(0, int(warmup))
+        self.issue_ratio_threshold = float(issue_ratio_threshold)
+        self.max_relative_spread = float(max_relative_spread)
+        np.random.seed(seed)
+        random.seed(seed)
 
-    def create_test_data(self, shape, dtype=np.float32, add_scaling=False):
-        """Create test data with optional FITS scaling."""
+    def create_test_data(
+        self, shape: tuple[int, int], dtype=np.float32, add_scaling: bool = False
+    ) -> tuple[np.ndarray, Dict[str, float]]:
+        """Create test data with optional FITS scaling headers."""
         data = np.random.normal(1000, 100, shape).astype(dtype)
 
-        header_kwargs = {}
+        header_kwargs: Dict[str, float] = {}
         if add_scaling:
             header_kwargs["BSCALE"] = 0.01
             header_kwargs["BZERO"] = 1000.0
-            # Convert to integer for scaling test
             data = ((data - 1000.0) / 0.01).astype(np.int16)
 
         return data, header_kwargs
 
-    def write_test_file(self, data, header_kwargs=None, compressed=False):
-        """Write test FITS file."""
+    def write_test_file(
+        self,
+        data: np.ndarray,
+        header_kwargs: Optional[Dict[str, float]] = None,
+        compressed: bool = False,
+    ) -> str:
+        """Write temporary FITS file and return path."""
         header_kwargs = header_kwargs or {}
+        if not astropy_fits:
+            raise ImportError("astropy required for test file creation")
 
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
-            if astropy_fits:
-                if compressed:
-                    hdu = astropy_fits.CompImageHDU(data, compression_type="RICE_1")
-                else:
-                    hdu = astropy_fits.PrimaryHDU(data)
-
-                for key, value in header_kwargs.items():
-                    hdu.header[key] = value
-
-                hdu.writeto(f.name, overwrite=True)
-                return f.name
+            if compressed:
+                hdu = astropy_fits.CompImageHDU(data, compression_type="RICE_1")
             else:
-                raise ImportError("astropy required for test file creation")
+                hdu = astropy_fits.PrimaryHDU(data)
+
+            for key, value in header_kwargs.items():
+                hdu.header[key] = value
+
+            hdu.writeto(f.name, overwrite=True)
+            return f.name
+
+    def _time_callable(self, func: Callable[[], Any]) -> Dict[str, float]:
+        """Robust timing with warmup and median/percentile stats."""
+        for _ in range(self.warmup):
+            _ = func()
+
+        samples: List[float] = []
+        for _ in range(self.runs):
+            t0 = time.perf_counter()
+            _ = func()
+            samples.append(time.perf_counter() - t0)
+
+        arr = np.array(samples, dtype=np.float64)
+        p10 = float(np.percentile(arr, 10))
+        p90 = float(np.percentile(arr, 90))
+        median = float(np.median(arr))
+        mean = float(np.mean(arr))
+        std = float(np.std(arr))
+        spread = p90 - p10
+        rel_spread = (spread / median) if median > 0 else float("inf")
+        return {
+            "mean_s": mean,
+            "median_s": median,
+            "std_s": std,
+            "p10_s": p10,
+            "p90_s": p90,
+            "spread_s": spread,
+            "rel_spread": rel_spread,
+        }
+
+    def _case_label(
+        self, shape: tuple[int, int], dtype: np.dtype, compressed: bool, scaled: bool
+    ) -> str:
+        compression = "compressed" if compressed else "uncompressed"
+        scale_mode = "scaled" if scaled else "raw"
+        return f"shape={shape} dtype={dtype.__name__} compression={compression} mode={scale_mode}"
 
     def bench_read_performance(
-        self, shape, dtype=np.float32, compressed=False, scaled=False
-    ):
-        """Benchmark read performance for specific configuration."""
-        print(
-            f"\\n📊 Benchmarking {shape} {dtype.__name__} {'compressed' if compressed else 'uncompressed'} {'scaled' if scaled else 'raw'}"
-        )
+        self,
+        shape: tuple[int, int],
+        dtype: np.dtype = np.float32,
+        compressed: bool = False,
+        scaled: bool = False,
+    ) -> None:
+        """Benchmark read performance for one case."""
+        case_label = self._case_label(shape, dtype, compressed, scaled)
+        print(f"\n[diagnostic] Case: {case_label}")
 
-        # Create test data
         data, header_kwargs = self.create_test_data(shape, dtype, scaled)
         filepath = self.write_test_file(data, header_kwargs, compressed)
+        hdu = 1 if compressed else 0
 
-        results = {
-            "shape": shape,
+        result: Dict[str, Any] = {
+            "case_label": case_label,
+            "shape": list(shape),
             "dtype": dtype.__name__,
-            "compressed": compressed,
-            "scaled": scaled,
+            "compressed": bool(compressed),
+            "scaled": bool(scaled),
+            "hdu": int(hdu),
             "file_size_mb": os.path.getsize(filepath) / 1024 / 1024,
+            "runs": self.runs,
+            "warmup": self.warmup,
         }
 
         try:
-            # Benchmark torchfits
             if torchfits:
-                times = []
-                tensor = None
-                for _ in range(3):
-                    start = time.perf_counter()
-                    res = torchfits.read(filepath)
-                    if isinstance(res, tuple):
-                        tensor = res[0]
-                    else:
-                        tensor = res
-                    end = time.perf_counter()
-                    times.append(end - start)
+                tf_last = {"tensor_shape": None, "tensor_dtype": None}
 
-                results["torchfits_time"] = np.mean(times)
-                results["torchfits_std"] = np.std(times)
-                if tensor is not None:
-                    results["torchfits_shape"] = tuple(tensor.shape)
-                    results["torchfits_dtype"] = str(tensor.dtype)
+                def read_torchfits() -> torch.Tensor:
+                    # High-level comparison path.
+                    out = torchfits.read(filepath, hdu=hdu, policy="smart")
+                    tensor = out[0] if isinstance(out, tuple) else out
+                    tf_last["tensor_shape"] = list(tensor.shape)
+                    tf_last["tensor_dtype"] = str(tensor.dtype)
+                    return tensor
 
-            # Benchmark astropy
+                tf_stats = self._time_callable(read_torchfits)
+                result.update({f"torchfits_{k}": v for k, v in tf_stats.items()})
+                result["torchfits_shape"] = tf_last["tensor_shape"]
+                result["torchfits_dtype"] = tf_last["tensor_dtype"]
+
+                def read_torchfits_specialized() -> torch.Tensor:
+                    # Direct/specialized image path.
+                    return torchfits.read_image(
+                        filepath,
+                        hdu=hdu,
+                        mmap=(not compressed),
+                        handle_cache=True,
+                    )
+
+                tf_spec_stats = self._time_callable(read_torchfits_specialized)
+                result.update(
+                    {f"torchfits_specialized_{k}": v for k, v in tf_spec_stats.items()}
+                )
+
             if astropy_fits:
-                times = []
-                for _ in range(3):
-                    start = time.perf_counter()
+
+                def read_astropy() -> torch.Tensor:
                     with astropy_fits.open(filepath) as hdul:
-                        array = hdul[0].data
-                        if array is not None:
-                            # Ensure native byte order for PyTorch
-                            if array.dtype.byteorder not in ("=", "|"):
-                                array = array.astype(array.dtype.newbyteorder("="))
-                            tensor = torch.from_numpy(array)
-                    end = time.perf_counter()
-                    times.append(end - start)
+                        array = hdul[hdu].data
+                        if array is None:
+                            raise RuntimeError("astropy returned no data")
+                        return torch.from_numpy(_to_native_endian(array))
 
-                results["astropy_time"] = np.mean(times)
-                results["astropy_std"] = np.std(times)
+                ast_stats = self._time_callable(read_astropy)
+                result.update({f"astropy_{k}": v for k, v in ast_stats.items()})
 
-            # Benchmark fitsio
+                def read_astropy_specialized() -> np.ndarray:
+                    with astropy_fits.open(filepath) as hdul:
+                        array = hdul[hdu].data
+                        if array is None:
+                            raise RuntimeError("astropy returned no data")
+                        return _to_native_endian(array)
+
+                ast_spec_stats = self._time_callable(read_astropy_specialized)
+                result.update(
+                    {f"astropy_specialized_{k}": v for k, v in ast_spec_stats.items()}
+                )
+
             if fitsio:
-                times = []
-                for _ in range(3):
-                    start = time.perf_counter()
-                    array = fitsio.read(filepath)
-                    # Ensure native byte order for PyTorch
-                    if array.dtype.byteorder not in ("=", "|"):
-                        array = array.astype(array.dtype.newbyteorder("="))
-                    tensor = torch.from_numpy(array)
-                    end = time.perf_counter()
-                    times.append(end - start)
 
-                results["fitsio_time"] = np.mean(times)
-                results["fitsio_std"] = np.std(times)
+                def read_fitsio() -> torch.Tensor:
+                    array = fitsio.read(filepath, ext=hdu)
+                    return torch.from_numpy(_to_native_endian(array))
 
-            # Calculate performance ratios
-            if "torchfits_time" in results:
-                if "astropy_time" in results:
-                    results["vs_astropy"] = (
-                        results["astropy_time"] / results["torchfits_time"]
-                    )
-                if "fitsio_time" in results:
-                    results["vs_fitsio"] = (
-                        results["fitsio_time"] / results["torchfits_time"]
-                    )
+                fi_stats = self._time_callable(read_fitsio)
+                result.update({f"fitsio_{k}": v for k, v in fi_stats.items()})
 
-            # Print results
-            print(f"  File size: {results['file_size_mb']:.1f} MB")
-            if "torchfits_time" in results:
-                print(
-                    f"  torchfits: {results['torchfits_time'] * 1000:.1f}ms ± {results['torchfits_std'] * 1000:.1f}ms"
-                )
-            if "astropy_time" in results:
-                print(
-                    f"  astropy:   {results['astropy_time'] * 1000:.1f}ms ± {results['astropy_std'] * 1000:.1f}ms"
-                )
-            if "fitsio_time" in results:
-                print(
-                    f"  fitsio:    {results['fitsio_time'] * 1000:.1f}ms ± {results['fitsio_std'] * 1000:.1f}ms"
+                def read_fitsio_specialized() -> np.ndarray:
+                    return _to_native_endian(fitsio.read(filepath, ext=hdu))
+
+                fi_spec_stats = self._time_callable(read_fitsio_specialized)
+                result.update(
+                    {f"fitsio_specialized_{k}": v for k, v in fi_spec_stats.items()}
                 )
 
-            if "vs_astropy" in results:
-                print(
-                    f"  torchfits vs astropy: {results['vs_astropy']:.2f}x {'faster' if results['vs_astropy'] > 1 else 'slower'}"
+            if "torchfits_median_s" in result and "astropy_median_s" in result:
+                result["vs_astropy_median"] = (
+                    result["astropy_median_s"] / result["torchfits_median_s"]
                 )
-            if "vs_fitsio" in results:
-                print(
-                    f"  torchfits vs fitsio:  {results['vs_fitsio']:.2f}x {'faster' if results['vs_fitsio'] > 1 else 'slower'}"
+            if "torchfits_median_s" in result and "fitsio_median_s" in result:
+                result["vs_fitsio_median"] = (
+                    result["fitsio_median_s"] / result["torchfits_median_s"]
+                )
+            if (
+                "torchfits_specialized_median_s" in result
+                and "fitsio_median_s" in result
+            ):
+                result["vs_fitsio_median_specialized"] = (
+                    result["fitsio_median_s"] / result["torchfits_specialized_median_s"]
+                )
+            if (
+                "torchfits_specialized_median_s" in result
+                and "fitsio_specialized_median_s" in result
+            ):
+                result["vs_fitsio_median_specialized_direct"] = (
+                    result["fitsio_specialized_median_s"]
+                    / result["torchfits_specialized_median_s"]
+                )
+            if (
+                "torchfits_specialized_median_s" in result
+                and "astropy_specialized_median_s" in result
+            ):
+                result["vs_astropy_median_specialized_direct"] = (
+                    result["astropy_specialized_median_s"]
+                    / result["torchfits_specialized_median_s"]
                 )
 
-            self.results.append(results)
+            print(f"  File size: {result['file_size_mb']:.2f} MB")
+            if "torchfits_median_s" in result:
+                print(
+                    "  torchfits (smart): "
+                    f"median={result['torchfits_median_s'] * 1000:.2f}ms "
+                    f"(p10={result['torchfits_p10_s'] * 1000:.2f}ms, "
+                    f"p90={result['torchfits_p90_s'] * 1000:.2f}ms, "
+                    f"spread={result['torchfits_spread_s'] * 1000:.2f}ms)"
+                )
+            if "torchfits_specialized_median_s" in result:
+                print(
+                    "  torchfits (specialized): "
+                    f"median={result['torchfits_specialized_median_s'] * 1000:.2f}ms "
+                    f"(spread={result['torchfits_specialized_spread_s'] * 1000:.2f}ms)"
+                )
+            if "astropy_median_s" in result:
+                print(
+                    "  astropy (smart):   "
+                    f"median={result['astropy_median_s'] * 1000:.2f}ms "
+                    f"(spread={result['astropy_spread_s'] * 1000:.2f}ms)"
+                )
+            if "astropy_specialized_median_s" in result:
+                print(
+                    "  astropy (specialized): "
+                    f"median={result['astropy_specialized_median_s'] * 1000:.2f}ms "
+                    f"(spread={result['astropy_specialized_spread_s'] * 1000:.2f}ms)"
+                )
+            if "fitsio_median_s" in result:
+                print(
+                    "  fitsio (smart):    "
+                    f"median={result['fitsio_median_s'] * 1000:.2f}ms "
+                    f"(spread={result['fitsio_spread_s'] * 1000:.2f}ms)"
+                )
+            if "fitsio_specialized_median_s" in result:
+                print(
+                    "  fitsio (specialized): "
+                    f"median={result['fitsio_specialized_median_s'] * 1000:.2f}ms "
+                    f"(spread={result['fitsio_specialized_spread_s'] * 1000:.2f}ms)"
+                )
 
+            if "vs_astropy_median" in result:
+                speed = result["vs_astropy_median"]
+                print(
+                    f"  torchfits vs astropy (median): {speed:.2f}x {'faster' if speed > 1 else 'slower'}"
+                )
+            if "vs_fitsio_median" in result:
+                speed = result["vs_fitsio_median"]
+                print(
+                    f"  torchfits smart vs fitsio (median):  {speed:.2f}x {'faster' if speed > 1 else 'slower'}"
+                )
+            if "vs_fitsio_median_specialized" in result:
+                speed = result["vs_fitsio_median_specialized"]
+                print(
+                    f"  torchfits specialized vs fitsio smart (median):  {speed:.2f}x {'faster' if speed > 1 else 'slower'}"
+                )
+            if "vs_fitsio_median_specialized_direct" in result:
+                speed = result["vs_fitsio_median_specialized_direct"]
+                print(
+                    f"  torchfits specialized vs fitsio specialized (median):  {speed:.2f}x {'faster' if speed > 1 else 'slower'}"
+                )
+            if "vs_astropy_median_specialized_direct" in result:
+                speed = result["vs_astropy_median_specialized_direct"]
+                print(
+                    f"  torchfits specialized vs astropy specialized (median): {speed:.2f}x {'faster' if speed > 1 else 'slower'}"
+                )
+
+            self.results.append(result)
         finally:
             os.unlink(filepath)
 
-    def bench_cutout_performance(self):
+    def bench_cutout_performance(self) -> None:
         """Benchmark cutout/subset reading performance."""
-        print("\\n🔍 Benchmarking Cutout Performance")
-
-        # Large image for cutout testing
+        print("\n[diagnostic] Cutout Performance")
         shape = (4000, 4000)
         data, _ = self.create_test_data(shape, np.float32)
         filepath = self.write_test_file(data)
-
         cutout_spec = f"{filepath}[0][1000:2000,1000:2000]"
 
         try:
             if torchfits:
-                times = []
-                subset = None
-                for _ in range(5):
-                    start = time.perf_counter()
-                    res = torchfits.read(cutout_spec)
-                    if isinstance(res, tuple):
-                        subset = res[0]
-                    else:
-                        subset = res
-                    end = time.perf_counter()
-                    times.append(end - start)
 
+                def tf_cutout() -> torch.Tensor:
+                    out = torchfits.read(cutout_spec, policy="smart")
+                    return out[0] if isinstance(out, tuple) else out
+
+                tf_stats = self._time_callable(tf_cutout)
                 print(
-                    f"  torchfits cutout: {np.mean(times) * 1000:.1f}ms ± {np.std(times) * 1000:.1f}ms"
+                    "  torchfits cutout: "
+                    f"median={tf_stats['median_s'] * 1000:.2f}ms "
+                    f"(spread={tf_stats['spread_s'] * 1000:.2f}ms)"
                 )
-                if subset is not None:
-                    print(f"  cutout shape: {subset.shape}")
 
-            # Compare with full read + slice
             if astropy_fits:
-                times = []
-                for _ in range(5):
-                    start = time.perf_counter()
+
+                def astropy_cutout() -> torch.Tensor:
                     with astropy_fits.open(filepath) as hdul:
-                        full_data = hdul[0].data
-                        subset = full_data[1000:2000, 1000:2000]
-                        if subset.dtype.byteorder not in ("=", "|"):
-                            subset = subset.astype(subset.dtype.newbyteorder("="))
-                        torch.from_numpy(subset)
-                    end = time.perf_counter()
-                    times.append(end - start)
+                        arr = hdul[0].data
+                        subset = arr[1000:2000, 1000:2000]
+                        return torch.from_numpy(_to_native_endian(subset))
 
+                ast_stats = self._time_callable(astropy_cutout)
                 print(
-                    f"  astropy full+slice: {np.mean(times) * 1000:.1f}ms ± {np.std(times) * 1000:.1f}ms"
+                    "  astropy full+slice: "
+                    f"median={ast_stats['median_s'] * 1000:.2f}ms "
+                    f"(spread={ast_stats['spread_s'] * 1000:.2f}ms)"
                 )
-
         finally:
             os.unlink(filepath)
 
-    def bench_scaling_performance(self):
+    def bench_scaling_performance(self) -> None:
         """Benchmark BSCALE/BZERO scaling performance."""
-        print("\\n⚖️  Benchmarking Scaling Performance")
-
+        print("\n[diagnostic] Scaling Performance")
         shape = (2000, 2000)
-
-        # Test with scaling
         self.bench_read_performance(shape, np.int16, compressed=False, scaled=True)
-
-        # Test without scaling for comparison
         self.bench_read_performance(shape, np.float32, compressed=False, scaled=False)
 
-    def identify_bottlenecks(self):
-        """Analyze results to identify performance bottlenecks."""
-        print("\\n🔍 Performance Analysis")
+    def identify_bottlenecks(self) -> Dict[str, Any]:
+        """Analyze stable issues and print grouped medians."""
+        print("\n[diagnostic] Performance Analysis")
 
-        slow_cases = []
+        stable_issues: List[Dict[str, Any]] = []
+        stable_issues_specialized: List[Dict[str, Any]] = []
         for result in self.results:
-            if "vs_astropy" in result and result["vs_astropy"] < 1.0:
-                slow_cases.append((result, "astropy", result["vs_astropy"]))
-            if "vs_fitsio" in result and result["vs_fitsio"] < 1.0:
-                slow_cases.append((result, "fitsio", result["vs_fitsio"]))
-
-        if slow_cases:
-            print("\\n⚠️  Performance Issues Identified:")
-            for result, vs_lib, ratio in slow_cases:
-                print(
-                    f"  {result['shape']} {result['dtype']} {'compressed' if result['compressed'] else 'uncompressed'}: "
-                    f"{ratio:.2f}x slower than {vs_lib}"
+            ratio = result.get("vs_fitsio_median")
+            tf_rel_spread = result.get("torchfits_rel_spread")
+            fi_rel_spread = result.get("fitsio_rel_spread")
+            if ratio is None:
+                continue
+            stable = (
+                ratio < self.issue_ratio_threshold
+                and tf_rel_spread is not None
+                and fi_rel_spread is not None
+                and tf_rel_spread <= self.max_relative_spread
+                and fi_rel_spread <= self.max_relative_spread
+            )
+            if stable:
+                stable_issues.append(
+                    {
+                        "case_label": result["case_label"],
+                        "mode": "smart",
+                        "vs_fitsio_median": ratio,
+                        "torchfits_rel_spread": tf_rel_spread,
+                        "fitsio_rel_spread": fi_rel_spread,
+                    }
                 )
 
-        # Identify patterns
-        compressed_slow = any(
-            r["compressed"] and "vs_fitsio" in r and r["vs_fitsio"] < 1.0
-            for r in self.results
-        )
-        large_file_slow = any(
-            r["file_size_mb"] > 50 and "vs_fitsio" in r and r["vs_fitsio"] < 1.0
-            for r in self.results
-        )
-        scaling_slow = any(
-            r["scaled"] and "vs_fitsio" in r and r["vs_fitsio"] < 1.0
-            for r in self.results
-        )
-
-        print("\\n🎯 Optimization Targets:")
-        if compressed_slow:
-            print("  - Compressed file reading needs optimization")
-        if large_file_slow:
-            print("  - Large file I/O needs optimization")
-        if scaling_slow:
-            print("  - BSCALE/BZERO scaling needs optimization")
-
-        # Calculate overall performance
-        if self.results:
-            avg_vs_astropy = np.mean(
-                [r.get("vs_astropy", 1.0) for r in self.results if "vs_astropy" in r]
+            ratio_spec = result.get("vs_fitsio_median_specialized_direct")
+            tf_spec_rel_spread = result.get("torchfits_specialized_rel_spread")
+            fi_spec_rel_spread = result.get("fitsio_specialized_rel_spread")
+            stable_spec = (
+                ratio_spec is not None
+                and ratio_spec < self.issue_ratio_threshold
+                and tf_spec_rel_spread is not None
+                and fi_spec_rel_spread is not None
+                and tf_spec_rel_spread <= self.max_relative_spread
+                and fi_spec_rel_spread <= self.max_relative_spread
             )
-            avg_vs_fitsio = np.mean(
-                [r.get("vs_fitsio", 1.0) for r in self.results if "vs_fitsio" in r]
+            if stable_spec:
+                stable_issues_specialized.append(
+                    {
+                        "case_label": result["case_label"],
+                        "mode": "specialized",
+                        "vs_fitsio_median": ratio_spec,
+                        "torchfits_rel_spread": tf_spec_rel_spread,
+                        "fitsio_rel_spread": fi_spec_rel_spread,
+                    }
+                )
+
+        if stable_issues:
+            print("\n[diagnostic] Stable Performance Issues (non-gating):")
+            for issue in stable_issues:
+                print(
+                    "  "
+                    f"{issue['case_label']}: "
+                    f"vs_fitsio={issue['vs_fitsio_median']:.2f}x, "
+                    f"tf_rel_spread={issue['torchfits_rel_spread']:.2f}, "
+                    f"fitsio_rel_spread={issue['fitsio_rel_spread']:.2f}"
+                )
+        else:
+            print("\n[diagnostic] No stable slow-vs-fitsio issues detected.")
+
+        if stable_issues_specialized:
+            print("\n[diagnostic] Stable Performance Issues (specialized, non-gating):")
+            for issue in stable_issues_specialized:
+                print(
+                    "  "
+                    f"{issue['case_label']}: "
+                    f"vs_fitsio={issue['vs_fitsio_median']:.2f}x, "
+                    f"tf_rel_spread={issue['torchfits_rel_spread']:.2f}, "
+                    f"fitsio_rel_spread={issue['fitsio_rel_spread']:.2f}"
+                )
+        else:
+            print("\n[diagnostic] No stable specialized slow-vs-fitsio issues detected.")
+
+        grouped: Dict[str, List[float]] = {
+            "compressed": [],
+            "uncompressed": [],
+            "scaled": [],
+        }
+        grouped_specialized: Dict[str, List[float]] = {
+            "compressed": [],
+            "uncompressed": [],
+            "scaled": [],
+        }
+        for result in self.results:
+            ratio = result.get("vs_fitsio_median")
+            ratio_spec = result.get("vs_fitsio_median_specialized_direct")
+            if ratio is None:
+                ratio = None
+            if result.get("compressed"):
+                if ratio is not None:
+                    grouped["compressed"].append(ratio)
+                if ratio_spec is not None:
+                    grouped_specialized["compressed"].append(ratio_spec)
+            else:
+                if ratio is not None:
+                    grouped["uncompressed"].append(ratio)
+                if ratio_spec is not None:
+                    grouped_specialized["uncompressed"].append(ratio_spec)
+            if result.get("scaled"):
+                if ratio is not None:
+                    grouped["scaled"].append(ratio)
+                if ratio_spec is not None:
+                    grouped_specialized["scaled"].append(ratio_spec)
+
+        print("\n[diagnostic] Ratio Summary vs fitsio (smart mode, median-based):")
+        summary: Dict[str, Any] = {
+            "stable_issues": stable_issues + stable_issues_specialized,
+            "group_summary_smart": {},
+            "group_summary_specialized": {},
+        }
+        for group, vals in grouped.items():
+            if not vals:
+                continue
+            arr = np.array(vals, dtype=np.float64)
+            group_stats = {
+                "count": int(arr.size),
+                "median": float(np.median(arr)),
+                "p10": float(np.percentile(arr, 10)),
+                "p90": float(np.percentile(arr, 90)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+            }
+            summary["group_summary_smart"][group] = group_stats
+            print(
+                f"  {group:12s} n={group_stats['count']:2d} "
+                f"median={group_stats['median']:.2f}x "
+                f"p10={group_stats['p10']:.2f}x "
+                f"p90={group_stats['p90']:.2f}x "
+                f"min={group_stats['min']:.2f}x"
             )
 
-            print("\\n📈 Overall Performance:")
-            print(f"  Average vs astropy: {avg_vs_astropy:.2f}x")
-            print(f"  Average vs fitsio:  {avg_vs_fitsio:.2f}x")
+        print("\n[diagnostic] Ratio Summary vs fitsio (specialized mode, median-based):")
+        for group, vals in grouped_specialized.items():
+            if not vals:
+                continue
+            arr = np.array(vals, dtype=np.float64)
+            group_stats = {
+                "count": int(arr.size),
+                "median": float(np.median(arr)),
+                "p10": float(np.percentile(arr, 10)),
+                "p90": float(np.percentile(arr, 90)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+            }
+            summary["group_summary_specialized"][group] = group_stats
+            print(
+                f"  {group:12s} n={group_stats['count']:2d} "
+                f"median={group_stats['median']:.2f}x "
+                f"p10={group_stats['p10']:.2f}x "
+                f"p90={group_stats['p90']:.2f}x "
+                f"min={group_stats['min']:.2f}x"
+            )
 
-    def run_comprehensive_benchmark(self):
+        return summary
+
+    def save_results_json(self, output_file: Path, summary: Dict[str, Any]) -> None:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "metadata": {
+                "runs": self.runs,
+                "warmup": self.warmup,
+                "issue_ratio_threshold": self.issue_ratio_threshold,
+                "max_relative_spread": self.max_relative_spread,
+            },
+            "summary": summary,
+            "results": self.results,
+        }
+        with open(output_file, "w") as f:
+            json.dump(payload, f, indent=2)
+
+    def run_comprehensive_benchmark(self, json_out: Optional[Path] = None) -> Dict[str, Any]:
         """Run comprehensive C++ backend benchmark."""
-        print("🚀 C++ Backend Performance Benchmark")
+        print("[diagnostic] C++ Backend Performance Benchmark (non-gating)")
         print("=" * 50)
 
         if not torchfits:
-            print("❌ torchfits not available - cannot run benchmark")
-            return
+            print("[diagnostic] SKIPPED: torchfits not available")
+            return {"status": "SKIPPED", "reason": "torchfits_not_available", "results": []}
 
-        # Test different data sizes and types
         test_configs = [
-            # Small files
             ((100, 100), np.float32, False),
             ((100, 100), np.int16, False),
-            # Medium files
             ((1000, 1000), np.float32, False),
             ((1000, 1000), np.int16, False),
             ((1000, 1000), np.float64, False),
-            # Large files
             ((2000, 2000), np.float32, False),
             ((2000, 2000), np.int16, False),
-            # Compressed files
             ((1000, 1000), np.float32, True),
             ((1000, 1000), np.int16, True),
         ]
@@ -335,48 +583,64 @@ class CPPBackendBenchmark:
         for shape, dtype, compressed in test_configs:
             self.bench_read_performance(shape, dtype, compressed)
 
-        # Test cutouts
         self.bench_cutout_performance()
-
-        # Test scaling
         self.bench_scaling_performance()
+        summary = self.identify_bottlenecks()
 
-        # Analyze results
-        self.identify_bottlenecks()
+        output_file = (
+            json_out
+            if json_out is not None
+            else Path(__file__).parent.parent / "bench_results" / "cpp_backend_results.json"
+        )
+        self.save_results_json(output_file, summary)
+        print(f"\n[diagnostic] Results saved to: {output_file}")
 
-        return self.results
+        return {
+            "status": "WARN" if summary["stable_issues"] else "PASS",
+            "results": self.results,
+            "summary": summary,
+            "json_out": str(output_file),
+        }
 
 
-def main():
-    """Run C++ backend benchmark."""
-    benchmark = CPPBackendBenchmark()
-    results = benchmark.run_comprehensive_benchmark()
-
-    # Save results
-    import json
-
-    output_file = (
-        Path(__file__).parent.parent / "bench_results" / "cpp_backend_results.json"
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run C++ backend diagnostic benchmark (informational, non-gating)."
     )
-    output_file.parent.mkdir(exist_ok=True)
+    parser.add_argument("--runs", type=int, default=9, help="Timed repeats per method")
+    parser.add_argument("--warmup", type=int, default=3, help="Warmup repeats per method")
+    parser.add_argument("--seed", type=int, default=123, help="Random seed")
+    parser.add_argument(
+        "--issue-ratio-threshold",
+        type=float,
+        default=0.97,
+        help="Flag only if fitsio/torchfits median ratio is below this threshold",
+    )
+    parser.add_argument(
+        "--max-relative-spread",
+        type=float,
+        default=0.25,
+        help="Require both methods to have spread/median below this value for stable issue flags",
+    )
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=Path("bench_results") / "cpp_backend_results.json",
+        help="Output JSON path",
+    )
+    return parser.parse_args()
 
-    # Convert numpy types to JSON serializable
-    json_results = []
-    for result in results:
-        json_result = {}
-        for key, value in result.items():
-            if isinstance(value, np.ndarray):
-                json_result[key] = value.tolist()
-            elif hasattr(value, "item"):  # numpy scalar
-                json_result[key] = value.item()
-            else:
-                json_result[key] = value
-        json_results.append(json_result)
 
-    with open(output_file, "w") as f:
-        json.dump(json_results, f, indent=2)
-
-    print(f"\\n💾 Results saved to: {output_file}")
+def main() -> None:
+    args = _parse_args()
+    benchmark = CPPBackendBenchmark(
+        runs=args.runs,
+        warmup=args.warmup,
+        seed=args.seed,
+        issue_ratio_threshold=args.issue_ratio_threshold,
+        max_relative_spread=args.max_relative_spread,
+    )
+    benchmark.run_comprehensive_benchmark(json_out=args.json_out)
 
 
 if __name__ == "__main__":

@@ -14,11 +14,6 @@ from typing import Any, Dict
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mpl_config import configure
-
-configure()
-
-import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 import torch  # noqa: E402
 
@@ -177,6 +172,10 @@ class BufferBenchmark:
     def generate_plots(self, results: Dict[str, Any]):
         """Generate buffer performance plots."""
         print("  📊 Generating buffer plots...")
+        from mpl_config import configure
+
+        configure()
+        import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         fig.suptitle("Buffer Management Performance", fontsize=16)
@@ -314,9 +313,38 @@ class BufferBenchmark:
 
 def main():
     """Run buffer benchmarks."""
-    benchmark = BufferBenchmark()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run buffer benchmarks")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("bench_results"),
+        help="Output directory",
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Generate plots (opt-in)",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip plot generation",
+    )
+    args = parser.parse_args()
+
+    if args.no_plots:
+        generate_plots = False
+    elif args.plots:
+        generate_plots = True
+    else:
+        generate_plots = False
+
+    benchmark = BufferBenchmark(output_dir=args.output_dir)
     results = benchmark.run_benchmarks()
-    benchmark.generate_plots(results)
+    if generate_plots:
+        benchmark.generate_plots(results)
     benchmark.save_results(results)
     # Ranked console view for quick comparison (lower is better).
     try:
