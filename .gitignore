@@ -12,7 +12,6 @@ verify_fix.py
 .vscode/
 .jules/
 .qoder/
-.claude/
 .benchmarks/
 
 # Build
@@ -39,13 +38,19 @@ data_wcs_examples/
 # Logs/Temp
 benchmark_full_output.txt
 benchmark_results/
+benchmark_results_*/
 bench_results/
 benchmark_results_*/
 benchmarks/benchmark_results/
 benchmarks/bench_results/
-bench*.log
-bench*.log*
-benchmark*.log
+benchmarks/replays/
+benchmarks/kapteyn_src/
+*.log
+*.log*
+*.json
+torchfits_exhaustive_*
+pytest_filtered.log
+
 # diagnostic scripts
 benchmark_all_wcs.py
 benchmark_compile.py
@@ -53,12 +58,34 @@ debug_*.py
 reproduce_*.py
 stress_test_sky.py
 verify_inverse.py
+test_fetch*.py
+test_sg*.py
 
 # benchmarks
 benchmarks/benchmark_competitors.py
+benchmarks/test_pyast*.py
+benchmarks/kapteyn-*.tar.gz
+benchmarks/large_mmap.fits
+benchmarks/parallel_test_*.fits
+benchmarks/scaled.fits
+benchmarks/repro_map2alm*.py
+benchmarks/find_overflow.py
+benchmarks/baselines/
+benchmarks/test_pyast*.py
+benchmarks/kapteyn_src/
+benchmarks/kapteyn-*.tar.gz
+benchmarks/large_mmap.fits
+benchmarks/parallel_test_*.fits
+benchmarks/scaled.fits
+benchmarks/repro_map2alm*.py
+benchmarks/find_overflow.py
+benchmarks/baselines/
 
 # native build artifacts
 wcslib.tar.bz2
 wcslib_src/
 
 .DS_Store
+
+# mpl config cache
+mpl-cache-*/

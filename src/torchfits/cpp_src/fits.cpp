@@ -775,6 +775,7 @@ public:
     }
 
     fitsfile* get_fptr() const { return fptr_; }
+    int get_start_hdu() const { return start_hdu_; }
 
     void ensure_hdu(int hdu_num, int* status) {
         if (!fptr_) {

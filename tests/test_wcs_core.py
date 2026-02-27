@@ -134,3 +134,37 @@ def test_origin_zero_and_one_consistent_shift() -> None:
 
     np.testing.assert_allclose(w0[0].cpu().numpy(), w1[0].cpu().numpy(), atol=1e-12)
     np.testing.assert_allclose(w0[1].cpu().numpy(), w1[1].cpu().numpy(), atol=1e-12)
+
+
+def test_cpp_helpers_match_python_fallbacks_for_inverse_rotation_and_tan_intermediate() -> (
+    None
+):
+    wcs = WCS(_tan_header()).to("cpu")
+
+    if (
+        wcs._cpp_inverse_spherical_rotation_pole is None
+        or wcs._cpp_tan_intermediate_from_radec is None
+    ):
+        return
+
+    ra = torch.tensor([179.9, 180.0, 180.3, 181.2], dtype=torch.float64)
+    dec = torch.tensor([-0.4, 0.0, 0.2, 0.8], dtype=torch.float64)
+
+    phi_cpp, theta_cpp = wcs._inverse_spherical_rotation(ra, dec, "pole")
+    xi_cpp, eta_cpp = wcs._tan_intermediate_from_radec(ra, dec)
+
+    old_inv = wcs._cpp_inverse_spherical_rotation_pole
+    old_tan = wcs._cpp_tan_intermediate_from_radec
+    try:
+        wcs._cpp_inverse_spherical_rotation_pole = None
+        wcs._cpp_tan_intermediate_from_radec = None
+        phi_py, theta_py = wcs._inverse_spherical_rotation(ra, dec, "pole")
+        xi_py, eta_py = wcs._tan_intermediate_from_radec(ra, dec)
+    finally:
+        wcs._cpp_inverse_spherical_rotation_pole = old_inv
+        wcs._cpp_tan_intermediate_from_radec = old_tan
+
+    assert torch.allclose(phi_cpp, phi_py, atol=1e-12, rtol=0.0)
+    assert torch.allclose(theta_cpp, theta_py, atol=1e-12, rtol=0.0)
+    assert torch.allclose(xi_cpp, xi_py, atol=1e-12, rtol=0.0)
+    assert torch.allclose(eta_cpp, eta_py, atol=1e-12, rtol=0.0)

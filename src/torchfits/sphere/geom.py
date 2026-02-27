@@ -11,7 +11,56 @@ import torch
 from torch import Tensor
 
 from ..wcs import healpix as _healpix
-from .core import great_circle_distance, lonlat_to_unit_xyz
+from .core import (
+    great_circle_distance,
+    lonlat_to_unit_xyz,
+    unit_xyz_to_lonlat,
+    wrap_longitude,
+)
+
+
+@dataclass(frozen=True)
+class LonLat:
+    """Spherical coordinates in degrees."""
+
+    lon: float
+    lat: float
+
+    def to_unit_xyz(self) -> "UnitVector3d":
+        v = lonlat_to_unit_xyz(self.lon, self.lat)
+        return UnitVector3d(float(v[0]), float(v[1]), float(v[2]))
+
+
+@dataclass(frozen=True)
+class Vector3d:
+    """3D Cartesian vector."""
+
+    x: float
+    y: float
+    z: float
+
+    def norm(self) -> float:
+        return math.sqrt(self.x**2 + self.y**2 + self.z**2)
+
+    def to_unit(self) -> "UnitVector3d":
+        n = self.norm()
+        if n < 1e-15:
+            raise ValueError("cannot normalize zero vector")
+        return UnitVector3d(self.x / n, self.y / n, self.z / n)
+
+
+@dataclass(frozen=True)
+class UnitVector3d:
+    """Unit-length 3D Cartesian vector."""
+
+    x: float
+    y: float
+    z: float
+
+    def to_lonlat(self, wrap_center_deg: float = 180.0) -> LonLat:
+        v = torch.tensor([self.x, self.y, self.z], dtype=torch.float64)
+        lon, lat = unit_xyz_to_lonlat(v, wrap_center_deg=wrap_center_deg)
+        return LonLat(float(lon), float(lat))
 
 
 def _normalize_polygon_vertices(
@@ -1010,6 +1059,154 @@ class SphericalCap:
         return self.to_exact(cap_steps=cap_steps).difference(other, cap_steps=cap_steps)
 
 
+Circle = SphericalCap
+
+
+@dataclass(frozen=True)
+class SphericalBox:
+    """Longitude/Latitude angle box."""
+
+    lon_min: float
+    lon_max: float
+    lat_min: float
+    lat_max: float
+
+    def __post_init__(self) -> None:
+        if self.lat_min > self.lat_max:
+            raise ValueError("lat_min must be <= lat_max")
+
+    def contains(
+        self,
+        lon_deg: Tensor | float,
+        lat_deg: Tensor | float,
+        *,
+        inclusive: bool = True,
+        atol_deg: float = 1e-10,
+    ) -> Tensor:
+        lon_t = torch.as_tensor(lon_deg, dtype=torch.float64)
+        lat_t = torch.as_tensor(lat_deg, dtype=torch.float64)
+
+        # Wrap longitude to handle crosses of the zero meridian
+        lon_wrapped = wrap_longitude(
+            lon_t, center_deg=(self.lon_min + self.lon_max) / 2
+        )
+
+        if inclusive:
+            mask = (
+                (lon_wrapped >= self.lon_min - atol_deg)
+                & (lon_wrapped <= self.lon_max + atol_deg)
+                & (lat_t >= self.lat_min - atol_deg)
+                & (lat_t <= self.lat_max + atol_deg)
+            )
+        else:
+            mask = (
+                (lon_wrapped > self.lon_min + atol_deg)
+                & (lon_wrapped < self.lon_max - atol_deg)
+                & (lat_t > self.lat_min + atol_deg)
+                & (lat_t < self.lat_max - atol_deg)
+            )
+        return mask
+
+    def query_pixels(self, nside: int, *, nest: bool = False) -> Tensor:
+        return _healpix.query_box(
+            nside,
+            self.lon_min,
+            self.lon_max,
+            self.lat_min,
+            self.lat_max,
+            nest=nest,
+            lonlat=True,
+        )
+
+    def pixelize(self, nside: int, *, nest: bool = False) -> PixelizedRegion:
+        return PixelizedRegion(
+            nside=nside, nest=nest, pixels=self.query_pixels(nside, nest=nest)
+        )
+
+    def union(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="union", left=self, right=other)
+
+    def intersection(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="intersection", left=self, right=other)
+
+    def difference(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="difference", left=self, right=other)
+
+
+Box = SphericalBox
+
+
+@dataclass(frozen=True)
+class SphericalEllipse:
+    """Spherical ellipse."""
+
+    lon_deg: float
+    lat_deg: float
+    semi_major_deg: float
+    semi_minor_deg: float
+    pa_deg: float = 0.0
+
+    def contains(
+        self,
+        lon_deg: Tensor | float,
+        lat_deg: Tensor | float,
+        *,
+        inclusive: bool = True,
+        atol_deg: float = 1e-10,
+    ) -> Tensor:
+        # Focal distance calculation similar to query_ellipse
+        major = float(math.radians(self.semi_major_deg))
+        minor = float(math.radians(self.semi_minor_deg))
+        cos_ratio = math.cos(major) / max(math.cos(minor), 1e-15)
+        cos_ratio = min(1.0, max(-1.0, cos_ratio))
+        focal_sep = math.acos(cos_ratio)
+        pa = math.radians(self.pa_deg)
+
+        lon_f1, lat_f1 = _destination_lonlat_deg(
+            self.lon_deg, self.lat_deg, pa, focal_sep
+        )
+        lon_f2, lat_f2 = _destination_lonlat_deg(
+            self.lon_deg, self.lat_deg, pa + math.pi, focal_sep
+        )
+
+        d1 = great_circle_distance(lon_f1, lat_f1, lon_deg, lat_deg, degrees=False)
+        d2 = great_circle_distance(lon_f2, lat_f2, lon_deg, lat_deg, degrees=False)
+
+        thresh = (2.0 * major) + math.radians(atol_deg)
+        if inclusive:
+            return (d1 + d2) <= thresh + 1e-12
+        return (d1 + d2) < thresh - 1e-12
+
+    def query_pixels(self, nside: int, *, nest: bool = False) -> Tensor:
+        return query_ellipse(
+            nside,
+            self.lon_deg,
+            self.lat_deg,
+            self.semi_major_deg,
+            self.semi_minor_deg,
+            pa_deg=self.pa_deg,
+            nest=nest,
+            inclusive=True,
+        )
+
+    def pixelize(self, nside: int, *, nest: bool = False) -> PixelizedRegion:
+        return PixelizedRegion(
+            nside=nside, nest=nest, pixels=self.query_pixels(nside, nest=nest)
+        )
+
+    def union(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="union", left=self, right=other)
+
+    def intersection(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="intersection", left=self, right=other)
+
+    def difference(self, other: "RegionOperand") -> "SphericalBooleanRegion":
+        return SphericalBooleanRegion(op="difference", left=self, right=other)
+
+
+Ellipse = SphericalEllipse
+
+
 RegionOperand = object
 
 
@@ -1443,14 +1640,22 @@ def query_ellipse(
 
 
 __all__ = [
+    "Box",
+    "Circle",
+    "Ellipse",
     "ExactSphericalRegion",
+    "LonLat",
     "NativeExactSphericalRegion",
     "PixelizedRegion",
     "RegionAreaEstimate",
     "SphericalBooleanRegion",
+    "SphericalBox",
     "SphericalCap",
+    "SphericalEllipse",
     "SphericalMultiPolygon",
     "SphericalPolygon",
+    "UnitVector3d",
+    "Vector3d",
     "convex_polygon_contains",
     "query_ellipse",
     "query_polygon_general",

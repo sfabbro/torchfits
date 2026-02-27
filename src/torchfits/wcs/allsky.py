@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional
 import math
 
 
@@ -8,7 +8,8 @@ def project_allsky(
     xi: Tensor,
     eta: Tensor,
     projection_code: str,
-    params: Optional[Dict[str, float]] = None,
+    pv1: Optional[Tensor] = None,
+    pv2: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """
     Project intermediate world coordinates (xi, eta) to native spherical coordinates (phi, theta).
@@ -17,8 +18,6 @@ def project_allsky(
     xi, eta: Degrees (Standard FITS Intermediate).
     Returns: phi, theta (Degrees)
     """
-    params = params or {}
-
     # Constants
     d2r = math.pi / 180.0
     r2d = 180.0 / math.pi
@@ -182,61 +181,66 @@ def project_allsky(
     elif projection_code == "HPX":
         # HEALPix
         # Calabretta & Roukema 2007 (Paper II, Eq 171-177)
-        # Standard FITS HPX uses H=4, K=3. We keep H/K scaling for the
-        # equatorial zone and use the standard polar-cap relations.
-        H = params.get("PV1_1", params.get("PV2_1", 4.0))
-        K = params.get("PV1_2", params.get("PV2_2", 3.0))
-
-        phi = torch.zeros_like(xi)
-        theta = torch.zeros_like(eta)
+        H = 4.0
+        K = 3.0
+        if pv1 is not None:
+            if pv1[1] != 0:
+                H = pv1[1]
+            if pv1[2] != 0:
+                K = pv1[2]
+        if pv2 is not None:
+            if pv2[1] != 0:
+                H = pv2[1]
+            if pv2[2] != 0:
+                K = pv2[2]
 
         eta_scale = 90.0 * (K / H)
         eta_boundary = eta_scale * (2.0 / 3.0)
         eta_pole = 90.0
-        polar_denom = eta_pole - eta_boundary
+        inv_polar_denom = 1.0 / (eta_pole - eta_boundary)
 
         abs_eta = torch.abs(eta)
         mask_eq = abs_eta <= eta_boundary
-        if mask_eq.any():
-            s_theta_eq = eta[mask_eq] / eta_scale
-            s_theta_eq = torch.clamp(s_theta_eq, -1.0, 1.0)
-            theta[mask_eq] = torch.asin(s_theta_eq) * r2d
-            phi[mask_eq] = xi[mask_eq]
 
-        mask_pol = ~mask_eq
-        if mask_pol.any():
-            xi_p, eta_p = xi[mask_pol], eta[mask_pol]
-            abs_eta = torch.abs(eta_p)
+        # Equatorial zone
+        s_theta_eq = eta / eta_scale
+        # phi_eq = xi (already correct)
 
-            sigma = (eta_pole - abs_eta) / polar_denom
-            sigma = torch.clamp(sigma, min=0.0)
+        # Polar caps
+        sigma = (eta_pole - abs_eta) * inv_polar_denom
+        s_theta_pol = torch.sign(eta) * (1.0 - (sigma * sigma) * (1.0 / 3.0))
 
-            # Standard HPX relation in the polar caps.
-            s_theta_pol = torch.sign(eta_p) * (1.0 - (sigma * sigma) / 3.0)
-            s_theta_pol = torch.clamp(s_theta_pol, -1.0, 1.0)
-            theta[mask_pol] = torch.asin(s_theta_pol) * r2d
+        s_theta = torch.where(mask_eq, s_theta_eq, s_theta_pol)
+        theta = torch.asin(torch.clamp(s_theta, -1.0, 1.0)) * r2d
 
-            xc = torch.round((xi_p - 45.0) / 90.0) * 90.0 + 45.0
-            dx = xi_p - xc
-            sigma_safe = torch.where(
-                torch.abs(sigma) < 1e-9, torch.ones_like(sigma), sigma
-            )
-            phi[mask_pol] = xc + dx / sigma_safe
+        xc = torch.round((xi - 45.0) * (1.0 / 90.0)) * 90.0 + 45.0
+        dx = xi - xc
+        sigma_safe = torch.where(sigma < 1e-9, torch.ones_like(sigma), sigma)
+        phi_pol = xc + dx / sigma_safe
 
-        # Reject points outside the nominal HPX domain.
-        invalid_eta = torch.abs(eta) > eta_pole
-        if mask_pol.any():
-            xi_p, eta_p = xi[mask_pol], eta[mask_pol]
-            xc = torch.round((xi_p - 45.0) / 90.0) * 90.0 + 45.0
-            sigma = torch.clamp((eta_pole - torch.abs(eta_p)) / polar_denom, min=0.0)
-            invalid_x = torch.abs(xi_p - xc) > (45.0 * sigma + 1e-8)
-            pol_bad = torch.zeros_like(mask_pol)
-            pol_bad[mask_pol] = invalid_x
-            invalid_eta = invalid_eta | pol_bad
+        phi = torch.where(mask_eq, xi, phi_pol)
 
-        nan_like = torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype)
-        phi = torch.where(invalid_eta, nan_like, phi)
-        theta = torch.where(invalid_eta, nan_like, theta)
+        # Validity check
+        invalid = (abs_eta > eta_pole) | (
+            ~mask_eq & (torch.abs(dx) > (45.0 * sigma + 1e-8))
+        )
+        if invalid.any():
+            nan = torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype)
+            phi = torch.where(invalid, nan, phi)
+            theta = torch.where(invalid, nan, theta)
+        return phi, theta
+
+    elif projection_code == "SFL":
+        # Sanson-Flamsteed (Sinusoidal)
+        # phi = xi / cos(theta)
+        # theta = eta
+        theta = eta
+        cos_theta = torch.cos(theta * d2r)
+        # Avoid division by zero at poles
+        cos_safe = torch.where(
+            torch.abs(cos_theta) < 1e-12, torch.ones_like(cos_theta), cos_theta
+        )
+        phi = xi / cos_safe
 
     else:
         raise NotImplementedError(
@@ -250,7 +254,8 @@ def deproject_allsky(
     phi: Tensor,
     theta: Tensor,
     projection_code: str,
-    params: Optional[Dict[str, float]] = None,
+    pv1: Optional[Tensor] = None,
+    pv2: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """
     Forward all-sky projection: native spherical (phi, theta) -> intermediate (xi, eta).
@@ -258,45 +263,94 @@ def deproject_allsky(
     phi, theta: Degrees.
     Returns: xi, eta in degrees.
     """
-    params = params or {}
     d2r = math.pi / 180.0
+    r2d = 180.0 / math.pi
 
-    if projection_code != "HPX":
+    if projection_code == "AIT":
+        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
+        phi_rad = phi_wrapped * d2r
+        theta_rad = theta * d2r
+
+        half_phi = phi_rad / 2.0
+        cos_theta = torch.cos(theta_rad)
+        sin_theta = torch.sin(theta_rad)
+        cos_half_phi = torch.cos(half_phi)
+
+        denom = torch.sqrt(0.5 * (1.0 + cos_theta * cos_half_phi))
+
+        xi = 2.0 * cos_theta * torch.sin(half_phi) / denom * r2d
+        eta = sin_theta / denom * r2d
+
+        return xi, eta
+
+    elif projection_code == "MOL":
+        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
+        phi_rad = phi_wrapped * d2r
+        theta_rad = theta * d2r
+
+        sin_theta = torch.sin(theta_rad)
+
+        gamma = torch.zeros_like(theta_rad)
+        for _ in range(10):
+            f = 2.0 * gamma + torch.sin(2.0 * gamma) - math.pi * sin_theta
+            fp = 2.0 + 2.0 * torch.cos(2.0 * gamma)
+            gamma = gamma - f / (fp + 1e-12)
+
+        cos_gamma = torch.cos(gamma)
+        sin_gamma = torch.sin(gamma)
+
+        sqrt2 = math.sqrt(2.0)
+        xi = 2.0 * sqrt2 * phi_rad * cos_gamma / math.pi * r2d
+        eta = sqrt2 * sin_gamma * r2d
+
+        return xi, eta
+
+    elif projection_code == "HPX":
+        H = 4.0
+        K = 3.0
+        if pv1 is not None:
+            if pv1[1] != 0:
+                H = pv1[1]
+            if pv1[2] != 0:
+                K = pv1[2]
+        if pv2 is not None:
+            if pv2[1] != 0:
+                H = pv2[1]
+            if pv2[2] != 0:
+                K = pv2[2]
+
+        phi_w = torch.remainder(phi + 180.0, 360.0) - 180.0
+        s_theta = torch.sin(theta * d2r)
+        abs_s = torch.abs(s_theta)
+
+        eta_scale = 90.0 * (K / H)
+        eta_boundary_s = 2.0 / 3.0
+        mask_eq = abs_s <= eta_boundary_s
+
+        # Polar
+        sigma = torch.sqrt(torch.clamp(3.0 * (1.0 - abs_s), min=0.0))
+        eta_pol = torch.sign(s_theta) * (
+            90.0 - (90.0 - (eta_scale * eta_boundary_s)) * sigma
+        )
+
+        xc = torch.round((phi_w - 45.0) * (1.0 / 90.0)) * 90.0 + 45.0
+        xi_pol = xc + sigma * (phi_w - xc)
+
+        xi = torch.where(mask_eq, phi_w, xi_pol)
+        eta = torch.where(mask_eq, eta_scale * s_theta, eta_pol)
+
+        return xi, eta
+
+    elif projection_code == "SFL":
+        # Sanson-Flamsteed (Sinusoidal)
+        # xi = phi * cos(theta)
+        # eta = theta
+        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
+        xi = phi_wrapped * torch.cos(theta * d2r)
+        eta = theta
+        return xi, eta
+
+    else:
         raise NotImplementedError(
             f"All-sky forward projection {projection_code} not implemented"
         )
-
-    H = params.get("PV1_1", params.get("PV2_1", 4.0))
-    K = params.get("PV1_2", params.get("PV2_2", 3.0))
-
-    # Wrap to a centered longitude interval to keep facet selection stable.
-    phi_w = torch.remainder(phi + 180.0, 360.0) - 180.0
-    s_theta = torch.sin(theta * d2r)
-    abs_s = torch.abs(s_theta)
-
-    xi = torch.zeros_like(phi_w)
-    eta = torch.zeros_like(theta)
-
-    # Equatorial zone.
-    # For standard HPX this corresponds to |sin(theta)| <= 2/3.
-    mask_eq = abs_s <= (2.0 / 3.0)
-    if mask_eq.any():
-        eta_scale = 90.0 * (K / H)
-        xi[mask_eq] = phi_w[mask_eq]
-        eta[mask_eq] = eta_scale * s_theta[mask_eq]
-
-    # Polar zones.
-    mask_pol = ~mask_eq
-    if mask_pol.any():
-        s_pol = s_theta[mask_pol]
-        sigma = torch.sqrt(torch.clamp(3.0 * (1.0 - torch.abs(s_pol)), min=0.0))
-        eta_scale = 90.0 * (K / H)
-        eta_boundary = eta_scale * (2.0 / 3.0)
-        eta[mask_pol] = torch.sign(s_pol) * (90.0 - (90.0 - eta_boundary) * sigma)
-
-        # Facet center consistent with project_allsky inverse implementation.
-        phi_pol = phi_w[mask_pol]
-        xc = torch.round((phi_pol - 45.0) / 90.0) * 90.0 + 45.0
-        xi[mask_pol] = xc + sigma * (phi_pol - xc)
-
-    return xi, eta

@@ -79,3 +79,16 @@ def test_hpx_inverse_matches_astropy() -> None:
 
     np.testing.assert_allclose(px_t.cpu().numpy(), px_ast, atol=1e-6)
     np.testing.assert_allclose(py_t.cpu().numpy(), py_ast, atol=1e-6)
+
+
+def test_hpx_cpp_project_marks_polar_out_of_facet_points_invalid() -> None:
+    import torchfits.cpp as cpp
+
+    xi = torch.tensor([45.0, 56.0, 0.0], dtype=torch.float64)
+    eta = torch.tensor([80.0, 80.0, 80.0], dtype=torch.float64)
+
+    phi, theta = cpp.wcs_hpx_project(xi, eta, 4.0, 3.0)
+
+    assert torch.isfinite(phi[0]) and torch.isfinite(theta[0])
+    assert torch.isnan(phi[1]) and torch.isnan(theta[1])
+    assert torch.isnan(phi[2]) and torch.isnan(theta[2])

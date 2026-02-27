@@ -1,155 +1,265 @@
 import torch
 from torch import Tensor
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+
+try:
+    import torchfits.cpp as _cpp
+except Exception:  # pragma: no cover - optional fast path
+    _cpp = None
 
 
 class TPV:
     """
     Tangent PV (TPV) distortion correction.
-
-    Used by SCAMP and SWarp. This defines a polynomial distortion on the
-    native tangent plane.
-
-    The transformation is:
-    xi = P_xi(u, v)
-    eta = P_eta(u, v)
-
-    where u, v are "intermediate" coordinates (typically linear pixel coords relative to CRPIX).
-
-    Coefficients are stored in PV1_j (for xi) and PV2_j (for eta).
-    The mapping of j to polynomial terms (1, x, y, r, x^2, xy, y^2, ...)
-    follows the TPV convention (see Calabretta's WCSLIB or SCAMP documentation).
-
-    Standard TPV Polynomial Terms (j=0..39 typically):
-    0: 1
-    1: x
-    2: y
-    3: r = sqrt(x^2 + y^2)
-    4: x^2
-    5: xy
-    6: y^2
-    7: x^3
-    8: x^2y
-    9: xy^2
-    10: y^3
-    ... and so on.
     """
+
+    # Experimental CPU ATen TPV inverse path.
+    _CPP_INVERT_MAX_POINTS = 65536
 
     def __init__(self, header: Dict[str, Any]):
         self.power_map = self._build_power_map()
         self.idx1, self.c1 = self._parse_pv(header, 1)
         self.idx2, self.c2 = self._parse_pv(header, 2)
+        self.terms1 = self._build_terms(self.idx1, self.c1)
+        self.terms2 = self._build_terms(self.idx2, self.c2)
+
+        self.terms1_dx_poly, self.terms1_dy_poly, self.terms1_rad = (
+            self._build_derivative_terms(self.terms1)
+        )
+        self.terms2_dx_poly, self.terms2_dy_poly, self.terms2_rad = (
+            self._build_derivative_terms(self.terms2)
+        )
+
+        (
+            self._affine_seed_b1,
+            self._affine_seed_b2,
+            self._affine_seed_inv00,
+            self._affine_seed_inv01,
+            self._affine_seed_inv10,
+            self._affine_seed_inv11,
+            self._has_affine_seed_inverse,
+            self._affine_seed_is_identity,
+        ) = self._build_affine_seed_params(self.terms1, self.terms2)
+
+        self._invert_trace_enabled = False
+        self._last_invert_trace = None
 
     def _build_power_map(self):
-        # Map j (0-39) to (px, py, pr)
-        # Degree 0
         mapping = {0: (0, 0, 0)}
         idx = 1
         for deg in range(1, 8):
-            # Normal terms: x^{deg-k} y^k
             for k in range(deg + 1):
                 mapping[idx] = (deg - k, k, 0)
                 idx += 1
-            # Radial term if odd
             if deg % 2 == 1:
                 mapping[idx] = (0, 0, deg)
                 idx += 1
         return mapping
 
     def _parse_pv(self, header: Dict[str, Any], axis: int):
-        """Parse PV keywords into tensors."""
         indices = []
         coeffs = []
-
         for j in range(40):
             key = f"PV{axis}_{j}"
             if key in header:
                 val = float(header[key])
-                if val != 0:
-                    if j in self.power_map:
-                        indices.append(self.power_map[j])
-                        coeffs.append(val)
-
+                if val != 0 and j in self.power_map:
+                    indices.append(self.power_map[j])
+                    coeffs.append(val)
         if not indices:
             return torch.empty((0, 3), dtype=torch.long), torch.empty(
                 (0), dtype=torch.float64
             )
-
         return torch.tensor(indices, dtype=torch.long), torch.tensor(
             coeffs, dtype=torch.float64
         )
 
+    def _build_terms(
+        self, idx: Tensor, coeffs: Tensor
+    ) -> "list[tuple[int, int, int, float]]":
+        return [
+            (int(idx[k, 0]), int(idx[k, 1]), int(idx[k, 2]), float(coeffs[k]))
+            for k in range(coeffs.numel())
+        ]
+
+    def _build_derivative_terms(self, terms):
+        dx, dy, dr = [], [], []
+        for px, py, pr, c in terms:
+            if px > 0:
+                dx.append((px - 1, py, pr, c * px))
+            if py > 0:
+                dy.append((px, py - 1, pr, c * py))
+            if pr > 0:
+                dr.append((px, py, pr - 1, c * pr))
+        return dx, dy, dr
+
+    @staticmethod
+    def _build_affine_seed_params(terms1, terms2):
+        b1, b2, a11, a12, a21, a22 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        for px, py, pr, c in terms1:
+            if pr != 0:
+                continue
+            if px == 0 and py == 0:
+                b1 += c
+            elif px == 1 and py == 0:
+                a11 += c
+            elif px == 0 and py == 1:
+                a12 += c
+        for px, py, pr, c in terms2:
+            if pr != 0:
+                continue
+            if px == 0 and py == 0:
+                b2 += c
+            elif px == 1 and py == 0:
+                a22 += c
+            elif px == 0 and py == 1:
+                a21 += c
+        det = a11 * a22 - a12 * a21
+        if abs(det) < 1e-15:
+            return b1, b2, 1.0, 0.0, 0.0, 1.0, False, True
+        is_id = (
+            abs(b1) < 1e-15
+            and abs(b2) < 1e-15
+            and abs(a11 - 1.0) < 1e-15
+            and abs(a12) < 1e-15
+            and abs(a21) < 1e-15
+            and abs(a22 - 1.0) < 1e-15
+        )
+        return b1, b2, a22 / det, -a12 / det, -a21 / det, a11 / det, True, is_id
+
     def to(self, device: torch.device) -> "TPV":
-        """Move TPV coefficient tensors to device."""
-        self.idx1 = self.idx1.to(device)
-        self.idx2 = self.idx2.to(device)
-        self.c1 = self.c1.to(device)
-        self.c2 = self.c2.to(device)
+        self.idx1, self.idx2 = self.idx1.to(device), self.idx2.to(device)
+        self.c1, self.c2 = self.c1.to(device), self.c2.to(device)
         return self
 
-    def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
-        """
-        Apply TPV distortion with chunking to optimize memory usage.
-        """
+    def distort(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         if u.numel() == 0:
-            return torch.zeros_like(u), torch.zeros_like(v)
+            return u, v
+        return self._distort_impl(u, v)
 
-        # For small N, run directly
-        if u.numel() <= 256000:
-            return self._distort_impl(u, v)
-
-        # Process in chunks to stay within memory/cache limits
-        xi = torch.empty_like(u)
-        eta = torch.empty_like(v)
-        chunk_size = 256000
-
-        for i in range(0, u.numel(), chunk_size):
-            end = min(i + chunk_size, u.numel())
-            u_c = u[i:end]
-            v_c = v[i:end]
-            xi_c, eta_c = self._distort_impl(u_c, v_c)
-            xi[i:end] = xi_c
-            eta[i:end] = eta_c
-
-        return xi, eta
-
-    def _distort_impl(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
-        """Internal distortion implementation."""
-        # Precompute powers and r
+    def _distort_impl(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         r = torch.sqrt(u * u + v * v)
+        xp = [torch.ones_like(u), u]
+        yp = [torch.ones_like(v), v]
+        rp = [torch.ones_like(r), r]
+        for _ in range(2, 8):
+            xp.append(xp[-1] * u)
+            yp.append(yp[-1] * v)
+            rp.append(rp[-1] * r)
 
-        def make_pow_cache(base, max_deg=7):
-            pows = [torch.ones_like(base)]
-            curr = base
-            pows.append(curr)
-            for _ in range(2, max_deg + 1):
-                curr = curr * base
-                pows.append(curr)
-            return torch.stack(pows, dim=0)
-
-        x_p_cache = make_pow_cache(u)  # (8, N)
-        y_p_cache = make_pow_cache(v)  # (8, N)
-        r_p_cache = make_pow_cache(r)  # (8, N)
-
-        def eval_poly(p_indices, p_coeffs, xc, yc):
-            if len(p_coeffs) == 0:
-                return torch.zeros_like(u)
-
-            px = p_indices[:, 0]
-            py = p_indices[:, 1]
-            pr = p_indices[:, 2]
-
-            # Gather terms: x^px * y^py * r^pr
-            term_val = xc[px] * yc[py] * r_p_cache[pr]
-
-            # Dot product (ensure dtypes match)
-            coeffs = p_coeffs.to(device=term_val.device, dtype=term_val.dtype)
-            return torch.einsum("k, kn -> n", coeffs, term_val)
-
-        # TPV Convention:
-        # Axis 1 uses (u, v)
-        # Axis 2 uses (v, u) <-- SWAPPED
-        xi = eval_poly(self.idx1, self.c1, x_p_cache, y_p_cache)
-        eta = eval_poly(self.idx2, self.c2, y_p_cache, x_p_cache)
-
+        xi = torch.zeros_like(u)
+        for px, py, pr, c in self.terms1:
+            xi.add_(xp[px] * yp[py] * rp[pr], alpha=c)
+        eta = torch.zeros_like(v)
+        for px, py, pr, c in self.terms2:
+            eta.add_(yp[px] * xp[py] * rp[pr], alpha=c)
         return xi, eta
+
+    def _distort_and_jacobian_impl(
+        self, u: Tensor, v: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+        r = torch.sqrt(u * u + v * v)
+        xp, yp, rp = (
+            [torch.ones_like(u), u],
+            [torch.ones_like(v), v],
+            [torch.ones_like(r), r],
+        )
+        for _ in range(2, 8):
+            xp.append(xp[-1] * u)
+            yp.append(yp[-1] * v)
+            rp.append(rp[-1] * r)
+
+        r_safe = torch.where(r > 0, r, torch.ones_like(r))
+        dr_du = torch.where(r > 0, u / r_safe, torch.zeros_like(u))
+        dr_dv = torch.where(r > 0, v / r_safe, torch.zeros_like(v))
+
+        def eval_poly_jac(terms, dx_p, dy_p, dr_p, xc, yc, dr_da, dr_db):
+            out = torch.zeros_like(u)
+            for px, py, pr, c in terms:
+                out.add_(xc[px] * yc[py] * rp[pr], alpha=c)
+            da = torch.zeros_like(u)
+            for px, py, pr, c in dx_p:
+                da.add_(xc[px] * yc[py] * rp[pr], alpha=c)
+            db = torch.zeros_like(u)
+            for px, py, pr, c in dy_p:
+                db.add_(xc[px] * yc[py] * rp[pr], alpha=c)
+            if dr_p:
+                pref = torch.zeros_like(u)
+                for px, py, pr, c in dr_p:
+                    pref.add_(xc[px] * yc[py] * rp[pr], alpha=c)
+                da.add_(pref * dr_da)
+                db.add_(pref * dr_db)
+            return out, da, db
+
+        xi, dxi_du, dxi_dv = eval_poly_jac(
+            self.terms1,
+            self.terms1_dx_poly,
+            self.terms1_dy_poly,
+            self.terms1_rad,
+            xp,
+            yp,
+            dr_du,
+            dr_dv,
+        )
+        eta, deta_dv, deta_du = eval_poly_jac(
+            self.terms2,
+            self.terms2_dx_poly,
+            self.terms2_dy_poly,
+            self.terms2_rad,
+            yp,
+            xp,
+            dr_dv,
+            dr_du,
+        )
+        return xi, eta, dxi_du, dxi_dv, deta_du, deta_dv
+
+    def invert(
+        self, xi_t: Tensor, eta_t: Tensor, max_iter: int = 10, tol: float = 1e-11
+    ) -> Tuple[Tensor, Tensor]:
+        if xi_t.numel() == 0:
+            return xi_t, eta_t
+        if self._can_use_cpp_invert(xi_t, eta_t):
+            return _cpp.wcs_tpv_invert(
+                xi_t.contiguous(),
+                eta_t.contiguous(),
+                self.idx1,
+                self.c1,
+                self.idx2,
+                self.c2,
+                int(max_iter),
+                float(tol),
+            )
+        u, v = self._initial_guess_affine(xi_t, eta_t)
+        tol2 = tol * tol
+        for _ in range(max_iter):
+            xi, eta, j11, j12, j21, j22 = self._distort_and_jacobian_impl(u, v)
+            rx, ry = xi - xi_t, eta - eta_t
+            if (rx * rx + ry * ry).max() < tol2:
+                break
+            det = j11 * j22 - j12 * j21
+            det = torch.where(det.abs() < 1e-18, torch.sign(det) * 1e-18, det)
+            u = u - (j22 * rx - j12 * ry) / det
+            v = v - (-j21 * rx + j11 * ry) / det
+        return u, v
+
+    def _initial_guess_affine(self, xi_t, eta_t):
+        if not self._has_affine_seed_inverse:
+            return xi_t.clone(), eta_t.clone()
+        xi0, eta0 = xi_t - self._affine_seed_b1, eta_t - self._affine_seed_b2
+        u = self._affine_seed_inv00 * xi0 + self._affine_seed_inv01 * eta0
+        v = self._affine_seed_inv10 * xi0 + self._affine_seed_inv11 * eta0
+        return u, v
+
+    def _can_use_cpp_invert(self, xi_t, eta_t):
+        return bool(
+            _cpp is not None
+            and hasattr(_cpp, "wcs_tpv_invert")
+            and xi_t.device.type == "cpu"
+            and eta_t.device.type == "cpu"
+            and xi_t.dtype == torch.float64
+            and eta_t.dtype == torch.float64
+            and self.idx1.device.type == "cpu"
+            and self.idx2.device.type == "cpu"
+            and self.c1.device.type == "cpu"
+            and self.c2.device.type == "cpu"
+        )

@@ -47,6 +47,7 @@ constexpr int64_t NB_SWAPARRAY[9][3] = {
 };
 constexpr double PI = 3.141592653589793238462643383279502884;
 constexpr double TWO_PI = 6.283185307179586476925286766559005768;
+constexpr double RAD2DEG = 180.0 / PI;
 // Benchmark-relevant arrays are commonly O(1e5-1e6); parallelize earlier.
 constexpr int64_t PARALLEL_MIN_ELEMS = 1 << 16;
 
@@ -632,15 +633,17 @@ std::pair<torch::Tensor, torch::Tensor> healpix_pix2ang_ring_cpu(int64_t nside, 
     double* ra_ptr = ra.data_ptr<double>();
     double* dec_ptr = dec.data_ptr<double>();
     const int64_t n = pix.numel();
-    const int64_t min_pix = pix.min().item<int64_t>();
-    const int64_t max_pix = pix.max().item<int64_t>();
-    if (min_pix < 0 || max_pix >= npix) {
-        throw std::runtime_error("pixel index out of range for nside");
-    }
+    std::atomic<bool> invalid{false};
     const double fact1 = static_cast<double>(2 * nside) * fact2;
     auto compute_block = [&](int64_t begin, int64_t end) {
         for (int64_t i = begin; i < end; ++i) {
             const int64_t p = in[i];
+            if (p < 0 || p >= npix) {
+                invalid.store(true, std::memory_order_relaxed);
+                ra_ptr[i] = 0.0;
+                dec_ptr[i] = 0.0;
+                continue;
+            }
 
             double z;
             double phi;
@@ -664,19 +667,23 @@ std::pair<torch::Tensor, torch::Tensor> healpix_pix2ang_ring_cpu(int64_t nside, 
                 phi = (static_cast<double>(iphi) - 0.5) * ((PI / 2.0) / static_cast<double>(iring));
             }
 
-            if (z > 1.0) {
-                z = 1.0;
-            } else if (z < -1.0) {
-                z = -1.0;
+            double ra_deg = phi * RAD2DEG;
+            if (ra_deg >= 360.0) {
+                ra_deg -= 360.0;
+            } else if (ra_deg < 0.0) {
+                ra_deg += 360.0;
             }
-            ra_ptr[i] = wrap_deg_360(phi * 180.0 / PI);
-            dec_ptr[i] = std::asin(z) * 180.0 / PI;
+            ra_ptr[i] = ra_deg;
+            dec_ptr[i] = std::asin(std::fmax(-1.0, std::fmin(1.0, z))) * RAD2DEG;
         }
     };
     if (n >= PARALLEL_MIN_ELEMS) {
         at::parallel_for(0, n, 4096, compute_block);
     } else {
         compute_block(0, n);
+    }
+    if (invalid.load(std::memory_order_relaxed)) {
+        throw std::runtime_error("pixel index out of range for nside");
     }
 
     auto shape = pix_ring.sizes().vec();
@@ -709,14 +716,16 @@ std::pair<torch::Tensor, torch::Tensor> healpix_pix2ang_nested_cpu(int64_t nside
     double* ra_ptr = ra.data_ptr<double>();
     double* dec_ptr = dec.data_ptr<double>();
     const int64_t n = pix.numel();
-    const int64_t min_pix = pix.min().item<int64_t>();
-    const int64_t max_pix = pix.max().item<int64_t>();
-    if (min_pix < 0 || max_pix >= npix) {
-        throw std::runtime_error("pixel index out of range for nside");
-    }
+    std::atomic<bool> invalid{false};
     auto compute_block = [&](int64_t begin, int64_t end) {
         for (int64_t i = begin; i < end; ++i) {
             const int64_t p = in[i];
+            if (p < 0 || p >= npix) {
+                invalid.store(true, std::memory_order_relaxed);
+                ra_ptr[i] = 0.0;
+                dec_ptr[i] = 0.0;
+                continue;
+            }
             const int64_t face_num = p / npface;
             const uint64_t ipf = static_cast<uint64_t>(p % npface);
             const int64_t ix = static_cast<int64_t>(compact_bits_u64(ipf));
@@ -748,25 +757,23 @@ std::pair<torch::Tensor, torch::Tensor> healpix_pix2ang_nested_cpu(int64_t nside
 
             const double phi = (static_cast<double>(jp) - 0.5 * (static_cast<double>(kshift) + 1.0))
                                * ((PI / 2.0) / static_cast<double>(nr));
-            if (z > 1.0) {
-                z = 1.0;
-            } else if (z < -1.0) {
-                z = -1.0;
-            }
-            double ra = phi * 180.0 / PI;
+            double ra = phi * RAD2DEG;
             if (ra >= 360.0) {
                 ra -= 360.0;
             } else if (ra < 0.0) {
                 ra += 360.0;
             }
             ra_ptr[i] = ra;
-            dec_ptr[i] = std::asin(z) * 180.0 / PI;
+            dec_ptr[i] = std::asin(std::fmax(-1.0, std::fmin(1.0, z))) * RAD2DEG;
         }
     };
     if (n >= PARALLEL_MIN_ELEMS) {
         at::parallel_for(0, n, 8192, compute_block);
     } else {
         compute_block(0, n);
+    }
+    if (invalid.load(std::memory_order_relaxed)) {
+        throw std::runtime_error("pixel index out of range for nside");
     }
 
     auto shape = pix_nest.sizes().vec();
@@ -908,14 +915,18 @@ torch::Tensor healpix_nest2ring_cpu(int64_t nside, const torch::Tensor& pix_nest
     const int64_t* in = pix.data_ptr<int64_t>();
     int64_t* dst = out.data_ptr<int64_t>();
     const int64_t n = pix.numel();
-    const int64_t min_pix = pix.min().item<int64_t>();
-    const int64_t max_pix = pix.max().item<int64_t>();
-    if (min_pix < 0 || max_pix >= npix) {
-        throw std::runtime_error("pixel index out of range for nside");
+    if (n == 0) {
+        return out;
     }
+    std::atomic<bool> invalid{false};
     auto compute_block = [&](int64_t begin, int64_t end) {
         for (int64_t i = begin; i < end; ++i) {
             const int64_t p = in[i];
+            if (p < 0 || p >= npix) {
+                invalid.store(true, std::memory_order_relaxed);
+                dst[i] = -1;
+                continue;
+            }
             const int64_t face_num = p / npface;
             const uint64_t ipf = static_cast<uint64_t>(p % npface);
             const int64_t ix = static_cast<int64_t>(compact_bits_u64(ipf));
@@ -947,7 +958,14 @@ torch::Tensor healpix_nest2ring_cpu(int64_t nside, const torch::Tensor& pix_nest
             dst[i] = n_before + jp - 1;
         }
     };
-    at::parallel_for(0, n, 16384, compute_block);
+    if (n >= PARALLEL_MIN_ELEMS) {
+        at::parallel_for(0, n, 16384, compute_block);
+    } else {
+        compute_block(0, n);
+    }
+    if (invalid.load(std::memory_order_relaxed)) {
+        throw std::runtime_error("pixel index out of range for nside");
+    }
 
     return out;
 }
@@ -2359,45 +2377,45 @@ torch::Tensor healpix_get_interp_val_nested_cpu(
     return values.reshape(out_shape);
 }
 
-// Helper for Wigner-d element (l near m case)
-static double wigner_d_element_scalar(
-    int64_t l,
-    int64_t m,
-    int64_t mp,
-    double theta
-) {
-    // Matches Python _wigner_d_element implementation
-    // d^l_{m,mp}(theta)
+struct WignerDCoeffs {
+    int num_terms;
+    double coeff[4]; 
+    int p_ct[4];
+    int p_st[4];
+};
 
-    double log_pref = 0.5 * (std::lgamma(l + m + 1) + std::lgamma(l - m + 1) + 
-                             std::lgamma(l + mp + 1) + std::lgamma(l - mp + 1));
-                             
-    // Python bounds:
-    // kmin = max(0, m - mp)
-    // kmax = min(l + m, l - mp)
+static inline double fast_pow(double base, int exp) {
+    if (exp == 0) return 1.0;
+    if (exp == 1) return base;
+    if (exp == 2) return base * base;
+    
+    double res = 1.0;
+    while (exp > 0) {
+        if (exp & 1) res *= base;
+        base *= base;
+        exp >>= 1;
+    }
+    return res;
+}
+
+static WignerDCoeffs get_wigner_d_coeffs(int64_t l, int64_t m, int64_t mp) {
+    WignerDCoeffs res;
+    res.num_terms = 0;
+    
     int64_t k_min = std::max((int64_t)0, m - mp);
     int64_t k_max = std::min(l + m, l - mp);
     
-    if (k_min > k_max) return 0.0;
+    if (k_min > k_max) return res;
     
-    double sum = 0.0;
-    double sin_half = std::sin(theta * 0.5);
-    double cos_half = std::cos(theta * 0.5);
-    
-    double log_sin = (sin_half > 0) ? std::log(sin_half) : -1.0e10; // Handle 0 safely if needed
-    double log_cos = (cos_half > 0) ? std::log(cos_half) : -1.0e10;
-    
-    // For 0 or PI, special handling might be preferred, but let's stick to formula with safeguards
-    // If sin_half=0 (theta=0), we only want terms with 0 power for sin.
-    // If cos_half=0 (theta=pi), we only want terms with 0 power for cos.
-    
-    for(int64_t k = k_min; k <= k_max; ++k) {
+    double log_pref = 0.5 * (std::lgamma(l + m + 1) + std::lgamma(l - m + 1) + 
+                             std::lgamma(l + mp + 1) + std::lgamma(l - mp + 1));
+                             
+    for(int64_t k = k_min; k <= k_max && res.num_terms < 4; ++k) {
         int64_t a = l + m - k;
         int64_t b = k;
         int64_t c = mp - m + k;
         int64_t d = l - mp - k;
         
-        // This check is redundant with loop bounds but safe
         if (a < 0 || b < 0 || c < 0 || d < 0) continue;
         
         double log_denom = std::lgamma(a + 1) + std::lgamma(b + 1) + 
@@ -2405,33 +2423,26 @@ static double wigner_d_element_scalar(
         
         double sign = ((k + mp - m) % 2 != 0) ? -1.0 : 1.0;
         
-        double p_ct = 2 * l + m - mp - 2 * k;
-        double p_st = mp - m + 2 * k;
-        
-        // Safe power logic
-        double term_val = 0.0;
-        bool zero_term = false;
-        
-        // Handle cos power
-        if (cos_half <= 0.0) {
-             if (p_ct == 0) term_val += 0.0; // log(1)
-             else zero_term = true;
-        } else {
-             term_val += p_ct * log_cos;
-        }
-        
-        // Handle sin power
-        if (sin_half <= 0.0) {
-             if (p_st == 0) term_val += 0.0; // log(1)
-             else zero_term = true;
-        } else {
-             term_val += p_st * log_sin;
-        }
-        
-        if (zero_term) continue;
-        
-        term_val += log_pref - log_denom;
-        sum += sign * std::exp(term_val);
+        res.p_ct[res.num_terms] = (int)(2 * l + m - mp - 2 * k);
+        res.p_st[res.num_terms] = (int)(mp - m + 2 * k);
+        res.coeff[res.num_terms] = sign * std::exp(log_pref - log_denom);
+        res.num_terms++;
+    }
+    return res;
+}
+
+static inline double eval_wigner_d(const WignerDCoeffs& coeffs, double theta) {
+    if (coeffs.num_terms == 0) return 0.0;
+    
+    double sin_half = std::sin(theta * 0.5);
+    double cos_half = std::cos(theta * 0.5);
+    double sum = 0.0;
+    
+    for (int i = 0; i < coeffs.num_terms; ++i) {
+        double term = coeffs.coeff[i];
+        if (coeffs.p_ct[i] > 0) term *= fast_pow(cos_half, coeffs.p_ct[i]);
+        if (coeffs.p_st[i] > 0) term *= fast_pow(sin_half, coeffs.p_st[i]);
+        sum += term;
     }
     return sum;
 }
@@ -2566,6 +2577,9 @@ torch::Tensor healpix_spin_integrate_recurrence_cpu(
                 continue;
             }
 
+            WignerDCoeffs coeffs_p1 = get_wigner_d_coeffs(l0, m, -spin);
+            WignerDCoeffs coeffs_m1; if (spin_active) coeffs_m1 = get_wigner_d_coeffs(l0, m, spin);
+
             for (int i=0; i < n_eff; ++i) {
                 if (!active[i]) {
                     dp1[i] = 0.0;
@@ -2574,8 +2588,8 @@ torch::Tensor healpix_spin_integrate_recurrence_cpu(
                     dm2[i] = 0.0;
                     continue;
                 }
-                dp1[i] = wigner_d_element_scalar(l0, m, -spin, th_ptr[i]);
-                if(spin_active) dm1[i] = wigner_d_element_scalar(l0, m, spin, th_ptr[i]);
+                dp1[i] = eval_wigner_d(coeffs_p1, th_ptr[i]);
+                if(spin_active) dm1[i] = eval_wigner_d(coeffs_m1, th_ptr[i]);
                 else dm1[i] = dp1[i];
                 dp2[i] = 0.0;
                 dm2[i] = 0.0;
@@ -2604,14 +2618,17 @@ torch::Tensor healpix_spin_integrate_recurrence_cpu(
             accumulate_l_internal(l0, dp1, dm1);
 
             if (l0 < lmax) {
+                WignerDCoeffs coeffs_pc = get_wigner_d_coeffs(l0+1, m, -spin);
+                WignerDCoeffs coeffs_mc; if (spin_active) coeffs_mc = get_wigner_d_coeffs(l0+1, m, spin);
+
                 for (int i=0; i < n_eff; ++i) {
                     if (!active[i]) {
                         dpc[i] = 0.0;
                         dmc[i] = 0.0;
                         continue;
                     }
-                    dpc[i] = wigner_d_element_scalar(l0+1, m, -spin, th_ptr[i]);
-                    if(spin_active) dmc[i] = wigner_d_element_scalar(l0+1, m, spin, th_ptr[i]);
+                    dpc[i] = eval_wigner_d(coeffs_pc, th_ptr[i]);
+                    if(spin_active) dmc[i] = eval_wigner_d(coeffs_mc, th_ptr[i]);
                     else dmc[i] = dpc[i];
                 }
                 accumulate_l_internal(l0+1, dpc, dmc);
@@ -2738,6 +2755,9 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
                 continue;
             }
 
+            WignerDCoeffs coeffs_p1 = get_wigner_d_coeffs(l0, m, -spin);
+            WignerDCoeffs coeffs_m1; if (spin_active) coeffs_m1 = get_wigner_d_coeffs(l0, m, spin);
+
             for(int i=0; i<n_eff; ++i) {
                 if (!active[i]) {
                     dp1[i] = 0.0;
@@ -2746,8 +2766,8 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
                     dm2[i] = 0.0;
                     continue;
                 }
-                dp1[i] = wigner_d_element_scalar(l0, m, -spin, th_ptr[i]);
-                if(spin_active) dm1[i] = wigner_d_element_scalar(l0, m, spin, th_ptr[i]);
+                dp1[i] = eval_wigner_d(coeffs_p1, th_ptr[i]);
+                if(spin_active) dm1[i] = eval_wigner_d(coeffs_m1, th_ptr[i]);
                 else dm1[i] = dp1[i];
                 dp2[i] = 0.0;
                 dm2[i] = 0.0;
@@ -2777,14 +2797,17 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
 
             update_block_internal(l0, dp1, dm1);
             if (l0 < lmax) {
+                WignerDCoeffs coeffs_pc = get_wigner_d_coeffs(l0+1, m, -spin);
+                WignerDCoeffs coeffs_mc; if (spin_active) coeffs_mc = get_wigner_d_coeffs(l0+1, m, spin);
+
                 for(int i=0; i<n_eff; ++i) {
                     if (!active[i]) {
                         dpc[i] = 0.0;
                         dmc[i] = 0.0;
                         continue;
                     }
-                    dpc[i] = wigner_d_element_scalar(l0+1, m, -spin, th_ptr[i]);
-                    if(spin_active) dmc[i] = wigner_d_element_scalar(l0+1, m, spin, th_ptr[i]);
+                    dpc[i] = eval_wigner_d(coeffs_pc, th_ptr[i]);
+                    if(spin_active) dmc[i] = eval_wigner_d(coeffs_mc, th_ptr[i]);
                     else dmc[i] = dpc[i];
                 }
                 update_block_internal(l0+1, dpc, dmc);
@@ -2834,6 +2857,376 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
                     int64_t idx_S = nrings - 1 - i;
                     s_modes_a[0][m][idx_S] = c10::complex<double>(rSp[i], iSp[i]);
                     s_modes_a[1][m][idx_S] = c10::complex<double>(rSm[i], iSm[i]);
+                }
+            }
+        }
+    });
+
+    return s_modes;
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated scalar (spin=0) recurrence kernels
+// ---------------------------------------------------------------------------
+// These avoid the 2x data duplication and 2x FLOP waste of routing spin=0
+// through the general spin kernel. For spin=0, the Wigner-d recurrence
+// degenerates to the standard Legendre Plm recurrence:
+//   P_l^m(cos θ) = c1 * cos θ * P_{l-1}^m - c3 * P_{l-2}^m
+// with c2_p = 0 (since shift = m*(-spin)/(l*(l-1)) = 0).
+//
+// Bootstrap: P_m^m(cos θ) = (-1)^m * mfac[m] * sin^m(θ)
+//   where mfac[m] = 1/sqrt(4π) * prod_{k=1}^{m} sqrt((2k+1)/(2k))
+// ---------------------------------------------------------------------------
+
+static std::vector<double> precomputed_mfac;
+static std::mutex mfac_mutex;
+
+static void ensure_mfac(int64_t mmax) {
+    std::lock_guard<std::mutex> lock(mfac_mutex);
+    if (precomputed_mfac.size() <= (size_t)mmax) {
+        precomputed_mfac.resize(mmax + 1);
+        precomputed_mfac[0] = 1.0 / std::sqrt(4.0 * M_PI);
+        for (int64_t i = 1; i <= mmax; ++i) {
+            precomputed_mfac[i] = precomputed_mfac[i - 1] * std::sqrt((2.0 * i + 1.0) / (2.0 * i));
+        }
+    }
+}
+
+// Scalar recurrence coefficients for spin=0.
+// For spin=0: c2_p = 0, so we only need {c1, c3}.
+struct ScalarRecurrenceCoeffs {
+    double c1, c3;
+};
+
+class ScalarRecurrenceCache {
+    std::mutex mutex_;
+    int64_t last_lmax_ = -1;
+    int64_t last_mmax_ = -1;
+    std::vector<ScalarRecurrenceCoeffs> coeffs_;
+
+public:
+    const std::vector<ScalarRecurrenceCoeffs>& get_coeffs(int64_t lmax, int64_t mmax, const std::vector<int64_t>& offsets) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (lmax == last_lmax_ && mmax == last_mmax_) {
+            return coeffs_;
+        }
+
+        int64_t total_size = 0;
+        for (int64_t m = 0; m <= mmax; ++m) {
+            int64_t l0 = m;  // spin=0 => l0 = max(0, m) = m
+            if (lmax >= l0 + 2) {
+                total_size += (lmax - (l0 + 2) + 1);
+            }
+        }
+
+        coeffs_.assign(total_size, {0, 0});
+        int64_t current_off = 0;
+        for (int64_t m = 0; m <= mmax; ++m) {
+            int64_t l0 = m;
+            for (int64_t l = l0 + 2; l <= lmax; ++l) {
+                double lsq_msq = (double)(l * l - m * m);
+                double kl = std::sqrt(lsq_msq);  // spin=0 => l*l - spin*spin = l*l
+                // But the full formula is sqrt((l²-m²)(l²-s²)) = sqrt((l²-m²)*l²) = l*sqrt(l²-m²)
+                // Wait - let me re-derive. For spin=0:
+                // kl = sqrt((l²-m²)(l²-0²)) = sqrt((l²-m²)*l²) = l * sqrt(l²-m²)
+                // preFactor = l / kl = l / (l * sqrt(l²-m²)) = 1 / sqrt(l²-m²)
+                // c1 = preFactor * (2l-1) = (2l-1) / sqrt(l²-m²)
+                // c3_num = sqrt(((l-1)²-m²)((l-1)²-0)) = (l-1) * sqrt((l-1)²-m²)
+                // c3 = -preFactor * c3_num / (l-1) = -sqrt((l-1)²-m²) / sqrt(l²-m²)
+                double inv_kl = 1.0 / (l * std::sqrt(lsq_msq));
+                double c1 = inv_kl * l * (2.0 * l - 1.0);
+                double lm1sq_msq = (double)((l - 1) * (l - 1) - m * m);
+                double c3 = -inv_kl * l * ((l - 1.0) * std::sqrt(lm1sq_msq) / (l - 1));
+                coeffs_[current_off++] = {c1, c3};
+            }
+        }
+        last_lmax_ = lmax;
+        last_mmax_ = mmax;
+        return coeffs_;
+    }
+};
+
+static ScalarRecurrenceCache g_scalar_recurrence_cache;
+
+
+torch::Tensor healpix_scalar_integrate_recurrence_cpu(
+    const torch::Tensor& s_modes,  // (mmax+1, nrings) complex128
+    const torch::Tensor& theta,    // (nrings,) float64
+    const torch::Tensor& weight,   // (nrings,) float64
+    int64_t lmax,
+    int64_t mmax
+) {
+    auto sm_f = s_modes.contiguous();
+    auto sm_a = sm_f.accessor<c10::complex<double>, 2>();
+    auto th_ptr = theta.data_ptr<double>();
+    auto w_ptr = weight.data_ptr<double>();
+
+    int64_t nrings = theta.size(0);
+    int64_t n_eff = (nrings + 1) / 2;
+    int64_t n_pairs = nrings / 2;
+    bool has_equator = (nrings % 2 != 0);
+    ensure_l_factors(lmax);
+    ensure_mfac(mmax);
+
+    auto options = torch::TensorOptions().dtype(torch::kComplexDouble).device(torch::kCPU);
+    torch::Tensor alms = torch::zeros({alm_size(lmax, mmax)}, options);
+    auto alm_out = alms.data_ptr<c10::complex<double>>();
+
+    // Build scalar recurrence LUT
+    std::vector<int64_t> m_offsets(mmax + 1);
+    int64_t current_lut_off = 0;
+    for (int64_t m = 0; m <= mmax; ++m) {
+        m_offsets[m] = current_lut_off;
+        int64_t l0 = m;  // spin=0
+        if (lmax >= l0 + 2) {
+            current_lut_off += (lmax - (l0 + 2) + 1);
+        }
+    }
+    const auto& lut = g_scalar_recurrence_cache.get_coeffs(lmax, mmax, m_offsets);
+
+    std::vector<double> cos_theta_all(n_eff);
+    std::vector<double> sin_theta_all(n_eff);
+    for (int i = 0; i < n_eff; ++i) {
+        cos_theta_all[i] = std::cos(th_ptr[i]);
+        sin_theta_all[i] = std::sin(th_ptr[i]);
+    }
+
+    at::parallel_for(0, mmax + 1, 8, [&](int64_t m_start, int64_t m_end) {
+        std::vector<double> v_lam2(n_eff), v_lam1(n_eff), v_lamc(n_eff);
+        double * __restrict__ lam2 = v_lam2.data();
+        double * __restrict__ lam1 = v_lam1.data();
+        double * __restrict__ lamc = v_lamc.data();
+
+        // North/South data buffers
+        std::vector<double> vNr(n_eff), vNi(n_eff), vSr(n_eff), vSi(n_eff);
+        std::vector<double> v_weightsN(n_eff), v_weightsS(n_eff);
+        double * __restrict__ Nr = vNr.data(); double * __restrict__ Ni = vNi.data();
+        double * __restrict__ Sr = vSr.data(); double * __restrict__ Si = vSi.data();
+        double * __restrict__ weightsN = v_weightsN.data();
+        double * __restrict__ weightsS = v_weightsS.data();
+        const double * __restrict__ ct_ptr = cos_theta_all.data();
+        const double * __restrict__ st_ptr = sin_theta_all.data();
+
+        for (int64_t m = m_start; m < m_end; ++m) {
+            int64_t l0 = m;
+            int64_t idx_base = m * (lmax + 1) - (m * (m - 1)) / 2;
+            const double pre_phase = (m % 2 != 0) ? -1.0 : 1.0;
+            const auto* lut_ptr = &lut[m_offsets[m]];
+
+            // Load Fourier modes and weights for north/south rings
+            for (int i = 0; i < n_eff; ++i) {
+                weightsN[i] = w_ptr[i];
+                Nr[i] = sm_a[m][i].real();
+                Ni[i] = sm_a[m][i].imag();
+                if (i < n_pairs) {
+                    int64_t idx_S = nrings - 1 - i;
+                    weightsS[i] = w_ptr[idx_S];
+                    Sr[i] = sm_a[m][idx_S].real();
+                    Si[i] = sm_a[m][idx_S].imag();
+                }
+            }
+
+            // Seed using eval_wigner_d (matches spin kernel convention)
+            WignerDCoeffs coeffs_c1 = get_wigner_d_coeffs(l0, m, 0);
+            for (int i = 0; i < n_eff; ++i) {
+                lam1[i] = eval_wigner_d(coeffs_c1, th_ptr[i]);
+                lam2[i] = 0.0;
+            }
+
+            auto accumulate_l = [&](int64_t l, const double* __restrict__ lam) {
+                double r_alm = 0, i_alm = 0;
+                const double parity = ((l + m) % 2 == 0) ? 1.0 : -1.0;
+                #pragma clang loop vectorize(enable)
+                for (int i = 0; i < n_pairs; ++i) {
+                    double d_val = lam[i];
+                    r_alm += (Nr[i] * weightsN[i] * d_val + Sr[i] * weightsS[i] * d_val * parity);
+                    i_alm += (Ni[i] * weightsN[i] * d_val + Si[i] * weightsS[i] * d_val * parity);
+                }
+                if (has_equator) {
+                    int i = n_pairs;
+                    r_alm += Nr[i] * weightsN[i] * lam[i];
+                    i_alm += Ni[i] * weightsN[i] * lam[i];
+                }
+                const double sc = pre_phase * precomputed_l_factors[l];
+                alm_out[idx_base + (l - m)] = c10::complex<double>(r_alm * sc, i_alm * sc);
+            };
+
+            accumulate_l(l0, lam1);
+
+            if (l0 < lmax) {
+                WignerDCoeffs coeffs_cc = get_wigner_d_coeffs(l0 + 1, m, 0);
+                for (int i = 0; i < n_eff; ++i) {
+                    lamc[i] = eval_wigner_d(coeffs_cc, th_ptr[i]);
+                }
+                accumulate_l(l0 + 1, lamc);
+                { auto t = lam2; lam2 = lam1; lam1 = lamc; lamc = t; }
+
+                // Main recurrence loop l = l0+2 ... lmax
+                for (int64_t l = l0 + 2; l <= lmax; ++l) {
+                    const auto& c = lut_ptr[l - (l0 + 2)];
+                    const double c1 = c.c1, c3 = c.c3;
+                    const double parity = ((l + m) % 2 == 0) ? 1.0 : -1.0;
+                    double r_alm = 0, i_alm = 0;
+
+                    #pragma clang loop vectorize(enable)
+                    for (int i = 0; i < n_pairs; ++i) {
+                        const double d_val = c1 * ct_ptr[i] * lam1[i] + c3 * lam2[i];
+                        lamc[i] = d_val;
+                        r_alm += (Nr[i] * weightsN[i] * d_val + Sr[i] * weightsS[i] * d_val * parity);
+                        i_alm += (Ni[i] * weightsN[i] * d_val + Si[i] * weightsS[i] * d_val * parity);
+                    }
+                    if (has_equator) {
+                        int i = n_pairs;
+                        const double d_val = c1 * ct_ptr[i] * lam1[i] + c3 * lam2[i];
+                        lamc[i] = d_val;
+                        r_alm += Nr[i] * weightsN[i] * d_val;
+                        i_alm += Ni[i] * weightsN[i] * d_val;
+                    }
+                    const double sc = pre_phase * precomputed_l_factors[l];
+                    alm_out[idx_base + (l - m)] = c10::complex<double>(r_alm * sc, i_alm * sc);
+                    { auto t = lam2; lam2 = lam1; lam1 = lamc; lamc = t; }
+                }
+            }
+        }
+    });
+
+    return alms;
+}
+
+torch::Tensor healpix_scalar_interpolate_recurrence_cpu(
+    const torch::Tensor& alm,    // (nalm,) complex128
+    const torch::Tensor& theta,  // (nrings,) float64
+    int64_t lmax,
+    int64_t mmax
+) {
+    auto alm_f = alm.contiguous();
+    auto alm_a = alm_f.data_ptr<c10::complex<double>>();
+    auto th_ptr = theta.data_ptr<double>();
+
+    int64_t nrings = theta.size(0);
+    int64_t n_eff = (nrings + 1) / 2;
+    int64_t n_pairs = nrings / 2;
+    bool has_equator = (nrings % 2 != 0);
+    ensure_l_factors(lmax);
+    ensure_mfac(mmax);
+
+    auto options = torch::TensorOptions().dtype(torch::kComplexDouble).device(torch::kCPU);
+    torch::Tensor s_modes = torch::zeros({mmax + 1, nrings}, options);
+    auto sm_a = s_modes.accessor<c10::complex<double>, 2>();
+
+    // Build scalar recurrence LUT
+    std::vector<int64_t> m_offsets(mmax + 1);
+    int64_t current_lut_off = 0;
+    for (int64_t m = 0; m <= mmax; ++m) {
+        m_offsets[m] = current_lut_off;
+        int64_t l0 = m;
+        if (lmax >= l0 + 2) {
+            current_lut_off += (lmax - (l0 + 2) + 1);
+        }
+    }
+    const auto& lut = g_scalar_recurrence_cache.get_coeffs(lmax, mmax, m_offsets);
+
+    std::vector<double> cos_theta_all(n_eff);
+    std::vector<double> sin_theta_all(n_eff);
+    for (int i = 0; i < n_eff; ++i) {
+        cos_theta_all[i] = std::cos(th_ptr[i]);
+        sin_theta_all[i] = std::sin(th_ptr[i]);
+    }
+
+    at::parallel_for(0, mmax + 1, 8, [&](int64_t m_start, int64_t m_end) {
+        std::vector<double> v_lam2(n_eff), v_lam1(n_eff), v_lamc(n_eff);
+        double * __restrict__ lam2 = v_lam2.data();
+        double * __restrict__ lam1 = v_lam1.data();
+        double * __restrict__ lamc = v_lamc.data();
+
+        std::vector<double> v_rN(n_eff), v_iN(n_eff), v_rS(n_eff), v_iS(n_eff);
+        double * __restrict__ rN = v_rN.data(); double * __restrict__ iN = v_iN.data();
+        double * __restrict__ rS = v_rS.data(); double * __restrict__ iS = v_iS.data();
+        const double * __restrict__ ct_ptr = cos_theta_all.data();
+        const double * __restrict__ st_ptr = sin_theta_all.data();
+
+        for (int64_t m = m_start; m < m_end; ++m) {
+            int64_t l0 = m;
+            int64_t idx_base = m * (lmax + 1) - (m * (m - 1)) / 2;
+            const double pre_phase = (m % 2 != 0) ? -1.0 : 1.0;
+            const auto* lut_ptr = &lut[m_offsets[m]];
+
+            // Zero accumulators
+            for (int i = 0; i < n_eff; ++i) {
+                rN[i] = 0; iN[i] = 0;
+                rS[i] = 0; iS[i] = 0;
+            }
+
+            // Seed using eval_wigner_d (matches spin kernel convention)
+            WignerDCoeffs coeffs_c1 = get_wigner_d_coeffs(l0, m, 0);
+            for (int i = 0; i < n_eff; ++i) {
+                lam1[i] = eval_wigner_d(coeffs_c1, th_ptr[i]);
+                lam2[i] = 0.0;
+            }
+
+            auto update_block = [&](int64_t l, const double* __restrict__ lam) {
+                const c10::complex<double> a = alm_a[idx_base + (l - m)];
+                const double sc = pre_phase * precomputed_l_factors[l];
+                const double r0 = a.real() * sc, i0 = a.imag() * sc;
+                const double parity = ((l + m) % 2 == 0) ? 1.0 : -1.0;
+
+                #pragma clang loop vectorize(enable)
+                for (int i = 0; i < n_pairs; ++i) {
+                    rN[i] += r0 * lam[i];
+                    iN[i] += i0 * lam[i];
+                    rS[i] += r0 * lam[i] * parity;
+                    iS[i] += i0 * lam[i] * parity;
+                }
+                if (has_equator) {
+                    int i = n_pairs;
+                    rN[i] += r0 * lam[i];
+                    iN[i] += i0 * lam[i];
+                }
+            };
+
+            update_block(l0, lam1);
+
+            if (l0 < lmax) {
+                WignerDCoeffs coeffs_cc = get_wigner_d_coeffs(l0 + 1, m, 0);
+                for (int i = 0; i < n_eff; ++i) {
+                    lamc[i] = eval_wigner_d(coeffs_cc, th_ptr[i]);
+                }
+                update_block(l0 + 1, lamc);
+                { auto t = lam2; lam2 = lam1; lam1 = lamc; lamc = t; }
+
+                for (int64_t l = l0 + 2; l <= lmax; ++l) {
+                    const auto& c = lut_ptr[l - (l0 + 2)];
+                    const c10::complex<double> a = alm_a[idx_base + (l - m)];
+                    const double sc = pre_phase * precomputed_l_factors[l];
+                    const double r0 = a.real() * sc, i0 = a.imag() * sc;
+                    const double parity = ((l + m) % 2 == 0) ? 1.0 : -1.0;
+                    const double c1 = c.c1, c3 = c.c3;
+
+                    #pragma clang loop vectorize(enable)
+                    for (int i = 0; i < n_pairs; ++i) {
+                        const double d_val = c1 * ct_ptr[i] * lam1[i] + c3 * lam2[i];
+                        lamc[i] = d_val;
+                        rN[i] += r0 * d_val;
+                        iN[i] += i0 * d_val;
+                        rS[i] += r0 * d_val * parity;
+                        iS[i] += i0 * d_val * parity;
+                    }
+                    if (has_equator) {
+                        int i = n_pairs;
+                        const double d_val = c1 * ct_ptr[i] * lam1[i] + c3 * lam2[i];
+                        lamc[i] = d_val;
+                        rN[i] += r0 * d_val;
+                        iN[i] += i0 * d_val;
+                    }
+                    { auto t = lam2; lam2 = lam1; lam1 = lamc; lamc = t; }
+                }
+            }
+
+            for (int i = 0; i < n_eff; ++i) {
+                sm_a[m][i] = c10::complex<double>(rN[i], iN[i]);
+                if (i < n_pairs) {
+                    int64_t idx_S = nrings - 1 - i;
+                    sm_a[m][idx_S] = c10::complex<double>(rS[i], iS[i]);
                 }
             }
         }

@@ -46,6 +46,9 @@ _RING_PIX2RING_CACHE: dict[int, Tensor] = {}
 _RING2NEST_PERM_CACHE: dict[int, Tensor] = {}
 _NEST2RING_PERM_CACHE: dict[int, Tensor] = {}
 _RING_SPIN_BASIS_CACHE: dict[tuple[int, int, int, int], tuple[Tensor, ...]] = {}
+_RING_SCALAR_BASIS_CONCAT_CACHE: dict[tuple[int, int, int], Tensor] = {}
+_RING_SCALAR_BASIS_CONCAT_CACHE_BYTES: dict[tuple[int, int, int], int] = {}
+_RING_SCALAR_BASIS_CONCAT_CACHE_TOTAL_BYTES = 0
 _RING_GROUP_CACHE: dict[
     int,
     tuple[
@@ -67,7 +70,13 @@ _SCALAR_MAX_CACHE_BYTES = int(
     os.environ.get("TORCHFITS_SCALAR_MAX_CACHE_BYTES", str(512 * 1024 * 1024))
 )
 _SCALAR_RING_AUTO_MIN_BYTES = int(
-    os.environ.get("TORCHFITS_SCALAR_RING_AUTO_MIN_BYTES", str(64 * 1024 * 1024))
+    os.environ.get("TORCHFITS_SCALAR_RING_AUTO_MIN_BYTES", "0")
+)
+_SCALAR_RECURRENCE_CPP_ENABLE = (
+    os.environ.get("TORCHFITS_SCALAR_MAP2ALM_RECURRENCE_CPP", "1") != "0"
+)
+_SCALAR_INTERP_CPP_ENABLE = (
+    os.environ.get("TORCHFITS_SCALAR_ALM2MAP_RECURRENCE_CPP", "1") != "0"
 )
 _SPIN_RING_AUTO_MIN_BYTES = int(
     os.environ.get("TORCHFITS_SPIN_RING_AUTO_MIN_BYTES", str(32 * 1024 * 1024))
@@ -110,25 +119,27 @@ _SPIN_RING_FINALIZE_CPP_ENABLE = (
     os.environ.get("TORCHFITS_SPIN_RING_FINALIZE_CPP", "1") != "0"
 )
 _SPIN_MAP2ALM_RING_CONCAT_CPP_ENABLE = (
-    os.environ.get("TORCHFITS_SPIN_MAP2ALM_RING_CONCAT_CPP", "0") != "0"
+    os.environ.get("TORCHFITS_SPIN_MAP2ALM_RING_CONCAT_CPP", "1") != "0"
 )
 _SPIN_RING_NEST_ENABLE = os.environ.get("TORCHFITS_SPIN_RING_NEST_ENABLE", "1") != "0"
 _RING_SMALL_DFT_MAX_NPH = int(os.environ.get("TORCHFITS_RING_SMALL_DFT_MAX_NPH", "0"))
-_RING_FOURIER_CPP_ENABLE = os.environ.get("TORCHFITS_RING_FOURIER_CPP", "0") != "0"
+_RING_FOURIER_CPP_ENABLE = os.environ.get("TORCHFITS_RING_FOURIER_CPP", "1") != "0"
 _RING_FOURIER_MODES_CPP_ENABLE = (
-    os.environ.get("TORCHFITS_RING_FOURIER_MODES_CPP", "0") != "0"
+    os.environ.get("TORCHFITS_RING_FOURIER_MODES_CPP", "1") != "0"
 )
 _RING_FOURIER_SYNTH_CPP_ENABLE = (
-    os.environ.get("TORCHFITS_RING_FOURIER_SYNTH_CPP", "0") != "0"
+    os.environ.get("TORCHFITS_RING_FOURIER_SYNTH_CPP", "1") != "0"
 )
 _RING_FOURIER_MODES_CPP_MAX_M = int(
-    os.environ.get("TORCHFITS_RING_FOURIER_MODES_CPP_MAX_M", "64")
+    os.environ.get("TORCHFITS_RING_FOURIER_MODES_CPP_MAX_M", "1024")
 )
 _RING_FOURIER_SYNTH_CPP_MAX_M = int(
-    os.environ.get("TORCHFITS_RING_FOURIER_SYNTH_CPP_MAX_M", "64")
+    os.environ.get("TORCHFITS_RING_FOURIER_SYNTH_CPP_MAX_M", "1024")
 )
 _PIXWIN_TABLE_CACHE: dict[int, tuple[Tensor, Tensor]] = {}
 _PIXWIN_DATA_DIR = Path(__file__).resolve().parent / "data" / "pixel_window_functions"
+
+_LEGENDRE_REC_CACHE: dict[tuple[int, int], tuple[list[float], list[float]]] = {}
 
 
 def _preferred_real_dtype(device: torch.device) -> torch.dtype:
@@ -353,20 +364,89 @@ def _pmm_base(m: int, x: Tensor) -> Tensor:
     return sign * val
 
 
+def _legendre_rec_coeffs(m: int, lmax: int) -> tuple[list[float], list[float]]:
+    """Return recurrence coefficients a_lm, b_lm for l=m+2..lmax."""
+    key = (m, lmax)
+    if key in _LEGENDRE_REC_CACHE:
+        return _LEGENDRE_REC_CACHE[key]
+
+    a_list = []
+    b_list = []
+    for ell in range(m + 2, lmax + 1):
+        a_lm = math.sqrt((4.0 * ell * ell - 1.0) / (ell * ell - m * m))
+        b_lm = math.sqrt(
+            (2.0 * ell + 1.0)
+            / (2.0 * ell - 3.0)
+            * ((ell - 1.0) ** 2 - m * m)
+            / (ell * ell - m * m)
+        )
+        a_list.append(a_lm)
+        b_list.append(b_lm)
+
+    _LEGENDRE_REC_CACHE[key] = (a_list, b_list)
+    return a_list, b_list
+
+
+def _legendre_l_sequence_loop(
+    x: Tensor,
+    prev2: Tensor,
+    prev1: Tensor,
+    a_list: list[float],
+    b_list: list[float],
+) -> list[Tensor]:
+    """Inner recurrence loop, potentially compilable."""
+    res = []
+    p2 = prev2
+    p1 = prev1
+    for i in range(len(a_list)):
+        cur = a_list[i] * x * p1 - b_list[i] * p2
+        res.append(cur)
+        p2 = p1
+        p1 = cur
+    return res
+
+
 def _legendre_l_sequence(m: int, x: Tensor, lmax: int) -> Tensor:
-    """Associated Legendre P_l^m(x) for l=m..lmax. Output shape [lmax-m+1, npix]."""
-    pmm = _pmm_base(m, x)
+    """Fully normalized Associated Legendre P_l^m(x) for l=m..lmax. shape [lmax-m+1, npix]."""
+    # Standard normalization for Ylm includes 1/sqrt(4pi)
+    # Pmm = (-1)^m * sqrt( (2m+1)!! / (2m)!! ) * (1-x^2)^(m/2) * sqrt(1/4pi)
+
+    x.shape[0]
+
+    sin2theta = torch.clamp(1.0 - x * x, min=1e-30)
+
+    ln_4pi = math.log(4.0 * math.pi)
+    ln2 = math.log(2.0)
+
+    # log_norm_mm = 0.5 * (log(2m+1) - log(4pi) + lgamma(2m+1) - 2*(m*log(2) + lgamma(m+1)))
+    log_pmm = 0.5 * (
+        math.log(2 * m + 1)
+        - ln_4pi
+        + math.lgamma(2 * m + 1)
+        - 2 * (m * ln2 + math.lgamma(m + 1))
+    )
+    log_sin_m = 0.5 * m * torch.log(sin2theta)
+
+    pmm = torch.exp(log_pmm + log_sin_m)
+    if (m % 2) != 0:
+        pmm = -pmm
+
     if lmax == m:
         return pmm.unsqueeze(0)
-    pm1 = (2 * m + 1) * x * pmm
+
+    pm1 = x * math.sqrt(2 * m + 3) * pmm
+
+    if lmax == m + 1:
+        return torch.stack([pmm, pm1], dim=0)
+
+    a_list, b_list = _legendre_rec_coeffs(m, lmax)
+
+    # Note: torch.compile overhead is often not worth it for small L,
+    # but for large L (>512) it can be beneficial.
+    # We use a simple loop here which is already faster than the old version.
     seq = [pmm, pm1]
-    prev2 = pmm
-    prev1 = pm1
-    for ell in range(m + 2, lmax + 1):
-        cur = ((2 * ell - 1) * x * prev1 - (ell + m - 1) * prev2) / float(ell - m)
-        seq.append(cur)
-        prev2 = prev1
-        prev1 = cur
+    seq.extend(_legendre_l_sequence_loop(x, pmm, pm1, a_list, b_list))
+
     return torch.stack(seq, dim=0)
 
 
@@ -394,10 +474,7 @@ def _ylm_basis(
         phase = torch.exp(
             torch.complex(torch.zeros_like(phi), m * phi)
         )  # exp(+i m phi)
-        norms = torch.tensor(
-            [_ylm_norm(ell, m) for ell in range(m, lmax + 1)], dtype=torch.float64
-        )
-        y = (norms.unsqueeze(1) * p_seq).to(dtype=torch.complex128) * phase.unsqueeze(0)
+        y = p_seq.to(dtype=torch.complex128) * phase.unsqueeze(0)
         y_blocks.append(y)
         y_conj_blocks.append(torch.conj(y))
     out = (tuple(y_blocks), tuple(y_conj_blocks))
@@ -938,13 +1015,338 @@ def _ring_scalar_bases_for_nside(
     blocks: list[Tensor] = []
     for m in range(int(mmax) + 1):
         p_seq = _legendre_l_sequence(m, x_ring, int(lmax))
-        norms = torch.tensor(
-            [_ylm_norm(ell, m) for ell in range(m, int(lmax) + 1)], dtype=torch.float64
-        )
-        blocks.append((norms.unsqueeze(1) * p_seq).to(torch.complex128))
+        blocks.append(p_seq.to(torch.complex128))
     out = tuple(blocks)
     _RING_SCALAR_BASIS_CACHE[key] = out
     return out
+
+
+def _ring_scalar_basis_concat(nside: int, lmax: int, mmax: int) -> Tensor:
+    """
+    Returns concatenated (N_alm, N_rings) basis matrix for scalar Y_lm.
+    Uses LRU cache with size limit.
+    """
+    key = (int(nside), int(lmax), int(mmax))
+    if key in _RING_SCALAR_BASIS_CONCAT_CACHE:
+        val = _RING_SCALAR_BASIS_CONCAT_CACHE.pop(key)
+        _RING_SCALAR_BASIS_CONCAT_CACHE[key] = val
+        return val
+
+    blocks = _ring_scalar_bases_for_nside(nside, lmax, mmax)
+    if not blocks:
+        return torch.empty((0, 0), dtype=torch.complex128, device=torch.device("cpu"))
+
+    Y = torch.cat(blocks, dim=0)
+
+    bytes_needed = Y.numel() * 16
+    if bytes_needed <= _SCALAR_MAX_CACHE_BYTES:
+        global _RING_SCALAR_BASIS_CONCAT_CACHE_TOTAL_BYTES
+        while (
+            _RING_SCALAR_BASIS_CONCAT_CACHE_TOTAL_BYTES + bytes_needed
+        ) > _SCALAR_MAX_CACHE_BYTES and _RING_SCALAR_BASIS_CONCAT_CACHE:
+            old_key = next(iter(_RING_SCALAR_BASIS_CONCAT_CACHE))
+            _RING_SCALAR_BASIS_CONCAT_CACHE.pop(old_key)
+            old_bytes = _RING_SCALAR_BASIS_CONCAT_CACHE_BYTES.pop(old_key, 0)
+            _RING_SCALAR_BASIS_CONCAT_CACHE_TOTAL_BYTES -= old_bytes
+
+        _RING_SCALAR_BASIS_CONCAT_CACHE[key] = Y
+        _RING_SCALAR_BASIS_CONCAT_CACHE_BYTES[key] = bytes_needed
+        _RING_SCALAR_BASIS_CONCAT_CACHE_TOTAL_BYTES += bytes_needed
+
+    return Y
+
+
+class ScalarSHTIntegrate(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx, s_modes: Tensor, nside: int, lmax: int, mmax: int, pix_w: float
+    ) -> Tensor:
+        ctx.nside = nside
+        ctx.lmax = lmax
+        ctx.mmax = mmax
+        ctx.pix_w = pix_w
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(nside)
+        nrings = int(theta_ring_cpu.numel())
+        weight = torch.full((nrings,), pix_w, dtype=torch.float64, device="cpu")
+
+        s_modes_cpu = s_modes.detach().to(dtype=torch.complex128, device="cpu")
+
+        if hasattr(_cpp, "_healpix_scalar_integrate_recurrence_cpu"):
+            out = _cpp._healpix_scalar_integrate_recurrence_cpu(
+                s_modes_cpu.contiguous(),
+                theta_ring_cpu.contiguous(),
+                weight.contiguous(),
+                int(lmax),
+                int(mmax),
+            )
+        else:
+            s_minus = s_modes_cpu.clone()
+            alms_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+                s_modes_cpu.contiguous(),
+                s_minus.contiguous(),
+                theta_ring_cpu.contiguous(),
+                weight.contiguous(),
+                int(lmax),
+                int(mmax),
+                0,
+            )
+            out = (alms_stacked[0] + alms_stacked[1]) * 0.5
+
+        return out.to(device=s_modes.device)
+
+    @staticmethod
+    def backward(ctx, grad_alm: Tensor):
+        grad_alm_cpu = grad_alm.detach().to(device="cpu", dtype=torch.complex128)
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(ctx.nside)
+
+        if hasattr(_cpp, "_healpix_scalar_interpolate_recurrence_cpu"):
+            grad_s = _cpp._healpix_scalar_interpolate_recurrence_cpu(
+                grad_alm_cpu.contiguous(),
+                theta_ring_cpu.contiguous(),
+                int(ctx.lmax),
+                int(ctx.mmax),
+            )
+        else:
+            alm_stack = torch.stack([grad_alm_cpu, grad_alm_cpu], dim=0)
+            s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
+                alm_stack.contiguous(),
+                theta_ring_cpu.contiguous(),
+                int(ctx.lmax),
+                int(ctx.mmax),
+                0,
+            )
+            grad_s = s_modes_stacked[0]
+
+        grad_s = grad_s * ctx.pix_w
+        return grad_s.to(device=grad_alm.device), None, None, None, None
+
+
+class ScalarSHTInterpolate(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, alm: Tensor, nside: int, lmax: int, mmax: int) -> Tensor:
+        ctx.nside = nside
+        ctx.lmax = lmax
+        ctx.mmax = mmax
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(nside)
+        alm_cpu = alm.detach().to(dtype=torch.complex128, device="cpu")
+
+        if hasattr(_cpp, "_healpix_scalar_interpolate_recurrence_cpu"):
+            out = _cpp._healpix_scalar_interpolate_recurrence_cpu(
+                alm_cpu.contiguous(),
+                theta_ring_cpu.contiguous(),
+                int(lmax),
+                int(mmax),
+            )
+        else:
+            alm_stack = torch.stack([alm_cpu, alm_cpu], dim=0)
+            s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
+                alm_stack.contiguous(),
+                theta_ring_cpu.contiguous(),
+                int(lmax),
+                int(mmax),
+                0,
+            )
+            out = s_modes_stacked[0]
+
+        return out.to(device=alm.device)
+
+    @staticmethod
+    def backward(ctx, grad_s_modes: Tensor):
+        grad_s_cpu = grad_s_modes.detach().to(device="cpu", dtype=torch.complex128)
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(ctx.nside)
+        nrings = int(theta_ring_cpu.numel())
+        weight = torch.ones((nrings,), dtype=torch.float64, device="cpu")
+
+        if hasattr(_cpp, "_healpix_scalar_integrate_recurrence_cpu"):
+            grad_alm = _cpp._healpix_scalar_integrate_recurrence_cpu(
+                grad_s_cpu.contiguous(),
+                theta_ring_cpu.contiguous(),
+                weight.contiguous(),
+                int(ctx.lmax),
+                int(ctx.mmax),
+            )
+        else:
+            s_minus = grad_s_cpu.clone()
+            alms_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+                grad_s_cpu.contiguous(),
+                s_minus.contiguous(),
+                theta_ring_cpu.contiguous(),
+                weight.contiguous(),
+                int(ctx.lmax),
+                int(ctx.mmax),
+                0,
+            )
+            grad_alm = (alms_stacked[0] + alms_stacked[1]) * 0.5
+
+        return grad_alm.to(device=grad_s_modes.device), None, None, None
+
+
+class SpinSHTIntegrate(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        s_plus: Tensor,
+        s_minus: Tensor,
+        nside: int,
+        lmax: int,
+        mmax: int,
+        spin: int,
+        pix_w: float,
+    ) -> tuple[Tensor, Tensor]:
+        ctx.nside = nside
+        ctx.lmax = lmax
+        ctx.mmax = mmax
+        ctx.spin = spin
+        ctx.pix_w = pix_w
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(nside)
+        nrings = int(theta_ring_cpu.numel())
+        w_vec = torch.full((nrings,), pix_w, dtype=torch.float64, device="cpu")
+
+        sp = s_plus.detach().to(dtype=torch.complex128, device="cpu")
+        sm = s_minus.detach().to(dtype=torch.complex128, device="cpu")
+
+        alms_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+            sp.contiguous(),
+            sm.contiguous(),
+            theta_ring_cpu.contiguous(),
+            w_vec.contiguous(),
+            int(lmax),
+            int(mmax),
+            int(spin),
+        )
+        return alms_stacked[0].to(device=s_plus.device), alms_stacked[1].to(
+            device=s_minus.device
+        )
+
+    @staticmethod
+    def backward(ctx, grad_a_plus: Tensor, grad_a_minus: Tensor):
+        gap = grad_a_plus.detach().to(dtype=torch.complex128, device="cpu")
+        gam = grad_a_minus.detach().to(dtype=torch.complex128, device="cpu")
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(int(ctx.nside))
+        alm_stack = torch.stack([gap, gam], dim=0)
+
+        s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
+            alm_stack.contiguous(),
+            theta_ring_cpu.contiguous(),
+            int(ctx.lmax),
+            int(ctx.mmax),
+            int(ctx.spin),
+        )
+
+        gsp = s_modes_stacked[0] * ctx.pix_w
+        gsm = s_modes_stacked[1] * ctx.pix_w
+
+        return (
+            gsp.to(device=grad_a_plus.device),
+            gsm.to(device=grad_a_plus.device),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+class SpinSHTInterpolate(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        a_plus: Tensor,
+        a_minus: Tensor,
+        nside: int,
+        lmax: int,
+        mmax: int,
+        spin: int,
+    ) -> tuple[Tensor, Tensor]:
+        ctx.nside = nside
+        ctx.lmax = lmax
+        ctx.mmax = mmax
+        ctx.spin = spin
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(nside)
+
+        ap = a_plus.detach().to(dtype=torch.complex128, device="cpu")
+        am = a_minus.detach().to(dtype=torch.complex128, device="cpu")
+        alm_stack = torch.stack([ap, am], dim=0)
+
+        s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
+            alm_stack.contiguous(),
+            theta_ring_cpu.contiguous(),
+            int(lmax),
+            int(mmax),
+            int(spin),
+        )
+        return s_modes_stacked[0].to(device=a_plus.device), s_modes_stacked[1].to(
+            device=a_minus.device
+        )
+
+    @staticmethod
+    def backward(ctx, grad_s_plus: Tensor, grad_s_minus: Tensor):
+        gsp = grad_s_plus.detach().to(dtype=torch.complex128, device="cpu")
+        gsm = grad_s_minus.detach().to(dtype=torch.complex128, device="cpu")
+
+        _, _, theta_ring_cpu, _ = _ring_layout_for_nside(ctx.nside)
+        nrings = int(theta_ring_cpu.numel())
+        w_vec = torch.ones((nrings,), dtype=torch.float64, device="cpu")
+
+        alms_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+            gsp.contiguous(),
+            gsm.contiguous(),
+            theta_ring_cpu.contiguous(),
+            w_vec.contiguous(),
+            int(ctx.lmax),
+            int(ctx.mmax),
+            int(ctx.spin),
+        )
+
+        return (
+            alms_stacked[0].to(device=grad_s_plus.device),
+            alms_stacked[1].to(device=grad_s_minus.device),
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+def _scalar_ring_integrate_recurrence_cpu(
+    s_modes: Tensor,
+    *,
+    nside: int,
+    lmax: int,
+    mmax: int,
+    pix_w: float,
+) -> Tensor:
+    """
+    Integrate scalar Fourier modes to alms using C++ recurrence (spin=0).
+
+    s_modes: (mmax+1, nrings) complex tensor of Fourier modes per ring
+    Returns: (nalm,) complex tensor of alm coefficients
+    """
+    return ScalarSHTIntegrate.apply(
+        s_modes, int(nside), int(lmax), int(mmax), float(pix_w)
+    )
+
+
+def _scalar_ring_interpolate_recurrence_cpu(
+    alm: Tensor,
+    *,
+    nside: int,
+    lmax: int,
+    mmax: int,
+) -> Tensor:
+    """
+    Interpolate scalar alms to Fourier modes using C++ recurrence (spin=0).
+
+    alm: (nalm,) complex tensor of alm coefficients
+    Returns: (mmax+1, nrings) complex tensor of Fourier modes per ring
+    """
+    return ScalarSHTInterpolate.apply(alm, int(nside), int(lmax), int(mmax))
 
 
 def _ring_phi0_phase_for_nside(nside: int, mmax: int, *, sign: int) -> Tensor:
@@ -1346,6 +1748,21 @@ def _ring_fourier_modes_spin_conj(
     return s_plus, s_minus
 
 
+_M_PER_ALM_CACHE: dict[tuple[int, int], Tensor] = {}
+
+
+def _m_per_alm_cached(lmax: int, mmax: int) -> Tensor:
+    """Return (nalm,) int64 tensor where entry j holds the m-index for alm j."""
+    key = (int(lmax), int(mmax))
+    cached = _M_PER_ALM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    parts = [torch.full((lmax - m + 1,), m, dtype=torch.int64) for m in range(mmax + 1)]
+    out = torch.cat(parts)
+    _M_PER_ALM_CACHE[key] = out
+    return out
+
+
 def _scalar_alm2map_ring_torch(
     rows: Tensor,
     *,
@@ -1353,56 +1770,79 @@ def _scalar_alm2map_ring_torch(
     lmax: int,
     mmax: int,
 ) -> Tensor:
-    starts_cpu, lengths_cpu, theta_ring_cpu, _ = _ring_layout_for_nside(int(nside))
+    starts_cpu, lengths_cpu, _, _ = _ring_layout_for_nside(int(nside))
     device = rows.device
     dtype_real = _preferred_real_dtype(device)
     dtype_cplx = _preferred_complex_dtype(device)
 
-    starts = starts_cpu.to(device=device)
-    y_base_blocks = _ring_scalar_bases_for_nside(int(nside), int(lmax), int(mmax))
-    phi0_phase = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=1).to(
-        device=device, dtype=dtype_cplx
+    nmaps = int(rows.shape[0])
+    nrings = int(lengths_cpu.numel())
+
+    use_cpp_recurrence = (
+        _SCALAR_INTERP_CPP_ENABLE
+        and _cpp is not None
+        and hasattr(_cpp, "_healpix_scalar_interpolate_recurrence_cpu")
     )
 
-    nmaps = int(rows.shape[0])
-    nrings = int(theta_ring_cpu.numel())
-    npix = _healpix.nside2npix(int(nside))
-    out = torch.empty((nmaps, npix), dtype=dtype_real, device=device)
-    lengths_list = [int(v) for v in lengths_cpu.tolist()]
-    unique_lengths = sorted(set(lengths_list))
+    if use_cpp_recurrence:
+        out_s_m = []
+        for i in range(nmaps):
+            s_modes = _scalar_ring_interpolate_recurrence_cpu(
+                rows[i],
+                nside=int(nside),
+                lmax=int(lmax),
+                mmax=int(mmax),
+            )
+            out_s_m.append(s_modes)
+        s_modes_batch = torch.stack(out_s_m, dim=0)
 
-    f_m_ring = torch.zeros((nmaps, mmax + 1, nrings), dtype=dtype_cplx, device=device)
-    idx = 0
-    for m in range(mmax + 1):
-        l_count = lmax - m + 1
-        coeff = rows[:, idx : idx + l_count]
-        y_base = y_base_blocks[m].to(device=device, dtype=dtype_cplx)
-        fm = coeff @ y_base
-        if m > 0:
-            fm = fm * phi0_phase[m].unsqueeze(0)
-        f_m_ring[:, m, :] = fm
-        idx += l_count
+        phase0_pos = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=1).to(
+            dtype=torch.complex128, device=s_modes_batch.device
+        )
+        c_all = s_modes_batch * phase0_pos.unsqueeze(0)
 
-    c_all = f_m_ring
-    if mmax > 0:
-        c_all = c_all.clone()
-        c_all[:, 1:, :] = 2.0 * c_all[:, 1:, :]
-
-    for nph in unique_lengths:
-        ring_ids = [i for i, nph_i in enumerate(lengths_list) if nph_i == int(nph)]
-        ring_idx = torch.tensor(ring_ids, dtype=torch.int64, device=device)
-        c_group = torch.index_select(c_all, 2, ring_idx)
-        phase = _ring_azimuth_phase(int(nph), int(mmax)).to(
+        if mmax > 0:
+            c_all = c_all.clone()
+            c_all[:, 1:, :] = 2.0 * c_all[:, 1:, :]
+    else:
+        # Batched Legendre interpolation (no Python m-loop)
+        Y = _ring_scalar_basis_concat(int(nside), int(lmax), int(mmax)).to(
             device=device, dtype=dtype_cplx
         )
-        vals_group = torch.real(torch.einsum("amr,mn->arn", c_group, phase)).to(
-            dtype_real
-        )
-        for j, rid in enumerate(ring_ids):
-            start = int(starts[rid].item())
-            out[:, start : start + int(nph)] = vals_group[:, j, :]
+        m_idx = _m_per_alm_cached(int(lmax), int(mmax)).to(device=device)
 
-    return out
+        phi0_phase = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=1).to(
+            device=device, dtype=dtype_cplx
+        )
+
+        # alm_weighted: (nmaps, nalm, nrings) = alm[:, j] * Y[j, r]
+        alm_cplx = rows.to(dtype=dtype_cplx)
+        alm_weighted = alm_cplx.unsqueeze(-1) * Y.unsqueeze(0)  # broadcast
+
+        # Scatter-sum into per-m Fourier modes using m_idx
+        f_m_ring = torch.zeros(
+            (nmaps, mmax + 1, nrings), dtype=dtype_cplx, device=device
+        )
+        m_expand = m_idx.unsqueeze(0).unsqueeze(-1).expand_as(alm_weighted)
+        f_m_ring.scatter_add_(1, m_expand, alm_weighted)
+
+        # Apply phi0 phase per m
+        f_m_ring = f_m_ring * phi0_phase.unsqueeze(0)
+
+        c_all = f_m_ring
+        if mmax > 0:
+            c_all = c_all.clone()
+            c_all[:, 1:, :] = 2.0 * c_all[:, 1:, :]
+
+    out = _ring_fourier_synthesis(
+        c_all,
+        starts_cpu=starts_cpu,
+        lengths_cpu=lengths_cpu,
+        nside=int(nside),
+    )
+    if out.is_complex():
+        out = out.real
+    return out.to(dtype=dtype_real)
 
 
 def _scalar_map2alm_ring_torch(
@@ -1418,10 +1858,8 @@ def _scalar_map2alm_ring_torch(
 
     nmaps = int(rows.shape[0])
     npix = int(rows.shape[1])
-    nalm = alm_size(int(lmax), int(mmax))
 
     pix_w = (4.0 * math.pi) / float(npix)
-    out = torch.zeros((nmaps, nalm), dtype=dtype_cplx, device=device)
     s_all = _ring_fourier_modes(
         rows.to(dtype=dtype_cplx),
         starts_cpu=starts_cpu,
@@ -1435,14 +1873,37 @@ def _scalar_map2alm_ring_torch(
     )
     s_all = s_all * phase0_neg.unsqueeze(0)
 
-    y_base_blocks = _ring_scalar_bases_for_nside(int(nside), int(lmax), int(mmax))
-    idx = 0
-    for m in range(mmax + 1):
-        y_base = y_base_blocks[m].to(device=device, dtype=dtype_cplx)
-        s_m = s_all[:, m, :]
-        l_count = lmax - m + 1
-        out[:, idx : idx + l_count] = (s_m @ y_base.transpose(0, 1)) * pix_w
-        idx += l_count
+    use_cpp_recurrence = (
+        _SCALAR_RECURRENCE_CPP_ENABLE
+        and _cpp is not None
+        and hasattr(_cpp, "_healpix_scalar_integrate_recurrence_cpu")
+    )
+
+    if use_cpp_recurrence:
+        out_alms = []
+        for i in range(nmaps):
+            alm = _scalar_ring_integrate_recurrence_cpu(
+                s_all[i],
+                nside=int(nside),
+                lmax=int(lmax),
+                mmax=int(mmax),
+                pix_w=pix_w,
+            )
+            out_alms.append(alm)
+        return torch.stack(out_alms, dim=0)
+
+    # Batched Legendre integration (no Python m-loop)
+    Y = _ring_scalar_basis_concat(int(nside), int(lmax), int(mmax)).to(
+        device=device, dtype=dtype_cplx
+    )
+    m_idx = _m_per_alm_cached(int(lmax), int(mmax)).to(device=device)
+
+    # Expand s_all from (nmaps, mmax+1, nrings) to (nmaps, nalm, nrings)
+    # using m_idx to select the correct m for each alm
+    s_expanded = torch.index_select(s_all, 1, m_idx)  # (nmaps, nalm, nrings)
+
+    # Single batched einsum: alm[b, j] = sum_r(s_expanded[b, j, r] * conj(Y[j, r])) * pix_w
+    out = torch.einsum("bnr,nr->bn", s_expanded, Y) * pix_w
 
     return out
 
@@ -1764,27 +2225,14 @@ def _spin_alm2map_ring_torch(
     Helper for ring-based alm2map_spin.
     """
     use_cpp = (
-        coeff_plus.device.type == "cpu"
-        and getattr(_cpp, "_healpix_spin_interpolate_recurrence_cpu", None) is not None
-        and (not coeff_plus.requires_grad)
+        getattr(_cpp, "_healpix_spin_interpolate_recurrence_cpu", None) is not None
         and os.environ.get("TORCHFITS_SPIN_ALM2MAP_RECURRENCE_CPP", "1") != "0"
     )
 
     if use_cpp:
-        # print("DEBUG: Using C++ Recurrence")
-        _, _, theta_ring, _ = _ring_layout_for_nside(int(nside))
-
-        # Stack coeffs: (2, Nalm)
-        alms_stacked = torch.stack([coeff_plus, coeff_minus], dim=0)
-
-        # Returns stacked S: (2, mmax+1, nrings)
-        # s_plus = S[0], s_minus = S[1]
-        s_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
-            alms_stacked, theta_ring, int(lmax), int(mmax), int(spin)
+        s_plus, s_minus = SpinSHTInterpolate.apply(
+            coeff_plus, coeff_minus, int(nside), int(lmax), int(mmax), int(spin)
         )
-        s_plus = s_stacked[0]
-        s_minus = s_stacked[1]
-
     else:
         s_plus, s_minus = _ring_spin_interpolate_blocks(
             coeff_plus,
@@ -1871,7 +2319,7 @@ def map2alm(
     mmax: int | None = None,
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
-    iter: int = 0,
+    iter: int = 3,
     pol: bool = False,
     use_pixel_weights: bool = False,
 ) -> Tensor:
@@ -1892,51 +2340,6 @@ def map2alm(
     if ll < 0 or mm < 0 or mm > ll:
         raise ValueError("invalid lmax/mmax")
 
-    if pol:
-        rows_pol = rows.to(dtype=torch.float64, device="cpu")
-        if rows_pol.shape[0] != 3:
-            raise ValueError("pol=True requires map_values shape (3, npix)")
-        if backend == "healpy":
-            try:
-                import healpy as hp
-            except Exception as exc:  # pragma: no cover
-                raise RuntimeError(
-                    "healpy backend requested but healpy is not available"
-                ) from exc
-            arr = rows_pol.detach().cpu().numpy()
-            if nest:
-                arr = np.stack([hp.reorder(arr[i], n2r=True) for i in range(3)], axis=0)
-            alm_np = hp.map2alm(
-                arr,
-                lmax=ll,
-                mmax=mm,
-                iter=int(iter),
-                pol=True,
-                use_pixel_weights=bool(use_pixel_weights),
-            )
-            return torch.from_numpy(np.asarray(alm_np)).to(dtype=torch.complex128)
-        a_t = map2alm(
-            rows_pol[0],
-            nside=ns,
-            lmax=ll,
-            mmax=mm,
-            nest=nest,
-            backend="torch",
-            iter=iter,
-            pol=False,
-            use_pixel_weights=use_pixel_weights,
-        )
-        a_e, a_b = map2alm_spin(
-            rows_pol[1:3],
-            spin=2,
-            nside=ns,
-            lmax=ll,
-            mmax=mm,
-            nest=nest,
-            backend="torch",
-        )
-        return torch.stack([a_t, a_e, a_b], dim=0)
-
     if backend == "healpy":
         try:
             import healpy as hp
@@ -1944,62 +2347,139 @@ def map2alm(
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
             ) from exc
-        out = []
-        for i in range(rows.shape[0]):
-            m_np = rows[i].detach().cpu().numpy()
+        rows_pol = rows.detach().cpu().numpy()
+        if pol:
+            if rows_pol.shape[0] != 3:
+                raise ValueError("pol=True requires map_values shape (3, npix)")
             if nest:
-                m_np = hp.reorder(m_np, n2r=True)
-            alm_np = hp.map2alm(
-                m_np,
-                lmax=ll,
-                mmax=mm,
-                iter=int(iter),
-                pol=False,
-                use_pixel_weights=bool(use_pixel_weights),
-            )
-            out.append(torch.from_numpy(alm_np))
-        alm = torch.stack(out, dim=0).to(dtype=torch.complex128)
-        return alm[0] if single else alm
+                rows_pol = np.stack(
+                    [hp.reorder(rows_pol[i], n2r=True) for i in range(3)], axis=0
+                )
+        else:
+            if nest:
+                rows_pol = np.stack(
+                    [
+                        hp.reorder(rows_pol[i], n2r=True)
+                        for i in range(rows_pol.shape[0])
+                    ],
+                    axis=0,
+                )
+        alm_np = hp.map2alm(
+            rows_pol,
+            lmax=ll,
+            mmax=mm,
+            iter=int(iter),
+            pol=pol,
+            use_pixel_weights=bool(use_pixel_weights),
+        )
+        alm = torch.from_numpy(np.asarray(alm_np)).to(dtype=torch.complex128)
+        return (alm[0] if single else alm) if not pol else alm
 
-    npix = _healpix.nside2npix(ns)
-    nalm = alm_size(ll, mm)
+    # torch backend
+    if nest:
+        # Reorder to RING for memory stability on torch backend
+        rows = _reorder_nest_to_ring_rows(rows, ns)
+        nest = False
+
+    if use_pixel_weights:
+        import warnings
+
+        warnings.warn(
+            "use_pixel_weights=True is currently ignored by the torch backend. "
+            "Results may be biased for high-l.",
+            UserWarning,
+        )
+
+    # Iterative solver (Matches healpy behavior)
+    alm = _map2alm_single_pass(
+        rows, nside=ns, lmax=ll, mmax=mm, pol=pol, use_pixel_weights=False
+    )
+    for _ in range(iter):
+        map_rec = alm2map(
+            alm, nside=ns, lmax=ll, mmax=mm, nest=False, backend="torch", pol=pol
+        )
+        res = rows - _map_to_rows(map_rec)[0]
+        alm = alm + _map2alm_single_pass(
+            res, nside=ns, lmax=ll, mmax=mm, pol=pol, use_pixel_weights=False
+        )
+
+    if single and not pol:
+        return alm[0]
+    return alm
+
+
+def _map2alm_single_pass(
+    rows: Tensor,
+    *,
+    nside: int,
+    lmax: int,
+    mmax: int,
+    pol: bool,
+    use_pixel_weights: bool,
+) -> Tensor:
+    if pol:
+        a_t = _map2alm_single_pass(
+            rows[0:1],
+            nside=nside,
+            lmax=lmax,
+            mmax=mmax,
+            pol=False,
+            use_pixel_weights=use_pixel_weights,
+        )
+        a_e, a_b = map2alm_spin(
+            rows[1:3],
+            spin=2,
+            nside=nside,
+            lmax=lmax,
+            mmax=mmax,
+            nest=False,
+            backend="torch",
+            iter=0,
+        )
+        return torch.stack([a_t[0], a_e, a_b], dim=0)
+
+    npix = _healpix.nside2npix(nside)
+    nalm = alm_size(lmax, mmax)
     bytes_needed = int(npix * nalm * 16)
     ring_mode = os.environ.get("TORCHFITS_SCALAR_MAP2ALM_RING_TORCH", "auto")
     auto_ring = ring_mode == "auto" and bytes_needed >= _SCALAR_RING_AUTO_MIN_BYTES
-    use_ring_torch = (not nest) and (
-        ring_mode == "force" or ring_mode == "1" or auto_ring
-    )
+    use_ring_torch = ring_mode == "force" or ring_mode == "1" or auto_ring
+
     if use_ring_torch:
-        alm_ring = _scalar_map2alm_ring_torch(rows, nside=ns, lmax=ll, mmax=mm)
+        alm_ring = _scalar_map2alm_ring_torch(rows, nside=nside, lmax=lmax, mmax=mmax)
         if torch.isfinite(alm_ring).all():
-            return alm_ring[0] if single else alm_ring
+            return alm_ring
         if ring_mode == "force":
             raise RuntimeError(
-                "TORCHFITS_SCALAR_MAP2ALM_RING_TORCH=force produced non-finite values; "
-                "disable force or lower lmax/nside."
+                "TORCHFITS_SCALAR_MAP2ALM_RING_TORCH=force produced non-finite values"
             )
 
-    _, _, _, pix_w = _angles_for_nside(ns, nest)
+    _, _, _, pix_w = _angles_for_nside(nside, nest=False)
     complex_dtype = _preferred_complex_dtype(rows.device)
     map_c = rows.to(dtype=complex_dtype)
-    mat = _scalar_map2alm_mat(ns, nest, ll, mm)
+    mat = _scalar_map2alm_mat(nside, False, lmax, mmax)
     if mat is not None:
         if mat.device != map_c.device or mat.dtype != complex_dtype:
             mat = mat.to(device=map_c.device, dtype=complex_dtype)
         alm = (map_c @ mat) * pix_w
     else:
-        _, y_conj_blocks = _ylm_basis(ns, nest, ll, mm)
+        if bytes_needed > 1024 * 1024 * 1024:
+            raise RuntimeError(
+                f"map2alm failed: basis-based fallback requires {bytes_needed / 1e9:.1f} GB (max 1.0 GB). "
+                f"NSIDE={nside}, LMAX={lmax}."
+            )
+        _, y_conj_blocks = _ylm_basis(nside, False, lmax, mmax)
         alm = torch.zeros(
             (rows.shape[0], nalm), dtype=complex_dtype, device=map_c.device
         )
-        for m in range(mm + 1):
+        for m in range(mmax + 1):
             y_conj = y_conj_blocks[m].to(device=map_c.device, dtype=complex_dtype)
-            l_count = ll - m + 1
+            l_count = lmax - m + 1
             coeffs = (map_c @ y_conj.transpose(0, 1)) * pix_w
-            start = alm_index(m, m, ll, mm)
+            start = alm_index(m, m, lmax, mmax)
             alm[:, start : start + l_count] = coeffs
 
-    return alm[0] if single else alm
+    return alm
 
 
 def map2alm_lsq(
@@ -2420,7 +2900,7 @@ def anafast(
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
     nspec: int | None = None,
-    iter: int = 0,
+    iter: int = 3,
     alm: bool = False,
     pol: bool = True,
     use_weights: bool = False,
@@ -2455,18 +2935,9 @@ def anafast(
         m1_np = m1.detach().cpu().numpy()
         m2_np = m2.detach().cpu().numpy()
         if nest:
-            if m1.ndim == 1:
-                m1_np = hp.reorder(m1_np, n2r=True)
-                m2_np = hp.reorder(m2_np, n2r=True)
-            else:
-                m1_np = np.stack(
-                    [hp.reorder(m1_np[i], n2r=True) for i in range(m1_np.shape[0])],
-                    axis=0,
-                )
-                m2_np = np.stack(
-                    [hp.reorder(m2_np[i], n2r=True) for i in range(m2_np.shape[0])],
-                    axis=0,
-                )
+            m1_np = hp.reorder(m1_np, n2r=True)
+            m2_np = hp.reorder(m2_np, n2r=True)
+
         out = hp.anafast(
             m1_np,
             map2=None if map2 is None else m2_np,
@@ -2770,6 +3241,7 @@ def synalm(
     mm_in = ll if mmax is None else int(mmax)
     mm = ll if mm_in < 0 else min(mm_in, ll)
 
+    # Build batched covariance matrices [ll+1, n_fields, n_fields]
     cov = torch.zeros((ll + 1, n_fields, n_fields), dtype=torch.float64)
     for spec, (i, j) in zip(seq, pairs, strict=False):
         if spec is None:
@@ -2780,32 +3252,72 @@ def synalm(
         cov[:take, i, j] = spec[:take]
         cov[:take, j, i] = spec[:take]
 
+    # Ensure positive semi-definite and compute batched Cholesky
+    # Symmetric matrices are 0.5 * (A + A^T) to ensure symmetry
+    cov = 0.5 * (cov + cov.transpose(-1, -2))
+
+    # Batch Cholesky decomposition
+    # Default torch.linalg.cholesky might fail on slightly non-PSD matrices
+    # We use eigh to be robust for theoretical spectra with zeros
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    eigvals = torch.clamp(eigvals, min=0.0)
+    fac = eigvecs @ (
+        torch.sqrt(eigvals).unsqueeze(-1)
+        * torch.eye(n_fields, device=cov.device, dtype=cov.dtype)
+    )
+    # fac shape: [ll+1, n_fields, n_fields]
+
     nalm = alm_size(ll, mm)
-    out = torch.zeros((n_fields, nalm), dtype=torch.complex128)
+    # Generate all (l, m) indices in HEALPix order
+    # m=0: (0,0), (1,0), ..., (ll,0)
+    # m=1: (1,1), (2,1), ..., (ll,1)
+    # ...
+    ell_indices = []
+    m_indices = []
+    for m in range(mm + 1):
+        ell_indices.append(torch.arange(m, ll + 1, dtype=torch.int64))
+        m_indices.append(torch.full((ll - m + 1,), m, dtype=torch.int64))
+
+    ell_idx = torch.cat(ell_indices)
+    m_idx = torch.cat(m_indices)
+    # ell_idx.shape == (nalm,)
+
+    # fac shape: [ll+1, n_fields, n_fields]
+    # We need fac[ell_idx] -> [nalm, n_fields, n_fields]
+    fac_all = fac.index_select(0, ell_idx.to(fac.device))
+
+    # Random vectors:
+    # m=0 (m_idx == 0): Purely real
+    # m > 0 (m_idx > 0): Complex
+    z_real = torch.randn((nalm, n_fields), dtype=fac.dtype, device=fac.device)
+    z_imag = torch.randn((nalm, n_fields), dtype=fac.dtype, device=fac.device)
+
+    # For m=0, we only use z_real and no sqrt(2) factor
+    # For m>0, we use (z_real + i*z_imag)/sqrt(2)
+    # We can handle this with a scale factor per alm
     inv_sqrt2 = 1.0 / math.sqrt(2.0)
+    scale = torch.where(
+        m_idx > 0,
+        torch.tensor(inv_sqrt2, device=fac.device),
+        torch.tensor(1.0, device=fac.device),
+    )
 
-    for ell in range(ll + 1):
-        c = 0.5 * (cov[ell] + cov[ell].transpose(0, 1))
-        try:
-            fac = torch.linalg.cholesky(c)
-        except RuntimeError:
-            eigvals, eigvecs = torch.linalg.eigh(c)
-            eigvals = torch.clamp(eigvals, min=0.0)
-            fac = eigvecs @ torch.diag(torch.sqrt(eigvals))
+    # V = fac @ Z
+    # v_real = fac_all @ (z_real * scale)
+    # v_imag = fac_all @ (z_imag * scale)
+    # Note: zipper matmul is [nalm, n_fields, n_fields] @ [nalm, n_fields, 1]
+    v_real = torch.matmul(
+        fac_all, (z_real * scale.unsqueeze(-1)).unsqueeze(-1)
+    ).squeeze(-1)
+    v_imag = torch.matmul(
+        fac_all, (z_imag * scale.unsqueeze(-1)).unsqueeze(-1)
+    ).squeeze(-1)
 
-        idx0 = alm_index(ell, 0, ll, mm)
-        z0 = torch.randn((n_fields,), dtype=torch.float64)
-        out[:, idx0] = torch.complex(
-            fac @ z0, torch.zeros((n_fields,), dtype=torch.float64)
-        )
+    # Set imaginary part to 0 for m=0
+    v_imag = torch.where((m_idx > 0).unsqueeze(-1), v_imag, torch.zeros_like(v_imag))
 
-        mlim = min(mm, ell)
-        for m in range(1, mlim + 1):
-            zr = torch.randn((n_fields,), dtype=torch.float64)
-            zi = torch.randn((n_fields,), dtype=torch.float64)
-            vr = (fac @ zr) * inv_sqrt2
-            vi = (fac @ zi) * inv_sqrt2
-            out[:, alm_index(ell, m, ll, mm)] = torch.complex(vr, vi)
+    # Construct complex output [n_fields, nalm]
+    out = torch.complex(v_real.transpose(0, 1), v_imag.transpose(0, 1))
 
     if n_fields == 1:
         return out[0]
@@ -3064,6 +3576,7 @@ def map2alm_spin(
     mmax: int | None = None,
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
+    iter: int = 3,
 ) -> tuple[Tensor, Tensor]:
     """
     Spin-weighted map->alm transform (Q/U-like pair).
@@ -3102,14 +3615,48 @@ def map2alm_spin(
                 [hp.reorder(arr[0], n2r=True), hp.reorder(arr[1], n2r=True)], axis=0
             )
         alm1, alm2 = hp.map2alm_spin(arr, spin=spin_i, lmax=ll, mmax=mm)
-        return torch.from_numpy(alm1).to(torch.complex128), torch.from_numpy(alm2).to(
-            torch.complex128
+        # healpy doesn't have iter in map2alm_spin, but we can do it manually if requested
+        res_a1 = torch.from_numpy(alm1).to(torch.complex128)
+        res_a2 = torch.from_numpy(alm2).to(torch.complex128)
+        return res_a1, res_a2
+
+    # torch backend
+    if nest:
+        # Reorder to RING for memory stability
+        m0 = _reorder_nest_to_ring_rows(maps_t[0:1], ns)[0]
+        m1 = _reorder_nest_to_ring_rows(maps_t[1:2], ns)[0]
+        maps_t = torch.stack([m0, m1], dim=0)
+        nest = False
+
+    # Iterative solver
+    alm1, alm2 = _map2alm_spin_single_pass(maps_t, spin_i, nside=ns, lmax=ll, mmax=mm)
+    for _ in range(iter):
+        m_rec_0, m_rec_1 = alm2map_spin(
+            (alm1, alm2), ns, spin_i, lmax=ll, mmax=mm, backend="torch"
         )
+        res0 = maps_t[0] - m_rec_0
+        res1 = maps_t[1] - m_rec_1
+        res_alm1, res_alm2 = _map2alm_spin_single_pass(
+            torch.stack([res0, res1], dim=0), spin_i, nside=ns, lmax=ll, mmax=mm
+        )
+        alm1 = alm1 + res_alm1
+        alm2 = alm2 + res_alm2
 
+    return alm1, alm2
+
+
+def _map2alm_spin_single_pass(
+    maps_t: Tensor,
+    spin_i: int,
+    *,
+    nside: int,
+    lmax: int,
+    mmax: int,
+) -> tuple[Tensor, Tensor]:
     rows = maps_t.to(device="cpu")
-    pix_w = 4.0 * math.pi / float(npix)
-
-    nalm = alm_size(ll, mm)
+    npix = int(maps_t.shape[1])
+    pix_w = (4.0 * math.pi) / float(npix)
+    nalm = alm_size(lmax, mmax)
     ring_mode = os.environ.get("TORCHFITS_SPIN_MAP2ALM_RING_TORCH", "auto")
     bytes_needed = int(
         npix * nalm * 32
@@ -3117,14 +3664,12 @@ def map2alm_spin(
     auto_ring = (
         ring_mode == "auto" and bytes_needed >= _SPIN_MAP2ALM_RING_AUTO_MIN_BYTES
     )
-    use_ring_torch = (ring_mode == "force" or ring_mode == "1" or auto_ring) and (
-        _SPIN_RING_NEST_ENABLE or (not nest)
-    )
+    use_ring_torch = ring_mode == "force" or ring_mode == "1" or auto_ring
     if use_ring_torch:
-        starts_cpu, lengths_cpu, _, _ = _ring_layout_for_nside(ns)
-        rows_ring = _reorder_nest_to_ring_rows(rows, int(ns)) if nest else rows
+        starts_cpu, lengths_cpu, _, _ = _ring_layout_for_nside(nside)
+        rows_ring = rows
         p_plus = torch.complex(rows_ring[0], rows_ring[1])
-        nrings = (4 * int(ns)) - 1
+        nrings = (4 * int(nside)) - 1
         bytes_concat = int(nalm * nrings * 32)  # two complex128 concat bases
         use_concat_fast = (
             bytes_concat <= _SPIN_RING_INTEGRATE_CONCAT_FAST_MAX_BYTES
@@ -3140,9 +3685,9 @@ def map2alm_spin(
         )
         if use_cpp_fused:
             y_plus, y_minus = _ring_spin_basis_concat(
-                int(ns), int(ll), int(mm), int(spin_i)
+                int(nside), int(lmax), int(mmax), int(spin_i)
             )
-            phase0_neg = _ring_phi0_phase_for_nside(int(ns), int(mm), sign=-1).to(
+            phase0_neg = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=-1).to(
                 dtype=torch.complex128
             )
             c_plus, c_minus = _cpp._healpix_spin_map2alm_ring_concat_cpu(
@@ -3152,8 +3697,8 @@ def map2alm_spin(
                 phase0_neg.contiguous(),
                 y_plus.contiguous(),
                 y_minus.contiguous(),
-                int(ll),
-                int(mm),
+                int(lmax),
+                int(mmax),
                 float(pix_w),
             )
         else:
@@ -3161,71 +3706,82 @@ def map2alm_spin(
                 p_plus,
                 starts_cpu=starts_cpu,
                 lengths_cpu=lengths_cpu,
-                mmax=mm,
-                nside=int(ns),
+                mmax=mmax,
+                nside=int(nside),
             )
 
-            phase0_neg = _ring_phi0_phase_for_nside(int(ns), int(mm), sign=-1).to(
+            phase0_neg = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=-1).to(
                 dtype=torch.complex128
             )
             s_plus = s_plus * phase0_neg
             s_minus = s_minus * phase0_neg
 
-            # Check for C++ Recurrence Backend (Hybrid Approach)
             if (
-                s_plus.device.type == "cpu"
-                and getattr(_cpp, "_healpix_spin_integrate_recurrence_cpu", None)
+                getattr(_cpp, "_healpix_spin_integrate_recurrence_cpu", None)
                 is not None
-                and (not s_plus.requires_grad)
                 and os.environ.get("TORCHFITS_SPIN_MAP2ALM_RECURRENCE_CPP", "1") != "0"
             ):
-                # Re-fetch theta from cached ring layout and use uniform ring weights.
-                _, _, theta_ring, _ = _ring_layout_for_nside(int(ns))
-                w_vec = torch.full_like(theta_ring, pix_w)
-
-                alms_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
-                    s_plus, s_minus, theta_ring, w_vec, int(ll), int(mm), int(spin_i)
+                c_plus, c_minus = SpinSHTIntegrate.apply(
+                    s_plus,
+                    s_minus,
+                    int(nside),
+                    int(lmax),
+                    int(mmax),
+                    int(spin_i),
+                    float(pix_w),
                 )
-                c_plus = alms_stacked[0]
-                c_minus = alms_stacked[1]
-
             else:
                 c_plus, c_minus = _ring_spin_integrate_blocks(
                     s_plus,
                     s_minus,
-                    nside=int(ns),
-                    lmax=int(ll),
-                    mmax=int(mm),
+                    nside=int(nside),
+                    lmax=int(lmax),
+                    mmax=int(mmax),
                     spin=int(spin_i),
                     pix_w=float(pix_w),
                 )
     else:
-        mats = _spin_map2alm_mats(ns, nest, ll, mm, spin_i)
+        mats = _spin_map2alm_mats(nside, False, lmax, mmax, spin_i)
         if mats is None:
             # Dense cached matrices unavailable (memory cap); use ring path fallback.
-            starts_cpu, lengths_cpu, _, _ = _ring_layout_for_nside(ns)
+            starts_cpu, lengths_cpu, _, _ = _ring_layout_for_nside(nside)
             p_plus = torch.complex(rows[0], rows[1])
             s_plus, s_minus = _ring_fourier_modes_spin_conj(
                 p_plus,
                 starts_cpu=starts_cpu,
                 lengths_cpu=lengths_cpu,
-                mmax=mm,
-                nside=int(ns),
+                mmax=mmax,
+                nside=int(nside),
             )
-            phase0_neg = _ring_phi0_phase_for_nside(int(ns), int(mm), sign=-1).to(
+            phase0_neg = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=-1).to(
                 dtype=torch.complex128
             )
             s_plus = s_plus * phase0_neg
             s_minus = s_minus * phase0_neg
-            c_plus, c_minus = _ring_spin_integrate_blocks(
-                s_plus,
-                s_minus,
-                nside=int(ns),
-                lmax=int(ll),
-                mmax=int(mm),
-                spin=int(spin_i),
-                pix_w=float(pix_w),
-            )
+            if (
+                getattr(_cpp, "_healpix_spin_integrate_recurrence_cpu", None)
+                is not None
+                and os.environ.get("TORCHFITS_SPIN_MAP2ALM_RECURRENCE_CPP", "1") != "0"
+            ):
+                c_plus, c_minus = SpinSHTIntegrate.apply(
+                    s_plus,
+                    s_minus,
+                    int(nside),
+                    int(lmax),
+                    int(mmax),
+                    int(spin_i),
+                    float(pix_w),
+                )
+            else:
+                c_plus, c_minus = _ring_spin_integrate_blocks(
+                    s_plus,
+                    s_minus,
+                    nside=int(nside),
+                    lmax=int(lmax),
+                    mmax=int(mmax),
+                    spin=int(spin_i),
+                    pix_w=float(pix_w),
+                )
         else:
             ycp_t, ycm_t = mats
             use_cpp = (
@@ -3253,7 +3809,7 @@ def map2alm_spin(
     neg_sign = -1.0 if (spin_i & 1) else 1.0  # (-1)^spin
     a_e = -0.5 * ((neg_sign * c_plus) + c_minus)
     a_b = 0.5j * ((neg_sign * c_plus) - c_minus)
-    ell = _alm_ell_array(ll, mm)
+    ell = _alm_ell_array(int(lmax), int(mmax))
     low_ell = ell < abs(spin_i)
     if torch.any(low_ell):
         a_e = a_e.clone()

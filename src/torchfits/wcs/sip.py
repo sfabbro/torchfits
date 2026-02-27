@@ -14,6 +14,8 @@ class SIP:
     - Shupe et al. (2005): "The SIP Convention for Representing Distortion in FITS Image Headers"
     """
 
+    _SMALL_VEC_MAX_POINTS = 0
+
     def __init__(self, header: Dict[str, Any]):
         self.a_order = int(header.get("A_ORDER", 0))
         self.b_order = int(header.get("B_ORDER", 0))
@@ -27,6 +29,53 @@ class SIP:
         # Parse AP/BP coefficients (Inverse: Focal Plane -> Pixel)
         self.ap_coeffs = self._parse_coeffs(header, "AP", self.ap_order)
         self.bp_coeffs = self._parse_coeffs(header, "BP", self.bp_order)
+        self.a_terms = self._coeff_terms(self.a_coeffs)
+        self.b_terms = self._coeff_terms(self.b_coeffs)
+        self.ap_terms = self._coeff_terms(self.ap_coeffs)
+        self.bp_terms = self._coeff_terms(self.bp_coeffs)
+        self.a_du_terms, self.a_dv_terms = self._derivative_terms(self.a_terms)
+        self.b_du_terms, self.b_dv_terms = self._derivative_terms(self.b_terms)
+        self._a_pack = self._build_term_pack(self.a_terms)
+        self._b_pack = self._build_term_pack(self.b_terms)
+        self._ap_pack = self._build_term_pack(self.ap_terms)
+        self._bp_pack = self._build_term_pack(self.bp_terms)
+        self._a_du_pack = self._build_term_pack(self.a_du_terms)
+        self._a_dv_pack = self._build_term_pack(self.a_dv_terms)
+        self._b_du_pack = self._build_term_pack(self.b_du_terms)
+        self._b_dv_pack = self._build_term_pack(self.b_dv_terms)
+        # Pre-build tensors for vectorized evaluation
+        self._a_c = torch.tensor([t[2] for t in self.a_terms], dtype=torch.float64)
+        self._a_pq = torch.tensor(
+            [[t[0], t[1]] for t in self.a_terms], dtype=torch.long
+        )
+        self._b_c = torch.tensor([t[2] for t in self.b_terms], dtype=torch.float64)
+        self._b_pq = torch.tensor(
+            [[t[0], t[1]] for t in self.b_terms], dtype=torch.long
+        )
+
+        self._ap_c = torch.tensor([t[2] for t in self.ap_terms], dtype=torch.float64)
+        self._ap_pq = torch.tensor(
+            [[t[0], t[1]] for t in self.ap_terms], dtype=torch.long
+        )
+        self._bp_c = torch.tensor([t[2] for t in self.bp_terms], dtype=torch.float64)
+        self._bp_pq = torch.tensor(
+            [[t[0], t[1]] for t in self.bp_terms], dtype=torch.long
+        )
+
+        self.has_forward = bool(self.a_coeffs) or bool(self.b_coeffs)
+        self.has_inverse = bool(self.ap_coeffs) or bool(self.bp_coeffs)
+
+    def to(self, device: torch.device) -> "SIP":
+        """Move SIP tensors to device."""
+        self._a_c = self._a_c.to(device)
+        self._a_pq = self._a_pq.to(device)
+        self._b_c = self._b_c.to(device)
+        self._b_pq = self._b_pq.to(device)
+        self._ap_c = self._ap_c.to(device)
+        self._ap_pq = self._ap_pq.to(device)
+        self._bp_c = self._bp_c.to(device)
+        self._bp_pq = self._bp_pq.to(device)
+        return self
 
     def _parse_coeffs(
         self, header: Dict[str, Any], prefix: str, order: int
@@ -50,17 +99,115 @@ class SIP:
                     coeffs[(p, q)] = float(header[key])
         return coeffs
 
+    @staticmethod
+    def _coeff_terms(
+        coeffs: Dict[tuple[int, int], float],
+    ) -> "list[tuple[int, int, float]]":
+        return [(int(p), int(q), float(c)) for (p, q), c in coeffs.items()]
+
+    @staticmethod
+    def _derivative_terms(
+        terms: "list[tuple[int, int, float]]",
+    ) -> "tuple[list[tuple[int, int, float]], list[tuple[int, int, float]]]":
+        du_terms = []
+        dv_terms = []
+        for p, q, coeff in terms:
+            if p > 0:
+                du_terms.append((p - 1, q, coeff * p))
+            if q > 0:
+                dv_terms.append((p, q - 1, coeff * q))
+        return du_terms, dv_terms
+
+    @staticmethod
+    def _build_term_pack(terms: "list[tuple[int, int, float]]") -> Dict[str, Tensor]:
+        if not terms:
+            return {
+                "p": torch.empty((0,), dtype=torch.long),
+                "q": torch.empty((0,), dtype=torch.long),
+                "c": torch.empty((0,), dtype=torch.float64),
+            }
+        p = torch.tensor([t[0] for t in terms], dtype=torch.long)
+        q = torch.tensor([t[1] for t in terms], dtype=torch.long)
+        c = torch.tensor([t[2] for t in terms], dtype=torch.float64)
+        return {"p": p, "q": q, "c": c}
+
+    @staticmethod
+    def _sum_terms_from_pack(
+        pack: Dict[str, Tensor], u_stack: Tensor, v_stack: Tensor, out_like: Tensor
+    ) -> Tensor:
+        c = pack["c"].to(device=out_like.device, dtype=out_like.dtype)
+        if c.numel() == 0:
+            return torch.zeros_like(out_like)
+        p = pack["p"].to(out_like.device)
+        q = pack["q"].to(out_like.device)
+        vals = u_stack.index_select(0, p) * v_stack.index_select(0, q)
+        return (vals * c[:, None]).sum(dim=0)
+
     def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         """
-        Apply forward distortion with power caches.
+        Apply forward distortion using vectorized matrix-vector multiplication.
         """
-        if u.numel() == 0:
+        if u.numel() == 0 or not self.has_forward:
             return u, v
 
-        # For large N, chunking is handle at the caller level in WCS if needed,
-        # but here we just optimize the impl.
+        max_order = max(self.a_order, self.b_order)
+        u_p = [torch.ones_like(u)]
+        v_p = [torch.ones_like(v)]
+        for _ in range(1, max_order + 1):
+            u_p.append(u_p[-1] * u)
+            v_p.append(v_p[-1] * v)
 
-        # Max order across all polynomials
+        u_stack = torch.stack(u_p, dim=0)
+        v_stack = torch.stack(v_p, dim=0)
+
+        def eval_poly(pq, c):
+            if c.numel() == 0:
+                return torch.zeros_like(u)
+            # Basis: u^p * v^q
+            # pq is (N_terms, 2)
+            p = pq[:, 0]
+            q = pq[:, 1]
+            basis = u_stack.index_select(0, p) * v_stack.index_select(
+                0, q
+            )  # (N_terms, N_points)
+            return torch.matmul(c.to(u.dtype), basis)
+
+        f_uv = eval_poly(self._a_pq, self._a_c)
+        g_uv = eval_poly(self._b_pq, self._b_c)
+
+        return u + f_uv, v + g_uv
+
+    def _distort_smallvec(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
+        max_order = max(self.a_order, self.b_order, 1)
+
+        def make_pow_stack(base, order):
+            pows = [torch.ones_like(base)]
+            if order >= 1:
+                pows.append(base)
+            curr = base
+            for _ in range(2, order + 1):
+                curr = curr * base
+                pows.append(curr)
+            return torch.stack(pows, dim=0)
+
+        u_s = make_pow_stack(u, max_order)
+        v_s = make_pow_stack(v, max_order)
+        f_uv = self._sum_terms_from_pack(self._a_pack, u_s, v_s, u)
+        g_uv = self._sum_terms_from_pack(self._b_pack, u_s, v_s, v)
+        return u + f_uv, v + g_uv
+
+    def _forward_and_jacobian(
+        self, u: Tensor, v: Tensor
+    ) -> "tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]":
+        """
+        Evaluate SIP forward map and Jacobian in one pass.
+
+        Returns:
+            xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
+        """
+        if u.numel() <= self._SMALL_VEC_MAX_POINTS:
+            return self._forward_and_jacobian_smallvec(u, v)
+
         max_order = max(self.a_order, self.b_order, 1)
 
         def make_pow_cache(base, order):
@@ -71,32 +218,43 @@ class SIP:
             for _ in range(2, order + 1):
                 curr = curr * base
                 pows.append(curr)
-            return torch.stack(pows, dim=0)
+            return pows
 
         u_p = make_pow_cache(u, max_order)
         v_p = make_pow_cache(v, max_order)
 
-        f_uv = torch.zeros_like(u)
-        g_uv = torch.zeros_like(v)
+        xd = u.clone()
+        yd = v.clone()
+        dxd_du = torch.ones_like(u)
+        dxd_dv = torch.zeros_like(u)
+        dyd_du = torch.zeros_like(v)
+        dyd_dv = torch.ones_like(v)
 
-        for (p, q), coeff in self.a_coeffs.items():
-            f_uv += coeff * u_p[p] * v_p[q]
+        for p, q, coeff in self.a_terms:
+            base = coeff * u_p[p] * v_p[q]
+            xd = xd + base
 
-        for (p, q), coeff in self.b_coeffs.items():
-            g_uv += coeff * u_p[p] * v_p[q]
+        for p, q, coeff in self.a_du_terms:
+            dxd_du = dxd_du + coeff * u_p[p] * v_p[q]
+        for p, q, coeff in self.a_dv_terms:
+            dxd_dv = dxd_dv + coeff * u_p[p] * v_p[q]
 
-        return u + f_uv, v + g_uv
+        for p, q, coeff in self.b_terms:
+            base = coeff * u_p[p] * v_p[q]
+            yd = yd + base
+        for p, q, coeff in self.b_du_terms:
+            dyd_du = dyd_du + coeff * u_p[p] * v_p[q]
+        for p, q, coeff in self.b_dv_terms:
+            dyd_dv = dyd_dv + coeff * u_p[p] * v_p[q]
 
-    def undistort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
-        """
-        Apply inverse distortion using power caches.
-        """
-        if u.numel() == 0:
-            return u, v
+        return xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
 
-        max_order = max(self.ap_order, self.bp_order, 1)
+    def _forward_and_jacobian_smallvec(
+        self, u: Tensor, v: Tensor
+    ) -> "tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]":
+        max_order = max(self.a_order, self.b_order, 1)
 
-        def make_pow_cache(base, order):
+        def make_pow_stack(base, order):
             pows = [torch.ones_like(base)]
             if order >= 1:
                 pows.append(base)
@@ -106,16 +264,119 @@ class SIP:
                 pows.append(curr)
             return torch.stack(pows, dim=0)
 
-        u_p = make_pow_cache(u, max_order)
-        v_p = make_pow_cache(v, max_order)
+        u_s = make_pow_stack(u, max_order)
+        v_s = make_pow_stack(v, max_order)
 
-        delta_u = torch.zeros_like(u)
-        delta_v = torch.zeros_like(v)
+        xd = u + self._sum_terms_from_pack(self._a_pack, u_s, v_s, u)
+        yd = v + self._sum_terms_from_pack(self._b_pack, u_s, v_s, v)
+        dxd_du = torch.ones_like(u) + self._sum_terms_from_pack(
+            self._a_du_pack, u_s, v_s, u
+        )
+        dxd_dv = self._sum_terms_from_pack(self._a_dv_pack, u_s, v_s, u)
+        dyd_du = self._sum_terms_from_pack(self._b_du_pack, u_s, v_s, v)
+        dyd_dv = torch.ones_like(v) + self._sum_terms_from_pack(
+            self._b_dv_pack, u_s, v_s, v
+        )
+        return xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
 
-        for (p, q), coeff in self.ap_coeffs.items():
-            delta_u += coeff * u_p[p] * v_p[q]
+    def undistort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
+        """
+        Apply inverse distortion using matrix-vectorized evaluation.
+        """
+        if u.numel() == 0 or not self.has_inverse:
+            return u, v
 
-        for (p, q), coeff in self.bp_coeffs.items():
-            delta_v += coeff * u_p[p] * v_p[q]
+        max_order = max(self.ap_order, self.bp_order)
+        u_p = [torch.ones_like(u)]
+        v_p = [torch.ones_like(v)]
+        for _ in range(1, max_order + 1):
+            u_p.append(u_p[-1] * u)
+            v_p.append(v_p[-1] * v)
+
+        u_stack = torch.stack(u_p, dim=0)
+        v_stack = torch.stack(v_p, dim=0)
+
+        def eval_poly(pq, c):
+            if c.numel() == 0:
+                return torch.zeros_like(u)
+            p = pq[:, 0]
+            q = pq[:, 1]
+            basis = u_stack.index_select(0, p) * v_stack.index_select(0, q)
+            return torch.matmul(c.to(u.dtype), basis)
+
+        delta_u = eval_poly(self._ap_pq, self._ap_c)
+        delta_v = eval_poly(self._bp_pq, self._bp_c)
 
         return u + delta_u, v + delta_v
+
+    def invert_distortion(
+        self,
+        u_dist: Tensor,
+        v_dist: Tensor,
+        max_iter: int = 6,
+        tol: float = 1e-6,
+    ) -> "tuple[Tensor, Tensor]":
+        """
+        Invert SIP forward distortion map (u, v) -> distort(u, v).
+
+        Uses AP/BP inverse coefficients when available, otherwise a vectorized
+        Newton solve on the SIP polynomial only (much cheaper than full WCS Newton).
+        """
+        if u_dist.numel() == 0:
+            return u_dist, v_dist
+        if not self.has_forward:
+            return u_dist, v_dist
+        if self.has_inverse:
+            return self.undistort(u_dist, v_dist)
+
+        x = u_dist.clone()
+        y = v_dist.clone()
+        active_idx = None
+        tol2 = tol * tol
+        for _ in range(max_iter):
+            if active_idx is None:
+                x_a = x
+                y_a = y
+                u_t_a = u_dist
+                v_t_a = v_dist
+            else:
+                if active_idx.numel() == 0:
+                    break
+                x_a = x[active_idx]
+                y_a = y[active_idx]
+                u_t_a = u_dist[active_idx]
+                v_t_a = v_dist[active_idx]
+
+            xd, yd, j11, j12, j21, j22 = self._forward_and_jacobian(x_a, y_a)
+            rx = xd - u_t_a
+            ry = yd - v_t_a
+
+            dist2 = rx * rx + ry * ry
+            keep_active = dist2 >= tol2
+            if not torch.any(keep_active):
+                break
+
+            det = j11 * j22 - j12 * j21
+            det_sign = torch.where(det >= 0, 1.0, -1.0).to(det.dtype)
+            det = torch.where(torch.abs(det) < 1e-15, det_sign * 1e-15, det)
+
+            dx = -(j22 * rx - j12 * ry) / det
+            dy = -(-j21 * rx + j11 * ry) / det
+            dx = torch.clamp(dx, -256.0, 256.0)
+            dy = torch.clamp(dy, -256.0, 256.0)
+            if active_idx is None:
+                x_next = x_a + dx
+                y_next = y_a + dy
+                if bool(torch.all(keep_active)):
+                    x = x_next
+                    y = y_next
+                else:
+                    x = x_next
+                    y = y_next
+                    active_idx = torch.nonzero(keep_active, as_tuple=False).squeeze(1)
+            else:
+                x[active_idx] = x_a + dx
+                y[active_idx] = y_a + dy
+                active_idx = active_idx[keep_active]
+
+        return x, y

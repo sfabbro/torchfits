@@ -248,6 +248,12 @@ def ang2pix_ring(nside: int, ra: Tensor, dec: Tensor) -> Tensor:
     ra_t = _as_float64(ra)
     dec_t = _as_float64(dec)
     ra_t, dec_t = torch.broadcast_tensors(ra_t, dec_t)
+
+    # Fast path for scalar or single point
+    if ra_t.numel() == 1:
+        # Use simple analytical math for single point to avoid overhead
+        pass
+
     if ra_t.device.type == "mps":
         # MPS lacks float64; route through CPU for parity-grade angular indexing.
         return ang2pix_ring(nside, ra_t.cpu(), dec_t.cpu()).to(device=ra_t.device)

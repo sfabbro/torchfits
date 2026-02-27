@@ -1,28 +1,19 @@
 import torch
 from torch import Tensor
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional
 
 
 def project_zenithal(
     xi: Tensor,
     eta: Tensor,
     projection_code: str,
-    params: Optional[Dict[str, float]] = None,
+    pv1: Optional[Tensor] = None,
+    pv2: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """
     Project intermediate world coordinates (xi, eta) to spherical coordinates (phi, theta)
     for Zenithal projections.
-
-    Standard algorithm (Calabretta & Greisen 2002):
-    1. R = sqrt(xi^2 + eta^2)
-    2. phi = atan2(xi, -eta)  (Note: differing conventions on eta sign, checking standard)
-       WCSLIB: phi = arg( -eta, xi ) -> atan2(xi, -eta)
-    3. theta depends on R via projection specific function.
-
-    We align with WCSLIB/Astropy conventions.
     """
-    params = params or {}
-
     # 1. R and Phi
     r = torch.sqrt(xi * xi + eta * eta)
 
@@ -31,8 +22,9 @@ def project_zenithal(
 
     # Convert to degrees
     # WCS Paper II: phi increases in the direction of increasing RA (East).
-    # Standard projection: xi increases to the West.
-    # So phi = atan2(-xi, -eta)
+    # For zenithal projections, the native longitude phi is measured from the
+    # direction toward the celestial pole. With phi_p = 180°, the formula is:
+    # phi = atan2(-xi, -eta)
     phi_rad = torch.atan2(-xi, -eta)
     phi = torch.rad2deg(phi_rad)
 
@@ -47,53 +39,8 @@ def project_zenithal(
     # No, usually we solve for theta directly.
 
     if projection_code == "TAN":
-        # Gnomonic
-        # R = tan(90 - theta) = cot(theta)
-        # theta = 90 - atan(R) = atan(1/R) ?
-        # Wait, standard TAN: R = tan(theta_native_colatitude)?
-        # WCS Paper II:
-        # theta_native = 90 corresponds to R=0.
-        # r_theta = 180/pi * cot(theta)  (if R in degrees? No, R is dimensionless in formula, scaled by 180/pi)
-        # Usually xi, eta are in degrees.
-        # Let's use WCSLIB formulae:
-        # TAN: R = 180/pi * cot(theta)
-        # -> cot(theta) = R * pi/180
-        # -> tan(theta) = 180 / (pi * R)
-        # -> theta = atan( 180 / (pi * R) )
-
-        # Avoid division by zero
-        # If R=0, theta = 90.
-
-        # Faster: theta = 90 - degrees(atan(R_rad)) ?
-        # If R is in degrees (on tangent plane):
-        # r_rad = deg2rad(r)
-        # theta = 90 - rad2deg(atan(r_rad)) ?
-        # Let's assert: xi, eta in degrees.
-        # R in degrees.
-        # TAN logic:
-        # theta = 90 - atan( R )  (if R was dimensionless tangent)
-        # But R is angle on sky? No, R is distance on tangent plane.
-        # R_rad = deg2rad(R)
-        # theta = rad2deg( atan( 1 / R_rad ) ) ??
-
-        # Standard Gnomonic:
-        # x = tan(lat_native_co) * sin(lon)
-        # y = -tan(lat_native_co) * cos(lon)
-        # R = tan(90 - theta)
-        # 90 - theta = atan(R)
-        # theta = 90 - atan(R) (if R is strictly tan(co-lat))
-
-        # BUT xi, eta are usually scaled by CD.
-        # If CD gives degrees, then R is in degrees.
-        # We must treat R as "degrees on tangent plane".
-        # Which corresponds to tan(angle) * (180/pi)?
-        # Yes, standard WCS logic assumes projections generate (x,y) in degrees.
-        # So x_standard = (180/pi) * x_true
-
         r_rad = torch.deg2rad(r)
-        theta = torch.rad2deg(
-            torch.atan2(torch.tensor(1.0, device=r.device, dtype=r.dtype), r_rad)
-        )
+        theta = torch.rad2deg(torch.atan2(torch.ones_like(r_rad), r_rad))
 
         # Wait, atan2(1, r_rad) is behavior of cot(theta) = r_rad?
         # If R_true = tan(90-theta)
@@ -157,96 +104,44 @@ def project_zenithal(
         theta = 90.0 - r
 
     elif projection_code == "ZPN":
-        # Zenithal Polynomial
-        # R = 180/pi * P(w)
-        # w = 90 - theta (degrees? Check scale).
-        # Paper II: P(w) is polynomial in w (radians? No, likely degrees if coeffs are adjusted?
-        # Actually standard: "w is the native colatitude in degrees".
-        # But R comes out in degrees.
-        # PVi_j coeffs: PV2_0 + PV2_1*w + ...
-        # Standard: PV2_0, PV2_1 ... match coefficients.
-        #
-        # We have R (from xi, eta).
-        # We need to solve P(w) - R = 0 for w.
-        # w is colatitude [0, 180]. P(w) is monotonic usually.
-        # Use Newton-Raphson.
-
-        # Get coeffs from params.
-        # Keys: 'PV2_0', 'PV2_1', ...
-        # Usually up to order 30?
-        # Collect PVs
-        # ZPN coeffs: PV2_3 ($C_0$), PV2_4 ($C_1$), ...
-        # PV2_1 is phi0, PV2_2 is theta0 (not typically used in ZPN dist models but valid)
-
-        # Determine max order
-        max_m = -1
-        for m_idx in range(3, 31):
-            if f"PV2_{m_idx}" in params:
-                max_m = m_idx
-
-        if max_m == -1:
-            p_coeffs = []
+        if pv2 is None:
+            w = torch.deg2rad(r)
         else:
-            order = max_m - 3
-            p_coeffs = [0.0] * (order + 1)
-            for i in range(order + 1):
-                key = f"PV2_{i + 3}"
-                if key in params:
-                    p_coeffs[i] = params[key]
+            # PV2_3 is C0, PV2_4 is C1, ...
+            # Extract coefficients from PV2 tensor [3:31]
+            p_coeffs = pv2[3:31]
+            mask_valid = p_coeffs != 0.0
+            if not mask_valid.any():
+                w = torch.deg2rad(r)
+            else:
+                # Find last valid coefficient for order
+                # Use a small epsilon to detect non-zero coefficients
+                valid_indices = torch.nonzero(p_coeffs.abs() > 1e-15, as_tuple=True)[0]
+                if valid_indices.numel() == 0:
+                    w = torch.deg2rad(r)
+                else:
+                    max_m = valid_indices[-1].item()
+                    coeffs = p_coeffs[: max_m + 1]
 
-        # If no coeffs, default ZPN? Identity?
-        if not p_coeffs:
-            # Fallback to linear? w = R?
-            w = r.clone()  # Ensure copy
-        else:
-            # Newton-Raphson Solver for R = P(w)
-            # P(w) = sum c_k w^k
-            # P'(w) = sum k c_k w^{k-1}
+                    r_rad_target = torch.deg2rad(r)
+                    w = r_rad_target.clone()
+                    target_eps = 1e-12
 
-            # Pre-process coeffs into tensors for fast eval
-            # Poly params (ascending power)
-            # coeffs: [c0, c1, c2, ...]
-            # deriv_coeffs: [c1, 2*c2, 3*c3, ...]
-            # We use Horner's method which is efficiently vectorizable if unrolled
-            # or if we accept sequential kernel launches (still faster than Python loop overhead if cleaner)
+                    # Newton-Raphson (Horner's method)
+                    rev_c = torch.flip(coeffs, dims=(0,))
+                    for _ in range(12):
+                        val = rev_c[0].expand_as(w).clone()
+                        der = torch.zeros_like(w)
+                        for i in range(1, len(rev_c)):
+                            der = der * w + val
+                            val = val * w + rev_c[i]
 
-            # Actually, standard Newton method converges fast (5-10 iter)
-            # Loop over iterations
+                        diff = val - r_rad_target
+                        if diff.abs().max() < target_eps:
+                            break
+                        mask_nz = der.abs() > 1e-15
+                        w = torch.where(mask_nz, w - diff / der, w)
 
-            # R_deg = (180/pi) * P(w_rad)
-            # Find w_rad such that P(w_rad) = r_deg * (pi/180)
-            r_rad_target = torch.deg2rad(r)
-            rev_c = p_coeffs[::-1]
-
-            # Initial guess: linear w = r_rad_target
-            w = r_rad_target.clone()
-
-            # Pre-move coeffs to device
-            rev_c_t = torch.tensor(rev_c, device=r.device, dtype=r.dtype)
-
-            target_eps = 1e-9 if r.dtype == torch.float32 else 1e-12
-            for _ in range(12):
-                val = torch.full_like(w, rev_c[0])
-                der = torch.zeros_like(w)
-
-                for i in range(1, len(rev_c)):
-                    der.mul_(w).add_(val)
-                    val.mul_(w).add_(rev_c_t[i])
-
-                # diff = val - target
-                val.sub_(r_rad_target)
-
-                if val.abs().max() < target_eps:
-                    break
-
-                mask_nz = der.abs() > 1e-15
-                w = torch.where(mask_nz, w - val / der, w)
-
-                if torch.isnan(w).any():
-                    w = torch.nan_to_num(w, nan=1.5708)  # Pole
-                    break
-
-        # w is colatitude in radians
         theta = 90.0 - torch.rad2deg(w)
 
     else:
@@ -259,13 +154,12 @@ def deproject_zenithal(
     phi: Tensor,
     theta: Tensor,
     projection_code: str,
-    params: Optional[Dict[str, float]] = None,
+    pv1: Optional[Tensor] = None,
+    pv2: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """
     Inverse: Spherical (phi, theta) -> Intermediate (xi, eta).
     """
-    params = params or {}
-
     # R depends on theta
     r = torch.zeros_like(theta)
 
@@ -286,19 +180,43 @@ def deproject_zenithal(
         r = torch.rad2deg(torch.cos(torch.deg2rad(theta)))
 
     elif projection_code == "ARC":
-        # R = 90 - theta
         r = 90.0 - theta
 
+    elif projection_code == "ZEA":
+        r = 2.0 * torch.rad2deg(torch.sin(torch.deg2rad(90.0 - theta) / 2.0))
+
+    elif projection_code == "STG":
+        r = 2.0 * torch.rad2deg(torch.tan(torch.deg2rad(90.0 - theta) / 2.0))
+
     elif projection_code == "ZPN":
-        # R = 180/pi * P(w)
-        # w = 90 - theta (deg? rad?)
-        # WCSLIB PVi keywords define P.
-        pass
+        if pv2 is not None:
+            # PV2_3 is C0, PV2_4 is C1, ...
+            p_coeffs = pv2[3:31]
+            mask_valid = p_coeffs.abs() > 1e-15
+            if not mask_valid.any():
+                r = 90.0 - theta
+            else:
+                # Find last valid coefficient for order
+                valid_indices = torch.nonzero(mask_valid, as_tuple=True)[0]
+                max_m = valid_indices[-1].item()
+                coeffs = p_coeffs[: max_m + 1]
 
-    # xi = R * sin(phi)
-    # eta = -R * cos(phi)  (standard convention)
+                # Horner's method for P(w)
+                # w is colatitude in degrees
+                w = 90.0 - theta
+                rev_c = torch.flip(coeffs, dims=(0,))
+                val = rev_c[0].expand_as(w).clone()
+                for i in range(1, len(rev_c)):
+                    val = val * w + rev_c[i]
+                r = val
+        else:
+            r = 90.0 - theta
 
-    xi = r * torch.sin(phi)
-    eta = -r * torch.cos(phi)
+    # xi = -R * sin(phi)
+    # eta = -R * cos(phi)  (standard convention for phi measured from North)
+
+    phi_rad = torch.deg2rad(phi)
+    xi = -r * torch.sin(phi_rad)
+    eta = -r * torch.cos(phi_rad)
 
     return xi, eta
