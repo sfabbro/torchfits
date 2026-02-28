@@ -38,16 +38,8 @@ import psutil
 import torch
 from astropy.io import fits as astropy_fits
 from astropy.io.fits import CompImageHDU
-try:
-    from astropy.wcs import WCS as AstropyWCS
-except ImportError:
-    AstropyWCS = None
 
 import torchfits
-try:
-    from torchfits.wcs.core import WCS as TorchWCS
-except ImportError:
-    TorchWCS = None
 
 
 class ExhaustiveBenchmarkSuite:
@@ -1054,9 +1046,9 @@ class ExhaustiveBenchmarkSuite:
 
             methods["torchfits_numpy"] = _table_numpy_fallback
 
-        # Test torchfits mmap explicitly for tables
+        # Test torchfits mmap explicitly for tables (diagnostic only).
         if file_type == "table":
-            methods["torchfits_mmap"] = lambda: torchfits.read(
+            diagnostic_methods["torchfits_mmap"] = lambda: torchfits.read(
                 str(filepath),
                 hdu=hdu_num,
                 mmap=True,
@@ -1345,9 +1337,6 @@ class ExhaustiveBenchmarkSuite:
         }
         specialized_methods = {
             "torchfits_specialized",
-            "torchfits_mmap",
-            "torchfits_cpp_open_once",
-            "torchfits_numpy",
             "astropy",
             "fitsio",
             # Optional aliases for future external direct adapters.
@@ -1445,9 +1434,7 @@ class ExhaustiveBenchmarkSuite:
                 result["speedup_vs_best_numpy"] = None
 
             # Specialized/direct family comparison (all direct/specialized methods).
-            specialized_valid = {
-                k: v for k, v in {**valid_methods, **valid_diag_methods}.items() if k in specialized_methods
-            }
+            specialized_valid = {k: v for k, v in valid_methods.items() if k in specialized_methods}
             if specialized_valid and "torchfits_specialized" in specialized_valid:
                 best_spec = min(specialized_valid.keys(), key=lambda k: specialized_valid[k])
                 sorted_spec = sorted(specialized_valid.items(), key=lambda x: x[1])
@@ -2086,100 +2073,34 @@ class ExhaustiveBenchmarkSuite:
 
         return [row]
 
-    def _bench_wcs(self, files: Dict[str, Path]) -> List[Dict]:
-        """Benchmark WCS performance against Astropy."""
-        if not self.include_wcs or AstropyWCS is None or TorchWCS is None:
-            if self.include_wcs:
-                print("⚠️ Skipping WCS benchmarks: astropy.wcs or torchfits.wcs not available")
-            return []
-
-        print("\n" + "=" * 100)
-        print("WCS PERFORMANCE BENCHMARK (pixel_to_world)")
-        print("=" * 100)
-
-        results = []
-        n_points = 200_000
-        runs = 5
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Create a representative WCS (TAN projection with SIP)
-        header = {
-            "NAXIS": 2,
-            "CTYPE1": "RA---TAN-SIP",
-            "CTYPE2": "DEC--TAN-SIP",
-            "CRVAL1": 180.0,
-            "CRVAL2": 0.0,
-            "CRPIX1": 2048.0,
-            "CRPIX2": 2048.0,
-            "CD1_1": -2.8e-4,
-            "CD1_2": 0.0,
-            "CD2_1": 0.0,
-            "CD2_2": 2.8e-4,
-            "A_ORDER": 2,
-            "A_2_0": 1e-6,
-            "B_ORDER": 2,
-            "B_0_2": 1e-6,
-        }
-
-        awcs = AstropyWCS(header)
-        twcs = TorchWCS(header).to(device)
-
-        rng = np.random.default_rng(42)
-        x = rng.uniform(0, 4096, n_points)
-        y = rng.uniform(0, 4096, n_points)
-        x_t = torch.from_numpy(x).to(device)
-        y_t = torch.from_numpy(y).to(device)
-
-        def tf_wcs():
-            with torch.no_grad():
-                return twcs.pixel_to_world(x_t, y_t)
-
-        def astropy_wcs():
-            return awcs.all_pix2world(x, y, 0)
-
-        tf_res = self._time_method(tf_wcs, "torchfits", runs=runs, use_median=True)
-        ast_res = self._time_method(astropy_wcs, "astropy", runs=runs, use_median=True)
-
-        row = {
-            "filename": "WCS_TAN_SIP",
-            "operation": "wcs_pixel_to_world",
-            "file_type": "wcs",
-            "size_mb": 0.0,
-            "data_type": "float64",
-            "dimensions": "2d",
-            "compression": "uncompressed",
-        }
-
-        if tf_res:
-            row["torchfits_mean"] = tf_res["mean"]
-            row["torchfits_std"] = tf_res["std"]
-            row["torchfits_median"] = tf_res["median"]
-            row["torchfits_mb_s"] = (n_points / 1e6) / tf_res["median"] # Using Mpts/s in mb_s column
-            row["torchfits_memory"] = tf_res["memory"]
-            row["torchfits_peak_memory"] = tf_res["peak_memory"]
-            row["torchfits_payload_mb"] = tf_res.get("payload_memory", 0.0)
-
-        if ast_res:
-            row["astropy_mean"] = ast_res["mean"]
-            row["astropy_std"] = ast_res["std"]
-            row["astropy_median"] = ast_res["median"]
-            row["astropy_mb_s"] = (n_points / 1e6) / ast_res["median"]
-            row["astropy_memory"] = ast_res["memory"]
-            row["astropy_peak_memory"] = ast_res["peak_memory"]
-            row["astropy_payload_mb"] = ast_res.get("payload_memory", 0.0)
-
-        if tf_res and ast_res:
-            row["best_method"] = "torchfits" if tf_res["median"] < ast_res["median"] else "astropy"
-            row["torchfits_rank"] = 1 if tf_res["median"] < ast_res["median"] else 2
-            row["speedup_vs_best"] = ast_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / ast_res["median"]
-
-        # Fill missing columns
-        for prefix in ["torchfits_specialized", "torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
-            for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
+    def _set_aux_result_defaults(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        for prefix in [
+            "torchfits_specialized",
+            "torchfits_numpy",
+            "torchfits_hot",
+            "torchfits_handle_cache",
+            "torchfits_mmap",
+            "fitsio",
+            "astropy_torch",
+            "fitsio_torch",
+            "torchfits_cpp_open_once",
+        ]:
+            for suffix in [
+                "mean",
+                "std",
+                "median",
+                "mb_s",
+                "memory",
+                "peak_memory",
+                "payload_mb",
+            ]:
                 row.setdefault(f"{prefix}_{suffix}", None)
-        row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
-        row.setdefault("torchfits_rank_torch", 1 if tf_res and "torchfits" in row["best_method"] else 2)
-        row.setdefault("speedup_vs_best_torch", row["speedup_vs_best"] if tf_res and "torchfits" in row["best_method"] else None)
+        row.setdefault("best_method", "torchfits")
+        row.setdefault("torchfits_rank", 1)
+        row.setdefault("speedup_vs_best", None)
+        row.setdefault("best_method_torch", row.get("best_method"))
+        row.setdefault("torchfits_rank_torch", row.get("torchfits_rank"))
+        row.setdefault("speedup_vs_best_torch", row.get("speedup_vs_best"))
         row.setdefault("best_method_numpy", "none")
         row.setdefault("torchfits_numpy_rank", 999)
         row.setdefault("speedup_vs_best_numpy", None)
@@ -2187,112 +2108,310 @@ class ExhaustiveBenchmarkSuite:
         row.setdefault("torchfits_specialized_rank", 999)
         row.setdefault("speedup_vs_best_specialized", None)
         row.setdefault("speedup_specialized_vs_smart", None)
+        return row
 
-        print(f"torchfits (WCS): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
-        print(f"astropy (WCS):   {ast_res['median']:.6f}s (median, {(n_points/1e6)/ast_res['median']:.2f} Mpts/s)")
-        print(f"Speedup: {ast_res['median']/tf_res['median']:.2f}x")
+    def _run_benchmark_json_script(
+        self,
+        script_name: str,
+        *,
+        json_out: Path,
+        extra_args: Optional[List[str]] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Any]:
+        import subprocess
 
-        results.append(row)
+        cmd = [
+            sys.executable,
+            script_name,
+            *(extra_args or []),
+            "--json-out",
+            str(json_out),
+        ]
+        title = label or script_name
+        print(f"[benchmark] Running {title}...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent,
+        )
+        if result.returncode != 0:
+            print(f"⚠️ {title} failed with exit code {result.returncode}")
+            if result.stderr.strip():
+                print(result.stderr.strip())
+            return None
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if not json_out.exists():
+            print(f"⚠️ {title} completed but did not produce {json_out}")
+            return None
+        try:
+            with json_out.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:
+            print(f"⚠️ Failed to parse {json_out}: {exc}")
+            return None
+
+    def _bench_wcs(self, files: Dict[str, Path]) -> List[Dict]:
+        """Run comprehensive WCS benchmark matrix and map into exhaustive rows."""
+        if not self.include_wcs:
+            return []
+
+        print("\n" + "=" * 100)
+        print("WCS PERFORMANCE BENCHMARK MATRIX")
+        print("=" * 100)
+
+        wcs_json = self.output_dir / "wcs_suite_results.json"
+        wcs_csv = self.output_dir / "wcs_suite_results.csv"
+        wcs_rows = self._run_benchmark_json_script(
+            "bench_wcs.py",
+            json_out=wcs_json,
+            extra_args=[
+                "--cases",
+                "TAN,SIN,ARC,AIT,MOL,HPX,CEA,MER,TAN_SIP,TPV",
+                "--sample-profile",
+                "mixed",
+                "--n-points",
+                "200000",
+                "--runs",
+                "5",
+                "--device",
+                "auto",
+                "--csv-out",
+                str(wcs_csv),
+            ],
+            label="WCS suite (all projections)",
+        )
+        if not isinstance(wcs_rows, list) or not wcs_rows:
+            print("⚠️ No WCS benchmark rows were produced")
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        def _valid_ms(value: Any) -> bool:
+            try:
+                fval = float(value)
+            except Exception:
+                return False
+            return np.isfinite(fval) and fval > 0.0
+
+        op_specs = [
+            (
+                "wcs_pixel_to_world",
+                "torch_forward_ms",
+                "astropy_forward_ms",
+                "torch_forward_mpts_s",
+                "astropy_forward_mpts_s",
+            ),
+            (
+                "wcs_world_to_pixel",
+                "torch_inverse_ms",
+                "astropy_inverse_ms",
+                None,
+                None,
+            ),
+        ]
+
+        for case in wcs_rows:
+            case_name = str(case.get("case", "unknown"))
+            n_points = float(case.get("n_points", 0.0))
+            for op_name, tf_ms_key, ast_ms_key, tf_mpts_key, ast_mpts_key in op_specs:
+                if not _valid_ms(case.get(tf_ms_key)) or not _valid_ms(
+                    case.get(ast_ms_key)
+                ):
+                    continue
+
+                tf_s = float(case[tf_ms_key]) / 1000.0
+                ast_s = float(case[ast_ms_key]) / 1000.0
+                tf_mpts = (
+                    float(case.get(tf_mpts_key))
+                    if tf_mpts_key and _valid_ms(case.get(tf_mpts_key))
+                    else ((n_points / 1e6) / tf_s if tf_s > 0 else float("nan"))
+                )
+                ast_mpts = (
+                    float(case.get(ast_mpts_key))
+                    if ast_mpts_key and _valid_ms(case.get(ast_mpts_key))
+                    else ((n_points / 1e6) / ast_s if ast_s > 0 else float("nan"))
+                )
+
+                best_method = "torchfits" if tf_s <= ast_s else "astropy"
+                speedup = ast_s / tf_s if best_method == "torchfits" else tf_s / ast_s
+
+                row: Dict[str, Any] = {
+                    "filename": f"WCS_{case_name}",
+                    "operation": op_name,
+                    "file_type": "wcs",
+                    "size_mb": 0.0,
+                    "data_type": "float64",
+                    "dimensions": "2d",
+                    "compression": "uncompressed",
+                    "torchfits_mean": tf_s,
+                    "torchfits_std": 0.0,
+                    "torchfits_median": tf_s,
+                    "torchfits_mb_s": tf_mpts,
+                    "torchfits_memory": None,
+                    "torchfits_peak_memory": None,
+                    "torchfits_payload_mb": None,
+                    "astropy_mean": ast_s,
+                    "astropy_std": 0.0,
+                    "astropy_median": ast_s,
+                    "astropy_mb_s": ast_mpts,
+                    "astropy_memory": None,
+                    "astropy_peak_memory": None,
+                    "astropy_payload_mb": None,
+                    "best_method": best_method,
+                    "torchfits_rank": 1 if best_method == "torchfits" else 2,
+                    "speedup_vs_best": speedup,
+                    "best_method_torch": best_method,
+                    "torchfits_rank_torch": 1 if best_method == "torchfits" else 2,
+                    "speedup_vs_best_torch": speedup,
+                }
+                results.append(self._set_aux_result_defaults(row))
+
+        competitors_json = self.output_dir / "wcs_competitors_results.json"
+        competitors = self._run_benchmark_json_script(
+            "bench_competitors.py",
+            json_out=competitors_json,
+            extra_args=[
+                "--cases",
+                "TAN,SIN,ARC,AIT,MOL,HPX,CEA,MER,TAN_SIP,TPV",
+                "--sample-profile",
+                "mixed",
+                "--n-points",
+                "100000",
+            ],
+            label="WCS optional competitors (PyAST/Kapteyn)",
+        )
+        if isinstance(competitors, list):
+            optional_available = []
+            for lib in ("pyast", "kapteyn"):
+                key = f"{lib}_ms"
+                if any(_valid_ms(r.get(key)) for r in competitors):
+                    optional_available.append(lib)
+            if optional_available:
+                print(
+                    "WCS optional competitor timings available for: "
+                    + ", ".join(optional_available)
+                )
+            else:
+                print("WCS optional competitors not installed in this environment")
+
+        print(f"WCS benchmark rows added: {len(results)}")
         return results
 
     def _bench_sphere(self, files: Dict[str, Path]) -> List[Dict]:
-        """Benchmark Sphere/HEALPix performance against healpy."""
-        try:
-            import healpy
-        except ImportError:
-            healpy = None
-
-        try:
-            import torchfits.wcs.healpix as tfhp
-        except ImportError:
-            tfhp = None
-
-        if not self.include_sphere or healpy is None or tfhp is None:
-            if self.include_sphere:
-                print("⚠️ Skipping Sphere benchmarks: healpy or torchfits.wcs.healpix not available")
+        """Run sphere/HEALPix benchmark matrix across ecosystem comparators."""
+        if not self.include_sphere:
             return []
 
         print("\n" + "=" * 100)
-        print("SPHERE/HEALPIX PERFORMANCE BENCHMARK (ang2pix_ring)")
+        print("SPHERE/HEALPIX PERFORMANCE BENCHMARK MATRIX")
         print("=" * 100)
 
-        results = []
-        nside = 1024
-        n_points = 200_000
-        runs = 5
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        sphere_json = self.output_dir / "sphere_geometry_results.json"
+        sphere_csv = self.output_dir / "sphere_geometry_results.csv"
+        sphere_rows = self._run_benchmark_json_script(
+            "bench_sphere_geometry.py",
+            json_out=sphere_json,
+            extra_args=[
+                "--nside",
+                "1024",
+                "--n-points",
+                "200000",
+                "--runs",
+                "5",
+                "--device",
+                "cpu",
+                "--sample-profile",
+                "mixed",
+                "--libraries",
+                "torchfits,healpy,hpgeom,astropy-healpix,healpix,mhealpy",
+                "--csv-out",
+                str(sphere_csv),
+            ],
+            label="Sphere geometry suite (ecosystem comparators)",
+        )
+        if not isinstance(sphere_rows, list) or not sphere_rows:
+            print("⚠️ No sphere benchmark rows were produced")
+            return []
 
-        rng = np.random.default_rng(123)
-        ra = rng.uniform(0.0, 360.0, n_points)
-        dec = np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, n_points)))
-        
-        ra_t = torch.from_numpy(ra).to(device)
-        dec_t = torch.from_numpy(dec).to(device)
+        results: List[Dict[str, Any]] = []
+        by_operation: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for row in sphere_rows:
+            op = str(row.get("operation", "unknown"))
+            lib = str(row.get("library", "unknown"))
+            by_operation.setdefault(op, {})[lib] = row
 
-        def tf_sphere():
-            with torch.no_grad():
-                return tfhp.ang2pix_ring(nside, ra_t, dec_t)
+        for op in sorted(by_operation):
+            libs = by_operation[op]
+            tf_row = libs.get("torchfits")
+            if tf_row is None:
+                continue
+            try:
+                tf_s = float(tf_row["ms"]) / 1000.0
+                tf_mpts = float(tf_row["mpts_s"])
+            except Exception:
+                continue
+            if not np.isfinite(tf_s) or tf_s <= 0.0:
+                continue
 
-        def healpy_sphere():
-            return healpy.ang2pix(nside, ra, dec, lonlat=True, nest=False)
+            for lib in sorted(k for k in libs if k != "torchfits"):
+                comp = libs[lib]
+                try:
+                    comp_s = float(comp["ms"]) / 1000.0
+                    comp_mpts = float(comp["mpts_s"])
+                except Exception:
+                    continue
+                if not np.isfinite(comp_s) or comp_s <= 0.0:
+                    continue
 
-        tf_res = self._time_method(tf_sphere, "torchfits", runs=runs, use_median=True)
-        hp_res = self._time_method(healpy_sphere, "healpy", runs=runs, use_median=True)
+                best_method = "torchfits" if tf_s <= comp_s else lib
+                speedup = (
+                    comp_s / tf_s if best_method == "torchfits" else tf_s / comp_s
+                )
+                row: Dict[str, Any] = {
+                    "filename": f"SPHERE_{op}_{lib}",
+                    "operation": f"sphere_{op}",
+                    "file_type": "sphere",
+                    "size_mb": 0.0,
+                    "data_type": (
+                        "int64"
+                        if op
+                        in {
+                            "ang2pix_ring",
+                            "ang2pix_nested",
+                            "ring2nest",
+                            "nest2ring",
+                        }
+                        else "float64"
+                    ),
+                    "dimensions": "1d",
+                    "compression": "uncompressed",
+                    "torchfits_mean": tf_s,
+                    "torchfits_std": 0.0,
+                    "torchfits_median": tf_s,
+                    "torchfits_mb_s": tf_mpts,
+                    "torchfits_memory": None,
+                    "torchfits_peak_memory": None,
+                    "torchfits_payload_mb": None,
+                    # Reuse astropy_* columns as generic comparator columns for non-image domains.
+                    "astropy_mean": comp_s,
+                    "astropy_std": 0.0,
+                    "astropy_median": comp_s,
+                    "astropy_mb_s": comp_mpts,
+                    "astropy_memory": None,
+                    "astropy_peak_memory": None,
+                    "astropy_payload_mb": None,
+                    "best_method": best_method,
+                    "torchfits_rank": 1 if best_method == "torchfits" else 2,
+                    "speedup_vs_best": speedup,
+                    "best_method_torch": best_method,
+                    "torchfits_rank_torch": 1 if best_method == "torchfits" else 2,
+                    "speedup_vs_best_torch": speedup,
+                }
+                results.append(self._set_aux_result_defaults(row))
 
-        row = {
-            "filename": "HEALPix_NSIDE1024",
-            "operation": "sphere_ang2pix_ring",
-            "file_type": "sphere",
-            "size_mb": 0.0,
-            "data_type": "int64",
-            "dimensions": "1d",
-            "compression": "uncompressed",
-        }
-
-        if tf_res:
-            row["torchfits_mean"] = tf_res["mean"]
-            row["torchfits_std"] = tf_res["std"]
-            row["torchfits_median"] = tf_res["median"]
-            row["torchfits_mb_s"] = (n_points / 1e6) / tf_res["median"] # Using Mpts/s
-            row["torchfits_memory"] = tf_res["memory"]
-            row["torchfits_peak_memory"] = tf_res["peak_memory"]
-            row["torchfits_payload_mb"] = tf_res.get("payload_memory", 0.0)
-
-        # Mapping healpy to astropy columns for reporting consistency in this report
-        if hp_res:
-            row["astropy_mean"] = hp_res["mean"] # Reuse astropy column for healpy baseline
-            row["astropy_std"] = hp_res["std"]
-            row["astropy_median"] = hp_res["median"]
-            row["astropy_mb_s"] = (n_points / 1e6) / hp_res["median"]
-            row["astropy_memory"] = hp_res["memory"]
-            row["astropy_peak_memory"] = hp_res["peak_memory"]
-            row["astropy_payload_mb"] = hp_res.get("payload_memory", 0.0)
-
-        if tf_res and hp_res:
-            row["best_method"] = "torchfits" if tf_res["median"] < hp_res["median"] else "healpy"
-            row["torchfits_rank"] = 1 if tf_res["median"] < hp_res["median"] else 2
-            row["speedup_vs_best"] = hp_res["median"] / tf_res["median"] if row["best_method"] == "torchfits" else tf_res["median"] / hp_res["median"]
-
-        # Fill missing columns
-        for prefix in ["torchfits_specialized", "torchfits_numpy", "torchfits_hot", "torchfits_handle_cache", "torchfits_mmap", "fitsio", "astropy_torch", "fitsio_torch", "torchfits_cpp_open_once"]:
-            for suffix in ["mean", "std", "median", "mb_s", "memory", "peak_memory", "payload_mb"]:
-                row.setdefault(f"{prefix}_{suffix}", None)
-        row.setdefault("best_method_torch", "torchfits" if tf_res and "torchfits" in row["best_method"] else None)
-        row.setdefault("torchfits_rank_torch", 1 if tf_res and "torchfits" in row["best_method"] else 2)
-        row.setdefault("speedup_vs_best_torch", row["speedup_vs_best"] if tf_res and "torchfits" in row["best_method"] else None)
-        row.setdefault("best_method_numpy", "none")
-        row.setdefault("torchfits_numpy_rank", 999)
-        row.setdefault("speedup_vs_best_numpy", None)
-        row.setdefault("best_method_specialized", "none")
-        row.setdefault("torchfits_specialized_rank", 999)
-        row.setdefault("speedup_vs_best_specialized", None)
-        row.setdefault("speedup_specialized_vs_smart", None)
-
-        print(f"torchfits (Sphere): {tf_res['median']:.6f}s (median, {(n_points/1e6)/tf_res['median']:.2f} Mpts/s)")
-        print(f"healpy (Sphere):    {hp_res['median']:.6f}s (median, {(n_points/1e6)/hp_res['median']:.2f} Mpts/s)")
-        print(f"Speedup: {hp_res['median']/tf_res['median']:.2f}x")
-
-        results.append(row)
+        print(f"Sphere benchmark rows added: {len(results)}")
         return results
 
 
@@ -2887,14 +3006,19 @@ class ExhaustiveBenchmarkSuite:
             wcs_df = additional_df[additional_df["file_type"] == "wcs"]
             if not wcs_df.empty:
                 f.write("## WCS Performance Summary\n\n")
-                f.write("| Operation | Best | torchfits (Mpts/s) | astropy (Mpts/s) | Speedup |\n")
-                f.write("|---|---|---|---|---:|\n")
+                f.write(
+                    "| Case | Operation | Best | torchfits (Mpts/s) | astropy (Mpts/s) | Speedup |\n"
+                )
+                f.write("|---|---|---|---|---|---:|\n")
                 for _, r in wcs_df.iterrows():
                     tf_mpts = r.get("torchfits_mb_s", 0)
                     ast_mpts = r.get("astropy_mb_s", 0)
                     speedup = r.get("speedup_vs_best")
+                    speedup_str = (
+                        f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
+                    )
                     f.write(
-                        f"| {r['operation']} | {r['best_method']} | {tf_mpts:.2f} | {ast_mpts:.2f} | {speedup:.2f}x |\n"
+                        f"| {r.get('filename', '-')} | {r['operation']} | {r['best_method']} | {tf_mpts:.2f} | {ast_mpts:.2f} | {speedup_str} |\n"
                     )
                 f.write("\n")
 
@@ -2902,14 +3026,27 @@ class ExhaustiveBenchmarkSuite:
             sphere_df = additional_df[additional_df["file_type"] == "sphere"]
             if not sphere_df.empty:
                 f.write("## Sphere/HEALPix Performance Summary\n\n")
-                f.write("| Operation | Best | torchfits (Mpts/s) | healpy (Mpts/s) | Speedup |\n")
-                f.write("|---|---|---|---|---:|\n")
+                f.write(
+                    "| Case | Operation | Comparator | Best | torchfits (Mpts/s) | comparator (Mpts/s) | Speedup |\n"
+                )
+                f.write("|---|---|---|---|---|---|---:|\n")
                 for _, r in sphere_df.iterrows():
                     tf_mpts = r.get("torchfits_mb_s", 0)
-                    hp_mpts = r.get("astropy_mb_s", 0) # Mapped to astropy column in _bench_sphere
+                    hp_mpts = r.get(
+                        "astropy_mb_s", 0
+                    )  # Generic comparator column for sphere rows.
                     speedup = r.get("speedup_vs_best")
+                    speedup_str = (
+                        f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
+                    )
+                    filename = str(r.get("filename", ""))
+                    comparator = (
+                        filename.rsplit("_", 1)[-1]
+                        if filename.startswith("SPHERE_") and "_" in filename
+                        else "baseline"
+                    )
                     f.write(
-                        f"| {r['operation']} | {r['best_method']} | {tf_mpts:.2f} | {hp_mpts:.2f} | {speedup:.2f}x |\n"
+                        f"| {filename} | {r['operation']} | {comparator} | {r['best_method']} | {tf_mpts:.2f} | {hp_mpts:.2f} | {speedup_str} |\n"
                     )
                 f.write("\n")
 
