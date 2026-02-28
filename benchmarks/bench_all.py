@@ -11,6 +11,8 @@ Domains:
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -29,6 +31,9 @@ from bench_fits_io import run_fits_domain
 from bench_fitstable_io import run_fitstable_domain
 from bench_sphere_suite import run_sphere_domain
 from bench_wcs_suite import REQUIRED_PROJECTIONS, run_wcs_domain
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -65,6 +70,11 @@ def _parse_args() -> argparse.Namespace:
         "--legacy-wcs",
         action="store_true",
         help="Include legacy WCS comparators (PyAST/Kapteyn) when available",
+    )
+    parser.add_argument(
+        "--no-legacy-wcs-bridge",
+        action="store_true",
+        help="Disable auto cross-env legacy WCS bridge for wcs-only runs",
     )
     parser.add_argument(
         "--wcs-n-tiers",
@@ -173,6 +183,112 @@ def _domain_failure_row(*, run_id: str, domain: str, error: str) -> dict[str, An
     }
 
 
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        v = float(value)
+    except Exception:
+        return None
+    if v != v:  # NaN
+        return None
+    return v
+
+
+def _run_wcs_legacy_bridge(
+    *,
+    run_id: str,
+    run_dir: Path,
+    n_tiers: list[int],
+) -> tuple[list[dict[str, Any]], str]:
+    bridge_root = run_dir / "_raw" / "wcs_legacy_bridge"
+    bridge_run_id = f"{run_id}_legacy"
+    bridge_json = bridge_root / f"{bridge_run_id}.json"
+    bridge_root.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        "pixi",
+        "run",
+        "-e",
+        "bench-legacy",
+        "python",
+        "benchmarks/bench_wcs_legacy_only.py",
+        "--n-tiers",
+        ",".join(str(x) for x in n_tiers),
+        "--json-out",
+        str(bridge_json),
+    ]
+    proc = subprocess.run(
+        cmd,
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    log_path = bridge_root / "bridge.log"
+    log_path.write_text(proc.stdout or "", encoding="utf-8")
+    if proc.returncode != 0:
+        return [], f"legacy_wcs_bridge_failed(code={proc.returncode}, log={log_path})"
+    if not bridge_json.exists():
+        return [], f"legacy_wcs_bridge_missing_json({bridge_json})"
+
+    try:
+        src_rows = json.loads(bridge_json.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [], f"legacy_wcs_bridge_invalid_json({exc})"
+    if not isinstance(src_rows, list):
+        return [], "legacy_wcs_bridge_json_not_list"
+
+    out_rows: list[dict[str, Any]] = []
+    for src in src_rows:
+        if not isinstance(src, dict):
+            continue
+        library = str(src.get("library", ""))
+        if library not in {"pyast", "kapteyn"}:
+            continue
+
+        status = str(src.get("status", "SKIPPED"))
+        t_val = _to_float(src.get("time_s"))
+        n_points = src.get("n_points", "")
+        n_int = int(n_points) if str(n_points).strip().isdigit() else 0
+        throughput = _to_float(src.get("throughput"))
+        if throughput is None and t_val and t_val > 0 and n_int > 0:
+            throughput = n_int / t_val / 1e6
+
+        comparable = bool(status == "OK" and t_val is not None and t_val > 0)
+        metadata = src.get("metadata") if isinstance(src.get("metadata"), dict) else {}
+        metadata = dict(metadata)
+        metadata["source_env"] = "bench-legacy"
+        metadata["cross_env"] = True
+
+        out_rows.append(
+            {
+                "run_id": run_id,
+                "domain": "wcs",
+                "suite": str(src.get("suite", "wcs_legacy")),
+                "case_id": str(src.get("case_id", "")),
+                "case_label": str(src.get("case_label", "")),
+                "operation": str(src.get("operation", "forward")),
+                # Merge into the smart family table for direct cross-env comparison.
+                "family": "smart",
+                "library": library,
+                "method": library,
+                "mode": "legacy_cross_env",
+                "status": status,
+                "skip_reason": str(src.get("skip_reason", "")),
+                "comparable": comparable,
+                "mmap_target": "-",
+                "time_s": t_val,
+                "throughput": throughput,
+                "unit": str(src.get("unit", "Mpts/s")),
+                "size_mb": src.get("size_mb", ""),
+                "n_points": src.get("n_points", ""),
+                "metadata": metadata,
+            }
+        )
+    return out_rows, ""
+
+
 def main() -> int:
     # Support `pixi run <task> -- --flag` separator pass-through.
     if "--" in sys.argv[1:]:
@@ -254,6 +370,25 @@ def main() -> int:
                     include_legacy=args.legacy_wcs,
                 )
             )
+            use_legacy_bridge = (scope == "wcs") and (not args.no_legacy_wcs_bridge)
+            if use_legacy_bridge:
+                print("[bench-all][wcs] running cross-env legacy bridge (bench-legacy)...", flush=True)
+                bridge_rows, bridge_err = _run_wcs_legacy_bridge(
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    n_tiers=tiers,
+                )
+                if bridge_err:
+                    print(f"[bench-all][wcs] legacy bridge failed: {bridge_err}", flush=True)
+                    all_rows.append(
+                        _domain_failure_row(run_id=run_id, domain="wcs", error=bridge_err)
+                    )
+                else:
+                    print(
+                        f"[bench-all][wcs] legacy bridge rows={len(bridge_rows)} (pyast/kapteyn)",
+                        flush=True,
+                    )
+                    all_rows.extend(bridge_rows)
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
             print(f"[bench-all][wcs] failed: {err}", flush=True)
