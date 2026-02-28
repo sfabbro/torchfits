@@ -837,7 +837,7 @@ void wcs_pixel_to_world_fused_cpu(
     double* ra_ptr = ra_tensor.data_ptr<double>();
     double* dec_ptr = dec_tensor.data_ptr<double>();
 
-    bool use_center_equator_fast = (native_type == "center" && std::abs(delta0) < 1e-12 && std::abs(std::fmod(phi_p_rad * R2D, 360.0)) < 1e-12);
+    bool use_center_equator_fast = (native_type == "center" && std::abs(delta0) < 1e-12 && (std::abs(std::fmod(phi_p_rad * R2D, 360.0)) < 1e-12 || std::abs(std::abs(std::fmod(phi_p_rad * R2D, 360.0)) - 180.0) < 1e-12));
 
     for (int64_t i = 0; i < n; ++i) {
         // 1. CD Matrix application
@@ -900,6 +900,21 @@ void wcs_pixel_to_world_fused_cpu(
                 double s_theta = (eta_deg >= 0 ? 1.0 : -1.0) * (1.0 - (sigma * sigma) / 3.0);
                 theta = std::asin(std::max(-1.0, std::min(1.0, s_theta))) * R2D;
             }
+        } else if (proj_code == "CAR") {
+            phi = xi_deg;
+            theta = eta_deg;
+        } else if (proj_code == "SFL") {
+            theta = eta_deg;
+            double cos_theta = std::cos(theta * D2R);
+            phi = (std::abs(cos_theta) > 1e-12) ? (xi_deg / cos_theta) : 0.0;
+        } else if (proj_code == "MOL") {
+            double sqrt2 = std::sqrt(2.0);
+            double sin_gamma = std::max(-1.0, std::min(1.0, (eta_deg * D2R) / sqrt2));
+            double gamma = std::asin(sin_gamma);
+            double cos_gamma = std::cos(gamma);
+            double t_val = (2.0 * gamma + std::sin(2.0 * gamma)) / WCS_PI;
+            theta = std::asin(std::max(-1.0, std::min(1.0, t_val))) * R2D;
+            phi = (std::abs(cos_gamma) > 1e-12) ? (xi_deg * WCS_PI / (2.0 * sqrt2 * cos_gamma)) : 0.0;
         } else {
             phi = std::nan("");
             theta = std::nan("");
@@ -907,7 +922,9 @@ void wcs_pixel_to_world_fused_cpu(
 
         // 3. Spherical Rotation (phi, theta) -> (ra, dec)
         if (use_center_equator_fast) {
-            ra_ptr[i] = std::fmod(phi + alpha0 + 360.0, 360.0);
+            double phi_p_deg = phi_p_rad * R2D;
+            double phi_shifted = phi - (phi_p_deg - 180.0);
+            ra_ptr[i] = std::fmod(phi_shifted + alpha0 + 360.0, 360.0);
             dec_ptr[i] = theta;
         } else {
             double phi_rad = phi * D2R;
@@ -957,7 +974,7 @@ void wcs_world_to_pixel_fused_cpu(
     double* x_ptr = x_tensor.data_ptr<double>();
     double* y_ptr = y_tensor.data_ptr<double>();
 
-    bool use_center_equator_fast = (native_type == "center" && std::abs(delta0) < 1e-12 && std::abs(std::fmod(phi_p_rad * R2D, 360.0)) < 1e-12);
+    bool use_center_equator_fast = (native_type == "center" && std::abs(delta0) < 1e-12 && (std::abs(std::fmod(phi_p_rad * R2D, 360.0)) < 1e-12 || std::abs(std::abs(std::fmod(phi_p_rad * R2D, 360.0)) - 180.0) < 1e-12));
 
     for (int64_t i = 0; i < n; ++i) {
         // 1. Inverse Spherical Rotation (ra, dec) -> (phi, theta)
@@ -966,7 +983,8 @@ void wcs_world_to_pixel_fused_cpu(
         
         double phi, theta;
         if (use_center_equator_fast) {
-            double phi_tmp = std::fmod(ra_deg - alpha0 + 180.0, 360.0);
+            double phi_p_deg = phi_p_rad * R2D;
+            double phi_tmp = std::fmod(ra_deg - alpha0 + (phi_p_deg - 180.0) + 180.0, 360.0);
             if (phi_tmp < 0) phi_tmp += 360.0;
             phi = phi_tmp - 180.0;
             theta = dec_deg;
@@ -1044,6 +1062,25 @@ void wcs_world_to_pixel_fused_cpu(
                 double xc = std::round((phi_w - 45.0) / 90.0) * 90.0 + 45.0;
                 xi = xc + sigma * (phi_w - xc);
             }
+        } else if (proj_code == "CAR") {
+            xi = phi_w;
+            eta = theta;
+        } else if (proj_code == "SFL") {
+            xi = phi_w * std::cos(theta * D2R);
+            eta = theta;
+        } else if (proj_code == "MOL") {
+            double phi_rad = phi_w * D2R;
+            double sin_theta = std::sin(theta * D2R);
+            double gamma = 0.0;
+            for (int j = 0; j < 10; ++j) {
+                double f = 2.0 * gamma + std::sin(2.0 * gamma) - WCS_PI * sin_theta;
+                double fp = 2.0 + 2.0 * std::cos(2.0 * gamma);
+                gamma -= f / (fp + 1e-12);
+            }
+            double cos_gamma = std::cos(gamma);
+            double sqrt2 = std::sqrt(2.0);
+            xi = 2.0 * sqrt2 * phi_rad * cos_gamma / WCS_PI * R2D;
+            eta = sqrt2 * std::sin(gamma) * R2D;
         } else {
             xi = std::nan("");
             eta = std::nan("");

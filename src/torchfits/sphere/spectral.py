@@ -8,7 +8,6 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Literal
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -2319,7 +2318,7 @@ def map2alm(
     mmax: int | None = None,
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
-    iter: int = 3,
+    iter: int = 0,
     pol: bool = False,
     use_pixel_weights: bool = False,
 ) -> Tensor:
@@ -2343,6 +2342,7 @@ def map2alm(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -2522,6 +2522,7 @@ def map2alm_lsq(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -2733,6 +2734,7 @@ def alm2map(
         if backend == "healpy":
             try:
                 import healpy as hp
+                import numpy as np
             except Exception as exc:  # pragma: no cover
                 raise RuntimeError(
                     "healpy backend requested but healpy is not available"
@@ -2794,6 +2796,7 @@ def alm2map(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -2900,7 +2903,7 @@ def anafast(
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
     nspec: int | None = None,
-    iter: int = 3,
+    iter: int = 0,
     alm: bool = False,
     pol: bool = True,
     use_weights: bool = False,
@@ -2928,6 +2931,7 @@ def anafast(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -3110,12 +3114,12 @@ def bl2beam(bl: Tensor | list[float], theta: Tensor | list[float]) -> Tensor:
         raise ValueError("bl must be non-empty")
     x = torch.cos(theta_t.reshape(-1))
     lmax = int(bl_t.numel() - 1)
+    # p contains Y_l0 = sqrt((2l+1)/4pi) * P_l
     p = _legendre_l_sequence(0, x, lmax)
-    coeff = (
-        ((2.0 * torch.arange(lmax + 1, dtype=torch.float64)) + 1.0)
-        * bl_t
-        / (4.0 * math.pi)
-    )
+    # b(theta) = sum_l [ (2l+1)/4pi * bl * P_l ]
+    #          = sum_l [ sqrt((2l+1)/4pi) * bl * Y_l0 ]
+    ell = torch.arange(lmax + 1, dtype=torch.float64)
+    coeff = bl_t * torch.sqrt((2.0 * ell + 1.0) / (4.0 * math.pi))
     out = coeff @ p
     return out.reshape(theta_t.shape)
 
@@ -3138,11 +3142,16 @@ def beam2bl(
     th_s = th_t.index_select(0, order)
     b_s = b_t.index_select(0, order)
     x = torch.cos(th_s)
+    # p contains Y_l0 = sqrt((2l+1)/4pi) * P_l
     p = _legendre_l_sequence(0, x, ll)
+    # bl = 2pi * integral [ b(theta) * P_l(theta) * sin(theta) dtheta ]
+    #    = 2pi * sqrt(4pi/(2l+1)) * integral [ b(theta) * Y_l0(theta) * sin(theta) dtheta ]
     integrand = p * (b_s * torch.sin(th_s)).unsqueeze(0)
     dth = th_s[1:] - th_s[:-1]
     trap = 0.5 * (integrand[:, 1:] + integrand[:, :-1]) * dth.unsqueeze(0)
-    return 2.0 * math.pi * torch.sum(trap, dim=1)
+    ell = torch.arange(ll + 1, dtype=torch.float64)
+    norm = 2.0 * math.pi * torch.sqrt((4.0 * math.pi) / (2.0 * ell + 1.0))
+    return norm * torch.sum(trap, dim=1)
 
 
 def _cls_order_pairs(n_fields: int, *, new: bool) -> list[tuple[int, int]]:
@@ -3487,6 +3496,7 @@ def smoothmap(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -3576,7 +3586,7 @@ def map2alm_spin(
     mmax: int | None = None,
     nest: bool = False,
     backend: Literal["torch", "healpy"] = "torch",
-    iter: int = 3,
+    iter: int = 0,
 ) -> tuple[Tensor, Tensor]:
     """
     Spin-weighted map->alm transform (Q/U-like pair).
@@ -3605,6 +3615,7 @@ def map2alm_spin(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
@@ -3683,24 +3694,26 @@ def _map2alm_spin_single_pass(
             and p_plus.device.type == "cpu"
             and (not p_plus.requires_grad)
         )
-        if use_cpp_fused:
+        if use_concat_fast:
+            s_plus, s_minus = _ring_fourier_modes_spin_conj(
+                p_plus,
+                starts_cpu=starts_cpu,
+                lengths_cpu=lengths_cpu,
+                mmax=mmax,
+                nside=int(nside),
+            )
             y_plus, y_minus = _ring_spin_basis_concat(
                 int(nside), int(lmax), int(mmax), int(spin_i)
             )
             phase0_neg = _ring_phi0_phase_for_nside(int(nside), int(mmax), sign=-1).to(
-                dtype=torch.complex128
+                dtype=torch.complex128, device=s_plus.device
             )
-            c_plus, c_minus = _cpp._healpix_spin_map2alm_ring_concat_cpu(
-                p_plus.contiguous(),
-                starts_cpu.contiguous(),
-                lengths_cpu.contiguous(),
-                phase0_neg.contiguous(),
-                y_plus.contiguous(),
-                y_minus.contiguous(),
-                int(lmax),
-                int(mmax),
-                float(pix_w),
-            )
+            s_plus = s_plus * phase0_neg
+            s_minus = s_minus * phase0_neg
+            
+            m_idx = _alm_m_array(int(lmax), int(mmax)).to(s_plus.device)
+            c_plus = torch.sum(y_plus * s_plus[m_idx], dim=1) * pix_w
+            c_minus = torch.sum(y_minus * s_minus[m_idx], dim=1) * pix_w
         else:
             s_plus, s_minus = _ring_fourier_modes_spin_conj(
                 p_plus,
@@ -3848,6 +3861,7 @@ def alm2map_spin(
     if backend == "healpy":
         try:
             import healpy as hp
+            import numpy as np
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"

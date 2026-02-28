@@ -310,6 +310,7 @@ NB_MODULE(cpp, m) {
         .def("__init__", [](torchfits::TableReader* self, torchfits::FITSFile& file, int hdu_num) {
             new (self) torchfits::TableReader(file.get_fptr(), hdu_num);
         }, nb::arg("file"), nb::arg("hdu_num") = 1)
+        .def_prop_ro("num_rows", &torchfits::TableReader::get_num_rows)
         .def("read_rows", [](torchfits::TableReader& self,
                              const std::vector<std::string>& column_names,
                              long start_row, long num_rows) -> nb::object {

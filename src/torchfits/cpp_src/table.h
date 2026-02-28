@@ -29,10 +29,15 @@ public:
         int num_rows = -1
     );
     
+    int64_t get_num_rows() const { return nrows_; }
+    
 private:
     fitsfile* fptr_;
     int hdu_num_;
     bool owns_fptr_;
+    int64_t nrows_ = 0;
+    int ncols_ = 0;
+    bool is_ascii_ = false;
 };
 
 } // namespace torchfits

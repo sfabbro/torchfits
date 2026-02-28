@@ -2051,21 +2051,14 @@ std::pair<torch::Tensor, torch::Tensor> healpix_spin_integrate_concat_cpu(
         for (int64_t m = begin; m < end; ++m) {
             const int64_t base = m * (lmax + 1) - (m * (m - 1)) / 2;
             const int64_t l_count = lmax - m + 1;
-            const auto* sp_row = sp_ptr + m * nrings;
-            const auto* sm_row = sm_ptr + m * nrings;
-            for (int64_t t = 0; t < l_count; ++t) {
-                const int64_t i = base + t;
-                const auto* yp_row = yp_ptr + i * nrings;
-                const auto* ym_row = ym_ptr + i * nrings;
-                c10::complex<double> accp(0.0, 0.0);
-                c10::complex<double> accm(0.0, 0.0);
-                for (int64_t r = 0; r < nrings; ++r) {
-                    accp += yp_row[r] * sp_row[r];
-                    accm += ym_row[r] * sm_row[r];
-                }
-                op_ptr[i] = accp * pix_w;
-                om_ptr[i] = accm * pix_w;
-            }
+            
+            auto yp_block = yp.narrow(0, base, l_count);
+            auto ym_block = ym.narrow(0, base, l_count);
+            auto sp_vec = sp.select(0, m);
+            auto sm_vec = sm.select(0, m);
+            
+            out_plus.narrow(0, base, l_count).copy_(at::mv(yp_block, sp_vec) * pix_w);
+            out_minus.narrow(0, base, l_count).copy_(at::mv(ym_block, sm_vec) * pix_w);
         }
     });
 
