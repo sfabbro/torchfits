@@ -246,6 +246,12 @@ def _time_kapteyn(header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: in
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-tiers", type=str, default="1000,10000,100000,1000000,10000000")
+    parser.add_argument(
+        "--cases",
+        type=str,
+        default="",
+        help="Comma-separated projection cases to run (default: all required)",
+    )
     parser.add_argument("--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed")
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--json-out", type=Path, required=True)
@@ -255,9 +261,18 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     n_tiers = [int(x.strip()) for x in args.n_tiers.split(",") if x.strip()]
+    requested = (
+        [x.strip() for x in args.cases.split(",") if x.strip()]
+        if args.cases.strip()
+        else list(REQUIRED_PROJECTIONS)
+    )
+    unknown = [name for name in requested if name not in CASES]
+    if unknown:
+        raise ValueError(f"Unknown WCS legacy cases: {', '.join(unknown)}")
+
     rows: list[dict[str, Any]] = []
 
-    for i_case, case_name in enumerate(REQUIRED_PROJECTIONS):
+    for i_case, case_name in enumerate(requested):
         case = CASES[case_name]
         for i_tier, n_points in enumerate(n_tiers):
             runs = _runs_for_points(n_points)

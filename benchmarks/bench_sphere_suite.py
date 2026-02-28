@@ -101,9 +101,400 @@ def _row(
     }
 
 
-def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True) -> list[dict[str, Any]]:
+def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    case_budget = max(1, int(max_cases))
+
+    # Case 1: geometry ang2pix_ring (torchfits vs healpy).
+    if len({str(r.get("case_id")) for r in rows}) < case_budget:
+        print("[sphere][quick] running geometry mini-case...", flush=True)
+        geo_json = raw_dir / "sphere_geometry_cpu_quick.json"
+        geo_cmd = [
+            sys.executable,
+            str(Path(__file__).with_name("bench_sphere_geometry.py")),
+            "--device",
+            "cpu",
+            "--sample-profile",
+            "mixed",
+            "--nside",
+            "256",
+            "--n-points",
+            "20000",
+            "--runs",
+            "3",
+            "--libraries",
+            "torchfits,healpy",
+            "--json-out",
+            str(geo_json),
+        ]
+        ok_geo, geo_rows, reason_geo = _run_json_command("sphere_geometry_cpu_quick", geo_cmd, geo_json)
+        case_id = "geometry::ang2pix_ring::cpu"
+        case_label = "geometry ang2pix_ring cpu"
+        if not ok_geo:
+            rows.append(
+                _row(
+                    run_id=run_id,
+                    suite="sphere_geometry",
+                    case_id=case_id,
+                    case_label=case_label,
+                    operation="ang2pix_ring",
+                    family="specialized",
+                    library="torchfits",
+                    method="torchfits",
+                    mode="specialized",
+                    status="FAILED",
+                    skip_reason=reason_geo,
+                    comparable=False,
+                    time_s=None,
+                    throughput=None,
+                    unit="Mpts/s",
+                    n_points=20000,
+                    metadata={"quick_case": True},
+                )
+            )
+        else:
+            by_lib = {
+                str(r.get("library", "")): r
+                for r in geo_rows
+                if str(r.get("operation", "")) == "ang2pix_ring"
+            }
+            for lib in ("torchfits", "healpy"):
+                src = by_lib.get(lib)
+                if src is None:
+                    rows.append(
+                        _row(
+                            run_id=run_id,
+                            suite="sphere_geometry",
+                            case_id=case_id,
+                            case_label=case_label,
+                            operation="ang2pix_ring",
+                            family="specialized",
+                            library=lib,
+                            method=lib,
+                            mode="specialized",
+                            status="SKIPPED",
+                            skip_reason="comparator_unavailable",
+                            comparable=False,
+                            time_s=None,
+                            throughput=None,
+                            unit="Mpts/s",
+                            n_points=20000,
+                            metadata={"quick_case": True},
+                        )
+                    )
+                    continue
+                ms = _safe_float(src.get("ms"))
+                mpts = _safe_float(src.get("mpts_s"))
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="sphere_geometry",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="ang2pix_ring",
+                        family="specialized",
+                        library=lib,
+                        method=lib,
+                        mode="specialized",
+                        status="OK" if ms is not None else "FAILED",
+                        skip_reason="",
+                        comparable=ms is not None,
+                        time_s=(ms / 1000.0) if ms is not None else None,
+                        throughput=mpts,
+                        unit="Mpts/s",
+                        n_points=int(src.get("n_points", 0) or 0),
+                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                    )
+                )
+
+    # Case 2: advanced neighbors_ring (torchfits vs healpy).
+    if len({str(r.get("case_id")) for r in rows}) < case_budget:
+        print("[sphere][quick] running advanced mini-case...", flush=True)
+        adv_json = raw_dir / "healpix_advanced_quick.json"
+        adv_cmd = [
+            sys.executable,
+            str(Path(__file__).with_name("bench_healpix_advanced.py")),
+            "--device",
+            "cpu",
+            "--nside",
+            "256",
+            "--n-points",
+            "20000",
+            "--runs",
+            "3",
+            "--json-out",
+            str(adv_json),
+        ]
+        ok_adv, adv_rows, reason_adv = _run_json_command("healpix_advanced_quick", adv_cmd, adv_json)
+        case_id = "advanced::neighbors_ring"
+        case_label = "advanced neighbors_ring"
+        if not ok_adv:
+            rows.append(
+                _row(
+                    run_id=run_id,
+                    suite="healpix_advanced",
+                    case_id=case_id,
+                    case_label=case_label,
+                    operation="neighbors_ring",
+                    family="specialized",
+                    library="torchfits",
+                    method="torchfits",
+                    mode="specialized",
+                    status="FAILED",
+                    skip_reason=reason_adv,
+                    comparable=False,
+                    time_s=None,
+                    throughput=None,
+                    unit="Mpts/s",
+                    n_points=20000,
+                    metadata={"quick_case": True},
+                )
+            )
+        else:
+            src = next((r for r in adv_rows if str(r.get("operation", "")) == "neighbors_ring"), None)
+            if src is None:
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="healpix_advanced",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="neighbors_ring",
+                        family="specialized",
+                        library="torchfits",
+                        method="torchfits",
+                        mode="specialized",
+                        status="FAILED",
+                        skip_reason="missing_neighbors_ring_row",
+                        comparable=False,
+                        time_s=None,
+                        throughput=None,
+                        unit="Mpts/s",
+                        n_points=20000,
+                        metadata={"quick_case": True},
+                    )
+                )
+            else:
+                n_points = int(src.get("n_points", 0) or 0)
+                tf_mpts = _safe_float(src.get("mpts_s_torchfits")) or _safe_float(src.get("torch_mpts_s"))
+                hp_mpts = _safe_float(src.get("mpts_s_healpy")) or _safe_float(src.get("healpy_mpts_s"))
+                tf_ms = _safe_float(src.get("torch_ms"))
+                hp_ms = _safe_float(src.get("healpy_ms"))
+                tf_s = (tf_ms / 1000.0) if tf_ms is not None else _seconds_from_mpts(tf_mpts, n_points)
+                hp_s = (hp_ms / 1000.0) if hp_ms is not None else _seconds_from_mpts(hp_mpts, n_points)
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="healpix_advanced",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="neighbors_ring",
+                        family="specialized",
+                        library="torchfits",
+                        method="torchfits",
+                        mode="specialized",
+                        status="OK" if tf_s is not None else "FAILED",
+                        skip_reason="",
+                        comparable=tf_s is not None,
+                        time_s=tf_s,
+                        throughput=tf_mpts,
+                        unit="Mpts/s",
+                        n_points=n_points,
+                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                    )
+                )
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="healpix_advanced",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="neighbors_ring",
+                        family="specialized",
+                        library="healpy",
+                        method="healpy",
+                        mode="specialized",
+                        status="OK" if hp_s is not None else "FAILED",
+                        skip_reason="",
+                        comparable=hp_s is not None,
+                        time_s=hp_s,
+                        throughput=hp_mpts,
+                        unit="Mpts/s",
+                        n_points=n_points,
+                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                    )
+                )
+
+    # Case 3: spectral map2alm_spin (torchfits vs healpy when available).
+    if len({str(r.get("case_id")) for r in rows}) < case_budget:
+        print("[sphere][quick] running spectral mini-case...", flush=True)
+        spec_json = raw_dir / "sphere_spectral_quick.json"
+        spec_cmd = [
+            sys.executable,
+            str(Path(__file__).with_name("bench_sphere_spectral.py")),
+            "--nside",
+            "16",
+            "--lmax",
+            "16",
+            "--runs",
+            "3",
+            "--json-out",
+            str(spec_json),
+        ]
+        ok_spec, spec_rows, reason_spec = _run_json_command("sphere_spectral_quick", spec_cmd, spec_json)
+        case_id = "spectral::map2alm_spin"
+        case_label = "spectral map2alm_spin"
+        if not ok_spec:
+            rows.append(
+                _row(
+                    run_id=run_id,
+                    suite="sphere_spectral",
+                    case_id=case_id,
+                    case_label=case_label,
+                    operation="map2alm_spin",
+                    family="specialized",
+                    library="torchfits",
+                    method="torch",
+                    mode="specialized",
+                    status="FAILED",
+                    skip_reason=reason_spec,
+                    comparable=False,
+                    time_s=None,
+                    throughput=None,
+                    unit="Mops/s",
+                    n_points=0,
+                    metadata={"quick_case": True},
+                )
+            )
+        else:
+            tf_row = next(
+                (
+                    r
+                    for r in spec_rows
+                    if str(r.get("op", "")) == "map2alm_spin"
+                    and str(r.get("backend", "")).startswith("torch")
+                ),
+                None,
+            )
+            hp_row = next(
+                (
+                    r
+                    for r in spec_rows
+                    if str(r.get("op", "")) == "map2alm_spin"
+                    and str(r.get("backend", "")) == "healpy"
+                ),
+                None,
+            )
+            if tf_row is None:
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="sphere_spectral",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="map2alm_spin",
+                        family="specialized",
+                        library="torchfits",
+                        method="torch",
+                        mode="specialized",
+                        status="FAILED",
+                        skip_reason="missing_torch_map2alm_spin_row",
+                        comparable=False,
+                        time_s=None,
+                        throughput=None,
+                        unit="Mops/s",
+                        n_points=0,
+                        metadata={"quick_case": True},
+                    )
+                )
+            else:
+                tf_t = _safe_float(tf_row.get("time_s"))
+                tf_mops = _safe_float(tf_row.get("mops_s"))
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="sphere_spectral",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="map2alm_spin",
+                        family="specialized",
+                        library="torchfits",
+                        method=str(tf_row.get("backend", "torch")),
+                        mode="specialized",
+                        status="OK" if tf_t is not None else "FAILED",
+                        skip_reason="",
+                        comparable=tf_t is not None,
+                        time_s=tf_t,
+                        throughput=tf_mops,
+                        unit="Mops/s",
+                        n_points=int(tf_row.get("n", 0) or 0),
+                        metadata={"quick_case": True, "nside": tf_row.get("nside"), "lmax": tf_row.get("lmax")},
+                    )
+                )
+            if hp_row is None:
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="sphere_spectral",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="map2alm_spin",
+                        family="specialized",
+                        library="healpy",
+                        method="healpy",
+                        mode="specialized",
+                        status="SKIPPED",
+                        skip_reason="healpy_not_available",
+                        comparable=False,
+                        time_s=None,
+                        throughput=None,
+                        unit="Mops/s",
+                        n_points=0,
+                        metadata={"quick_case": True},
+                    )
+                )
+            else:
+                hp_t = _safe_float(hp_row.get("time_s"))
+                hp_mops = _safe_float(hp_row.get("mops_s"))
+                rows.append(
+                    _row(
+                        run_id=run_id,
+                        suite="sphere_spectral",
+                        case_id=case_id,
+                        case_label=case_label,
+                        operation="map2alm_spin",
+                        family="specialized",
+                        library="healpy",
+                        method="healpy",
+                        mode="specialized",
+                        status="OK" if hp_t is not None else "FAILED",
+                        skip_reason="",
+                        comparable=hp_t is not None,
+                        time_s=hp_t,
+                        throughput=hp_mops,
+                        unit="Mops/s",
+                        n_points=int(hp_row.get("n", 0) or 0),
+                        metadata={"quick_case": True, "nside": hp_row.get("nside"), "lmax": hp_row.get("lmax")},
+                    )
+                )
+
+    annotate_rankings(rows)
+    print(f"[sphere][quick] normalized rows={len(rows)}", flush=True)
+    return rows
+
+
+def run_sphere_domain(
+    *,
+    run_id: str,
+    output_dir: Path,
+    include_gpu: bool = True,
+    quick_cases: int | None = None,
+) -> list[dict[str, Any]]:
     raw_dir = output_dir / "_raw" / "sphere"
     raw_dir.mkdir(parents=True, exist_ok=True)
+
+    if quick_cases is not None and quick_cases > 0:
+        return _run_sphere_domain_quick(run_id=run_id, raw_dir=raw_dir, max_cases=quick_cases)
 
     rows: list[dict[str, Any]] = []
 

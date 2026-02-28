@@ -34,6 +34,7 @@ from bench_wcs_suite import REQUIRED_PROJECTIONS, run_wcs_domain
 
 
 ROOT = Path(__file__).resolve().parents[1]
+QUICK_CASES_PER_DOMAIN = 3
 
 
 def _parse_args() -> argparse.Namespace:
@@ -200,6 +201,7 @@ def _run_wcs_legacy_bridge(
     run_id: str,
     run_dir: Path,
     n_tiers: list[int],
+    projections: list[str],
 ) -> tuple[list[dict[str, Any]], str]:
     bridge_root = run_dir / "_raw" / "wcs_legacy_bridge"
     bridge_run_id = f"{run_id}_legacy"
@@ -215,6 +217,8 @@ def _run_wcs_legacy_bridge(
         "benchmarks/bench_wcs_legacy_only.py",
         "--n-tiers",
         ",".join(str(x) for x in n_tiers),
+        "--cases",
+        ",".join(projections),
         "--json-out",
         str(bridge_json),
     ]
@@ -316,13 +320,16 @@ def main() -> int:
 
     if "fits" in scopes:
         try:
+            fits_case_filter = args.filter
+            if args.quick and not fits_case_filter:
+                fits_case_filter = "^(tiny_int16_2d|mef_small|compressed_rice_1)$"
             all_rows.extend(
                 run_fits_domain(
                     run_id=run_id,
                     output_dir=run_dir,
                     profile=args.profile,
                     use_mmap=use_mmap,
-                    case_filter=args.filter,
+                    case_filter=fits_case_filter,
                     header_runs=3 if args.quick else 7,
                     header_warmup=1 if args.quick else 2,
                     keep_temp=args.keep_temp,
@@ -343,6 +350,7 @@ def main() -> int:
                     profile=args.profile,
                     warmup=0 if args.quick else 1,
                     quick=args.quick,
+                    max_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
                     keep_temp=args.keep_temp,
                 )
             )
@@ -355,15 +363,18 @@ def main() -> int:
 
     if "wcs" in scopes:
         try:
-            tiers = _parse_int_list(args.wcs_n_tiers)
-            if args.quick:
-                tiers = [1_000, 10_000]
+            tiers = [1_000] if args.quick else _parse_int_list(args.wcs_n_tiers)
+            projections = (
+                list(REQUIRED_PROJECTIONS[:QUICK_CASES_PER_DOMAIN])
+                if args.quick
+                else list(REQUIRED_PROJECTIONS)
+            )
             all_rows.extend(
                 run_wcs_domain(
                     run_id=run_id,
                     output_dir=run_dir,
                     n_tiers=tiers,
-                    projections=list(REQUIRED_PROJECTIONS),
+                    projections=projections,
                     device_choice=args.wcs_device,
                     origin=0,
                     sample_profile="mixed",
@@ -377,6 +388,7 @@ def main() -> int:
                     run_id=run_id,
                     run_dir=run_dir,
                     n_tiers=tiers,
+                    projections=projections,
                 )
                 if bridge_err:
                     print(f"[bench-all][wcs] legacy bridge failed: {bridge_err}", flush=True)
@@ -401,6 +413,7 @@ def main() -> int:
                     run_id=run_id,
                     output_dir=run_dir,
                     include_gpu=(not args.no_gpu and not args.quick),
+                    quick_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
                 )
             )
         except Exception as exc:

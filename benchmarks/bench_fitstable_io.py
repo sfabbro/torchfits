@@ -663,6 +663,7 @@ def run_fitstable_domain(
     profile: str = "user",
     warmup: int = 1,
     quick: bool = False,
+    max_cases: int | None = None,
     keep_temp: bool = False,
 ) -> list[dict[str, Any]]:
     _ = profile
@@ -671,6 +672,10 @@ def run_fitstable_domain(
 
     try:
         cases = _build_cases(temp_root, quick=quick)
+        if max_cases is not None and max_cases > 0:
+            supported_cases = [c for c in cases if not bool(c.get("unsupported", False))]
+            cases = supported_cases[:max_cases]
+            print(f"[fitstable] quick case cap applied: {len(cases)} case(s)", flush=True)
         for case in cases:
             rows.extend(
                 _bench_case(
@@ -700,6 +705,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", choices=["user", "lab"], default="user")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument("--keep-temp", action="store_true")
     return parser.parse_args()
 
@@ -720,6 +726,7 @@ def main() -> int:
         profile=args.profile,
         warmup=args.warmup,
         quick=args.quick,
+        max_cases=(args.max_cases if args.max_cases > 0 else None),
         keep_temp=args.keep_temp,
     )
 
