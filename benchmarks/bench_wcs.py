@@ -101,6 +101,9 @@ def _make_header(case: CaseSpec) -> fits.Header:
         header["CD1_2"] = 0.0
         header["CD2_1"] = 0.0
         header["CD2_2"] = 2.8e-4
+        if case.projection == "ZPN":
+            # ZPN requires at least one valid polynomial coefficient.
+            header["PV2_1"] = 1.0
 
     if case.sip:
         header["A_ORDER"] = 3

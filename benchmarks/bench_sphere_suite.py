@@ -26,7 +26,14 @@ def _run_json_command(name: str, cmd: list[str], out_json: Path) -> tuple[bool, 
     if proc.returncode != 0:
         return False, [], f"{name} failed (code {proc.returncode}): {proc.stdout[-400:]}"
     try:
-        rows = json.loads(out_json.read_text(encoding="utf-8"))
+        raw = json.loads(out_json.read_text(encoding="utf-8"))
+        rows: Any
+        if isinstance(raw, list):
+            rows = raw
+        elif isinstance(raw, dict) and isinstance(raw.get("rows"), list):
+            rows = raw["rows"]
+        else:
+            rows = raw
         if not isinstance(rows, list):
             return False, [], f"{name} output is not a JSON list"
         return True, rows, ""
@@ -42,6 +49,12 @@ def _safe_float(v: Any) -> float | None:
     if not math.isfinite(x):
         return None
     return x
+
+
+def _seconds_from_mpts(mpts: float | None, n_points: int) -> float | None:
+    if mpts is None or mpts <= 0.0 or n_points <= 0:
+        return None
+    return float(n_points) / (mpts * 1.0e6)
 
 
 def _row(
@@ -299,8 +312,23 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
     if ok_adv:
         for r in adv_rows:
             op = str(r.get("operation", "unknown"))
+            n_points = int(r.get("n_points", 0) or 0)
             tf_t = _safe_float(r.get("torch_ms"))
             hp_t = _safe_float(r.get("healpy_ms"))
+            tf_mpts = _safe_float(r.get("torch_mpts_s"))
+            hp_mpts = _safe_float(r.get("healpy_mpts_s"))
+            if tf_mpts is None:
+                tf_mpts = _safe_float(r.get("mpts_s_torchfits"))
+            if hp_mpts is None:
+                hp_mpts = _safe_float(r.get("mpts_s_healpy"))
+            if tf_t is not None:
+                tf_t = tf_t / 1000.0
+            else:
+                tf_t = _seconds_from_mpts(tf_mpts, n_points)
+            if hp_t is not None:
+                hp_t = hp_t / 1000.0
+            else:
+                hp_t = _seconds_from_mpts(hp_mpts, n_points)
             rows.append(
                 _row(
                     run_id=run_id,
@@ -315,10 +343,10 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
                     status="OK" if tf_t is not None else "FAILED",
                     skip_reason="",
                     comparable=tf_t is not None,
-                    time_s=(tf_t / 1000.0) if tf_t is not None else None,
-                    throughput=_safe_float(r.get("torch_mpts_s")),
+                    time_s=tf_t,
+                    throughput=tf_mpts,
                     unit="Mpts/s",
-                    n_points=int(r.get("n_points", 0) or 0),
+                    n_points=n_points,
                     metadata={"mismatches": r.get("mismatches")},
                 )
             )
@@ -336,10 +364,10 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
                     status="OK" if hp_t is not None else "FAILED",
                     skip_reason="",
                     comparable=hp_t is not None,
-                    time_s=(hp_t / 1000.0) if hp_t is not None else None,
-                    throughput=_safe_float(r.get("healpy_mpts_s")),
+                    time_s=hp_t,
+                    throughput=hp_mpts,
                     unit="Mpts/s",
-                    n_points=int(r.get("n_points", 0) or 0),
+                    n_points=n_points,
                     metadata={"mismatches": r.get("mismatches")},
                 )
             )

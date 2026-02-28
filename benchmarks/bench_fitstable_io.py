@@ -400,7 +400,8 @@ def _astropy_read_full(path: Path, *, memmap: bool):
 def _astropy_projection(path: Path, columns: list[str], *, memmap: bool):
     with astropy_fits.open(path, memmap=memmap) as hdul:
         data = hdul[1].data
-        return np.array(data[columns], copy=False)
+        # FITS_rec does not support list-of-names indexing directly.
+        return {col: np.asarray(data[col]) for col in columns}
 
 
 def _astropy_row_slice(path: Path, start_row: int, num_rows: int, *, memmap: bool):

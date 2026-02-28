@@ -290,7 +290,7 @@ def _benchmark_headers(
         case_label = f"{name} [header_read]"
 
         def _tf_header():
-            return torchfits.read_header(str(path), hdu=hdu)
+            return torchfits.get_header(str(path), hdu=hdu)
 
         def _astropy_header():
             with astropy_fits.open(path, memmap=target_memmap) as hdul:

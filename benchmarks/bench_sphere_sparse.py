@@ -64,6 +64,7 @@ def main() -> int:
 
     sparse = SparseHealpixMap.from_dense(dense, nside=nside, nest=False)
     lon, lat = _sample_lonlat(int(args.n_queries), args.seed + 1)
+    coverage_frac = float(len(sparse.pixels)) / float(npix)
 
     rows: list[dict[str, Any]] = []
 
@@ -74,7 +75,7 @@ def main() -> int:
         {
             "operation": "sparse_interpolate_nearest",
             "nside": nside,
-            "coverage_frac": sparse.coverage_fraction,
+            "coverage_frac": coverage_frac,
             "n_queries": int(args.n_queries),
             "qps": float(args.n_queries) / t_sparse_nearest,
         }
@@ -87,7 +88,7 @@ def main() -> int:
         {
             "operation": "sparse_interpolate_bilinear",
             "nside": nside,
-            "coverage_frac": sparse.coverage_fraction,
+            "coverage_frac": coverage_frac,
             "n_queries": int(args.n_queries),
             "qps": float(args.n_queries) / t_sparse_bilinear,
         }
@@ -112,7 +113,7 @@ def main() -> int:
             "operation": "ud_grade_sparse_vs_dense",
             "nside_in": nside,
             "nside_out": nside_out,
-            "coverage_frac": sparse.coverage_fraction,
+            "coverage_frac": coverage_frac,
             "sparse_s": t_sparse_ud,
             "dense_s": t_dense_ud,
             "ratio_sparse_vs_dense": ratio_ud,
