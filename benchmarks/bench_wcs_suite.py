@@ -297,6 +297,11 @@ def run_wcs_domain(
             )
 
             inv_ok = result.get("inverse_reference") not in {"none", None}
+            astropy_inv_skip_reason = ""
+            if not inv_ok:
+                astropy_inv_skip_reason = "inverse_not_available"
+            elif as_inv is None:
+                astropy_inv_skip_reason = "astropy_inverse_not_available_for_case"
             rows.append(
                 _base_row(
                     run_id=run_id,
@@ -332,7 +337,7 @@ def run_wcs_domain(
                     time_s=as_inv if inv_ok else None,
                     throughput=(n / as_inv / 1e6) if (inv_ok and as_inv) else None,
                     status="OK" if (inv_ok and as_inv is not None) else "SKIPPED",
-                    skip_reason="inverse_not_available" if not inv_ok else "",
+                    skip_reason=astropy_inv_skip_reason,
                     comparable=bool(inv_ok and as_inv is not None),
                     sample_profile=sample_profile,
                     device="cpu",
