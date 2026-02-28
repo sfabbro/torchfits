@@ -64,58 +64,121 @@ def _time_median(fn, *, runs: int, warmup: int) -> tuple[float | None, str | Non
 
 
 def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
+    fallback_paths: set[str] = set()
+
     @contextmanager
     def _astropy_open_strict(filepath: Path, memmap: bool):
-        hdul = astropy_fits.open(filepath, memmap=bool(memmap))
+        hdul = None
+        try:
+            hdul = astropy_fits.open(filepath, memmap=bool(memmap))
+        except Exception:
+            if bool(memmap):
+                # Astropy cannot memmap some scaled/byte-packed payloads; read via
+                # non-mmap fallback but mark these rows non-comparable later.
+                hdul = astropy_fits.open(filepath, memmap=False)
+                fallback_paths.add(str(filepath))
+            else:
+                raise
         try:
             yield hdul
         finally:
-            hdul.close()
+            if hdul is not None:
+                hdul.close()
 
     def _astropy_read_strict(filepath: Path, hdu_num: int):
-        with _astropy_open_strict(filepath, suite.use_mmap) as hdul:
-            hdu = hdul[hdu_num]
-            if hasattr(hdu, "data") and hdu.data is not None:
-                if isinstance(hdu, astropy_fits.BinTableHDU):
-                    return suite._table_to_numpy_dict(hdu.data)
-                return suite._ensure_native_endian_numpy(np.array(hdu.data, copy=True))
-            return None
+        try:
+            with _astropy_open_strict(filepath, suite.use_mmap) as hdul:
+                hdu = hdul[hdu_num]
+                if hasattr(hdu, "data") and hdu.data is not None:
+                    if isinstance(hdu, astropy_fits.BinTableHDU):
+                        return suite._table_to_numpy_dict(hdu.data)
+                    return suite._ensure_native_endian_numpy(np.array(hdu.data, copy=True))
+                return None
+        except Exception:
+            if suite.use_mmap:
+                fallback_paths.add(str(filepath))
+                with astropy_fits.open(filepath, memmap=False) as hdul:
+                    hdu = hdul[hdu_num]
+                    if hasattr(hdu, "data") and hdu.data is not None:
+                        if isinstance(hdu, astropy_fits.BinTableHDU):
+                            return suite._table_to_numpy_dict(hdu.data)
+                        return suite._ensure_native_endian_numpy(np.array(hdu.data, copy=True))
+                    return None
+            raise
 
     def _astropy_to_torch_strict(filepath: Path, hdu_num: int):
-        with _astropy_open_strict(filepath, suite.use_mmap) as hdul:
-            hdu = hdul[hdu_num]
-            if hasattr(hdu, "data") and hdu.data is not None:
-                if isinstance(hdu, astropy_fits.BinTableHDU):
-                    out = {}
-                    data = hdu.data
-                    for col in data.names:
-                        col_data = np.ascontiguousarray(np.asarray(data[col]))
-                        if col_data.dtype.byteorder not in ("=", "|"):
-                            col_data = col_data.astype(col_data.dtype.newbyteorder("="))
-                        if col_data.dtype.kind in {"S", "U"}:
-                            if col_data.dtype.kind == "U":
-                                col_data = np.char.encode(col_data, "ascii")
-                            col_data = np.ascontiguousarray(col_data).view("uint8").reshape(
-                                len(col_data), -1
-                            )
-                        elif col_data.dtype.kind == "b":
-                            col_data = col_data.astype(bool)
-                        out[col] = torch.from_numpy(col_data)
-                    return out
-                arr = np.array(hdu.data, copy=True)
-                if arr.dtype.byteorder not in ("=", "|"):
-                    arr = arr.astype(arr.dtype.newbyteorder("="))
-                return torch.from_numpy(arr)
-            return None
+        try:
+            with _astropy_open_strict(filepath, suite.use_mmap) as hdul:
+                hdu = hdul[hdu_num]
+                if hasattr(hdu, "data") and hdu.data is not None:
+                    if isinstance(hdu, astropy_fits.BinTableHDU):
+                        out = {}
+                        data = hdu.data
+                        for col in data.names:
+                            col_data = np.ascontiguousarray(np.asarray(data[col]))
+                            if col_data.dtype.byteorder not in ("=", "|"):
+                                col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                            if col_data.dtype.kind in {"S", "U"}:
+                                if col_data.dtype.kind == "U":
+                                    col_data = np.char.encode(col_data, "ascii")
+                                col_data = np.ascontiguousarray(col_data).view("uint8").reshape(
+                                    len(col_data), -1
+                                )
+                            elif col_data.dtype.kind == "b":
+                                col_data = col_data.astype(bool)
+                            out[col] = torch.from_numpy(col_data)
+                        return out
+                    arr = np.array(hdu.data, copy=True)
+                    if arr.dtype.byteorder not in ("=", "|"):
+                        arr = arr.astype(arr.dtype.newbyteorder("="))
+                    return torch.from_numpy(arr)
+                return None
+        except Exception:
+            if suite.use_mmap:
+                fallback_paths.add(str(filepath))
+                with astropy_fits.open(filepath, memmap=False) as hdul:
+                    hdu = hdul[hdu_num]
+                    if hasattr(hdu, "data") and hdu.data is not None:
+                        if isinstance(hdu, astropy_fits.BinTableHDU):
+                            out = {}
+                            data = hdu.data
+                            for col in data.names:
+                                col_data = np.ascontiguousarray(np.asarray(data[col]))
+                                if col_data.dtype.byteorder not in ("=", "|"):
+                                    col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                                if col_data.dtype.kind in {"S", "U"}:
+                                    if col_data.dtype.kind == "U":
+                                        col_data = np.char.encode(col_data, "ascii")
+                                    col_data = np.ascontiguousarray(col_data).view(
+                                        "uint8"
+                                    ).reshape(len(col_data), -1)
+                                elif col_data.dtype.kind == "b":
+                                    col_data = col_data.astype(bool)
+                                out[col] = torch.from_numpy(col_data)
+                            return out
+                        arr = np.array(hdu.data, copy=True)
+                        if arr.dtype.byteorder not in ("=", "|"):
+                            arr = arr.astype(arr.dtype.newbyteorder("="))
+                        return torch.from_numpy(arr)
+                    return None
+            raise
 
     def _astropy_cutout_strict(path, hdu, x1, y1, x2, y2):
-        with _astropy_open_strict(path, suite.use_mmap) as hdul:
-            return hdul[hdu].section[y1:y2, x1:x2]
+        try:
+            with _astropy_open_strict(path, suite.use_mmap) as hdul:
+                return hdul[hdu].section[y1:y2, x1:x2]
+        except Exception:
+            if suite.use_mmap:
+                fallback_paths.add(str(path))
+                with astropy_fits.open(path, memmap=False) as hdul:
+                    return hdul[hdu].section[y1:y2, x1:x2]
+            raise
 
     suite._astropy_open = _astropy_open_strict  # type: ignore[attr-defined]
     suite._astropy_read = _astropy_read_strict  # type: ignore[attr-defined]
     suite._astropy_to_torch = _astropy_to_torch_strict  # type: ignore[attr-defined]
     suite._astropy_cutout = _astropy_cutout_strict  # type: ignore[attr-defined]
+    suite._astropy_memmap_fallback_paths = fallback_paths  # type: ignore[attr-defined]
 
 
 def _normalize_legacy_rows(
@@ -123,6 +186,8 @@ def _normalize_legacy_rows(
     run_id: str,
     raw_rows: list[dict[str, Any]],
     mmap_target: str,
+    files: dict[str, Path],
+    astropy_fallback_paths: set[str],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -161,6 +226,19 @@ def _normalize_legacy_rows(
                     comparable = False
                     status = "SKIPPED"
                     skip_reason = "strict_mmap_fairness: astropy mmap mode unavailable for this case"
+                    t_val = None
+                    tp_val = None
+                elif (
+                    library == "astropy"
+                    and mmap_target == "on"
+                    and str(files.get(str(raw.get("filename")), "")) in astropy_fallback_paths
+                ):
+                    comparable = False
+                    status = "SKIPPED"
+                    skip_reason = (
+                        "strict_mmap_fairness: astropy required memmap=False fallback "
+                        "for this payload"
+                    )
                     t_val = None
                     tp_val = None
 
@@ -316,7 +394,16 @@ def run_fits_domain(
         print(f"[fits] cases={len(files)} mmap={mmap_target} profile={profile}", flush=True)
 
         raw_rows = suite.run_exhaustive_benchmarks(files)
-        rows = _normalize_legacy_rows(run_id=run_id, raw_rows=raw_rows, mmap_target=mmap_target)
+        astropy_fallback_paths = set(
+            getattr(suite, "_astropy_memmap_fallback_paths", set())  # type: ignore[attr-defined]
+        )
+        rows = _normalize_legacy_rows(
+            run_id=run_id,
+            raw_rows=raw_rows,
+            mmap_target=mmap_target,
+            files=files,
+            astropy_fallback_paths=astropy_fallback_paths,
+        )
         rows.extend(
             _benchmark_headers(
                 run_id=run_id,

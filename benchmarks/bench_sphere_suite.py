@@ -95,6 +95,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
     rows: list[dict[str, Any]] = []
 
     # 1) Geometry / projection operations across ecosystem libs (CPU baseline).
+    print("[sphere] running geometry CPU suite...", flush=True)
     geo_json = raw_dir / "sphere_geometry_cpu.json"
     geo_cmd = [
         sys.executable,
@@ -205,6 +206,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
     # Optional GPU subsection.
     if include_gpu and (torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())):
         gpu_dev = "cuda" if torch.cuda.is_available() else "mps"
+        print(f"[sphere] running geometry {gpu_dev} suite...", flush=True)
         geo_gpu_json = raw_dir / f"sphere_geometry_{gpu_dev}.json"
         geo_gpu_cmd = [
             sys.executable,
@@ -277,6 +279,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
             )
 
     # 2) Advanced HEALPix operations.
+    print("[sphere] running advanced HEALPix suite...", flush=True)
     adv_json = raw_dir / "healpix_advanced.json"
     adv_cmd = [
         sys.executable,
@@ -364,6 +367,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
         )
 
     # 3) Sparse operations.
+    print("[sphere] running sparse HEALPix suite...", flush=True)
     sparse_json = raw_dir / "sphere_sparse.json"
     sparse_cmd = [
         sys.executable,
@@ -477,6 +481,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
         )
 
     # 4) Spectral operations.
+    print("[sphere] running spectral sphere suite...", flush=True)
     spec_json = raw_dir / "sphere_spectral.json"
     spec_cmd = [
         sys.executable,
@@ -543,6 +548,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
         )
 
     # 5) Polygon operations.
+    print("[sphere] running polygon suite...", flush=True)
     poly_json = raw_dir / "sphere_polygons.json"
     poly_cmd = [
         sys.executable,
@@ -636,6 +642,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
         )
 
     # 6) Sphere core operations.
+    print("[sphere] running sphere core suite...", flush=True)
     core_json = raw_dir / "sphere_core.json"
     core_cmd = [
         sys.executable,
@@ -725,6 +732,7 @@ def run_sphere_domain(*, run_id: str, output_dir: Path, include_gpu: bool = True
         )
 
     annotate_rankings(rows)
+    print(f"[sphere] normalized rows={len(rows)}", flush=True)
     return rows
 
 

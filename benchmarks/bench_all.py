@@ -148,6 +148,31 @@ def _print_deficit_summary(deficits: list[dict[str, Any]]) -> None:
         )
 
 
+def _domain_failure_row(*, run_id: str, domain: str, error: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "domain": domain,
+        "suite": f"{domain}_orchestrator",
+        "case_id": f"{domain}::domain_failure",
+        "case_label": f"{domain} domain failure",
+        "operation": "domain_failure",
+        "family": "orchestrator",
+        "library": "torchfits",
+        "method": "orchestrator",
+        "mode": "n/a",
+        "status": "FAILED",
+        "skip_reason": error,
+        "comparable": False,
+        "mmap_target": "-",
+        "time_s": "",
+        "throughput": "",
+        "unit": "",
+        "size_mb": "",
+        "n_points": "",
+        "metadata": {"error": error},
+    }
+
+
 def main() -> int:
     # Support `pixi run <task> -- --flag` separator pass-through.
     if "--" in sys.argv[1:]:
@@ -173,8 +198,8 @@ def main() -> int:
 
     all_rows: list[dict[str, Any]] = []
 
-    try:
-        if "fits" in scopes:
+    if "fits" in scopes:
+        try:
             all_rows.extend(
                 run_fits_domain(
                     run_id=run_id,
@@ -187,8 +212,13 @@ def main() -> int:
                     keep_temp=args.keep_temp,
                 )
             )
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"[bench-all][fits] failed: {err}", flush=True)
+            all_rows.append(_domain_failure_row(run_id=run_id, domain="fits", error=err))
 
-        if "fitstable" in scopes:
+    if "fitstable" in scopes:
+        try:
             all_rows.extend(
                 run_fitstable_domain(
                     run_id=run_id,
@@ -200,8 +230,15 @@ def main() -> int:
                     keep_temp=args.keep_temp,
                 )
             )
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"[bench-all][fitstable] failed: {err}", flush=True)
+            all_rows.append(
+                _domain_failure_row(run_id=run_id, domain="fitstable", error=err)
+            )
 
-        if "wcs" in scopes:
+    if "wcs" in scopes:
+        try:
             tiers = _parse_int_list(args.wcs_n_tiers)
             if args.quick:
                 tiers = [1_000, 10_000]
@@ -217,8 +254,13 @@ def main() -> int:
                     include_legacy=args.legacy_wcs,
                 )
             )
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"[bench-all][wcs] failed: {err}", flush=True)
+            all_rows.append(_domain_failure_row(run_id=run_id, domain="wcs", error=err))
 
-        if "sphere" in scopes:
+    if "sphere" in scopes:
+        try:
             all_rows.extend(
                 run_sphere_domain(
                     run_id=run_id,
@@ -226,10 +268,12 @@ def main() -> int:
                     include_gpu=(not args.no_gpu and not args.quick),
                 )
             )
-
-    except Exception as exc:
-        print(f"[bench-all] fatal error: {exc}", flush=True)
-        # Continue to materialize whatever rows are already available.
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"[bench-all][sphere] failed: {err}", flush=True)
+            all_rows.append(
+                _domain_failure_row(run_id=run_id, domain="sphere", error=err)
+            )
 
     annotate_rankings(all_rows)
     deficits = compute_deficits(all_rows, run_id=run_id)
