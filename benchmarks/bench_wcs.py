@@ -38,18 +38,23 @@ class CaseSpec:
 
     @property
     def is_cylindrical(self) -> bool:
-        return self.projection in {"CEA", "MER"}
+        return self.projection in {"CEA", "MER", "CAR", "SFL"}
 
 
 CASES = {
     "TAN": CaseSpec("TAN", "TAN"),
     "SIN": CaseSpec("SIN", "SIN"),
     "ARC": CaseSpec("ARC", "ARC"),
+    "ZEA": CaseSpec("ZEA", "ZEA"),
+    "STG": CaseSpec("STG", "STG"),
+    "ZPN": CaseSpec("ZPN", "ZPN"),
     "AIT": CaseSpec("AIT", "AIT"),
     "MOL": CaseSpec("MOL", "MOL"),
     "HPX": CaseSpec("HPX", "HPX"),
     "CEA": CaseSpec("CEA", "CEA"),
     "MER": CaseSpec("MER", "MER"),
+    "CAR": CaseSpec("CAR", "CAR"),
+    "SFL": CaseSpec("SFL", "SFL"),
     "TAN_SIP": CaseSpec("TAN_SIP", "TAN", sip=True),
     "TPV": CaseSpec("TPV", "TPV", tpv=True),
 }
@@ -425,7 +430,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cases",
         type=str,
-        default="TAN,SIN,ARC,AIT,MOL,HPX,CEA,MER,TAN_SIP,TPV",
+        default="TAN,SIN,ARC,ZEA,STG,ZPN,AIT,MOL,HPX,CEA,MER,CAR,SFL,TAN_SIP,TPV",
         help=f"Comma-separated case names. Available: {','.join(CASES.keys())}",
     )
     parser.add_argument(

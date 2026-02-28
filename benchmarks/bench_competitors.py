@@ -45,6 +45,17 @@ def _time_one(fn) -> float:
     return time.perf_counter() - t0
 
 
+def _time_many(fn, runs: int, warmup: int = 1) -> float:
+    for _ in range(max(0, warmup)):
+        fn()
+    samples: list[float] = []
+    for _ in range(max(1, runs)):
+        t0 = time.perf_counter()
+        fn()
+        samples.append(time.perf_counter() - t0)
+    return float(np.median(samples))
+
+
 def _angular_sep_deg(
     ra1: np.ndarray, dec1: np.ndarray, ra2: np.ndarray, dec2: np.ndarray
 ) -> np.ndarray:
@@ -59,7 +70,7 @@ def _angular_sep_deg(
 
 
 def _run_pyast(
-    header: dict[str, Any], x: np.ndarray, y: np.ndarray
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int
 ) -> tuple[float, np.ndarray, np.ndarray] | None:
     if not HAS_PYAST:
         return None
@@ -76,7 +87,7 @@ def _run_pyast(
             return None
 
         coords = np.stack([x, y])
-        dt = _time_one(lambda: w.tran(coords, True))
+        dt = _time_many(lambda: w.tran(coords, True), runs=runs)
         out = w.tran(coords, True)
         # PyAST returns radians for celestial outputs.
         ra = np.rad2deg(out[0]) % 360.0
@@ -87,7 +98,7 @@ def _run_pyast(
 
 
 def _run_kapteyn(
-    header: dict[str, Any], x: np.ndarray, y: np.ndarray
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int
 ) -> tuple[float, np.ndarray, np.ndarray] | None:
     if not HAS_KAPTEYN:
         return None
@@ -101,7 +112,7 @@ def _run_kapteyn(
         proj = kwcs.Projection(wh)
         coords = np.stack([x, y], axis=-1)
 
-        dt = _time_one(lambda: proj.toworld(coords))
+        dt = _time_many(lambda: proj.toworld(coords), runs=runs)
         out = proj.toworld(coords)
         return dt, out[:, 0], out[:, 1]
     except Exception:
@@ -109,7 +120,12 @@ def _run_kapteyn(
 
 
 def run_case(
-    case_name: str, n_points: int, origin: int, seed: int, profile: str
+    case_name: str,
+    n_points: int,
+    origin: int,
+    seed: int,
+    profile: str,
+    runs: int = 5,
 ) -> dict[str, Any]:
     case = CASES[case_name]
     header = _make_header(case)
@@ -121,13 +137,13 @@ def run_case(
     awcs = AstropyWCS(header)
     twcs = TorchWCS(header_dict)
 
-    ast_dt = _time_one(lambda: awcs.all_pix2world(x, y, origin))
+    ast_dt = _time_many(lambda: awcs.all_pix2world(x, y, origin), runs=runs)
     ra_ast, dec_ast = awcs.all_pix2world(x, y, origin)
 
     x_t = torch.from_numpy(x)
     y_t = torch.from_numpy(y)
 
-    torch_dt = _time_one(lambda: twcs.pixel_to_world(x_t, y_t, origin=origin))
+    torch_dt = _time_many(lambda: twcs.pixel_to_world(x_t, y_t, origin=origin), runs=runs)
     ra_t, dec_t = twcs.pixel_to_world(x_t, y_t, origin=origin)
 
     ra_t_np = ra_t.detach().cpu().numpy()
@@ -158,7 +174,7 @@ def run_case(
         ),
     }
 
-    pyast = _run_pyast(header_dict, x, y)
+    pyast = _run_pyast(header_dict, x, y, runs=runs)
     if pyast is not None:
         pyast_dt, ra_p, dec_p = pyast
         valid_p = valid & np.isfinite(ra_p) & np.isfinite(dec_p)
@@ -177,7 +193,7 @@ def run_case(
         result["pyast_speedup"] = float("nan")
         result["pyast_max_angular_error_arcsec"] = float("nan")
 
-    kapteyn = _run_kapteyn(header_dict, x, y)
+    kapteyn = _run_kapteyn(header_dict, x, y, runs=runs)
     if kapteyn is not None:
         kap_dt, ra_k, dec_k = kapteyn
         valid_k = valid & np.isfinite(ra_k) & np.isfinite(dec_k)
@@ -247,6 +263,7 @@ def parse_args() -> argparse.Namespace:
         default="mixed",
         help="Pixel sampling profile: interior, boundary, or mixed",
     )
+    parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--json-out", type=Path, default=None)
     return parser.parse_args()
 
@@ -259,7 +276,14 @@ def main() -> int:
         raise ValueError(f"Unknown cases: {', '.join(unknown)}")
 
     results = [
-        run_case(name, args.n_points, args.origin, args.seed + i, args.sample_profile)
+        run_case(
+            name,
+            args.n_points,
+            args.origin,
+            args.seed + i,
+            args.sample_profile,
+            runs=args.runs,
+        )
         for i, name in enumerate(names)
     ]
 

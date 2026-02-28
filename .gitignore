@@ -39,6 +39,8 @@ data_wcs_examples/
 benchmark_full_output.txt
 benchmark_results/
 benchmark_results_*/
+benchmarks_results/
+benchmarks_results_*/
 bench_results/
 benchmark_results_*/
 benchmarks/benchmark_results/

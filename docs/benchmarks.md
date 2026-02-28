@@ -6,7 +6,12 @@ This page documents the benchmark methodology. The snapshot tables below reflect
 
 | Script | Description |
 |--------|-------------|
-| `bench_all.py` | Exhaustive suite across image/table/compression/WCS/cutout/random-extension paths. |
+| `bench_all.py` | 4-domain orchestrator: FITS I/O, FITS Table I/O, WCS, Sphere. |
+| `bench_fits_io.py` | Authoritative FITS image-domain runner (1D/2D/3D, dtype/size/compression/scaled, MEFs, cutouts, headers). |
+| `bench_fitstable_io.py` | Authoritative FITS table-domain runner (row scales, schema mixes, varlen, projection/slice/filter/scan). |
+| `bench_wcs_suite.py` | Authoritative WCS projection sweep runner with forward+inverse and `N={1k..10M}` tiers. |
+| `bench_sphere_suite.py` | Authoritative sphere-domain runner aggregating geometry/advanced/sparse/spectral/polygon/core benches. |
+| `bench_legacy_all.py` | Legacy monolithic exhaustive harness (opt-in only, no longer default contract). |
 | `bench_sentinel.py` | Fast 10-case gate with early-stop significance checks for optimization loops. |
 | `bench_ml_loader.py` | End-to-end DataLoader throughput benchmark (uncompressed + compressed). |
 | `bench_fast.py` | Fast regression loop for image-path changes. |
@@ -28,8 +33,27 @@ This page documents the benchmark methodology. The snapshot tables below reflect
 ## Standard Commands
 
 ```bash
-# Exhaustive release-style run (can exceed 1 hour)
-pixi run python benchmarks/bench_all.py --profile user --include-tables --output-dir bench_results/<run_id>
+# Contract run (all four domains)
+pixi run bench-all
+
+# Exact scope aliases
+pixi run bench-fits       # == pixi run bench-all -- --fits-only
+pixi run bench-fitstable  # == pixi run bench-all -- --fitstable-only
+pixi run bench-wcs        # == pixi run bench-all -- --wcs-only
+pixi run bench-sphere     # == pixi run bench-all -- --sphere-only
+
+# Direct CLI (equivalent)
+pixi run python benchmarks/bench_all.py --scope all
+pixi run python benchmarks/bench_all.py --fits-only
+pixi run python benchmarks/bench_all.py --fitstable-only
+pixi run python benchmarks/bench_all.py --wcs-only
+pixi run python benchmarks/bench_all.py --sphere-only
+
+# Output contract
+# benchmarks_results/<run_id>/
+#   - results.csv
+#   - torchfits_deficits.csv
+#   - summary.md
 
 # Fast optimization gate (10 diverse cases, early-stop enabled)
 pixi run python benchmarks/bench_sentinel.py --initial-repeats 3 --full-repeats 9 --seed 123

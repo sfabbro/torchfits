@@ -66,30 +66,34 @@ twine = ">=5.0"
 # Development tasks
 dev = "pip install -e . --no-build-isolation"
 build = "pixi build"
-test = "pytest tests/"
+test = "KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
 lint = "ruff check . && ruff format ."
 verify = "pixi exec python verify_setup.py"
 release-manual = "twine upload release_0.2.1/*"
 
 # Core benchmarks (essential)
 # Core benchmarks (essential)
-bench = "pixi run -e bench python benchmarks/bench_all.py --output-dir benchmark_results --include-tables"
+bench = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-fits = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --fits-only"
+bench-fitstable = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
+bench-wcs = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --wcs-only"
+bench-sphere = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --sphere-only"
 bench-fast = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv"
 bench-fast-stable = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3"
 bench-core = "pixi run -e bench python benchmarks/bench_fast.py"
-bench-table = "pixi run -e bench python benchmarks/bench_table.py"
+bench-table = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
 bench-table-arrow = "pixi run -e bench python benchmarks/bench_arrow_tables.py"
 bench-table-arrow-diverse = "pixi run -e bench python benchmarks/bench_arrow_tables_diverse.py"
 bench-ml-loader = "pixi run -e bench python benchmarks/bench_ml_loader.py"
-bench-wcs-legacy = "pixi run -e bench-legacy python benchmarks/bench_all.py --wcs-only"
+bench-wcs-legacy = "pixi run -e bench-legacy python benchmarks/bench_all.py --profile user --wcs-only --legacy-wcs"
 
 # Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "pixi run -e bench-all python benchmarks/bench_all.py --profile user"
-bench-all-keep = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --no-cleanup"
+bench-all = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-all-keep = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all --keep-temp"
 
 # Comprehensive benchmark runner
-bench-all-runner = "pixi run -e bench-all python benchmarks/bench_all.py --profile user"
-bench-all-force = "pixi run -e bench-all python benchmarks/bench_all.py --profile lab"
+bench-all-runner = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-all-force = "pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
 bench-transforms = "pixi run -e bench python benchmarks/bench_transforms.py"
 bench-buffer = "pixi run -e bench python benchmarks/bench_buffer.py"
 bench-cache = "pixi run -e bench python benchmarks/bench_cache.py"
