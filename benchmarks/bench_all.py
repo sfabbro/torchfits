@@ -370,7 +370,7 @@ def main() -> int:
                     include_legacy=args.legacy_wcs,
                 )
             )
-            use_legacy_bridge = (scope == "wcs") and (not args.no_legacy_wcs_bridge)
+            use_legacy_bridge = (not args.no_legacy_wcs_bridge)
             if use_legacy_bridge:
                 print("[bench-all][wcs] running cross-env legacy bridge (bench-legacy)...", flush=True)
                 bridge_rows, bridge_err = _run_wcs_legacy_bridge(
