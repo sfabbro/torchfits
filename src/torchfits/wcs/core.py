@@ -691,6 +691,7 @@ class WCS:
         use_fused = (
             _cpp is not None
             and hasattr(_cpp, "wcs_pixel_to_world_fused_cpu")
+            and not getattr(self, "_disable_fused_pixel_to_world", False)
             and self.sip is None
             and not self._is_tnx
             and not self._is_zpx
@@ -723,41 +724,47 @@ class WCS:
                 nx, ny, nz = self._north_x, self._north_y, self._north_z
                 rx, ry, rz = self._radial_x, self._radial_y, self._radial_z
 
-            _cpp.wcs_pixel_to_world_fused_cpu(
-                (x_flat + (1.0 - origin)).contiguous(),
-                (y_flat + (1.0 - origin)).contiguous(),
-                ra,
-                dec,
-                self._crpix0,
-                self._crpix1,
-                self._cd00,
-                self._cd01,
-                self._cd10,
-                self._cd11,
-                self._fused_proj_code,
-                self._fused_pv2_1,
-                self._hpx_h,
-                self._hpx_k,
-                ex,
-                ey,
-                nx,
-                ny,
-                nz,
-                rx,
-                ry,
-                rz,
-                self._ra_p_rad,
-                self._dec_p_rad,
-                self._phi_p_rad,
-                self._native_type,
-                self.alpha0,
-                self.delta0,
-                self._is_tpv,
-                self._fused_tpv_idx1,
-                self._fused_tpv_c1,
-                self._fused_tpv_idx2,
-                self._fused_tpv_c2,
-            )
+            try:
+                _cpp.wcs_pixel_to_world_fused_cpu(
+                    (x_flat + (1.0 - origin)).contiguous(),
+                    (y_flat + (1.0 - origin)).contiguous(),
+                    ra,
+                    dec,
+                    self._crpix0,
+                    self._crpix1,
+                    self._cd00,
+                    self._cd01,
+                    self._cd10,
+                    self._cd11,
+                    self._fused_proj_code,
+                    self._fused_pv2_1,
+                    self._hpx_h,
+                    self._hpx_k,
+                    ex,
+                    ey,
+                    nx,
+                    ny,
+                    nz,
+                    rx,
+                    ry,
+                    rz,
+                    self._ra_p_rad,
+                    self._dec_p_rad,
+                    self._phi_p_rad,
+                    self._native_type,
+                    self.alpha0,
+                    self.delta0,
+                    self._is_tpv,
+                    self._fused_tpv_idx1,
+                    self._fused_tpv_c1,
+                    self._fused_tpv_idx2,
+                    self._fused_tpv_c2,
+                )
+            except TypeError:
+                # C++ extension can be stale relative to Python bindings in editable
+                # workflows. Disable this fused path and fall back safely.
+                self._disable_fused_pixel_to_world = True
+                return self._pixel_to_world_2d_core(x, y, float(origin))
             return ra.reshape(x.shape), dec.reshape(x.shape)
 
         return self._pixel_to_world_2d_core(x, y, float(origin))
@@ -1055,11 +1062,13 @@ class WCS:
         use_fused = (
             _cpp is not None
             and hasattr(_cpp, "wcs_world_to_pixel_fused_cpu")
+            and not getattr(self, "_disable_fused_world_to_pixel", False)
             and device_ok
             and dtype_ok
             and self.sip is None
             and not self._is_tnx
             and not self._is_zpx
+            and (not self._is_tpv or not self.tpv._invert_trace_enabled)
             and (
                 self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "TPV")
                 or (self._is_tpv and self._proj_code == "TAN")
@@ -1086,41 +1095,47 @@ class WCS:
                 nx, ny, nz = self._north_x, self._north_y, self._north_z
                 rx, ry, rz = self._radial_x, self._radial_y, self._radial_z
 
-            _cpp.wcs_world_to_pixel_fused_cpu(
-                ra_flat.contiguous(),
-                dec_flat.contiguous(),
-                px,
-                py,
-                self._crpix0,
-                self._crpix1,
-                self._cdi00,
-                self._cdi01,
-                self._cdi10,
-                self._cdi11,
-                self._fused_proj_code,
-                self._fused_pv2_1,
-                self._hpx_h,
-                self._hpx_k,
-                ex,
-                ey,
-                nx,
-                ny,
-                nz,
-                rx,
-                ry,
-                rz,
-                self._ra_p_rad,
-                self._dec_p_rad,
-                self._phi_p_rad,
-                self._native_type,
-                self.alpha0,
-                self.delta0,
-                self._is_tpv,
-                self._fused_tpv_idx1,
-                self._fused_tpv_c1,
-                self._fused_tpv_idx2,
-                self._fused_tpv_c2,
-            )
+            try:
+                _cpp.wcs_world_to_pixel_fused_cpu(
+                    ra_flat.contiguous(),
+                    dec_flat.contiguous(),
+                    px,
+                    py,
+                    self._crpix0,
+                    self._crpix1,
+                    self._cdi00,
+                    self._cdi01,
+                    self._cdi10,
+                    self._cdi11,
+                    self._fused_proj_code,
+                    self._fused_pv2_1,
+                    self._hpx_h,
+                    self._hpx_k,
+                    ex,
+                    ey,
+                    nx,
+                    ny,
+                    nz,
+                    rx,
+                    ry,
+                    rz,
+                    self._ra_p_rad,
+                    self._dec_p_rad,
+                    self._phi_p_rad,
+                    self._native_type,
+                    self.alpha0,
+                    self.delta0,
+                    self._is_tpv,
+                    self._fused_tpv_idx1,
+                    self._fused_tpv_c1,
+                    self._fused_tpv_idx2,
+                    self._fused_tpv_c2,
+                )
+            except TypeError:
+                # C++ extension can be stale relative to Python bindings in editable
+                # workflows. Disable this fused path and fall back safely.
+                self._disable_fused_world_to_pixel = True
+                return self._world_to_pixel_2d_core(ra, dec, float(origin))
             px = px.reshape(shape)
             py = py.reshape(shape)
             if origin == 1:
