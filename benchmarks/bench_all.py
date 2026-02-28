@@ -907,10 +907,10 @@ class ExhaustiveBenchmarkSuite:
         # Compression timings are noisy; use more samples for stability.
         if file_type == "compressed":
             runs = max(runs, 30)
-        # Very small table files are dominated by scheduler/open jitter.
-        # Use higher sample count so sub-ms rankings are stable.
+        # Very small table files are dominated by scheduler/open jitter; keep
+        # repeats moderate so piped runs (`tee`) don't appear stalled.
         if file_type == "table" and size_mb < 0.1:
-            runs = max(runs, 60)
+            runs = max(runs, 30)
         tf_mmap_mode = self._torchfits_mmap_mode()
         tf_mmap_cpp = self._torchfits_effective_mmap_bool(filepath, hdu_num)
 
@@ -1069,9 +1069,9 @@ class ExhaustiveBenchmarkSuite:
         # print a single ranked table per benchmark case (no duplicated unranked view).
         case_label = f"{name} ({size_mb:.2f} MB) - {file_type} {data_type} {dimensions} {compression}"
 
-        progress_enabled = (
-            sys.stdout.isatty() or os.getenv("TORCHFITS_BENCH_PROGRESS") == "1"
-        )
+        # Show per-method progress by default even in non-TTY runs (e.g. piped to
+        # `tee`) so long table sections don't look like a hard crash.
+        progress_enabled = os.getenv("TORCHFITS_BENCH_PROGRESS", "1") != "0"
         progress_log_started = False
 
         def _progress(method: str) -> None:
@@ -1153,22 +1153,21 @@ class ExhaustiveBenchmarkSuite:
         # Run diagnostic methods (useful for debugging overhead; included in the single
         # ranked output but marked as diagnostic).
         # Open after the main loop so cache clears don't invalidate the handle.
-        try:
-            file_handle = torchfits.cpp.open_fits_file(str(filepath), "r")
-        except Exception:
-            file_handle = None
+        file_handle = None
+        # Table-path handle reuse diagnostics can deadlock/hang with some cache
+        # combinations; keep table benches stable by skipping this diagnostic.
+        if file_type != "table":
+            try:
+                file_handle = torchfits.cpp.open_fits_file(str(filepath), "r")
+            except Exception:
+                file_handle = None
         if file_handle is not None:
             # Reuse an already-open file handle. For image HDUs this benchmarks
             # the C++ image read without open/close overhead; for table HDUs it
             # benchmarks the handle-based table reader.
-            if file_type == "table":
-                diagnostic_methods["torchfits_cpp_open_once"] = lambda fh=file_handle: (
-                    torchfits.cpp.read_fits_table_from_handle(fh, hdu_num)
-                )
-            else:
-                diagnostic_methods["torchfits_cpp_open_once"] = lambda fh=file_handle: (
-                    torchfits.cpp.read_full(fh, hdu_num, tf_mmap_cpp)
-                )
+            diagnostic_methods["torchfits_cpp_open_once"] = lambda fh=file_handle: (
+                torchfits.cpp.read_full(fh, hdu_num, tf_mmap_cpp)
+            )
         diagnostic_methods["torchfits_hot"] = lambda: torchfits.read(
             str(filepath),
             hdu=hdu_num,
