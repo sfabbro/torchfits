@@ -1,6 +1,13 @@
 import torch
 from torch import Tensor
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+
+try:
+    from torch.func import vmap, jacrev
+except ImportError:
+    # Fallback for very old torch versions if needed, though we assume modern torch
+    vmap = None
+    jacrev = None
 
 
 class SIP:
@@ -142,6 +149,39 @@ class SIP:
         q = pack["q"].to(out_like.device)
         vals = u_stack.index_select(0, p) * v_stack.index_select(0, q)
         return (vals * c[:, None]).sum(dim=0)
+
+    def _distort_scalar(self, uv: Tensor) -> Tensor:
+        """
+        Distort a single (u, v) point. uv shape [2].
+        Returns [2].
+        Used by vmap and jacrev.
+        """
+        u, v = uv[0], uv[1]
+        
+        # Build powers manually for scalar
+        max_order = max(self.a_order, self.b_order)
+        up = torch.pow(u, torch.arange(max_order + 1, device=uv.device, dtype=uv.dtype))
+        vp = torch.pow(v, torch.arange(max_order + 1, device=uv.device, dtype=uv.dtype))
+        
+        # Evaluation
+        def eval_poly_scalar(pq, c):
+            if c.numel() == 0:
+                return torch.tensor(0.0, device=uv.device, dtype=uv.dtype)
+            p = pq[:, 0]
+            q = pq[:, 1]
+            basis = up[p] * vp[q]
+            return torch.dot(c.to(uv.dtype), basis)
+            
+        f_uv = eval_poly_scalar(self._a_pq, self._a_c)
+        g_uv = eval_poly_scalar(self._b_pq, self._b_c)
+        
+        return uv + torch.stack([f_uv, g_uv])
+
+    def distort_vmap(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+        """Apply distortion using torch.func.vmap (JAX-style)."""
+        uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1) # [N, 2]
+        out = vmap(self._distort_scalar)(uv) # [N, 2]
+        return out[:, 0].reshape(u.shape), out[:, 1].reshape(v.shape)
 
     def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         """
@@ -318,65 +358,50 @@ class SIP:
     ) -> "tuple[Tensor, Tensor]":
         """
         Invert SIP forward distortion map (u, v) -> distort(u, v).
-
-        Uses AP/BP inverse coefficients when available, otherwise a vectorized
-        Newton solve on the SIP polynomial only (much cheaper than full WCS Newton).
+        Uses a vectorized Newton solver with manual Jacobian for high performance.
         """
-        if u_dist.numel() == 0:
+        if u_dist.numel() == 0 or not self.has_forward:
             return u_dist, v_dist
-        if not self.has_forward:
-            return u_dist, v_dist
+
+        u_f = u_dist.reshape(-1)
+        v_f = v_dist.reshape(-1)
+
+        # Initial guess from inverse coefficients if available
         if self.has_inverse:
-            return self.undistort(u_dist, v_dist)
+            u_curr, v_curr = self.undistort(u_f, v_f)
+        else:
+            u_curr, v_curr = u_f.clone(), v_f.clone()
 
-        x = u_dist.clone()
-        y = v_dist.clone()
-        active_idx = None
-        tol2 = tol * tol
+        # Vectorized Newton iteration: x = x - inv(J) * f(x)
+        # where f(x) = distort(x) - target_dist
         for _ in range(max_iter):
-            if active_idx is None:
-                x_a = x
-                y_a = y
-                u_t_a = u_dist
-                v_t_a = v_dist
-            else:
-                if active_idx.numel() == 0:
-                    break
-                x_a = x[active_idx]
-                y_a = y[active_idx]
-                u_t_a = u_dist[active_idx]
-                v_t_a = v_dist[active_idx]
+            # Compute current forward map and its Jacobian at guess (u_curr, v_curr)
+            xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv = self._forward_and_jacobian(
+                u_curr, v_curr
+            )
 
-            xd, yd, j11, j12, j21, j22 = self._forward_and_jacobian(x_a, y_a)
-            rx = xd - u_t_a
-            ry = yd - v_t_a
+            # Residuals
+            du_res = xd - u_f
+            dv_res = yd - v_f
 
-            dist2 = rx * rx + ry * ry
-            keep_active = dist2 >= tol2
-            if not torch.any(keep_active):
+            # Check convergence
+            if torch.all(du_res.abs() < tol) and torch.all(dv_res.abs() < tol):
                 break
 
-            det = j11 * j22 - j12 * j21
-            det_sign = torch.where(det >= 0, 1.0, -1.0).to(det.dtype)
-            det = torch.where(torch.abs(det) < 1e-15, det_sign * 1e-15, det)
+            # Solve linear system J * [du, dv]^T = [du_res, dv_res]^T
+            # [ dxd_du  dxd_dv ] [ du ] = [ du_res ]
+            # [ dyd_du  dyd_dv ] [ dv ]   [ dv_res ]
+            det = dxd_du * dyd_dv - dxd_dv * dyd_du
 
-            dx = -(j22 * rx - j12 * ry) / det
-            dy = -(-j21 * rx + j11 * ry) / det
-            dx = torch.clamp(dx, -256.0, 256.0)
-            dy = torch.clamp(dy, -256.0, 256.0)
-            if active_idx is None:
-                x_next = x_a + dx
-                y_next = y_a + dy
-                if bool(torch.all(keep_active)):
-                    x = x_next
-                    y = y_next
-                else:
-                    x = x_next
-                    y = y_next
-                    active_idx = torch.nonzero(keep_active, as_tuple=False).squeeze(1)
-            else:
-                x[active_idx] = x_a + dx
-                y[active_idx] = y_a + dy
-                active_idx = active_idx[keep_active]
+            # Avoid division by zero
+            det_sign = torch.sign(det)
+            det_sign = torch.where(det_sign == 0, torch.ones_like(det_sign), det_sign)
+            det = torch.where(det.abs() < 1e-15, det_sign * 1e-15, det)
 
-        return x, y
+            du_step = (dyd_dv * du_res - dxd_dv * dv_res) / det
+            dv_step = (-dyd_du * du_res + dxd_du * dv_res) / det
+
+            u_curr = u_curr - du_step
+            v_curr = v_curr - dv_step
+
+        return u_curr.reshape(u_dist.shape), v_curr.reshape(v_dist.shape)

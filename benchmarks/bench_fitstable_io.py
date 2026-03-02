@@ -445,19 +445,17 @@ def _fitsio_scan_count(path: Path, *, col: str):
 def _torchfits_filter_pushdown(path: Path, *, col: str, mmap: bool, has_pyarrow: bool):
     if not has_pyarrow:
         raise RuntimeError("pyarrow not available for scanner filter")
-    import pyarrow.dataset as ds
+    import torchfits.table
 
-    sc = torchfits.table.scanner(
+    # Use the high-level read API which chooses the best path (C++ pushdown or local)
+    res = torchfits.table.read(
         str(path),
+        hdu=1,
         columns=[col],
-        filter=ds.field(col) > 0,
+        where=f"{col} > 0",
         mmap=mmap,
-        batch_size=65536,
     )
-    rows = 0
-    for batch in sc.to_batches():
-        rows += batch.num_rows
-    return rows
+    return len(res)
 
 
 def _torchfits_filter_local(path: Path, *, col: str, mmap: bool):

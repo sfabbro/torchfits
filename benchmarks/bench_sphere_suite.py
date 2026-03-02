@@ -57,6 +57,13 @@ def _seconds_from_mpts(mpts: float | None, n_points: int) -> float | None:
     return float(n_points) / (mpts * 1.0e6)
 
 
+def _canonical_sphere_method(*, library: str, method: str) -> str:
+    # Keep torchfits rows consistently labeled across sphere suites.
+    if library == "torchfits" or method.startswith("torch"):
+        return "torchfits"
+    return method
+
+
 def _row(
     *,
     run_id: str,
@@ -354,7 +361,7 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                     operation="map2alm_spin",
                     family="specialized",
                     library="torchfits",
-                    method="torch",
+                    method="torchfits",
                     mode="specialized",
                     status="FAILED",
                     skip_reason=reason_spec,
@@ -395,7 +402,7 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         operation="map2alm_spin",
                         family="specialized",
                         library="torchfits",
-                        method="torch",
+                        method="torchfits",
                         mode="specialized",
                         status="FAILED",
                         skip_reason="missing_torch_map2alm_spin_row",
@@ -419,7 +426,10 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         operation="map2alm_spin",
                         family="specialized",
                         library="torchfits",
-                        method=str(tf_row.get("backend", "torch")),
+                        method=_canonical_sphere_method(
+                            library="torchfits",
+                            method=str(tf_row.get("backend", "torchfits")),
+                        ),
                         mode="specialized",
                         status="OK" if tf_t is not None else "FAILED",
                         skip_reason="",
@@ -931,7 +941,7 @@ def run_sphere_domain(
                     operation=op,
                     family="specialized",
                     library=lib,
-                    method=backend,
+                    method=_canonical_sphere_method(library=lib, method=backend),
                     mode="specialized",
                     status="OK" if t is not None else "FAILED",
                     skip_reason="",

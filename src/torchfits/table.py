@@ -11,7 +11,6 @@ import re
 import threading
 from typing import Any, Optional
 
-import numpy as np
 import torch
 
 _TABLE_IO_KEYS = {
@@ -51,6 +50,8 @@ _handle_cache_lock = threading.Lock()
 _handle_cache: "OrderedDict[str, Any]" = OrderedDict()
 _reader_cache_lock = threading.Lock()
 _reader_cache: "OrderedDict[tuple[str, int], Any]" = OrderedDict()
+_VLA_DTYPE_MAP: dict[str, Any] = {}
+_COMPLEX_DTYPE_MAP: dict[str, Any] = {}
 
 
 def _close_cpp_handle(handle: Any) -> None:
@@ -145,6 +146,7 @@ def _require_pyarrow():
 
 
 def _arrow_column_to_python(pa, column, name: str) -> Any:
+    import numpy as np
     if isinstance(column, pa.ChunkedArray):
         column = column.combine_chunks()
 
@@ -218,6 +220,23 @@ def _default_table_column_values(
     num_rows: int,
     tnull: Any = None,
 ):
+    import numpy as np
+    global _VLA_DTYPE_MAP, _COMPLEX_DTYPE_MAP
+    if not _VLA_DTYPE_MAP:
+        _VLA_DTYPE_MAP = {
+            "L": np.bool_,
+            "B": np.uint8,
+            "I": np.int16,
+            "J": np.int32,
+            "K": np.int64,
+            "E": np.float32,
+            "D": np.float64,
+            "C": np.complex64,
+            "M": np.complex128,
+        }
+    if not _COMPLEX_DTYPE_MAP:
+        _COMPLEX_DTYPE_MAP = {"C": np.complex64, "M": np.complex128}
+
     is_vla, code, repeat = _parse_tform(tform)
     if repeat <= 0:
         repeat = 1
@@ -283,6 +302,7 @@ def _normalize_mutation_rows(
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
     complex_codes: dict[str, str] = {}
+    _COMPLEX_DTYPE_MAP = {"C": "complex64", "M": "complex128"}
     for col_name in columns:
         tform = tform_map.get(col_name, "")
         if not tform:
@@ -378,6 +398,7 @@ def _normalize_mutation_rows(
 
 
 def _read_table_for_rewrite(path: str, hdu: int, columns: list[str]) -> dict[str, Any]:
+    import numpy as np
     import torchfits
 
     with torchfits.open(path) as hdul:
@@ -417,6 +438,7 @@ def _read_table_for_rewrite(path: str, hdu: int, columns: list[str]) -> dict[str
 
 
 def _merge_insert_column(existing: Any, inserted: Any, row: int) -> Any:
+    import numpy as np
     if isinstance(existing, list):
         if isinstance(inserted, list):
             values = inserted
@@ -437,6 +459,7 @@ def _merge_insert_column(existing: Any, inserted: Any, row: int) -> Any:
 
 
 def _delete_column_rows(existing: Any, start0: int, num_rows: int) -> Any:
+    import numpy as np
     if isinstance(existing, list):
         return list(existing[:start0]) + list(existing[start0 + num_rows :])
 
@@ -853,7 +876,8 @@ def _compile_where_to_simple_predicates(
     return predicates
 
 
-def _where_mask_for_table(table, where: str, parsed_ast=None) -> np.ndarray:
+def _where_mask_for_table(table, where: str, parsed_ast=None) -> "np.ndarray":
+    import numpy as np
     pa = _require_pyarrow()
     import pyarrow.compute as pc
 
@@ -985,6 +1009,7 @@ def _resolve_rows_from_where_cpp(
     mmap: bool,
     apply_fits_nulls: bool,
 ) -> Optional[list[int]]:
+    import numpy as np
     where_ast = _parse_where_expression(where)
     where_columns = _where_columns_from_ast(where_ast)
     predicate_table = _read_cpp_numpy_table(
@@ -1021,7 +1046,8 @@ def _split_io_kwargs(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, 
     return io_kwargs, other_kwargs
 
 
-def _coerce_null_sentinel(value: np.ndarray, sentinel: Any) -> Any:
+def _coerce_null_sentinel(value: "np.ndarray", sentinel: Any) -> Any:
+    import numpy as np
     if sentinel is None:
         return None
     arr = np.ascontiguousarray(value)
@@ -1065,7 +1091,8 @@ def _tensor_to_arrow_array(
     )
 
 
-def _uint8_matrix_to_fixed_binary(pa, value: np.ndarray):
+def _uint8_matrix_to_fixed_binary(pa, value: "np.ndarray"):
+    import numpy as np
     arr = np.ascontiguousarray(value)
     if arr.ndim != 2:
         return _pa_array(pa, arr)
@@ -1076,7 +1103,8 @@ def _uint8_matrix_to_fixed_binary(pa, value: np.ndarray):
     return _pa_array(pa, byte_view, type=pa.binary(width))
 
 
-def _decode_uint8_matrix_to_arrow(pa, value: np.ndarray, encoding: str, strip: bool):
+def _decode_uint8_matrix_to_arrow(pa, value: "np.ndarray", encoding: str, strip: bool):
+    import numpy as np
     arr = np.ascontiguousarray(value)
     if arr.ndim != 2:
         return _pa_array(pa, arr)
@@ -1107,12 +1135,13 @@ def _decode_uint8_matrix_to_arrow(pa, value: np.ndarray, encoding: str, strip: b
 
 def _numpy_to_arrow_array(
     pa,
-    value: np.ndarray,
+    value: "np.ndarray",
     decode_bytes: bool,
     encoding: str,
     strip: bool,
     null_sentinel: Any = None,
 ):
+    import numpy as np
     arr = np.ascontiguousarray(value)
     if arr.ndim <= 1:
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
@@ -1143,14 +1172,16 @@ def _numpy_to_arrow_array(
 
 
 def _is_vla_tuple(value: Any) -> bool:
+    import numpy as np
     if not isinstance(value, tuple) or len(value) != 2:
         return False
     return isinstance(value[0], np.ndarray) and isinstance(value[1], np.ndarray)
 
 
 def _vla_tuple_to_arrow_array(
-    pa, value: tuple[np.ndarray, np.ndarray], null_sentinel: Any = None
+    pa, value: tuple[Any, Any], null_sentinel: Any = None
 ):
+    import numpy as np
     flat = np.ascontiguousarray(value[0]).reshape(-1)
     offsets64 = np.ascontiguousarray(value[1], dtype=np.int64).reshape(-1)
     if offsets64.size == 0:
@@ -1179,6 +1210,7 @@ def _chunk_to_record_batch(
     null_meta: Optional[dict[str, dict[str, str]]] = None,
     apply_fits_nulls: bool = False,
 ):
+    import numpy as np
     pa = _require_pyarrow()
 
     # Fast path when schema metadata is not requested.
@@ -1646,7 +1678,57 @@ def read(
             return single
 
     if where is not None:
-        # Try fast path: Predicate Pushdown
+        # Hybrid strategy: for small-to-medium tables, reading the full projected table 
+        # into Arrow and then filtering is often faster than the pushdown scanner 
+        # (which has higher per-batch overhead and IPC costs).
+        
+        # Check table size if possible
+        import torchfits
+        is_vla_table = False
+        try:
+            hdr = torchfits.get_header(path, hdu)
+            n_rows = int(hdr.get("NAXIS2", 0))
+            
+            # Detect if this is a VLA table (look for 'P' or 'Q' in TFORM keywords)
+            tfields = int(hdr.get("TFIELDS", 0))
+            for i in range(1, tfields + 1):
+                tform = str(hdr.get(f"TFORM{i}", "")).strip().upper()
+                if "P" in tform or "Q" in tform:
+                    is_vla_table = True
+                    break
+        except Exception:
+            n_rows = 1000001 # assume large if unsure
+
+        # Hybrid strategy: for small-to-medium tables, reading the full projected table 
+        # into Arrow and then filtering is often faster than the pushdown scanner 
+        # (which has higher per-batch overhead and IPC costs).
+        # Default threshold is 100,000 rows, but much lower for VLA tables.
+        default_threshold = 1000 if is_vla_table else 100000
+        threshold = int(os.environ.get("TORCHFITS_TABLE_SCANNER_THRESHOLD", str(default_threshold)))
+
+        # If it's a small table, or backend is forced to torch, avoid pushdown scanner
+        if n_rows <= threshold or backend == "torch":
+            base = read(
+                path,
+                hdu=hdu,
+                columns=columns,
+                row_slice=row_slice,
+                where=None,
+                batch_size=batch_size,
+                mmap=mmap,
+                decode_bytes=decode_bytes,
+                encoding=encoding,
+                strip=strip,
+                include_fits_metadata=include_fits_metadata,
+                apply_fits_nulls=apply_fits_nulls,
+                backend="torch" if backend == "auto" else backend,
+            )
+            mask = _where_mask_for_table(base, where)
+            if mask.size == 0:
+                return base.slice(0, 0)
+            return base.filter(_pa_array(pa, mask))
+
+        # For larger tables, try fast path: Predicate Pushdown (C++ scanner)
         import torchfits.cpp as cpp
 
         if hasattr(cpp, "read_fits_table_filtered"):
@@ -1794,6 +1876,7 @@ def _read_cpp_numpy_table(
     include_fits_metadata: bool,
     apply_fits_nulls: bool,
 ):
+    import numpy as np
     import torchfits.cpp as cpp
 
     has_numpy_row_api = hasattr(
@@ -2470,7 +2553,7 @@ def duckdb_query(
     return result
 
 
-def _infer_fits_scalar_code(arr: np.ndarray) -> str:
+def _infer_fits_scalar_code(arr: "np.ndarray") -> str:
     kind = arr.dtype.kind
     itemsize = arr.dtype.itemsize
     if kind == "b":
@@ -2494,7 +2577,8 @@ def _infer_fits_scalar_code(arr: np.ndarray) -> str:
     raise TypeError(f"Cannot infer FITS TFORM for dtype={arr.dtype}")
 
 
-def _infer_fits_format(arr: np.ndarray) -> str:
+def _infer_fits_format(arr: "np.ndarray") -> str:
+    import numpy as np
     if arr.ndim == 0:
         arr = arr.reshape(1)
 
@@ -2518,7 +2602,8 @@ def _infer_fits_format(arr: np.ndarray) -> str:
     return f"{repeat}{base}"
 
 
-def _prepare_array_for_column(arr: np.ndarray, fmt: str) -> np.ndarray:
+def _prepare_array_for_column(arr: "np.ndarray", fmt: str) -> "np.ndarray":
+    import numpy as np
     if arr.ndim == 0:
         return arr.reshape(1)
 
@@ -2803,6 +2888,7 @@ def _normalize_column_values_for_format(
     fmt: str,
     expected_rows: int,
 ) -> Any:
+    import numpy as np
     is_vla, code, repeat = _parse_tform(fmt)
     if repeat <= 0:
         repeat = 1
@@ -3164,7 +3250,11 @@ def _coerce_table_column_array(
     *,
     expected_rows: Optional[int] = None,
     allow_2d: bool = True,
-) -> np.ndarray:
+) -> "np.ndarray":
+    import numpy as np
+    global _COMPLEX_DTYPE_MAP
+    if not _COMPLEX_DTYPE_MAP:
+        _COMPLEX_DTYPE_MAP = {"C": np.complex64, "M": np.complex128}
     if isinstance(value, torch.Tensor):
         tensor = value.detach()
         if tensor.device.type != "cpu":
@@ -3210,6 +3300,7 @@ def _coerce_table_string_values(
     *,
     expected_rows: Optional[int] = None,
 ) -> list[str]:
+    import numpy as np
     if isinstance(value, (list, tuple)):
         values = list(value)
     elif isinstance(value, np.ndarray):
@@ -3235,29 +3326,25 @@ def _coerce_table_string_values(
     return out
 
 
-_VLA_DTYPE_MAP = {
-    "L": np.bool_,
-    "B": np.uint8,
-    "I": np.int16,
-    "J": np.int32,
-    "K": np.int64,
-    "E": np.float32,
-    "D": np.float64,
-}
-
-_COMPLEX_DTYPE_MAP = {
-    "C": np.complex64,
-    "M": np.complex128,
-}
-
-
 def _coerce_table_vla_values(
     name: str,
     value: Any,
     base_code: str,
     *,
     expected_rows: Optional[int] = None,
-) -> list[np.ndarray]:
+) -> "list[np.ndarray]":
+    import numpy as np
+    global _VLA_DTYPE_MAP
+    if not _VLA_DTYPE_MAP:
+        _VLA_DTYPE_MAP = {
+            "L": np.bool_,
+            "B": np.uint8,
+            "I": np.int16,
+            "J": np.int32,
+            "K": np.int64,
+            "E": np.float32,
+            "D": np.float64,
+        }
     code = base_code.upper()
     if code not in _VLA_DTYPE_MAP:
         raise TypeError(f"Column '{name}' VLA code '{code}' is not supported")
@@ -3303,7 +3390,14 @@ def _coerce_table_complex_values(
     *,
     expected_rows: Optional[int] = None,
     allow_2d: bool = True,
-) -> np.ndarray:
+) -> "np.ndarray":
+    import numpy as np
+    global _COMPLEX_DTYPE_MAP
+    if not _COMPLEX_DTYPE_MAP:
+        _COMPLEX_DTYPE_MAP = {
+            "C": np.complex64,
+            "M": np.complex128,
+        }
     base = code.upper()
     if base not in _COMPLEX_DTYPE_MAP:
         raise TypeError(f"Column '{name}' complex code '{base}' is not supported")
@@ -3519,6 +3613,9 @@ def update_rows(
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
     complex_codes: dict[str, str] = {}
+    global _COMPLEX_DTYPE_MAP
+    if not _COMPLEX_DTYPE_MAP:
+        _COMPLEX_DTYPE_MAP = {"C", "M"}
     for name, tform in tform_map.items():
         if not tform:
             continue

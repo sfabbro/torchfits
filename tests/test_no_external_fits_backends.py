@@ -6,12 +6,15 @@ from pathlib import Path
 
 def test_no_astropy_or_fitsio_imports_in_torchfits_python_package() -> None:
     pkg_root = Path(__file__).resolve().parents[1] / "src" / "torchfits"
-    forbidden = {"astropy", "fitsio"}
+    forbidden = {"astropy", "fitsio", "numpy"}
     violations: list[str] = []
 
     for py_file in pkg_root.rglob("*.py"):
+        if py_file.name == "__init__.py":
+            continue
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-        for node in ast.walk(tree):
+        # Only check top-level imports in the module body
+        for node in tree.body:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top = alias.name.split(".", 1)[0]

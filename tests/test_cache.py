@@ -200,7 +200,7 @@ class TestCaching:
             torchfits.clear_file_cache()
 
     def test_read_mmap_auto_defaults_to_false_for_compressed(self, monkeypatch):
-        """`mmap='auto' should default to non-mmap for compressed image HDUs."""
+        """In smart policy, `mmap='auto'` should disable mmap for compressed HDUs."""
         cpp = pytest.importorskip("torchfits.cpp")
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
@@ -242,6 +242,7 @@ class TestCaching:
             "synthetic_compressed.fits",
             hdu=1,
             mmap="auto",
+            policy="smart",
             cache_capacity=10,
             handle_cache_capacity=16,
         )
@@ -250,7 +251,7 @@ class TestCaching:
         assert observed == [False]
 
     def test_read_mmap_true_is_explicit_override(self, monkeypatch):
-        """`mmap=True` must stay enabled even for compressed-image metadata."""
+        """In smart policy, `mmap=True` must stay enabled for compressed metadata."""
         cpp = pytest.importorskip("torchfits.cpp")
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
@@ -292,6 +293,42 @@ class TestCaching:
             "synthetic_compressed.fits",
             hdu=1,
             mmap=True,
+            policy="smart",
+            cache_capacity=10,
+            handle_cache_capacity=16,
+        )
+
+        assert isinstance(out, torch.Tensor)
+        assert observed == [True]
+
+    def test_read_mmap_auto_default_policy_uses_direct_mmap(self, monkeypatch):
+        """Default policy should skip smart auto-mmap heuristics."""
+        cpp = pytest.importorskip("torchfits.cpp")
+
+        observed = []
+        monkeypatch.setattr(
+            cpp,
+            "read_full",
+            lambda path, hdu, use_mmap: (
+                observed.append(bool(use_mmap)),
+                torch.zeros((4, 4), dtype=torch.float32),
+            )[1],
+        )
+        if hasattr(cpp, "read_full_cached"):
+            monkeypatch.setattr(
+                cpp,
+                "read_full_cached",
+                lambda path, hdu, use_mmap: (
+                    observed.append(bool(use_mmap)),
+                    torch.zeros((4, 4), dtype=torch.float32),
+                )[1],
+            )
+
+        out = torchfits.read(
+            "synthetic_direct.fits",
+            hdu=1,
+            mmap="auto",
+            policy="default",
             cache_capacity=10,
             handle_cache_capacity=16,
         )

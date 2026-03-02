@@ -256,15 +256,17 @@ const int64_t kSharedMetaValidateIntervalNs = []() {
 
 std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::string& filename) {
     bool can_stat = kValidateSharedMeta && filename.find('[') == std::string::npos;
-    std::lock_guard<std::mutex> lock(g_shared_meta_mutex);
-    auto it = g_shared_meta.find(filename);
     std::shared_ptr<SharedReadMeta> meta;
-    if (it == g_shared_meta.end()) {
-        meta = std::make_shared<SharedReadMeta>();
-        meta->uid = g_shared_meta_uid.fetch_add(1, std::memory_order_relaxed);
-        g_shared_meta.emplace(filename, meta);
-    } else {
-        meta = it->second;
+    {
+        std::lock_guard<std::mutex> lock(g_shared_meta_mutex);
+        auto it = g_shared_meta.find(filename);
+        if (it == g_shared_meta.end()) {
+            meta = std::make_shared<SharedReadMeta>();
+            meta->uid = g_shared_meta_uid.fetch_add(1, std::memory_order_relaxed);
+            g_shared_meta.emplace(filename, meta);
+        } else {
+            meta = it->second;
+        }
     }
 
     if (!can_stat) {
@@ -272,6 +274,10 @@ std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::string& file
     }
 
     const int64_t now_ns = monotonic_now_ns();
+    
+    // Use the meta->mutex to protect all stat-related fields
+    std::lock_guard<std::mutex> meta_lock(meta->mutex);
+    
     if (kSharedMetaValidateIntervalNs > 0 && meta->last_stat_check_ns != 0 &&
         (now_ns - meta->last_stat_check_ns) < kSharedMetaValidateIntervalNs) {
         return meta;
@@ -279,12 +285,10 @@ std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::string& file
     meta->last_stat_check_ns = now_ns;
 
     struct stat st {};
-    bool has_stat = stat(filename.c_str(), &st) == 0;
-    if (has_stat) {
+    if (stat(filename.c_str(), &st) == 0) {
         int64_t cur_mtime_ns = mtime_ns_from_stat(st);
         if (!meta->has_stat || meta->size != st.st_size ||
             meta->mtime_ns != cur_mtime_ns || meta->inode != st.st_ino) {
-            std::lock_guard<std::mutex> meta_lock(meta->mutex);
             if (meta->raw_fd != -1) {
                 ::close(meta->raw_fd);
                 meta->raw_fd = -1;
@@ -1684,13 +1688,17 @@ public:
         std::vector<int64_t> shape = {height, width}; // Torch order (y, x)
         auto tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
 
-        long fpixel[2] = {x1 + 1, y1 + 1}; // FITS is 1-based
-        long lpixel[2] = {x2, y2};         // exclusive bounds -> inclusive in FITS
-        long inc[2] = {1, 1};
+        std::vector<long> fpixel(naxis, 1);
+        std::vector<long> lpixel(naxis, 1);
+        std::vector<long> inc(naxis, 1);
+        
+        fpixel[0] = x1 + 1; fpixel[1] = y1 + 1;
+        lpixel[0] = x2; lpixel[1] = y2;
+        
         int anynul = 0;
 
         fits_read_subset(
-            fptr_, datatype, fpixel, lpixel, inc, nullptr, tensor.data_ptr(), &anynul, &status
+            fptr_, datatype, fpixel.data(), lpixel.data(), inc.data(), nullptr, tensor.data_ptr(), &anynul, &status
         );
 
         if (status != 0) {

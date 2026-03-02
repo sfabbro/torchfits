@@ -3,6 +3,12 @@ from torch import Tensor
 from typing import Dict, Any, Tuple
 
 try:
+    from torch.func import vmap, jacrev
+except ImportError:
+    vmap = None
+    jacrev = None
+
+try:
     import torchfits.cpp as _cpp
 except Exception:  # pragma: no cover - optional fast path
     _cpp = None
@@ -43,6 +49,18 @@ class TPV:
 
         self._invert_trace_enabled = False
         self._last_invert_trace = None
+
+    def set_invert_trace(self, enabled: bool):
+        self._invert_trace_enabled = enabled
+
+    def get_last_invert_trace(self) -> Dict[str, Any] | None:
+        return self._last_invert_trace
+
+    def set_cpp_invert_max_points(self, n: int):
+        self._CPP_INVERT_MAX_POINTS = n
+
+    def _distort_and_jacobian(self, u: Tensor, v: Tensor):
+        return self._distort_and_jacobian_impl(u, v)
 
     def _build_power_map(self):
         mapping = {0: (0, 0, 0)}
@@ -132,6 +150,48 @@ class TPV:
         self.c1, self.c2 = self.c1.to(device), self.c2.to(device)
         return self
 
+    def _distort_scalar(self, uv: Tensor) -> Tensor:
+        """
+        Distort a single (u, v) point. uv shape [2].
+        Returns [2].
+        """
+        u, v = uv[0], uv[1]
+        r = torch.sqrt(u * u + v * v)
+        
+        # Polynomial powers [0..7]
+        up = torch.pow(u, torch.arange(8, device=uv.device, dtype=uv.dtype))
+        vp = torch.pow(v, torch.arange(8, device=uv.device, dtype=uv.dtype))
+        rp = torch.pow(r, torch.arange(8, device=uv.device, dtype=uv.dtype))
+        
+        def eval_axis(idx, c):
+            if c.numel() == 0:
+                return torch.tensor(0.0, device=uv.device, dtype=uv.dtype)
+            # idx is [N, 3] (px, py, pr)
+            basis = up[idx[:, 0]] * vp[idx[:, 1]] * rp[idx[:, 2]]
+            return torch.dot(c.to(uv.dtype), basis)
+            
+        xi = eval_axis(self.idx1, self.c1)
+        # Note: TPV axis 2 swaps U and V in the standard polynomial expansion logic
+        # but self.idx2/c2 already account for this or it's handled in eval_axis.
+        # Original code used yp[px] * xp[py] for axis 2.
+        # Let's match the original _distort_impl exactly.
+        
+        def eval_axis2(idx, c):
+            if c.numel() == 0:
+                return torch.tensor(0.0, device=uv.device, dtype=uv.dtype)
+            # Original: yp[px] * xp[py] * rp[pr]
+            basis = vp[idx[:, 0]] * up[idx[:, 1]] * rp[idx[:, 2]]
+            return torch.dot(c.to(uv.dtype), basis)
+            
+        eta = eval_axis2(self.idx2, self.c2)
+        return torch.stack([xi, eta])
+
+    def distort_vmap(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+        """Apply distortion using torch.func.vmap."""
+        uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1)
+        out = vmap(self._distort_scalar)(uv)
+        return out[:, 0].reshape(u.shape), out[:, 1].reshape(v.shape)
+
     def distort(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         if u.numel() == 0:
             return u, v
@@ -214,11 +274,13 @@ class TPV:
         return xi, eta, dxi_du, dxi_dv, deta_du, deta_dv
 
     def invert(
-        self, xi_t: Tensor, eta_t: Tensor, max_iter: int = 10, tol: float = 1e-11
+        self, xi_t: Tensor, eta_t: Tensor, max_iter: int = 20, tol: float = 1e-11
     ) -> Tuple[Tensor, Tensor]:
         if xi_t.numel() == 0:
             return xi_t, eta_t
-        if self._can_use_cpp_invert(xi_t, eta_t):
+            
+        # Use C++ path if requested and available
+        if self._can_use_cpp_invert(xi_t, eta_t) and not self._invert_trace_enabled:
             return _cpp.wcs_tpv_invert(
                 xi_t.contiguous(),
                 eta_t.contiguous(),
@@ -229,18 +291,57 @@ class TPV:
                 int(max_iter),
                 float(tol),
             )
-        u, v = self._initial_guess_affine(xi_t, eta_t)
-        tol2 = tol * tol
+            
+        # JAX-like vectorized Newton solver
+        shape = xi_t.shape
+        xi_f = xi_t.reshape(-1)
+        eta_f = eta_t.reshape(-1)
+        
+        u_curr, v_curr = self._initial_guess_affine(xi_f, eta_f)
+        
+        target = torch.stack([xi_f, eta_f], dim=1) # [N, 2]
+        x = torch.stack([u_curr, v_curr], dim=1) # [N, 2]
+        
+        jac_fn = vmap(jacrev(self._distort_scalar))
+        dist_fn = vmap(self._distort_scalar)
+        
+        active_counts = []
+        
+        # Fixed loop for compile-friendliness
         for _ in range(max_iter):
-            xi, eta, j11, j12, j21, j22 = self._distort_and_jacobian_impl(u, v)
-            rx, ry = xi - xi_t, eta - eta_t
-            if (rx * rx + ry * ry).max() < tol2:
+            fx = dist_fn(x) - target
+            
+            # Optional trace
+            if self._invert_trace_enabled:
+                res_norm = torch.norm(fx, dim=1)
+                active_counts.append(int((res_norm > tol).sum().item()))
+            
+            if not x.requires_grad and torch.all(torch.norm(fx, dim=1) < tol):
                 break
-            det = j11 * j22 - j12 * j21
+                
+            J = jac_fn(x)
+            det = J[:, 0, 0] * J[:, 1, 1] - J[:, 0, 1] * J[:, 1, 0]
             det = torch.where(det.abs() < 1e-18, torch.sign(det) * 1e-18, det)
-            u = u - (j22 * rx - j12 * ry) / det
-            v = v - (-j21 * rx + j11 * ry) / det
-        return u, v
+            
+            du = (J[:, 1, 1] * fx[:, 0] - J[:, 0, 1] * fx[:, 1]) / det
+            dv = (-J[:, 1, 0] * fx[:, 0] + J[:, 0, 0] * fx[:, 1]) / det
+            
+            # Clamp step to prevent divergence in extreme distortion
+            x = x - torch.stack([du.clamp(-1.0, 1.0), dv.clamp(-1.0, 1.0)], dim=1)
+            
+        if self._invert_trace_enabled:
+            n_points = xi_t.numel()
+            final_active = active_counts[-1] if active_counts else 0
+            self._last_invert_trace = {
+                "n_points": n_points,
+                "converged": n_points - final_active,
+                "final_active": final_active,
+                "active_counts": active_counts,
+                "iterations": len(active_counts),
+                "backend": "torch.func"
+            }
+            
+        return x[:, 0].reshape(shape), x[:, 1].reshape(shape)
 
     def _initial_guess_affine(self, xi_t, eta_t):
         if not self._has_affine_seed_inverse:

@@ -2,6 +2,7 @@ import torch
 from torch import Tensor
 from typing import Optional, Union, Tuple, Dict, Any
 import math
+import os
 
 try:
     import torchfits.cpp as _cpp
@@ -85,6 +86,10 @@ class WCS:
 
         # Default device
         self.device = torch.device("cpu")
+
+        # Environment-controlled fused C++ path. Default is False because vectorized 
+        # PyTorch + torch.compile is typically 2x-4x faster than the scalar C++ loop.
+        self._enable_fused_wcs = os.environ.get("TORCHFITS_WCS_FUSED", "0") == "1"
 
         # Move parameters to appropriate buffers/tensors
         self._setup_tensors()
@@ -518,7 +523,7 @@ class WCS:
         """Apply cached 2x2 inverse CD transform using scalar coefficients."""
         rel0 = self._cdi00 * xi + self._cdi01 * eta
         rel1 = self._cdi10 * xi + self._cdi11 * eta
-        return rel0 + self.crpix[0], rel1 + self.crpix[1]
+        return rel0 + self._crpix0, rel1 + self._crpix1
 
     def _alloc_pix_internal_like(self, world: Tensor) -> Tensor:
         """Allocate output for analytic world->pixel without zeroing 2D hot path."""
@@ -667,7 +672,8 @@ class WCS:
         elif self._is_mer:
             phi, theta = project_cylindrical(xi, eta, "MER")
         elif self._is_car:
-            phi, theta = project_cylindrical(xi, eta, "CAR")
+            # Inline trivial CAR projection: phi = xi, theta = eta
+            phi, theta = xi, eta
         elif self._is_sfl:
             phi, theta = project_allsky(xi, eta, "SFL")
         elif self._is_zpn:
@@ -687,16 +693,18 @@ class WCS:
         if x.shape != y.shape:
             raise RuntimeError("pixel coordinate shapes must match")
 
-        # Use fused C++ path if available and requested conditions met
+        # Environment-controlled fused C++ path. Default is False because vectorized 
+        # PyTorch + torch.compile is typically 2x-4x faster than the scalar C++ loop.
         use_fused = (
-            _cpp is not None
+            self._enable_fused_wcs
+            and _cpp is not None
             and hasattr(_cpp, "wcs_pixel_to_world_fused_cpu")
             and not getattr(self, "_disable_fused_pixel_to_world", False)
             and self.sip is None
             and not self._is_tnx
             and not self._is_zpx
             and (
-                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "TPV")
+                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
                 or (self._is_tpv and self._proj_code == "TAN")
             )
             and x.device.type == "cpu"
@@ -1017,7 +1025,9 @@ class WCS:
         elif self._is_mer:
             xi, eta = deproject_cylindrical(phi, theta, "MER")
         elif self._is_car:
-            xi, eta = deproject_cylindrical(phi, theta, "CAR")
+            # Inline trivial CAR projection: native RA -> intermediate xi, native Dec -> intermediate eta
+            xi = torch.remainder(phi + 180.0, 360.0) - 180.0
+            eta = theta
         elif self._is_sfl:
             xi, eta = deproject_allsky(phi, theta, "SFL")
         elif self._is_zea:
@@ -1060,7 +1070,8 @@ class WCS:
         device_ok = ra.device.type == "cpu" and dec.device.type == "cpu"
         dtype_ok = ra.dtype == torch.float64 and dec.dtype == torch.float64
         use_fused = (
-            _cpp is not None
+            self._enable_fused_wcs
+            and _cpp is not None
             and hasattr(_cpp, "wcs_world_to_pixel_fused_cpu")
             and not getattr(self, "_disable_fused_world_to_pixel", False)
             and device_ok
@@ -1070,7 +1081,7 @@ class WCS:
             and not self._is_zpx
             and (not self._is_tpv or not self.tpv._invert_trace_enabled)
             and (
-                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "TPV")
+                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
                 or (self._is_tpv and self._proj_code == "TAN")
             )
             and not ra.requires_grad
@@ -1313,10 +1324,13 @@ class WCS:
         v = cos_theta * cos_phi
         w = sin_theta
 
-        v_nat = torch.stack([u, v, w], dim=0)  # (3, N)
-        v_cel = torch.matmul(self._rot_matrix, v_nat)  # (3, N)
+        # v_cel = self._rot_matrix @ v_nat
+        # Manually expand 3x3 matmul to avoid stack/matmul overhead
+        r = self._rot_matrix
+        x = r[0, 0] * u + r[0, 1] * v + r[0, 2] * w
+        y = r[1, 0] * u + r[1, 1] * v + r[1, 2] * w
+        z = r[2, 0] * u + r[2, 1] * v + r[2, 2] * w
 
-        x, y, z = v_cel[0], v_cel[1], v_cel[2]
         ra = torch.remainder(torch.atan2(y, x) * r2d, 360.0)
         dec = torch.asin(torch.clamp(z, -1.0, 1.0)) * r2d
 
@@ -1455,15 +1469,15 @@ class WCS:
         sin_ra, cos_ra = _sincos(ra_rad)
 
         # Celestial Cartesian (X, Y, Z)
-        x = cos_dec * cos_ra
-        y = cos_dec * sin_ra
-        z = sin_dec
+        x_cel = cos_dec * cos_ra
+        y_cel = cos_dec * sin_ra
+        z_cel = sin_dec
 
-        v_cel = torch.stack([x, y, z], dim=0)  # (3, N)
-        v_nat = torch.matmul(self._rot_matrix_inv, v_cel)  # (3, N)
-
-        # Local basis components (u, v, w) match (East, North, Radial) at CRVAL
-        u, v, w = v_nat[0], v_nat[1], v_nat[2]
+        # v_nat = self._rot_matrix_inv @ v_cel
+        ri = self._rot_matrix_inv
+        u = ri[0, 0] * x_cel + ri[0, 1] * y_cel + ri[0, 2] * z_cel
+        v = ri[1, 0] * x_cel + ri[1, 1] * y_cel + ri[1, 2] * z_cel
+        w = ri[2, 0] * x_cel + ri[2, 1] * y_cel + ri[2, 2] * z_cel
 
         # theta = asin(w)
         # phi - phi_p = atan2(u, v) -- Wait, let's re-verify this.

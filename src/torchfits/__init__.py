@@ -11,7 +11,12 @@ from collections import OrderedDict
 import numpy as np
 import torch
 import os
+import warnings
 from torch import Tensor
+
+# Suppress noisy torch.jit.script deprecation warnings on Python 3.14+
+# This is a temporary measure until the codebase is migrated to torch.compile
+warnings.filterwarnings("ignore", message=".*torch.jit.script.*", category=DeprecationWarning)
 
 from .buffer import clear_buffers, configure_buffers, get_buffer_stats
 from .cache import clear_cache, configure_for_environment, get_cache_stats
@@ -771,6 +776,7 @@ def read_table(
     handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
+    policy: str = "default",
 ):
     """Read a table HDU as a dictionary of tensors/lists.
 
@@ -792,6 +798,7 @@ def read_table(
         handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
+        policy=policy,
     )
     data = out[0] if return_header else out
     if isinstance(data, torch.Tensor):
@@ -813,6 +820,7 @@ def read_table_rows(
     handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
+    policy: str = "default",
 ):
     """Read a row slice from a table HDU.
 
@@ -834,6 +842,7 @@ def read_table_rows(
         handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
+        policy=policy,
     )
 
 
@@ -854,6 +863,7 @@ def read(
     fast_header: bool = True,
     return_header: bool = False,
     mode: str = "auto",
+    policy: str = "default",
 ):
     """Read FITS data with optimizations.
 
@@ -861,6 +871,7 @@ def read(
         path: File path or cutout specification
         hdu: HDU index, name, or `"auto"` (first HDU with payload)
         mode: Read intent: `'auto'` (default), `'image'`, or `'table'`
+        policy: Dispatch mode compatibility flag: `'default'` or `'smart'`.
         device: Target device ('cpu', 'cuda')
         mmap: Memory-mapping mode. `True`/`False` are explicit, `'auto'` chooses
             per-HDU defaults (compressed images default to non-mmap).
@@ -913,6 +924,7 @@ def read(
                     p,
                     hdu=hdu,
                     mode=mode,
+                    policy=policy,
                     device=device,
                     mmap=mmap,
                     fp16=fp16,
@@ -938,6 +950,9 @@ def read(
     mode = str(mode).strip().lower()
     if mode not in {"auto", "image", "table"}:
         raise ValueError("mode must be 'auto', 'image', or 'table'")
+    policy = str(policy).strip().lower()
+    if policy not in {"default", "smart"}:
+        raise ValueError("policy must be 'default' or 'smart'")
     force_image = mode == "image"
     force_table = mode == "table"
     if force_image and (columns is not None or start_row != 1 or num_rows != -1):
@@ -974,6 +989,7 @@ def read(
                 path,
                 hdu=h,
                 device=device,
+                policy=policy,
                 mmap=mmap,
                 fp16=fp16,
                 bf16=bf16,

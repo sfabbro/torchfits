@@ -47,7 +47,7 @@ def test_sparse_map():
     dense = torch.zeros(12 * 4**2)
     dense[0:16] = 1.0  # First coverage pixel
 
-    sm = HealSparseMap.convert_healpix_map(dense, nside_cov)
+    sm = HealSparseMap.convert_healpix_map(dense, nside_cov, sentinel=0)
     assert sm.nside_coverage == 1
     assert sm.nside_sparse == 4
     assert sm.coverage_map[0] == 0

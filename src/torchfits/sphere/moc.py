@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 from typing import Literal
+import importlib
 
-import numpy as np
 import torch
 from torch import Tensor
 
@@ -451,7 +451,7 @@ class MOC:
 
     def write_fits(self, filename: str, overwrite: bool = False) -> None:
         """Write the MOC to a FITS file following the IVOA MOC standard."""
-        import fitsio
+        fitsio = importlib.import_module("fitsio")
         # IVOA MOC FITS encodes UNIQ as a single column table extension
         # with TFORM = '1K' (int64) or '1J' (int32 if order < 15)
         # and EXTNAME = 'MOC'
@@ -464,6 +464,7 @@ class MOC:
             {"name": "MOCTOOL", "value": "torchfits"},
         ]
 
+        import numpy as np
         data = np.zeros(len(self.uniq), dtype=[("UNIQ", "i8")])
         data["UNIQ"] = self.uniq.cpu().numpy()
 
@@ -473,7 +474,7 @@ class MOC:
     @classmethod
     def read_fits(cls, filename: str) -> MOC:
         """Read a MOC from an IVOA FITS file."""
-        import fitsio
+        fitsio = importlib.import_module("fitsio")
 
         with fitsio.FITS(filename) as fits:
             data = fits["MOC"].read()

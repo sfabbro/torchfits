@@ -1729,6 +1729,9 @@ class ExhaustiveBenchmarkSuite:
                 "torchfits": lambda: torchfits.read_subset(
                     str(target_file), hdu_idx, x1, y1, x2, y2
                 ),
+                "torchfits_specialized": lambda: torchfits.read_subset(
+                    str(target_file), hdu_idx, x1, y1, x2, y2
+                ),
                 "astropy": lambda: self._astropy_cutout(
                     target_file, hdu_idx, x1, y1, x2, y2
                 ),
@@ -1926,6 +1929,7 @@ class ExhaustiveBenchmarkSuite:
 
         methods = {
             "torchfits": tf_cached_handles,
+            "torchfits_specialized": tf_cached_handles,
             "torchfits_cpp_open_once": tf_cpp_open_once,
             "fitsio": fitsio_open_once,
             "astropy": astropy_open_once,

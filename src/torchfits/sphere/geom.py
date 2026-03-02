@@ -6,9 +6,13 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-import numpy as np
 import torch
 from torch import Tensor
+
+try:
+    from torch.func import vmap
+except ImportError:
+    vmap = None
 
 from ..wcs import healpix as _healpix
 from .core import (
@@ -294,7 +298,7 @@ def _make_tangent_basis(center: Tensor) -> tuple[Tensor, Tensor]:
     return e1, e2
 
 
-def _gnomonic_project(vertices_xyz: Tensor, center: Tensor) -> np.ndarray:
+def _gnomonic_project(vertices_xyz: Tensor, center: Tensor) -> "np.ndarray":
     e1, e2 = _make_tangent_basis(center)
     den = (vertices_xyz * center.unsqueeze(0)).sum(dim=-1)
     if bool(torch.any(den <= 1e-8)):
@@ -306,14 +310,15 @@ def _gnomonic_project(vertices_xyz: Tensor, center: Tensor) -> np.ndarray:
     return torch.stack((x, y), dim=-1).cpu().numpy()
 
 
-def _signed_area_2d(xy: np.ndarray) -> float:
+def _signed_area_2d(xy: "np.ndarray") -> float:
+    import numpy as np
     x = xy[:, 0]
     y = xy[:, 1]
     return 0.5 * float(np.sum(x * np.roll(y, -1) - y * np.roll(x, -1)))
 
 
 def _is_point_in_triangle_2d(
-    p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray, eps: float = 1e-15
+    p: "np.ndarray", a: "np.ndarray", b: "np.ndarray", c: "np.ndarray", eps: float = 1e-15
 ) -> bool:
     v0 = c - a
     v1 = b - a
@@ -326,14 +331,33 @@ def _is_point_in_triangle_2d(
     return (u >= -eps) and (v >= -eps) and (u + v <= 1.0 + eps)
 
 
-def _triangulate_simple_polygon_2d(xy: np.ndarray) -> list[tuple[int, int, int]]:
+def _is_point_in_triangle_2d_vec(
+    p: Tensor, a: Tensor, b: Tensor, c: Tensor, eps: float = 1e-15
+) -> Tensor:
+    """Vectorized check for multiple points p [M, 2] in triangle (a, b, c)."""
+    v0 = c - a
+    v1 = b - a
+    v2 = p - a
+    
+    den = (v0[0] * v1[1]) - (v1[0] * v0[1])
+    if abs(den) < eps:
+        return torch.zeros(p.shape[0], dtype=torch.bool, device=p.device)
+        
+    u = (v2[:, 0] * v1[1] - v1[0] * v2[:, 1]) / den
+    v = (v0[0] * v2[:, 1] - v2[:, 0] * v0[1]) / den
+    
+    return (u >= -eps) & (v >= -eps) & (u + v <= 1.0 + eps)
+
+
+def _triangulate_simple_polygon_2d(xy_np: "np.ndarray") -> list[tuple[int, int, int]]:
+    xy = torch.from_numpy(xy_np)
     n = xy.shape[0]
     if n < 3:
         raise ValueError("need at least three vertices")
     if n == 3:
         return [(0, 1, 2)]
 
-    orientation = 1.0 if _signed_area_2d(xy) >= 0.0 else -1.0
+    orientation = 1.0 if _signed_area_2d(xy_np) >= 0.0 else -1.0
     indices = list(range(n))
     triangles: list[tuple[int, int, int]] = []
     guard = 0
@@ -355,13 +379,15 @@ def _triangulate_simple_polygon_2d(xy: np.ndarray) -> list[tuple[int, int, int]]
             if cross * orientation <= 1e-15:
                 continue
 
-            has_inner = False
-            for j in indices:
-                if j in (i_prev, i_curr, i_next):
-                    continue
-                if _is_point_in_triangle_2d(xy[j], a, b, c):
-                    has_inner = True
-                    break
+            # Vectorized check for all other vertices
+            other_indices = [idx for idx in indices if idx not in (i_prev, i_curr, i_next)]
+            if not other_indices:
+                has_inner = False
+            else:
+                other_points = xy[other_indices]
+                inner_mask = _is_point_in_triangle_2d_vec(other_points, a, b, c)
+                has_inner = bool(inner_mask.any())
+
             if has_inner:
                 continue
 
@@ -1229,6 +1255,7 @@ def _require_spherical_geometry():
 
 
 def _sg_from_lonlat(lon_deg: Tensor, lat_deg: Tensor):
+    import numpy as np
     sg_poly = _require_spherical_geometry()
     lon_np = lon_deg.detach().cpu().numpy().astype(np.float64)
     lat_np = lat_deg.detach().cpu().numpy().astype(np.float64)
@@ -1237,7 +1264,8 @@ def _sg_from_lonlat(lon_deg: Tensor, lat_deg: Tensor):
     return sg_poly.from_radec(lon_np, lat_np, degrees=True)
 
 
-def _strip_closed_np(lon: np.ndarray, lat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _strip_closed_np(lon: "np.ndarray", lat: "np.ndarray") -> tuple["np.ndarray", "np.ndarray"]:
+    import numpy as np
     if lon.size >= 4 and np.isclose(lon[0], lon[-1]) and np.isclose(lat[0], lat[-1]):
         return lon[:-1], lat[:-1]
     return lon, lat
@@ -1475,6 +1503,7 @@ class ExactSphericalRegion:
         return bool(self._sg_poly.intersects_poly(other_sg))
 
     def contains(self, lon_deg: Tensor | float, lat_deg: Tensor | float) -> Tensor:
+        import numpy as np
         lon_t = torch.as_tensor(lon_deg, dtype=torch.float64)
         lat_t = torch.as_tensor(lat_deg, dtype=torch.float64)
         lon_t, lat_t = torch.broadcast_tensors(lon_t, lat_t)
@@ -1492,6 +1521,7 @@ class ExactSphericalRegion:
 
     def query_pixels(self, nside: int, *, nest: bool = False) -> Tensor:
         # Candidate pixels from per-component polygon queries, then exact center filtering.
+        import numpy as np
         chunks: list[Tensor] = []
         for lon, lat in self._sg_poly.to_lonlat():
             lon_np = np.asarray(lon, dtype=np.float64)
@@ -1540,6 +1570,7 @@ class ExactSphericalRegion:
         )
 
     def to_multipolygon(self) -> SphericalMultiPolygon:
+        import numpy as np
         polys: list[SphericalPolygon] = []
         for lon, lat in self._sg_poly.to_lonlat():
             lon_np = np.asarray(lon, dtype=np.float64)

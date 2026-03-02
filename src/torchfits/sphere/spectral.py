@@ -78,7 +78,7 @@ _SCALAR_INTERP_CPP_ENABLE = (
     os.environ.get("TORCHFITS_SCALAR_ALM2MAP_RECURRENCE_CPP", "1") != "0"
 )
 _SPIN_RING_AUTO_MIN_BYTES = int(
-    os.environ.get("TORCHFITS_SPIN_RING_AUTO_MIN_BYTES", str(32 * 1024 * 1024))
+    os.environ.get("TORCHFITS_SPIN_RING_AUTO_MIN_BYTES", "0")
 )
 _SPIN_MAP2ALM_RING_AUTO_MIN_BYTES = int(
     os.environ.get(
@@ -2229,9 +2229,27 @@ def _spin_alm2map_ring_torch(
     )
 
     if use_cpp:
-        s_plus, s_minus = SpinSHTInterpolate.apply(
-            coeff_plus, coeff_minus, int(nside), int(lmax), int(mmax), int(spin)
-        )
+        if coeff_plus.requires_grad or coeff_minus.requires_grad:
+            s_plus, s_minus = SpinSHTInterpolate.apply(
+                coeff_plus, coeff_minus, int(nside), int(lmax), int(mmax), int(spin)
+            )
+        else:
+            # Fast path: call C++ directly and avoid stack/detach overhead
+            _, _, theta_ring_cpu, _ = _ring_layout_for_nside(nside)
+            # We still need complex128 CPU tensors for the current C++ impl
+            cp_cpu = coeff_plus.to(dtype=torch.complex128, device="cpu").contiguous()
+            cm_cpu = coeff_minus.to(dtype=torch.complex128, device="cpu").contiguous()
+            alm_stack = torch.stack([cp_cpu, cm_cpu], dim=0)
+            
+            s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
+                alm_stack,
+                theta_ring_cpu.contiguous(),
+                int(lmax),
+                int(mmax),
+                int(spin),
+            )
+            s_plus = s_modes_stacked[0].to(device=coeff_plus.device)
+            s_minus = s_modes_stacked[1].to(device=coeff_minus.device)
     else:
         s_plus, s_minus = _ring_spin_interpolate_blocks(
             coeff_plus,
@@ -2373,7 +2391,9 @@ def map2alm(
             use_pixel_weights=bool(use_pixel_weights),
         )
         alm = torch.from_numpy(np.asarray(alm_np)).to(dtype=torch.complex128)
-        return (alm[0] if single else alm) if not pol else alm
+        if pol:
+            return alm
+        return alm[0] if (not single and alm.ndim > 1) else alm
 
     # torch backend
     if nest:
@@ -3517,7 +3537,6 @@ def smoothmap(
             mmax=mm,
             use_weights=bool(use_weights),
             use_pixel_weights=bool(use_pixel_weights),
-            verbose=bool(verbose),
             nest=bool(nest),
         )
         return torch.from_numpy(np.asarray(out)).to(dtype=torch.float64)
@@ -3734,15 +3753,28 @@ def _map2alm_spin_single_pass(
                 is not None
                 and os.environ.get("TORCHFITS_SPIN_MAP2ALM_RECURRENCE_CPP", "1") != "0"
             ):
-                c_plus, c_minus = SpinSHTIntegrate.apply(
-                    s_plus,
-                    s_minus,
-                    int(nside),
-                    int(lmax),
-                    int(mmax),
-                    int(spin_i),
-                    float(pix_w),
-                )
+                if s_plus.requires_grad or s_minus.requires_grad:
+                    c_plus, c_minus = SpinSHTIntegrate.apply(
+                        s_plus,
+                        s_minus,
+                        int(nside),
+                        int(lmax),
+                        int(mmax),
+                        int(spin_i),
+                        float(pix_w),
+                    )
+                else:
+                    _, _, theta_ring_cpu, _ = _ring_layout_for_nside(int(nside))
+                    nrings = int(theta_ring_cpu.numel())
+                    w_vec = torch.full((nrings,), float(pix_w), dtype=torch.float64, device="cpu")
+                    sp_cpu = s_plus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    sm_cpu = s_minus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    c_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+                        sp_cpu, sm_cpu, theta_ring_cpu.contiguous(), w_vec,
+                        int(lmax), int(mmax), int(spin_i)
+                    )
+                    c_plus = c_stacked[0].to(device=s_plus.device)
+                    c_minus = c_stacked[1].to(device=s_minus.device)
             else:
                 c_plus, c_minus = _ring_spin_integrate_blocks(
                     s_plus,
@@ -3776,15 +3808,28 @@ def _map2alm_spin_single_pass(
                 is not None
                 and os.environ.get("TORCHFITS_SPIN_MAP2ALM_RECURRENCE_CPP", "1") != "0"
             ):
-                c_plus, c_minus = SpinSHTIntegrate.apply(
-                    s_plus,
-                    s_minus,
-                    int(nside),
-                    int(lmax),
-                    int(mmax),
-                    int(spin_i),
-                    float(pix_w),
-                )
+                if s_plus.requires_grad or s_minus.requires_grad:
+                    c_plus, c_minus = SpinSHTIntegrate.apply(
+                        s_plus,
+                        s_minus,
+                        int(nside),
+                        int(lmax),
+                        int(mmax),
+                        int(spin_i),
+                        float(pix_w),
+                    )
+                else:
+                    _, _, theta_ring_cpu, _ = _ring_layout_for_nside(int(nside))
+                    nrings = int(theta_ring_cpu.numel())
+                    w_vec = torch.full((nrings,), float(pix_w), dtype=torch.float64, device="cpu")
+                    sp_cpu = s_plus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    sm_cpu = s_minus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    c_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
+                        sp_cpu, sm_cpu, theta_ring_cpu.contiguous(), w_vec,
+                        int(lmax), int(mmax), int(spin_i)
+                    )
+                    c_plus = c_stacked[0].to(device=s_plus.device)
+                    c_minus = c_stacked[1].to(device=s_minus.device)
             else:
                 c_plus, c_minus = _ring_spin_integrate_blocks(
                     s_plus,

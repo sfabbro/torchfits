@@ -5,6 +5,11 @@ import torch
 from torch import Tensor
 
 try:
+    from torch.func import vmap
+except ImportError:
+    vmap = None
+
+try:
     import torchfits.cpp as _cpp
 except Exception:  # pragma: no cover - optional fast-path
     _cpp = None
@@ -836,8 +841,11 @@ def boundaries(nside: int, pix: Tensor, step: int = 1, nest: bool = False) -> Te
     phi = torch.where(nr == 0.0, torch.zeros_like(phi), phi)
 
     lat = torch.asin(torch.clamp(z, -1.0, 1.0))
-    c = torch.cos(lat)
-    xyz = torch.stack([c * torch.cos(phi), c * torch.sin(phi), torch.sin(lat)], dim=1)
+    sin_lat = torch.sin(lat)
+    cos_lat = torch.cos(lat)
+    sin_phi = torch.sin(phi)
+    cos_phi = torch.cos(phi)
+    xyz = torch.stack([cos_lat * cos_phi, cos_lat * sin_phi, sin_lat], dim=1)
 
     if scalar_input:
         return xyz[0]
@@ -917,58 +925,69 @@ def neighbors(nside: int, ipix: Tensor | int, nest: bool = False) -> Tensor:
         ix_b = ix[boundary]
         iy_b = iy[boundary]
         face_b = face[boundary]
-        out_b = out[boundary]
+        
         facearr = _NB_FACEARRAY.to(device=pix_flat.device)
         swaparr = _NB_SWAPARRAY.to(device=pix_flat.device)
         band = face_b >> 2
-
-        for m in range(8):
-            x = ix_b + xoff[m]
-            y = iy_b + yoff[m]
-            nbnum = torch.full_like(x, 4)
-
-            lx = x < 0
-            gx = x >= nside
-            x = torch.where(lx, x + nside, x)
-            x = torch.where(gx, x - nside, x)
-            nbnum = torch.where(lx, nbnum - 1, nbnum)
-            nbnum = torch.where(gx, nbnum + 1, nbnum)
-
-            ly = y < 0
-            gy = y >= nside
-            y = torch.where(ly, y + nside, y)
-            y = torch.where(gy, y - nside, y)
-            nbnum = torch.where(ly, nbnum - 3, nbnum)
-            nbnum = torch.where(gy, nbnum + 3, nbnum)
-
-            f = facearr[nbnum, face_b]
-            valid = f >= 0
-            if not torch.any(valid):
-                continue
-
-            bits = swaparr[nbnum, band]
+        
+        # xoff, yoff are [8]
+        # ix_b, iy_b are [Nb]
+        # x, y: [Nb, 8]
+        x = ix_b.unsqueeze(1) + xoff.unsqueeze(0)
+        y = iy_b.unsqueeze(1) + yoff.unsqueeze(0)
+        
+        nbnum = torch.full_like(x, 4)
+        
+        lx = x < 0
+        gx = x >= nside
+        x = torch.where(lx, x + nside, x)
+        x = torch.where(gx, x - nside, x)
+        nbnum = torch.where(lx, nbnum - 1, nbnum)
+        nbnum = torch.where(gx, nbnum + 1, nbnum)
+        
+        ly = y < 0
+        gy = y >= nside
+        y = torch.where(ly, y + nside, y)
+        y = torch.where(gy, y - nside, y)
+        nbnum = torch.where(ly, nbnum - 3, nbnum)
+        nbnum = torch.where(gy, nbnum + 3, nbnum)
+        
+        # nbnum is [Nb, 8], face_b is [Nb]
+        # we want facearr[nbnum, face_b]
+        # advanced indexing: facearr is [9, 12]
+        # result f is [Nb, 8]
+        f = facearr[nbnum, face_b.unsqueeze(1).expand_as(nbnum)]
+        valid = f >= 0
+        
+        # result_b will store neighbor pixels for boundary points
+        result_b = torch.full_like(x, -1, dtype=torch.int64)
+        
+        if torch.any(valid):
+            # band is [Nb], nbnum is [Nb, 8]
+            bits = swaparr[nbnum, band.unsqueeze(1).expand_as(nbnum)]
+            
             xv = x[valid]
             yv = y[valid]
             bv = bits[valid]
-
+            fv = f[valid]
+            
             flip_x = (bv & 1) != 0
             flip_y = (bv & 2) != 0
             swap_xy = (bv & 4) != 0
-
+            
             xv = torch.where(flip_x, nside - xv - 1, xv)
             yv = torch.where(flip_y, nside - yv - 1, yv)
             x_new = torch.where(swap_xy, yv, xv)
             y_new = torch.where(swap_xy, xv, yv)
-
-            vals = (
-                _xyf2nest(nside, x_new, y_new, f[valid])
-                if nest
-                else _xyf2ring(nside, x_new, y_new, f[valid])
-            )
-            tmp = out_b[:, m]
-            tmp[valid] = vals
-            out_b[:, m] = tmp
-        out[boundary] = out_b
+            
+            if nest:
+                vals = _xyf2nest(nside, x_new, y_new, fv)
+            else:
+                vals = _xyf2ring(nside, x_new, y_new, fv)
+                
+            result_b[valid] = vals
+            
+        out[boundary] = result_b
 
     if scalar_input:
         return out[0]
@@ -1567,16 +1586,25 @@ def query_polygon(
     if centroid_norm <= 1.0e-15:
         raise ValueError("degenerate polygon: centroid norm too small")
     centroid = centroid / centroid_norm
-    signs = torch.empty((m,), dtype=vv.dtype)
-    for i in range(m):
-        probe = vv[(i + 2) % m]
-        s = torch.dot(probe, edge_normals[i])
-        if torch.abs(s) <= 1.0e-12:
-            s = torch.dot(centroid, edge_normals[i])
-        if torch.abs(s) <= 1.0e-12:
-            raise ValueError("degenerate polygon orientation")
-        signs[i] = torch.sign(s)
-    edge_normals = edge_normals * signs.unsqueeze(1)
+    
+    # Vectorized orientation check for all edges
+    # For each edge i, we need a probe point (v_{i+2} or centroid) to determine side sign.
+    # edge_normals: [M, 3], vv: [M, 3]
+    
+    # Try using next-next vertex as probe for each edge
+    probes = torch.roll(vv, shifts=-2, dims=0)
+    dot_probes = (probes * edge_normals).sum(dim=1)
+    
+    # If any probe is on the edge, fallback to centroid for that edge
+    near_edge = dot_probes.abs() <= 1.0e-12
+    if near_edge.any():
+        dot_centroid = (centroid.unsqueeze(0) * edge_normals).sum(dim=1)
+        dot_probes = torch.where(near_edge, dot_centroid, dot_probes)
+        
+    if (dot_probes.abs() <= 1.0e-12).any():
+        raise ValueError("degenerate polygon orientation")
+        
+    edge_normals = edge_normals * torch.sign(dot_probes).unsqueeze(1)
 
     tol = math.sin(max_pixel_radius(nside, degrees=False)) if inclusive else 0.0
     npix = nside2npix(nside)
@@ -1630,16 +1658,36 @@ def pixel_ranges_to_pixels(
     if ranges.numel() == 0:
         return torch.empty((0,), dtype=torch.int64, device=ranges.device)
 
-    parts: list[Tensor] = []
-    for i in range(ranges.shape[0]):
-        start = int(ranges[i, 0].item())
-        stop = int(ranges[i, 1].item()) + (1 if inclusive else 0)
-        if stop <= start:
-            continue
-        parts.append(torch.arange(start, stop, dtype=torch.int64, device=ranges.device))
-    if not parts:
+    # Vectorized expansion of ranges
+    starts = ranges[:, 0]
+    stops = ranges[:, 1] + (1 if inclusive else 0)
+    lengths = torch.clamp(stops - starts, min=0)
+    
+    total_len = int(lengths.sum().item())
+    if total_len == 0:
         return torch.empty((0,), dtype=torch.int64, device=ranges.device)
-    return torch.cat(parts, dim=0)
+        
+    # Create an array of indices into the original ranges for each output pixel
+    # e.g. ranges=[[10,12], [20,21]] -> range_idx=[0, 0, 1]
+    range_idx = torch.repeat_interleave(
+        torch.arange(ranges.shape[0], device=ranges.device), 
+        lengths
+    )
+    
+    # Offsets within each range
+    # range_idx=[0, 0, 1] -> range_offsets=[0, 1, 0]
+    # We can compute this with a cumulative sum and resets at range boundaries
+    pixel_offsets = torch.arange(total_len, device=ranges.device)
+    range_start_indices = torch.cat([
+        torch.zeros(1, dtype=torch.int64, device=ranges.device),
+        torch.cumsum(lengths[:-1], dim=0)
+    ])
+    
+    # Subtract start index of each range to get 0-based offset within range
+    pixel_offsets = pixel_offsets - range_start_indices[range_idx]
+    
+    # Output is starts[range_idx] + pixel_offsets
+    return starts[range_idx] + pixel_offsets
 
 
 def pixels_to_pixel_ranges(pixels: Tensor | Sequence[int]) -> Tensor:
@@ -1942,11 +1990,14 @@ def lonlat_to_xyz(ra: Tensor, dec: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
 
     lon = torch.deg2rad(ra_t)
     lat = torch.deg2rad(dec_t)
-    c = torch.cos(lat)
+    sin_lat = torch.sin(lat)
+    cos_lat = torch.cos(lat)
+    sin_lon = torch.sin(lon)
+    cos_lon = torch.cos(lon)
 
-    x = c * torch.cos(lon)
-    y = c * torch.sin(lon)
-    z = torch.sin(lat)
+    x = cos_lat * cos_lon
+    y = cos_lat * sin_lon
+    z = sin_lat
     return x, y, z
 
 

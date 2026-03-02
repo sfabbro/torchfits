@@ -322,16 +322,16 @@ class GPUMemoryBenchmark:
 
     def run_comprehensive_benchmark(self):
         """Run comprehensive GPU memory benchmark."""
-        print("🚀 GPU Memory Usage Validation Benchmark")
+        print("[diagnostic] GPU Memory Usage Validation Benchmark (non-gating)")
         print("=" * 50)
 
         if not self.cuda_available:
-            print("❌ CUDA not available - skipping GPU tests")
-            return
+            print("[diagnostic] SKIPPED: CUDA not available - skipping GPU tests")
+            return {"status": "SKIPPED", "reason": "cuda_not_available"}
 
         if not torchfits:
-            print("❌ torchfits not available - cannot run benchmark")
-            return
+            print("[diagnostic] SKIPPED: torchfits not available - cannot run benchmark")
+            return {"status": "SKIPPED", "reason": "torchfits_not_available"}
 
         # Run all GPU tests
         self.bench_direct_gpu_loading()
@@ -339,7 +339,8 @@ class GPUMemoryBenchmark:
         self.bench_gpu_transforms()
         self.bench_memory_leaks()
 
-        print("\\n✅ GPU Memory Benchmark Complete")
+        print("\\n[diagnostic] PASS: GPU Memory Benchmark Complete")
+        return {"status": "PASS"}
 
 
 def main():

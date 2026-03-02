@@ -8,7 +8,6 @@ and checksum verification as specified in Phase 1.
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
 import torch
 
 # Fast direct lookup tables - no enum overhead
@@ -19,15 +18,6 @@ _BITPIX_TO_TORCH = {
     64: torch.int64,
     -32: torch.float32,
     -64: torch.float64,
-}
-
-_BITPIX_TO_NUMPY = {
-    8: np.uint8,
-    16: np.int16,
-    32: np.int32,
-    64: np.int64,
-    -32: np.float32,
-    -64: np.float64,
 }
 
 
@@ -54,8 +44,17 @@ class FITSDataTypeHandler:
         return dtype
 
     @staticmethod
-    def to_numpy_dtype(bitpix: int) -> np.dtype:
+    def to_numpy_dtype(bitpix: int) -> "np.dtype":
         """Convert FITS BITPIX to NumPy dtype - fast direct lookup."""
+        import numpy as np
+        _BITPIX_TO_NUMPY = {
+            8: np.uint8,
+            16: np.int16,
+            32: np.int32,
+            64: np.int64,
+            -32: np.float32,
+            -64: np.float64,
+        }
         dtype = _BITPIX_TO_NUMPY.get(bitpix)
         if dtype is None:
             raise ValueError(f"Unsupported BITPIX: {bitpix}")
