@@ -1573,7 +1573,6 @@ def query_polygon(
 
     # Spherical half-space test: for each oriented edge (v_i -> v_{i+1}),
     # inside points lie on the same side of the edge great-circle plane.
-    m = vv.shape[0]
     vnext = torch.roll(vv, shifts=-1, dims=0)
     edge_normals = torch.cross(vv, vnext, dim=1)
     edge_norm = torch.sqrt((edge_normals * edge_normals).sum(dim=1))

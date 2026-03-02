@@ -65,11 +65,15 @@ def project_allsky(
         H = 4.0
         K = 3.0
         if pv1 is not None:
-            if pv1[1] != 0: H = pv1[1]
-            if pv1[2] != 0: K = pv1[2]
+            if pv1[1] != 0:
+                H = pv1[1]
+            if pv1[2] != 0:
+                K = pv1[2]
         if pv2 is not None:
-            if pv2[1] != 0: H = pv2[1]
-            if pv2[2] != 0: K = pv2[2]
+            if pv2[1] != 0:
+                H = pv2[1]
+            if pv2[2] != 0:
+                K = pv2[2]
 
         eta_scale = 90.0 * (K / H)
         eta_boundary = eta_scale * (2.0 / 3.0)
@@ -140,11 +144,15 @@ def deproject_allsky(
     elif projection_code == "HPX":
         H, K = 4.0, 3.0
         if pv1 is not None:
-            if pv1[1] != 0: H = pv1[1]
-            if pv1[2] != 0: K = pv1[2]
+            if pv1[1] != 0:
+                H = pv1[1]
+            if pv1[2] != 0:
+                K = pv1[2]
         if pv2 is not None:
-            if pv2[1] != 0: H = pv2[1]
-            if pv2[2] != 0: K = pv2[2]
+            if pv2[1] != 0:
+                H = pv2[1]
+            if pv2[2] != 0:
+                K = pv2[2]
         phi_w = torch.remainder(phi + 180.0, 360.0) - 180.0
         s_theta = torch.sin(theta * d2r)
         abs_s = torch.abs(s_theta)
