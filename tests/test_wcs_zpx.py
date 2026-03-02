@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 from torchfits.wcs.core import WCS

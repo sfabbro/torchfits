@@ -1,4 +1,5 @@
 import numpy as np
+import numpy as np
 import torch
 
 from torchfits.wcs.temporal import TemporalWCS
