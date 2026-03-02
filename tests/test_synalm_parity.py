@@ -1,12 +1,11 @@
 import torch
 import pytest
 
-hp = pytest.importorskip("healpy")
-from torchfits.sphere import synalm
 
-
-@pytest.mark.skipif(not hasattr(hp, "synalm"), reason="healpy not available")
 def test_synalm_parity_detailed():
+    hp = pytest.importorskip("healpy")
+    from torchfits.sphere import synalm
+
     lmax = 32
     mmax = 32
     cls = torch.ones(lmax + 1, dtype=torch.float64)
