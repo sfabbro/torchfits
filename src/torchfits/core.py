@@ -6,9 +6,12 @@ and checksum verification as specified in Phase 1.
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Fast direct lookup tables - no enum overhead
 _BITPIX_TO_TORCH = {

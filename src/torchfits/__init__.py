@@ -14,10 +14,6 @@ import os
 import warnings
 from torch import Tensor
 
-# Suppress noisy torch.jit.script deprecation warnings on Python 3.14+
-# This is a temporary measure until the codebase is migrated to torch.compile
-warnings.filterwarnings("ignore", message=".*torch.jit.script.*", category=DeprecationWarning)
-
 from .buffer import clear_buffers, configure_buffers, get_buffer_stats
 from .cache import clear_cache, configure_for_environment, get_cache_stats
 from .core import CompressionType, FITSCore
@@ -58,6 +54,10 @@ from .transforms import (
     create_validation_transform,
 )
 from .wcs import WCS
+
+# Suppress noisy torch.jit.script deprecation warnings on Python 3.14+
+# This is a temporary measure until the codebase is migrated to torch.compile
+warnings.filterwarnings("ignore", message=".*torch.jit.script.*", category=DeprecationWarning)
 
 # Simple cache tracking for tests
 _cache_stats = {"total_requests": 0, "hits": 0, "misses": 0, "cache_size": 0}
