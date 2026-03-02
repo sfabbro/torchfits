@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Core FITS data type support and compression handling.
 
