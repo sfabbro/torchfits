@@ -465,6 +465,7 @@ class MOC:
         ]
 
         import numpy as np
+
         data = np.zeros(len(self.uniq), dtype=[("UNIQ", "i8")])
         data["UNIQ"] = self.uniq.cpu().numpy()
 

@@ -157,12 +157,12 @@ class SIP:
         Used by vmap and jacrev.
         """
         u, v = uv[0], uv[1]
-        
+
         # Build powers manually for scalar
         max_order = max(self.a_order, self.b_order)
         up = torch.pow(u, torch.arange(max_order + 1, device=uv.device, dtype=uv.dtype))
         vp = torch.pow(v, torch.arange(max_order + 1, device=uv.device, dtype=uv.dtype))
-        
+
         # Evaluation
         def eval_poly_scalar(pq, c):
             if c.numel() == 0:
@@ -171,16 +171,16 @@ class SIP:
             q = pq[:, 1]
             basis = up[p] * vp[q]
             return torch.dot(c.to(uv.dtype), basis)
-            
+
         f_uv = eval_poly_scalar(self._a_pq, self._a_c)
         g_uv = eval_poly_scalar(self._b_pq, self._b_c)
-        
+
         return uv + torch.stack([f_uv, g_uv])
 
     def distort_vmap(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         """Apply distortion using torch.func.vmap (JAX-style)."""
-        uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1) # [N, 2]
-        out = vmap(self._distort_scalar)(uv) # [N, 2]
+        uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1)  # [N, 2]
+        out = vmap(self._distort_scalar)(uv)  # [N, 2]
         return out[:, 0].reshape(u.shape), out[:, 1].reshape(v.shape)
 
     def distort(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":

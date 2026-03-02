@@ -1,10 +1,11 @@
-from __future__ import annotations
 """
 Core FITS data type support and compression handling.
 
 Implements support for all standard FITS data types, compression formats,
 and checksum verification as specified in Phase 1.
 """
+
+from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
@@ -51,6 +52,7 @@ class FITSDataTypeHandler:
     def to_numpy_dtype(bitpix: int) -> "np.dtype":
         """Convert FITS BITPIX to NumPy dtype - fast direct lookup."""
         import numpy as np
+
         _BITPIX_TO_NUMPY = {
             8: np.uint8,
             16: np.int16,

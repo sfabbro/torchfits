@@ -96,7 +96,9 @@ def bench_mmap(args: argparse.Namespace) -> None:
     print(f"Final open FDs: {final_fds}")
 
     if final_fds > initial_fds:
-        print(f"[diagnostic] WARN: potential FD leak ({final_fds - initial_fds} extra FDs)")
+        print(
+            f"[diagnostic] WARN: potential FD leak ({final_fds - initial_fds} extra FDs)"
+        )
     else:
         print("[diagnostic] PASS: no FD leak detected.")
 
@@ -106,7 +108,9 @@ def bench_mmap(args: argparse.Namespace) -> None:
     except FileNotFoundError:
         print("[diagnostic] PASS: correctly caught FileNotFoundError")
     except Exception as e:
-        print(f"[diagnostic] WARN: unexpected error for missing file: {type(e).__name__}: {e}")
+        print(
+            f"[diagnostic] WARN: unexpected error for missing file: {type(e).__name__}: {e}"
+        )
 
 
 def _parse_args() -> argparse.Namespace:

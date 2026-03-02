@@ -57,7 +57,9 @@ from .wcs import WCS
 
 # Suppress noisy torch.jit.script deprecation warnings on Python 3.14+
 # This is a temporary measure until the codebase is migrated to torch.compile
-warnings.filterwarnings("ignore", message=".*torch.jit.script.*", category=DeprecationWarning)
+warnings.filterwarnings(
+    "ignore", message=".*torch.jit.script.*", category=DeprecationWarning
+)
 
 # Simple cache tracking for tests
 _cache_stats = {"total_requests": 0, "hits": 0, "misses": 0, "cache_size": 0}

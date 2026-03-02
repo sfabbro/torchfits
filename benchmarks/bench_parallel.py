@@ -63,8 +63,12 @@ def bench_parallel(args: argparse.Namespace) -> None:
         return cpp.read_images_batch(files, 0)
 
     def read_parallel_python_threads() -> List[torch.Tensor]:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = [executor.submit(torchfits.read, f, 0, policy="smart") for f in files]
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=args.workers
+        ) as executor:
+            futures = [
+                executor.submit(torchfits.read, f, 0, policy="smart") for f in files
+            ]
             return [f.result() for f in futures]
 
     serial_stats = _time_callable(

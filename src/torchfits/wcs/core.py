@@ -87,7 +87,7 @@ class WCS:
         # Default device
         self.device = torch.device("cpu")
 
-        # Environment-controlled fused C++ path. Default is False because vectorized 
+        # Environment-controlled fused C++ path. Default is False because vectorized
         # PyTorch + torch.compile is typically 2x-4x faster than the scalar C++ loop.
         self._enable_fused_wcs = os.environ.get("TORCHFITS_WCS_FUSED", "0") == "1"
 
@@ -693,7 +693,7 @@ class WCS:
         if x.shape != y.shape:
             raise RuntimeError("pixel coordinate shapes must match")
 
-        # Environment-controlled fused C++ path. Default is False because vectorized 
+        # Environment-controlled fused C++ path. Default is False because vectorized
         # PyTorch + torch.compile is typically 2x-4x faster than the scalar C++ loop.
         use_fused = (
             self._enable_fused_wcs
@@ -704,7 +704,8 @@ class WCS:
             and not self._is_tnx
             and not self._is_zpx
             and (
-                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
+                self._proj_code
+                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
                 or (self._is_tpv and self._proj_code == "TAN")
             )
             and x.device.type == "cpu"
@@ -1081,7 +1082,8 @@ class WCS:
             and not self._is_zpx
             and (not self._is_tpv or not self.tpv._invert_trace_enabled)
             and (
-                self._proj_code in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
+                self._proj_code
+                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
                 or (self._is_tpv and self._proj_code == "TAN")
             )
             and not ra.requires_grad
@@ -1158,7 +1160,6 @@ class WCS:
 
         # Fallback to compiled core
         return self._world_to_pixel_2d_core(ra, dec, float(origin))
-
 
     def compile(self, **kwargs):
         """

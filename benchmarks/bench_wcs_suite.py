@@ -350,7 +350,10 @@ def run_wcs_domain(
                     leg = run_legacy_case(case_name, n, origin, 123 + i, sample_profile)
                 except Exception as exc:
                     leg = {"error": str(exc)}
-                for lib_key, mode in (("pyast", "specialized"), ("kapteyn", "specialized")):
+                for lib_key, mode in (
+                    ("pyast", "specialized"),
+                    ("kapteyn", "specialized"),
+                ):
                     ms = leg.get(f"{lib_key}_ms") if isinstance(leg, dict) else None
                     t = _ok_time((float(ms) / 1000.0) if ms is not None else None)
                     status = "OK" if t is not None else "SKIPPED"
@@ -368,7 +371,9 @@ def run_wcs_domain(
                             time_s=t,
                             throughput=(n / t / 1e6) if t else None,
                             status=status,
-                            skip_reason="not_installed_or_failed" if status != "OK" else "",
+                            skip_reason="not_installed_or_failed"
+                            if status != "OK"
+                            else "",
                             comparable=False,
                             sample_profile=sample_profile,
                             device="cpu",
@@ -386,9 +391,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--device", choices=["cpu", "auto", "cuda"], default="cpu")
     parser.add_argument("--origin", type=int, choices=[0, 1], default=0)
-    parser.add_argument("--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed")
+    parser.add_argument(
+        "--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed"
+    )
     parser.add_argument("--include-legacy", action="store_true")
-    parser.add_argument("--n-tiers", type=str, default="1000,10000,100000,1000000,10000000")
+    parser.add_argument(
+        "--n-tiers", type=str, default="1000,10000,100000,1000000,10000000"
+    )
     return parser.parse_args()
 
 

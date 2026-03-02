@@ -34,6 +34,8 @@ from mpl_config import configure
 import fitsio
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 import psutil
 import torch
 from astropy.io import fits as astropy_fits
@@ -927,6 +929,7 @@ class ExhaustiveBenchmarkSuite:
             cache_capacity=self.cache_capacity,
             handle_cache_capacity=self.handle_cache_capacity,
         )
+
         # Direct specialized path (fair against low-level/direct variants).
         def _torchfits_specialized():
             if file_type == "table":
@@ -1349,7 +1352,9 @@ class ExhaustiveBenchmarkSuite:
             comparison_methods = dict(valid_methods)
 
         if comparison_methods:
-            best_method = min(comparison_methods.keys(), key=lambda k: comparison_methods[k])
+            best_method = min(
+                comparison_methods.keys(), key=lambda k: comparison_methods[k]
+            )
             sorted_methods = sorted(comparison_methods.items(), key=lambda x: x[1])
             torchfits_rank = next(
                 (i + 1 for i, (k, v) in enumerate(sorted_methods) if k == "torchfits"),
@@ -1368,7 +1373,9 @@ class ExhaustiveBenchmarkSuite:
                     if best_method != "torchfits"
                     else (
                         tf_time
-                        / min(v for k, v in comparison_methods.items() if k != "torchfits")
+                        / min(
+                            v for k, v in comparison_methods.items() if k != "torchfits"
+                        )
                         if any(k != "torchfits" for k in comparison_methods)
                         else None
                     )
@@ -1433,9 +1440,13 @@ class ExhaustiveBenchmarkSuite:
                 result["speedup_vs_best_numpy"] = None
 
             # Specialized/direct family comparison (all direct/specialized methods).
-            specialized_valid = {k: v for k, v in valid_methods.items() if k in specialized_methods}
+            specialized_valid = {
+                k: v for k, v in valid_methods.items() if k in specialized_methods
+            }
             if specialized_valid and "torchfits_specialized" in specialized_valid:
-                best_spec = min(specialized_valid.keys(), key=lambda k: specialized_valid[k])
+                best_spec = min(
+                    specialized_valid.keys(), key=lambda k: specialized_valid[k]
+                )
                 sorted_spec = sorted(specialized_valid.items(), key=lambda x: x[1])
                 tf_spec_rank = next(
                     (
@@ -1461,7 +1472,8 @@ class ExhaustiveBenchmarkSuite:
                 and "torchfits_specialized" in valid_methods
             ):
                 result["speedup_specialized_vs_smart"] = (
-                    comparison_methods["torchfits"] / valid_methods["torchfits_specialized"]
+                    comparison_methods["torchfits"]
+                    / valid_methods["torchfits_specialized"]
                 )
             else:
                 result["speedup_specialized_vs_smart"] = None
@@ -2369,9 +2381,7 @@ class ExhaustiveBenchmarkSuite:
                     continue
 
                 best_method = "torchfits" if tf_s <= comp_s else lib
-                speedup = (
-                    comp_s / tf_s if best_method == "torchfits" else tf_s / comp_s
-                )
+                speedup = comp_s / tf_s if best_method == "torchfits" else tf_s / comp_s
                 row: Dict[str, Any] = {
                     "filename": f"SPHERE_{op}_{lib}",
                     "operation": f"sphere_{op}",
@@ -2416,7 +2426,6 @@ class ExhaustiveBenchmarkSuite:
 
         print(f"Sphere benchmark rows added: {len(results)}")
         return results
-
 
     def _astropy_cutout(self, path, hdu, x1, y1, x2, y2):
         try:
@@ -2624,12 +2633,6 @@ class ExhaustiveBenchmarkSuite:
 
     def generate_plots(self, results: List[Dict]):
         """Generate comprehensive plots from benchmark results."""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        globals()["plt"] = plt
-        globals()["sns"] = sns
-
         print("\nGenerating exhaustive plots...")
         df = pd.DataFrame(results)
         if df.empty:
@@ -2929,7 +2932,7 @@ class ExhaustiveBenchmarkSuite:
             f.write(f"- Total benchmark rows: {len(df)}\n")
             f.write(f"- Primary read benchmarks: {len(primary_df)}\n")
             f.write(f"- Additional operation benchmarks: {len(additional_df)}\n")
-            
+
             if primary_df.empty and additional_df.empty:
                 f.write("\nNo benchmarks matched the current filter.\n")
                 return
@@ -2937,9 +2940,13 @@ class ExhaustiveBenchmarkSuite:
             if primary_df.empty:
                 f.write("\nNo primary read benchmarks matched the current filter.\n")
             else:
-                f.write(f"- File types tested: {_format_unique(primary_df['file_type'])}\n")
-                f.write(f"- Data types tested: {_format_unique(primary_df['data_type'])}\n")
-            
+                f.write(
+                    f"- File types tested: {_format_unique(primary_df['file_type'])}\n"
+                )
+                f.write(
+                    f"- Data types tested: {_format_unique(primary_df['data_type'])}\n"
+                )
+
             f.write(f"- MMap enabled: {self.use_mmap}\n")
             f.write(f"- TorchFits mmap mode: {self._torchfits_mmap_mode()}\n")
             f.write(f"- Tables included: {self.include_tables}\n")
@@ -2956,9 +2963,7 @@ class ExhaustiveBenchmarkSuite:
                 best_torch = primary_df["best_method_torch"].fillna("none").astype(str)
                 best_numpy = primary_df["best_method_numpy"].fillna("none").astype(str)
                 best_specialized = (
-                    primary_df["best_method_specialized"]
-                    .fillna("none")
-                    .astype(str)
+                    primary_df["best_method_specialized"].fillna("none").astype(str)
                     if "best_method_specialized" in primary_df.columns
                     else pd.Series(["none"] * len(primary_df), index=primary_df.index)
                 )
@@ -2967,7 +2972,9 @@ class ExhaustiveBenchmarkSuite:
                 tf_smart_wins = int((best_overall == "torchfits").sum())
                 tf_torch_wins = int((best_torch == "torchfits").sum())
                 tf_numpy_wins = int((best_numpy == "torchfits_numpy").sum())
-                tf_specialized_wins = int((best_specialized == "torchfits_specialized").sum())
+                tf_specialized_wins = int(
+                    (best_specialized == "torchfits_specialized").sum()
+                )
                 n_primary = len(primary_df)
 
                 f.write(
@@ -2990,7 +2997,9 @@ class ExhaustiveBenchmarkSuite:
                 misses = primary_df[best_torch != "torchfits"].copy()
                 if not misses.empty:
                     misses = misses.sort_values("speedup_vs_best_torch").head(10)
-                    f.write("\nTop cases where TorchFits (smart torch) is not best:\n\n")
+                    f.write(
+                        "\nTop cases where TorchFits (smart torch) is not best:\n\n"
+                    )
                     f.write(
                         "| File | Type | Size (MB) | Best (torch) | Speedup vs Best (torch) |\n"
                     )
@@ -2998,13 +3007,15 @@ class ExhaustiveBenchmarkSuite:
                     for _, r in misses.iterrows():
                         speedup = r.get("speedup_vs_best_torch")
                         speedup_str = (
-                            f"{float(speedup):.2f}x" if _is_valid_number(speedup) else "-"
+                            f"{float(speedup):.2f}x"
+                            if _is_valid_number(speedup)
+                            else "-"
                         )
                         f.write(
                             f"| {r['filename']} | {r['file_type']} | {r['size_mb']:.2f} | {r.get('best_method_torch', '-')} | {speedup_str} |\n"
                         )
                 f.write("\n")
-            
+
             # WCS results
             wcs_df = additional_df[additional_df["file_type"] == "wcs"]
             if not wcs_df.empty:
@@ -3189,7 +3200,9 @@ class ExhaustiveBenchmarkSuite:
 
             # Informational conversion overhead (not a cross-library regression table).
             if tf_col in df.columns and tf_np_col in df.columns:
-                f.write("## Informational: Tensor Conversion Overhead vs `torchfits_numpy`\n\n")
+                f.write(
+                    "## Informational: Tensor Conversion Overhead vs `torchfits_numpy`\n\n"
+                )
                 overhead = primary_df.copy()
                 overhead["torchfits_smart_time"] = pd.to_numeric(
                     overhead[tf_col], errors="coerce"
@@ -3206,13 +3219,17 @@ class ExhaustiveBenchmarkSuite:
                     & (overhead["smart_over_numpy"] > 1.0)
                 ].copy()
                 if not overhead.empty:
-                    overhead = overhead.sort_values("smart_over_numpy", ascending=False).head(10)
+                    overhead = overhead.sort_values(
+                        "smart_over_numpy", ascending=False
+                    ).head(10)
                     f.write(
                         "These rows compare `torchfits` tensor-return overhead against "
                         "`torchfits_numpy`; use the method-family sections below for "
                         "true regression interpretation.\n\n"
                     )
-                    f.write("| File | Type | Size (MB) | Speedup vs `torchfits_numpy` |\n")
+                    f.write(
+                        "| File | Type | Size (MB) | Speedup vs `torchfits_numpy` |\n"
+                    )
                     f.write("|---|---|---|---|\n")
                     for _, r in overhead.iterrows():
                         f.write(
@@ -3220,7 +3237,9 @@ class ExhaustiveBenchmarkSuite:
                         )
                     f.write("\n")
                 else:
-                    f.write("No meaningful tensor-conversion overhead rows detected.\n\n")
+                    f.write(
+                        "No meaningful tensor-conversion overhead rows detected.\n\n"
+                    )
 
             # Top regressions vs best (smart/tensor methods only)
             if (
@@ -3243,7 +3262,9 @@ class ExhaustiveBenchmarkSuite:
                     regressions = regressions.sort_values("speedup_vs_best_torch").head(
                         10
                     )
-                    f.write("| File | Type | Size (MB) | Best (smart) | Speedup vs Best |\n")
+                    f.write(
+                        "| File | Type | Size (MB) | Best (smart) | Speedup vs Best |\n"
+                    )
                     f.write("|---|---|---|---|---|\n")
                     for _, r in regressions.iterrows():
                         f.write(

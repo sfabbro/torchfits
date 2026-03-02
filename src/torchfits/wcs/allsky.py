@@ -40,8 +40,14 @@ def project_allsky(
         theta_rad = torch.asin(sin_theta)
         phi = phi_rad * r2d
         theta = theta_rad * r2d
-        phi = torch.where(mask, phi, torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype))
-        theta = torch.where(mask, theta, torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype))
+        phi = torch.where(
+            mask, phi, torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype)
+        )
+        theta = torch.where(
+            mask,
+            theta,
+            torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype),
+        )
 
     elif projection_code == "MOL":
         X = x
@@ -54,12 +60,24 @@ def project_allsky(
         theta_rad = torch.asin(torch.clamp(t_val, -1.0, 1.0))
         denom = 2.0 * sqrt2 * torch.cos(gamma)
         mask_pole = torch.abs(denom) < 1e-8
-        phi_rad = torch.where(mask_pole, torch.zeros_like(X), math.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom))
+        phi_rad = torch.where(
+            mask_pole,
+            torch.zeros_like(X),
+            math.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom),
+        )
         phi = phi_rad * r2d
         theta = theta_rad * r2d
         mask_valid = torch.abs(Y) <= (sqrt2 + 1e-9)
-        phi = torch.where(mask_valid, phi, torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype))
-        theta = torch.where(mask_valid, theta, torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype))
+        phi = torch.where(
+            mask_valid,
+            phi,
+            torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype),
+        )
+        theta = torch.where(
+            mask_valid,
+            theta,
+            torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype),
+        )
 
     elif projection_code == "HPX":
         H = 4.0
@@ -79,13 +97,29 @@ def project_allsky(
         eta_boundary = eta_scale * (2.0 / 3.0)
         abs_eta = torch.abs(eta)
         mask_eq = abs_eta <= eta_boundary
-        theta = torch.asin(torch.clamp(torch.where(mask_eq, eta / eta_scale, torch.sign(eta) * (1.0 - ((90.0 - abs_eta)/(90.0-eta_boundary))**2 / 3.0)), -1.0, 1.0)) * r2d
+        theta = (
+            torch.asin(
+                torch.clamp(
+                    torch.where(
+                        mask_eq,
+                        eta / eta_scale,
+                        torch.sign(eta)
+                        * (1.0 - ((90.0 - abs_eta) / (90.0 - eta_boundary)) ** 2 / 3.0),
+                    ),
+                    -1.0,
+                    1.0,
+                )
+            )
+            * r2d
+        )
         sigma = (90.0 - abs_eta) / (90.0 - eta_boundary)
         xc = torch.round((xi - 45.0) * (1.0 / 90.0)) * 90.0 + 45.0
         phi = torch.where(mask_eq, xi, xc + (xi - xc) / torch.clamp(sigma, min=1e-9))
-        invalid = (abs_eta > 90.0)
+        invalid = abs_eta > 90.0
         phi = torch.where(invalid, torch.tensor(float("nan"), device=phi.device), phi)
-        theta = torch.where(invalid, torch.tensor(float("nan"), device=theta.device), theta)
+        theta = torch.where(
+            invalid, torch.tensor(float("nan"), device=theta.device), theta
+        )
 
     elif projection_code == "SFL":
         theta = eta
@@ -125,16 +159,16 @@ def deproject_allsky(
         theta_rad = theta * d2r
         sin_theta = torch.sin(theta_rad)
         target = math.pi * sin_theta
-        gamma = theta_rad.clone() # Better initial guess than zero
+        gamma = theta_rad.clone()  # Better initial guess than zero
         for _ in range(5):
             sin_2g = torch.sin(2.0 * gamma)
             cos_2g = torch.cos(2.0 * gamma)
             res = 2.0 * gamma + sin_2g - target
-            
+
             # Convergence check to skip work
             if torch.all(torch.abs(res) < 1e-12):
                 break
-                
+
             gamma = gamma - res / (2.0 + 2.0 * cos_2g + 1e-12)
         sqrt2 = math.sqrt(2.0)
         xi = 2.0 * sqrt2 * phi_rad * torch.cos(gamma) / math.pi * r2d
@@ -159,7 +193,9 @@ def deproject_allsky(
         eta_scale = 90.0 * (K / H)
         mask_eq = abs_s <= (2.0 / 3.0)
         sigma = torch.sqrt(torch.clamp(3.0 * (1.0 - abs_s), min=0.0))
-        eta_pol = torch.sign(s_theta) * (90.0 - (90.0 - (eta_scale * 2.0/3.0)) * sigma)
+        eta_pol = torch.sign(s_theta) * (
+            90.0 - (90.0 - (eta_scale * 2.0 / 3.0)) * sigma
+        )
         xc = torch.round((phi_w - 45.0) / 90.0) * 90.0 + 45.0
         xi = torch.where(mask_eq, phi_w, xc + sigma * (phi_w - xc))
         eta = torch.where(mask_eq, eta_scale * s_theta, eta_pol)

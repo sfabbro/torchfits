@@ -2240,7 +2240,7 @@ def _spin_alm2map_ring_torch(
             cp_cpu = coeff_plus.to(dtype=torch.complex128, device="cpu").contiguous()
             cm_cpu = coeff_minus.to(dtype=torch.complex128, device="cpu").contiguous()
             alm_stack = torch.stack([cp_cpu, cm_cpu], dim=0)
-            
+
             s_modes_stacked = _cpp._healpix_spin_interpolate_recurrence_cpu(
                 alm_stack,
                 theta_ring_cpu.contiguous(),
@@ -3705,14 +3705,6 @@ def _map2alm_spin_single_pass(
             bytes_concat <= _SPIN_RING_INTEGRATE_CONCAT_FAST_MAX_BYTES
             and nalm <= _SPIN_RING_INTEGRATE_CONCAT_MAX_NALM
         )
-        use_cpp_fused = (
-            _SPIN_MAP2ALM_RING_CONCAT_CPP_ENABLE
-            and use_concat_fast
-            and _cpp is not None
-            and hasattr(_cpp, "_healpix_spin_map2alm_ring_concat_cpu")
-            and p_plus.device.type == "cpu"
-            and (not p_plus.requires_grad)
-        )
         if use_concat_fast:
             s_plus, s_minus = _ring_fourier_modes_spin_conj(
                 p_plus,
@@ -3729,7 +3721,7 @@ def _map2alm_spin_single_pass(
             )
             s_plus = s_plus * phase0_neg
             s_minus = s_minus * phase0_neg
-            
+
             m_idx = _alm_m_array(int(lmax), int(mmax)).to(s_plus.device)
             c_plus = torch.sum(y_plus * s_plus[m_idx], dim=1) * pix_w
             c_minus = torch.sum(y_minus * s_minus[m_idx], dim=1) * pix_w
@@ -3766,12 +3758,23 @@ def _map2alm_spin_single_pass(
                 else:
                     _, _, theta_ring_cpu, _ = _ring_layout_for_nside(int(nside))
                     nrings = int(theta_ring_cpu.numel())
-                    w_vec = torch.full((nrings,), float(pix_w), dtype=torch.float64, device="cpu")
-                    sp_cpu = s_plus.to(dtype=torch.complex128, device="cpu").contiguous()
-                    sm_cpu = s_minus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    w_vec = torch.full(
+                        (nrings,), float(pix_w), dtype=torch.float64, device="cpu"
+                    )
+                    sp_cpu = s_plus.to(
+                        dtype=torch.complex128, device="cpu"
+                    ).contiguous()
+                    sm_cpu = s_minus.to(
+                        dtype=torch.complex128, device="cpu"
+                    ).contiguous()
                     c_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
-                        sp_cpu, sm_cpu, theta_ring_cpu.contiguous(), w_vec,
-                        int(lmax), int(mmax), int(spin_i)
+                        sp_cpu,
+                        sm_cpu,
+                        theta_ring_cpu.contiguous(),
+                        w_vec,
+                        int(lmax),
+                        int(mmax),
+                        int(spin_i),
                     )
                     c_plus = c_stacked[0].to(device=s_plus.device)
                     c_minus = c_stacked[1].to(device=s_minus.device)
@@ -3821,12 +3824,23 @@ def _map2alm_spin_single_pass(
                 else:
                     _, _, theta_ring_cpu, _ = _ring_layout_for_nside(int(nside))
                     nrings = int(theta_ring_cpu.numel())
-                    w_vec = torch.full((nrings,), float(pix_w), dtype=torch.float64, device="cpu")
-                    sp_cpu = s_plus.to(dtype=torch.complex128, device="cpu").contiguous()
-                    sm_cpu = s_minus.to(dtype=torch.complex128, device="cpu").contiguous()
+                    w_vec = torch.full(
+                        (nrings,), float(pix_w), dtype=torch.float64, device="cpu"
+                    )
+                    sp_cpu = s_plus.to(
+                        dtype=torch.complex128, device="cpu"
+                    ).contiguous()
+                    sm_cpu = s_minus.to(
+                        dtype=torch.complex128, device="cpu"
+                    ).contiguous()
                     c_stacked = _cpp._healpix_spin_integrate_recurrence_cpu(
-                        sp_cpu, sm_cpu, theta_ring_cpu.contiguous(), w_vec,
-                        int(lmax), int(mmax), int(spin_i)
+                        sp_cpu,
+                        sm_cpu,
+                        theta_ring_cpu.contiguous(),
+                        w_vec,
+                        int(lmax),
+                        int(mmax),
+                        int(spin_i),
                     )
                     c_plus = c_stacked[0].to(device=s_plus.device)
                     c_minus = c_stacked[1].to(device=s_minus.device)

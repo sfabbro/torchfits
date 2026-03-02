@@ -44,7 +44,9 @@ def _parse_args() -> argparse.Namespace:
         default="all",
         help="Benchmark scope selector",
     )
-    parser.add_argument("--fits-only", action="store_true", help="Alias for --scope fits")
+    parser.add_argument(
+        "--fits-only", action="store_true", help="Alias for --scope fits"
+    )
     parser.add_argument(
         "--fitstable-only", action="store_true", help="Alias for --scope fitstable"
     )
@@ -64,7 +66,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", choices=["user", "lab"], default="user")
     parser.add_argument("--mmap", action="store_true", help="Force mmap on")
     parser.add_argument("--no-mmap", action="store_true", help="Force mmap off")
-    parser.add_argument("--filter", type=str, default="", help="Regex case filter (fits domain)")
+    parser.add_argument(
+        "--filter", type=str, default="", help="Regex case filter (fits domain)"
+    )
 
     parser.add_argument(
         "--legacy-wcs",
@@ -89,7 +93,9 @@ def _parse_args() -> argparse.Namespace:
         help="WCS benchmark device",
     )
 
-    parser.add_argument("--no-gpu", action="store_true", help="Disable optional sphere GPU subsection")
+    parser.add_argument(
+        "--no-gpu", action="store_true", help="Disable optional sphere GPU subsection"
+    )
 
     parser.add_argument(
         "--plots",
@@ -102,8 +108,12 @@ def _parse_args() -> argparse.Namespace:
         help="No plots (default behavior)",
     )
 
-    parser.add_argument("--quick", action="store_true", help="Reduce workload for smoke checks")
-    parser.add_argument("--keep-temp", action="store_true", help="Keep temporary fixture files")
+    parser.add_argument(
+        "--quick", action="store_true", help="Reduce workload for smoke checks"
+    )
+    parser.add_argument(
+        "--keep-temp", action="store_true", help="Keep temporary fixture files"
+    )
     return parser.parse_args()
 
 
@@ -145,7 +155,9 @@ def _print_deficit_summary(deficits: list[dict[str, Any]]) -> None:
         print("No comparable deficits found.", flush=True)
         return
 
-    print("domain | family | case | torchfits_s | best | lag_x | pct_behind", flush=True)
+    print(
+        "domain | family | case | torchfits_s | best | lag_x | pct_behind", flush=True
+    )
     for row in deficits:
         best_lbl = f"{row.get('best_library')}:{row.get('best_method')}"
         tf_s = row.get("torchfits_time_s")
@@ -307,7 +319,10 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if args.plots:
-        print("[bench-all] --plots requested, but orchestrated mode keeps plots disabled.", flush=True)
+        print(
+            "[bench-all] --plots requested, but orchestrated mode keeps plots disabled.",
+            flush=True,
+        )
 
     print("Starting benchmark orchestrator", flush=True)
     print(f"run_id={run_id}", flush=True)
@@ -337,7 +352,9 @@ def main() -> int:
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
             print(f"[bench-all][fits] failed: {err}", flush=True)
-            all_rows.append(_domain_failure_row(run_id=run_id, domain="fits", error=err))
+            all_rows.append(
+                _domain_failure_row(run_id=run_id, domain="fits", error=err)
+            )
 
     if "fitstable" in scopes:
         try:
@@ -380,9 +397,12 @@ def main() -> int:
                     include_legacy=args.legacy_wcs,
                 )
             )
-            use_legacy_bridge = (not args.no_legacy_wcs_bridge)
+            use_legacy_bridge = not args.no_legacy_wcs_bridge
             if use_legacy_bridge:
-                print("[bench-all][wcs] running cross-env legacy bridge (bench-legacy)...", flush=True)
+                print(
+                    "[bench-all][wcs] running cross-env legacy bridge (bench-legacy)...",
+                    flush=True,
+                )
                 bridge_rows, bridge_err = _run_wcs_legacy_bridge(
                     run_id=run_id,
                     run_dir=run_dir,
@@ -390,9 +410,14 @@ def main() -> int:
                     projections=projections,
                 )
                 if bridge_err:
-                    print(f"[bench-all][wcs] legacy bridge failed: {bridge_err}", flush=True)
+                    print(
+                        f"[bench-all][wcs] legacy bridge failed: {bridge_err}",
+                        flush=True,
+                    )
                     all_rows.append(
-                        _domain_failure_row(run_id=run_id, domain="wcs", error=bridge_err)
+                        _domain_failure_row(
+                            run_id=run_id, domain="wcs", error=bridge_err
+                        )
                     )
                 else:
                     print(
@@ -431,7 +456,9 @@ def main() -> int:
 
     write_csv(results_csv, all_rows, RESULT_COLUMNS)
     write_csv(deficits_csv, deficits, DEFICIT_COLUMNS)
-    write_summary(summary_md, run_id=run_id, scopes=scopes, rows=all_rows, deficits=deficits)
+    write_summary(
+        summary_md, run_id=run_id, scopes=scopes, rows=all_rows, deficits=deficits
+    )
 
     print("\nBenchmark run completed", flush=True)
     print(f"- Results CSV: {results_csv}", flush=True)

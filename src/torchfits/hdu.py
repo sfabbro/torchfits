@@ -351,6 +351,7 @@ class TableHDU(TensorFrame):
         source_hdu: Optional[int] = None,
     ):
         import numpy as np
+
         self._raw_data = tensor_dict or {}
         self._source_path = source_path
         self._source_hdu = source_hdu
@@ -672,6 +673,7 @@ class TableHDU(TensorFrame):
     def filter(self, condition: str) -> "TableHDU":
         """Filter rows by condition."""
         import numpy as np
+
         if not isinstance(condition, str) or not condition.strip():
             raise ValueError("condition must be a non-empty string")
 
@@ -792,6 +794,7 @@ class TableHDU(TensorFrame):
     @staticmethod
     def _value_num_rows(value: Any) -> int:
         import numpy as np
+
         if isinstance(value, torch.Tensor):
             return int(value.shape[0]) if value.dim() > 0 else 1
         if isinstance(value, np.ndarray):
@@ -803,6 +806,7 @@ class TableHDU(TensorFrame):
     @staticmethod
     def _append_column_values(name: str, old_value: Any, new_value: Any) -> Any:
         import numpy as np
+
         if isinstance(old_value, torch.Tensor):
             if not isinstance(new_value, torch.Tensor):
                 new_value = torch.as_tensor(

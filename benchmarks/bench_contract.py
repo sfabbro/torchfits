@@ -93,7 +93,9 @@ def annotate_rankings(rows: list[dict[str, Any]]) -> None:
         row["rank_in_family"] = ""
         row["lag_ratio"] = ""
         row["pct_behind"] = ""
-        groups[(str(row.get("domain")), str(row.get("case_id")), str(row.get("family")))].append(row)
+        groups[
+            (str(row.get("domain")), str(row.get("case_id")), str(row.get("family")))
+        ].append(row)
 
     for _key, grp_rows in groups.items():
         comparable_rows = []
@@ -123,7 +125,9 @@ def annotate_rankings(rows: list[dict[str, Any]]) -> None:
 def compute_deficits(rows: list[dict[str, Any]], run_id: str) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        groups[(str(row.get("domain")), str(row.get("case_id")), str(row.get("family")))].append(row)
+        groups[
+            (str(row.get("domain")), str(row.get("case_id")), str(row.get("family")))
+        ].append(row)
 
     preferred_method_by_family = {
         "smart": "torchfits",
@@ -151,9 +155,7 @@ def compute_deficits(rows: list[dict[str, Any]], run_id: str) -> list[dict[str, 
         best_row, best_t = comparable_rows[0]
 
         tf_candidates = [
-            r
-            for (r, _t) in comparable_rows
-            if str(r.get("library")) == "torchfits"
+            r for (r, _t) in comparable_rows if str(r.get("library")) == "torchfits"
         ]
         if not tf_candidates:
             continue
@@ -277,7 +279,6 @@ def write_summary(
                     pct = _fmt_float(row.get("pct_behind"), 2)
                     mmap = row.get("mmap_target") or "-"
                     case_label = row.get("case_label") or row.get("case_id")
-                    best_lbl = f"{row.get('best_library')} ({row.get('best_method')})"
                     f.write(
                         f"| {case_label} | {row.get('operation')} | {tf_time} | {best_time} | {lag} | {pct} | {mmap} |\n"
                     )

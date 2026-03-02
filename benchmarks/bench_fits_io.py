@@ -91,7 +91,9 @@ def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
                 if hasattr(hdu, "data") and hdu.data is not None:
                     if isinstance(hdu, astropy_fits.BinTableHDU):
                         return suite._table_to_numpy_dict(hdu.data)
-                    return suite._ensure_native_endian_numpy(np.array(hdu.data, copy=True))
+                    return suite._ensure_native_endian_numpy(
+                        np.array(hdu.data, copy=True)
+                    )
                 return None
         except Exception:
             if suite.use_mmap:
@@ -101,7 +103,9 @@ def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
                     if hasattr(hdu, "data") and hdu.data is not None:
                         if isinstance(hdu, astropy_fits.BinTableHDU):
                             return suite._table_to_numpy_dict(hdu.data)
-                        return suite._ensure_native_endian_numpy(np.array(hdu.data, copy=True))
+                        return suite._ensure_native_endian_numpy(
+                            np.array(hdu.data, copy=True)
+                        )
                     return None
             raise
 
@@ -116,12 +120,16 @@ def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
                         for col in data.names:
                             col_data = np.ascontiguousarray(np.asarray(data[col]))
                             if col_data.dtype.byteorder not in ("=", "|"):
-                                col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                                col_data = col_data.astype(
+                                    col_data.dtype.newbyteorder("=")
+                                )
                             if col_data.dtype.kind in {"S", "U"}:
                                 if col_data.dtype.kind == "U":
                                     col_data = np.char.encode(col_data, "ascii")
-                                col_data = np.ascontiguousarray(col_data).view("uint8").reshape(
-                                    len(col_data), -1
+                                col_data = (
+                                    np.ascontiguousarray(col_data)
+                                    .view("uint8")
+                                    .reshape(len(col_data), -1)
                                 )
                             elif col_data.dtype.kind == "b":
                                 col_data = col_data.astype(bool)
@@ -144,13 +152,17 @@ def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
                             for col in data.names:
                                 col_data = np.ascontiguousarray(np.asarray(data[col]))
                                 if col_data.dtype.byteorder not in ("=", "|"):
-                                    col_data = col_data.astype(col_data.dtype.newbyteorder("="))
+                                    col_data = col_data.astype(
+                                        col_data.dtype.newbyteorder("=")
+                                    )
                                 if col_data.dtype.kind in {"S", "U"}:
                                     if col_data.dtype.kind == "U":
                                         col_data = np.char.encode(col_data, "ascii")
-                                    col_data = np.ascontiguousarray(col_data).view(
-                                        "uint8"
-                                    ).reshape(len(col_data), -1)
+                                    col_data = (
+                                        np.ascontiguousarray(col_data)
+                                        .view("uint8")
+                                        .reshape(len(col_data), -1)
+                                    )
                                 elif col_data.dtype.kind == "b":
                                     col_data = col_data.astype(bool)
                                 out[col] = torch.from_numpy(col_data)
@@ -204,7 +216,10 @@ def _normalize_legacy_rows(
             "compression": raw.get("compression"),
         }
 
-        for family, methods in (("smart", SMART_METHODS), ("specialized", SPECIALIZED_METHODS)):
+        for family, methods in (
+            ("smart", SMART_METHODS),
+            ("specialized", SPECIALIZED_METHODS),
+        ):
             for method_key, library, method_label in methods:
                 t_col = f"{method_key}_median"
                 tp_col = f"{method_key}_mb_s"
@@ -218,7 +233,9 @@ def _normalize_legacy_rows(
                 if library == "fitsio":
                     comparable = False
                     status = "SKIPPED"
-                    skip_reason = "strict_mmap_fairness: comparator mmap mode is not controllable"
+                    skip_reason = (
+                        "strict_mmap_fairness: comparator mmap mode is not controllable"
+                    )
                     t_val = None
                     tp_val = None
                 elif library == "astropy" and status != "OK":
@@ -230,7 +247,8 @@ def _normalize_legacy_rows(
                 elif (
                     library == "astropy"
                     and mmap_target == "on"
-                    and str(files.get(str(raw.get("filename")), "")) in astropy_fallback_paths
+                    and str(files.get(str(raw.get("filename")), ""))
+                    in astropy_fallback_paths
                 ):
                     comparable = False
                     status = "SKIPPED"
@@ -312,7 +330,9 @@ def _benchmark_headers(
             if library == "fitsio":
                 status = "SKIPPED"
                 comparable = False
-                skip_reason = "strict_mmap_fairness: comparator mmap mode is not controllable"
+                skip_reason = (
+                    "strict_mmap_fairness: comparator mmap mode is not controllable"
+                )
                 t_val = None
 
             if library == "astropy" and err and target_memmap:
@@ -390,7 +410,10 @@ def run_fits_domain(
             rx = re.compile(case_filter)
             files = {k: v for k, v in files.items() if rx.search(k)}
 
-        print(f"[fits] cases={len(files)} mmap={mmap_target} profile={profile}", flush=True)
+        print(
+            f"[fits] cases={len(files)} mmap={mmap_target} profile={profile}",
+            flush=True,
+        )
 
         raw_rows = suite.run_exhaustive_benchmarks(files)
         astropy_fallback_paths = set(

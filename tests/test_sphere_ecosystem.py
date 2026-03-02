@@ -67,9 +67,7 @@ def test_moc():
     assert p == 0
 
     moc = MOC(torch.tensor([nest2uniq(4, 0), nest2uniq(4, 1)]))
-    assert (
-        not moc.contains(0, 0).item()
-    )  # Center of pixel 0 is lon=45 if nside=1...
+    assert not moc.contains(0, 0).item()  # Center of pixel 0 is lon=45 if nside=1...
     # Let's check a point we know is in pix 0 for nside=4 nest
     # actually better to just check via contains(lon, lat) logic
     from torchfits.wcs import healpix as hpg

@@ -80,9 +80,15 @@ def _write_table_file(
     cols = []
     for col_name, dtype in schema:
         arr = _dtype_values(dtype, nrows, rng)
-        cols.append(astropy_fits.Column(name=col_name, format=_to_tform(dtype), array=arr))
-    hdu = astropy_fits.BinTableHDU.from_columns(cols, name=f"TABLE_{schema_name.upper()}")
-    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(out_path, overwrite=True)
+        cols.append(
+            astropy_fits.Column(name=col_name, format=_to_tform(dtype), array=arr)
+        )
+    hdu = astropy_fits.BinTableHDU.from_columns(
+        cols, name=f"TABLE_{schema_name.upper()}"
+    )
+    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(
+        out_path, overwrite=True
+    )
     return schema_name, [c[0] for c in schema]
 
 
@@ -101,7 +107,9 @@ def _write_varlen_file(*, out_path: Path, nrows: int, rng_seed: int) -> list[str
         astropy_fits.Column(name="values", format="PJ()", array=var),
     ]
     hdu = astropy_fits.BinTableHDU.from_columns(cols, name="TABLE_VARLEN")
-    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(out_path, overwrite=True)
+    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(
+        out_path, overwrite=True
+    )
     return ["id", "flux", "values"]
 
 
@@ -145,7 +153,9 @@ def _table_to_torch_dict(data) -> dict[str, torch.Tensor]:
     return out
 
 
-def _choose_numeric_col(columns: list[str], schema: list[tuple[str, str]] | None) -> str:
+def _choose_numeric_col(
+    columns: list[str], schema: list[tuple[str, str]] | None
+) -> str:
     if schema:
         for name, dtype in schema:
             if dtype in {"f4", "f8", "i4", "i8"}:
@@ -182,7 +192,13 @@ def _bench_case(
 
     if unsupported:
         rows: list[dict[str, Any]] = []
-        operations = ["read_full", "projection", "row_slice", "predicate_filter", "scan_count"]
+        operations = [
+            "read_full",
+            "projection",
+            "row_slice",
+            "predicate_filter",
+            "scan_count",
+        ]
         method_specs = [
             ("torchfits", "torchfits", "smart", "smart"),
             ("astropy_torch", "astropy", "smart", "smart"),
@@ -258,7 +274,9 @@ def _bench_case(
                 policy="default",
                 mmap=target_memmap,
             ),
-            "astropy": lambda: _astropy_projection(path, proj_cols, memmap=target_memmap),
+            "astropy": lambda: _astropy_projection(
+                path, proj_cols, memmap=target_memmap
+            ),
             "astropy_torch": lambda: _table_to_torch_dict(
                 _astropy_projection(path, proj_cols, memmap=target_memmap)
             ),
@@ -289,7 +307,9 @@ def _bench_case(
                 path, row_slice_start, row_slice_n, memmap=target_memmap
             ),
             "astropy_torch": lambda: _table_to_torch_dict(
-                _astropy_row_slice(path, row_slice_start, row_slice_n, memmap=target_memmap)
+                _astropy_row_slice(
+                    path, row_slice_start, row_slice_n, memmap=target_memmap
+                )
             ),
             "fitsio": lambda: _fitsio_row_slice(path, row_slice_start, row_slice_n),
             "fitsio_torch": lambda: _table_to_torch_dict(
@@ -308,7 +328,9 @@ def _bench_case(
                 _astropy_filter(path, col=num_col, memmap=target_memmap)
             ),
             "fitsio": lambda: _fitsio_filter(path, col=num_col),
-            "fitsio_torch": lambda: _table_to_torch_dict(_fitsio_filter(path, col=num_col)),
+            "fitsio_torch": lambda: _table_to_torch_dict(
+                _fitsio_filter(path, col=num_col)
+            ),
         },
         "scan_count": {
             "torchfits": lambda: _torchfits_scan_count(
@@ -317,8 +339,12 @@ def _bench_case(
             "torchfits_specialized": lambda: _torchfits_scan_count_local(
                 path, col=num_col, mmap=target_memmap
             ),
-            "astropy": lambda: _astropy_scan_count(path, col=num_col, memmap=target_memmap),
-            "astropy_torch": lambda: _astropy_scan_count(path, col=num_col, memmap=target_memmap),
+            "astropy": lambda: _astropy_scan_count(
+                path, col=num_col, memmap=target_memmap
+            ),
+            "astropy_torch": lambda: _astropy_scan_count(
+                path, col=num_col, memmap=target_memmap
+            ),
             "fitsio": lambda: _fitsio_scan_count(path, col=num_col),
             "fitsio_torch": lambda: _fitsio_scan_count(path, col=num_col),
         },
@@ -357,7 +383,9 @@ def _bench_case(
             skip_reason = ""
 
             library = "torchfits" if method.startswith("torchfits") else "astropy"
-            family = "smart" if method in {"torchfits", "astropy_torch"} else "specialized"
+            family = (
+                "smart" if method in {"torchfits", "astropy_torch"} else "specialized"
+            )
             mode = "smart" if family == "smart" else "specialized"
 
             # If strict mmap parity cannot be honored by astropy in this case, mark SKIPPED.
@@ -469,6 +497,7 @@ def _torchfits_filter_local(path: Path, *, col: str, mmap: bool):
 
 def _torchfits_scan_count(path: Path, *, col: str, mmap: bool, has_pyarrow: bool):
     import torchfits
+
     # Use hdu.num_rows if no filtering is needed, it's MUCH faster for FITS.
     with torchfits.open(str(path)) as hdul:
         for hdu in hdul:
@@ -562,7 +591,9 @@ def _build_cases(temp_dir: Path, *, quick: bool = False) -> list[dict[str, Any]]
         ],
     }
 
-    row_scales = [1_000, 10_000, 100_000] if quick else [1_000, 10_000, 100_000, 1_000_000]
+    row_scales = (
+        [1_000, 10_000, 100_000] if quick else [1_000, 10_000, 100_000, 1_000_000]
+    )
     cases: list[dict[str, Any]] = []
 
     seed = 123
@@ -598,7 +629,7 @@ def _build_cases(temp_dir: Path, *, quick: bool = False) -> list[dict[str, Any]]
                 }
             )
 
-    for nrows in ([1_000, 10_000] if quick else [1_000, 10_000, 100_000]):
+    for nrows in [1_000, 10_000] if quick else [1_000, 10_000, 100_000]:
         path = temp_dir / f"table_varlen_{nrows}.fits"
         columns = _write_varlen_file(out_path=path, nrows=nrows, rng_seed=seed)
         seed += 1
@@ -666,9 +697,13 @@ def run_fitstable_domain(
     try:
         cases = _build_cases(temp_root, quick=quick)
         if max_cases is not None and max_cases > 0:
-            supported_cases = [c for c in cases if not bool(c.get("unsupported", False))]
+            supported_cases = [
+                c for c in cases if not bool(c.get("unsupported", False))
+            ]
             cases = supported_cases[:max_cases]
-            print(f"[fitstable] quick case cap applied: {len(cases)} case(s)", flush=True)
+            print(
+                f"[fitstable] quick case cap applied: {len(cases)} case(s)", flush=True
+            )
         for case in cases:
             rows.extend(
                 _bench_case(

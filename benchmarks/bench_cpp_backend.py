@@ -460,7 +460,9 @@ class CPPBackendBenchmark:
                     f"fitsio_rel_spread={issue['fitsio_rel_spread']:.2f}"
                 )
         else:
-            print("\n[diagnostic] No stable specialized slow-vs-fitsio issues detected.")
+            print(
+                "\n[diagnostic] No stable specialized slow-vs-fitsio issues detected."
+            )
 
         grouped: Dict[str, List[float]] = {
             "compressed": [],
@@ -520,7 +522,9 @@ class CPPBackendBenchmark:
                 f"min={group_stats['min']:.2f}x"
             )
 
-        print("\n[diagnostic] Ratio Summary vs fitsio (specialized mode, median-based):")
+        print(
+            "\n[diagnostic] Ratio Summary vs fitsio (specialized mode, median-based):"
+        )
         for group, vals in grouped_specialized.items():
             if not vals:
                 continue
@@ -559,14 +563,20 @@ class CPPBackendBenchmark:
         with open(output_file, "w") as f:
             json.dump(payload, f, indent=2)
 
-    def run_comprehensive_benchmark(self, json_out: Optional[Path] = None) -> Dict[str, Any]:
+    def run_comprehensive_benchmark(
+        self, json_out: Optional[Path] = None
+    ) -> Dict[str, Any]:
         """Run comprehensive C++ backend benchmark."""
         print("[diagnostic] C++ Backend Performance Benchmark (non-gating)")
         print("=" * 50)
 
         if not torchfits:
             print("[diagnostic] SKIPPED: torchfits not available")
-            return {"status": "SKIPPED", "reason": "torchfits_not_available", "results": []}
+            return {
+                "status": "SKIPPED",
+                "reason": "torchfits_not_available",
+                "results": [],
+            }
 
         test_configs = [
             ((100, 100), np.float32, False),
@@ -590,7 +600,9 @@ class CPPBackendBenchmark:
         output_file = (
             json_out
             if json_out is not None
-            else Path(__file__).parent.parent / "bench_results" / "cpp_backend_results.json"
+            else Path(__file__).parent.parent
+            / "bench_results"
+            / "cpp_backend_results.json"
         )
         self.save_results_json(output_file, summary)
         print(f"\n[diagnostic] Results saved to: {output_file}")
@@ -608,7 +620,9 @@ def _parse_args() -> argparse.Namespace:
         description="Run C++ backend diagnostic benchmark (informational, non-gating)."
     )
     parser.add_argument("--runs", type=int, default=9, help="Timed repeats per method")
-    parser.add_argument("--warmup", type=int, default=3, help="Warmup repeats per method")
+    parser.add_argument(
+        "--warmup", type=int, default=3, help="Warmup repeats per method"
+    )
     parser.add_argument("--seed", type=int, default=123, help="Random seed")
     parser.add_argument(
         "--issue-ratio-threshold",

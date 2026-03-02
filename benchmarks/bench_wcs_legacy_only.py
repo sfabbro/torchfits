@@ -173,11 +173,11 @@ def _sample_pixels(
     cx = float(header["CRPIX1"] - 1.0)
     cy = float(header["CRPIX2"] - 1.0)
     if case.is_allsky:
-        span_x, span_y = ((60.0, 40.0) if profile == "interior" else (140.0, 90.0))
+        span_x, span_y = (60.0, 40.0) if profile == "interior" else (140.0, 90.0)
     elif case.is_cylindrical:
-        span_x, span_y = ((180.0, 90.0) if profile == "interior" else (320.0, 160.0))
+        span_x, span_y = (180.0, 90.0) if profile == "interior" else (320.0, 160.0)
     else:
-        span_x, span_y = ((900.0, 900.0) if profile == "interior" else (1600.0, 1600.0))
+        span_x, span_y = (900.0, 900.0) if profile == "interior" else (1600.0, 1600.0)
 
     x = cx + rng.uniform(-span_x, span_x, size=n_points)
     y = cy + rng.uniform(-span_y, span_y, size=n_points)
@@ -196,7 +196,9 @@ def _row(
     skip_reason: str,
     time_s: float | None,
 ) -> dict[str, Any]:
-    throughput = (n_points / time_s / 1e6) if (time_s is not None and time_s > 0) else None
+    throughput = (
+        (n_points / time_s / 1e6) if (time_s is not None and time_s > 0) else None
+    )
     return {
         "suite": "wcs_legacy",
         "case_id": f"{case_name}::n{n_points}::forward",
@@ -214,7 +216,9 @@ def _row(
     }
 
 
-def _time_pyast(header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int) -> float | None:
+def _time_pyast(
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int
+) -> float | None:
     if not HAS_PYAST:
         return None
     fc = Ast.FitsChan()
@@ -230,7 +234,9 @@ def _time_pyast(header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int)
     return _time_median(lambda: w.tran(coords, True), runs=runs)
 
 
-def _time_kapteyn(header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int) -> float | None:
+def _time_kapteyn(
+    header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: int
+) -> float | None:
     if not HAS_KAPTEYN:
         return None
     h = {str(k): v for k, v in header.items()}
@@ -245,14 +251,18 @@ def _time_kapteyn(header: dict[str, Any], x: np.ndarray, y: np.ndarray, runs: in
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--n-tiers", type=str, default="1000,10000,100000,1000000,10000000")
+    parser.add_argument(
+        "--n-tiers", type=str, default="1000,10000,100000,1000000,10000000"
+    )
     parser.add_argument(
         "--cases",
         type=str,
         default="",
         help="Comma-separated projection cases to run (default: all required)",
     )
-    parser.add_argument("--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed")
+    parser.add_argument(
+        "--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed"
+    )
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--json-out", type=Path, required=True)
     return parser.parse_args()

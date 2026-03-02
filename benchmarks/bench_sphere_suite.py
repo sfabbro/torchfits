@@ -20,11 +20,19 @@ from bench_contract import RESULT_COLUMNS, annotate_rankings, write_csv
 REQUIRED_COMPARATORS = ["healpy", "hpgeom", "astropy-healpix", "healsparse"]
 
 
-def _run_json_command(name: str, cmd: list[str], out_json: Path) -> tuple[bool, list[dict[str, Any]], str]:
+def _run_json_command(
+    name: str, cmd: list[str], out_json: Path
+) -> tuple[bool, list[dict[str, Any]], str]:
     out_json.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
     if proc.returncode != 0:
-        return False, [], f"{name} failed (code {proc.returncode}): {proc.stdout[-400:]}"
+        return (
+            False,
+            [],
+            f"{name} failed (code {proc.returncode}): {proc.stdout[-400:]}",
+        )
     try:
         raw = json.loads(out_json.read_text(encoding="utf-8"))
         rows: Any
@@ -108,7 +116,9 @@ def _row(
     }
 
 
-def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> list[dict[str, Any]]:
+def _run_sphere_domain_quick(
+    *, run_id: str, raw_dir: Path, max_cases: int
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     case_budget = max(1, int(max_cases))
 
@@ -134,7 +144,9 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
             "--json-out",
             str(geo_json),
         ]
-        ok_geo, geo_rows, reason_geo = _run_json_command("sphere_geometry_cpu_quick", geo_cmd, geo_json)
+        ok_geo, geo_rows, reason_geo = _run_json_command(
+            "sphere_geometry_cpu_quick", geo_cmd, geo_json
+        )
         case_id = "geometry::ang2pix_ring::cpu"
         case_label = "geometry ang2pix_ring cpu"
         if not ok_geo:
@@ -210,7 +222,10 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         throughput=mpts,
                         unit="Mpts/s",
                         n_points=int(src.get("n_points", 0) or 0),
-                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                        metadata={
+                            "quick_case": True,
+                            "mismatches": src.get("mismatches"),
+                        },
                     )
                 )
 
@@ -232,7 +247,9 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
             "--json-out",
             str(adv_json),
         ]
-        ok_adv, adv_rows, reason_adv = _run_json_command("healpix_advanced_quick", adv_cmd, adv_json)
+        ok_adv, adv_rows, reason_adv = _run_json_command(
+            "healpix_advanced_quick", adv_cmd, adv_json
+        )
         case_id = "advanced::neighbors_ring"
         case_label = "advanced neighbors_ring"
         if not ok_adv:
@@ -258,7 +275,14 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                 )
             )
         else:
-            src = next((r for r in adv_rows if str(r.get("operation", "")) == "neighbors_ring"), None)
+            src = next(
+                (
+                    r
+                    for r in adv_rows
+                    if str(r.get("operation", "")) == "neighbors_ring"
+                ),
+                None,
+            )
             if src is None:
                 rows.append(
                     _row(
@@ -283,12 +307,24 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                 )
             else:
                 n_points = int(src.get("n_points", 0) or 0)
-                tf_mpts = _safe_float(src.get("mpts_s_torchfits")) or _safe_float(src.get("torch_mpts_s"))
-                hp_mpts = _safe_float(src.get("mpts_s_healpy")) or _safe_float(src.get("healpy_mpts_s"))
+                tf_mpts = _safe_float(src.get("mpts_s_torchfits")) or _safe_float(
+                    src.get("torch_mpts_s")
+                )
+                hp_mpts = _safe_float(src.get("mpts_s_healpy")) or _safe_float(
+                    src.get("healpy_mpts_s")
+                )
                 tf_ms = _safe_float(src.get("torch_ms"))
                 hp_ms = _safe_float(src.get("healpy_ms"))
-                tf_s = (tf_ms / 1000.0) if tf_ms is not None else _seconds_from_mpts(tf_mpts, n_points)
-                hp_s = (hp_ms / 1000.0) if hp_ms is not None else _seconds_from_mpts(hp_mpts, n_points)
+                tf_s = (
+                    (tf_ms / 1000.0)
+                    if tf_ms is not None
+                    else _seconds_from_mpts(tf_mpts, n_points)
+                )
+                hp_s = (
+                    (hp_ms / 1000.0)
+                    if hp_ms is not None
+                    else _seconds_from_mpts(hp_mpts, n_points)
+                )
                 rows.append(
                     _row(
                         run_id=run_id,
@@ -307,7 +343,10 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         throughput=tf_mpts,
                         unit="Mpts/s",
                         n_points=n_points,
-                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                        metadata={
+                            "quick_case": True,
+                            "mismatches": src.get("mismatches"),
+                        },
                     )
                 )
                 rows.append(
@@ -328,7 +367,10 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         throughput=hp_mpts,
                         unit="Mpts/s",
                         n_points=n_points,
-                        metadata={"quick_case": True, "mismatches": src.get("mismatches")},
+                        metadata={
+                            "quick_case": True,
+                            "mismatches": src.get("mismatches"),
+                        },
                     )
                 )
 
@@ -348,7 +390,9 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
             "--json-out",
             str(spec_json),
         ]
-        ok_spec, spec_rows, reason_spec = _run_json_command("sphere_spectral_quick", spec_cmd, spec_json)
+        ok_spec, spec_rows, reason_spec = _run_json_command(
+            "sphere_spectral_quick", spec_cmd, spec_json
+        )
         case_id = "spectral::map2alm_spin"
         case_label = "spectral map2alm_spin"
         if not ok_spec:
@@ -438,7 +482,11 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         throughput=tf_mops,
                         unit="Mops/s",
                         n_points=int(tf_row.get("n", 0) or 0),
-                        metadata={"quick_case": True, "nside": tf_row.get("nside"), "lmax": tf_row.get("lmax")},
+                        metadata={
+                            "quick_case": True,
+                            "nside": tf_row.get("nside"),
+                            "lmax": tf_row.get("lmax"),
+                        },
                     )
                 )
             if hp_row is None:
@@ -484,7 +532,11 @@ def _run_sphere_domain_quick(*, run_id: str, raw_dir: Path, max_cases: int) -> l
                         throughput=hp_mops,
                         unit="Mops/s",
                         n_points=int(hp_row.get("n", 0) or 0),
-                        metadata={"quick_case": True, "nside": hp_row.get("nside"), "lmax": hp_row.get("lmax")},
+                        metadata={
+                            "quick_case": True,
+                            "nside": hp_row.get("nside"),
+                            "lmax": hp_row.get("lmax"),
+                        },
                     )
                 )
 
@@ -504,7 +556,9 @@ def run_sphere_domain(
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     if quick_cases is not None and quick_cases > 0:
-        return _run_sphere_domain_quick(run_id=run_id, raw_dir=raw_dir, max_cases=quick_cases)
+        return _run_sphere_domain_quick(
+            run_id=run_id, raw_dir=raw_dir, max_cases=quick_cases
+        )
 
     rows: list[dict[str, Any]] = []
 
@@ -618,7 +672,10 @@ def run_sphere_domain(
                 )
 
     # Optional GPU subsection.
-    if include_gpu and (torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())):
+    if include_gpu and (
+        torch.cuda.is_available()
+        or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+    ):
         gpu_dev = "cuda" if torch.cuda.is_available() else "mps"
         print(f"[sphere] running geometry {gpu_dev} suite...", flush=True)
         geo_gpu_json = raw_dir / f"sphere_geometry_{gpu_dev}.json"
@@ -709,7 +766,9 @@ def run_sphere_domain(
         "--json-out",
         str(adv_json),
     ]
-    ok_adv, adv_rows, reason_adv = _run_json_command("healpix_advanced", adv_cmd, adv_json)
+    ok_adv, adv_rows, reason_adv = _run_json_command(
+        "healpix_advanced", adv_cmd, adv_json
+    )
     if ok_adv:
         for r in adv_rows:
             op = str(r.get("operation", "unknown"))
@@ -812,7 +871,9 @@ def run_sphere_domain(
         "--json-out",
         str(sparse_json),
     ]
-    ok_sparse, sparse_rows, reason_sparse = _run_json_command("sphere_sparse", sparse_cmd, sparse_json)
+    ok_sparse, sparse_rows, reason_sparse = _run_json_command(
+        "sphere_sparse", sparse_cmd, sparse_json
+    )
     if ok_sparse:
         for r in sparse_rows:
             op = str(r.get("operation", "unknown"))
@@ -862,7 +923,9 @@ def run_sphere_domain(
                         throughput=(1.0 / sparse_s) if sparse_s else None,
                         unit="ops/s",
                         n_points="",
-                        metadata={"ratio_sparse_vs_dense": r.get("ratio_sparse_vs_dense")},
+                        metadata={
+                            "ratio_sparse_vs_dense": r.get("ratio_sparse_vs_dense")
+                        },
                     )
                 )
                 rows.append(
@@ -883,7 +946,9 @@ def run_sphere_domain(
                         throughput=(1.0 / dense_s) if dense_s else None,
                         unit="ops/s",
                         n_points="",
-                        metadata={"ratio_sparse_vs_dense": r.get("ratio_sparse_vs_dense")},
+                        metadata={
+                            "ratio_sparse_vs_dense": r.get("ratio_sparse_vs_dense")
+                        },
                     )
                 )
     else:
@@ -924,7 +989,9 @@ def run_sphere_domain(
         "--json-out",
         str(spec_json),
     ]
-    ok_spec, spec_rows, reason_spec = _run_json_command("sphere_spectral", spec_cmd, spec_json)
+    ok_spec, spec_rows, reason_spec = _run_json_command(
+        "sphere_spectral", spec_cmd, spec_json
+    )
     if ok_spec:
         for r in spec_rows:
             backend = str(r.get("backend", "unknown"))
@@ -991,7 +1058,9 @@ def run_sphere_domain(
         "--json-out",
         str(poly_json),
     ]
-    ok_poly, poly_rows, reason_poly = _run_json_command("sphere_polygons", poly_cmd, poly_json)
+    ok_poly, poly_rows, reason_poly = _run_json_command(
+        "sphere_polygons", poly_cmd, poly_json
+    )
     if ok_poly:
         for r in poly_rows:
             op = str(r.get("operation", "unknown"))
@@ -1089,7 +1158,9 @@ def run_sphere_domain(
         "--json-out",
         str(core_json),
     ]
-    ok_core, core_rows, reason_core = _run_json_command("sphere_core", core_cmd, core_json)
+    ok_core, core_rows, reason_core = _run_json_command(
+        "sphere_core", core_cmd, core_json
+    )
     if ok_core:
         for r in core_rows:
             op = str(r.get("operation", "unknown"))
@@ -1128,7 +1199,9 @@ def run_sphere_domain(
                     method="torchfits",
                     mode="specialized",
                     status="OK" if (t is not None or thr is not None) else "SKIPPED",
-                    skip_reason="no_timing_field" if (t is None and thr is None) else "",
+                    skip_reason="no_timing_field"
+                    if (t is None and thr is None)
+                    else "",
                     comparable=False,
                     time_s=t,
                     throughput=thr,
@@ -1178,7 +1251,9 @@ def main() -> int:
     run_id = args.run_id.strip() or time.strftime("%Y%m%d_%H%M%S")
     run_dir = args.output_dir / run_id
 
-    rows = run_sphere_domain(run_id=run_id, output_dir=run_dir, include_gpu=not args.no_gpu)
+    rows = run_sphere_domain(
+        run_id=run_id, output_dir=run_dir, include_gpu=not args.no_gpu
+    )
     out_csv = run_dir / "sphere_results.csv"
     write_csv(out_csv, rows, RESULT_COLUMNS)
     print(f"[sphere] wrote {len(rows)} rows to {out_csv}")

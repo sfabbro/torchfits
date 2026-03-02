@@ -143,7 +143,9 @@ def run_case(
     x_t = torch.from_numpy(x)
     y_t = torch.from_numpy(y)
 
-    torch_dt = _time_many(lambda: twcs.pixel_to_world(x_t, y_t, origin=origin), runs=runs)
+    torch_dt = _time_many(
+        lambda: twcs.pixel_to_world(x_t, y_t, origin=origin), runs=runs
+    )
     ra_t, dec_t = twcs.pixel_to_world(x_t, y_t, origin=origin)
 
     ra_t_np = ra_t.detach().cpu().numpy()

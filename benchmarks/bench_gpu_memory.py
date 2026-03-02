@@ -330,7 +330,9 @@ class GPUMemoryBenchmark:
             return {"status": "SKIPPED", "reason": "cuda_not_available"}
 
         if not torchfits:
-            print("[diagnostic] SKIPPED: torchfits not available - cannot run benchmark")
+            print(
+                "[diagnostic] SKIPPED: torchfits not available - cannot run benchmark"
+            )
             return {"status": "SKIPPED", "reason": "torchfits_not_available"}
 
         # Run all GPU tests
