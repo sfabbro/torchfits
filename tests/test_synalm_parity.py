@@ -1,7 +1,8 @@
 import torch
-import healpy as hp
-from torchfits.sphere import synalm
 import pytest
+
+hp = pytest.importorskip("healpy")
+from torchfits.sphere import synalm
 
 
 @pytest.mark.skipif(not hasattr(hp, "synalm"), reason="healpy not available")
