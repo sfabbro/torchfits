@@ -53,7 +53,7 @@ cache = ["psutil>=5.0.0"]
 
 dev = [
     "pytest>=6.0",
-    "pytest-cov>=2.0", 
+    "pytest-cov>=2.0",
     "ruff>=0.1.0",
     "mypy>=1.0",
     "ipykernel",
@@ -69,7 +69,7 @@ bench = [
 ]
 test = [
     "pytest>=6.0",
-    "pytest-cov>=2.0", 
+    "pytest-cov>=2.0",
     "pytest-benchmark>=3.0",
 ]
 examples = [

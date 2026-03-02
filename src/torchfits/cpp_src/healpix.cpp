@@ -2051,12 +2051,12 @@ std::pair<torch::Tensor, torch::Tensor> healpix_spin_integrate_concat_cpu(
         for (int64_t m = begin; m < end; ++m) {
             const int64_t base = m * (lmax + 1) - (m * (m - 1)) / 2;
             const int64_t l_count = lmax - m + 1;
-            
+
             auto yp_block = yp.narrow(0, base, l_count);
             auto ym_block = ym.narrow(0, base, l_count);
             auto sp_vec = sp.select(0, m);
             auto sm_vec = sm.select(0, m);
-            
+
             out_plus.narrow(0, base, l_count).copy_(at::mv(yp_block, sp_vec) * pix_w);
             out_minus.narrow(0, base, l_count).copy_(at::mv(ym_block, sm_vec) * pix_w);
         }
@@ -2372,7 +2372,7 @@ torch::Tensor healpix_get_interp_val_nested_cpu(
 
 struct WignerDCoeffs {
     int num_terms;
-    double coeff[4]; 
+    double coeff[4];
     int p_ct[4];
     int p_st[4];
 };
@@ -2381,7 +2381,7 @@ static inline double fast_pow(double base, int exp) {
     if (exp == 0) return 1.0;
     if (exp == 1) return base;
     if (exp == 2) return base * base;
-    
+
     double res = 1.0;
     while (exp > 0) {
         if (exp & 1) res *= base;
@@ -2394,28 +2394,28 @@ static inline double fast_pow(double base, int exp) {
 static WignerDCoeffs get_wigner_d_coeffs(int64_t l, int64_t m, int64_t mp) {
     WignerDCoeffs res;
     res.num_terms = 0;
-    
+
     int64_t k_min = std::max((int64_t)0, m - mp);
     int64_t k_max = std::min(l + m, l - mp);
-    
+
     if (k_min > k_max) return res;
-    
-    double log_pref = 0.5 * (std::lgamma(l + m + 1) + std::lgamma(l - m + 1) + 
+
+    double log_pref = 0.5 * (std::lgamma(l + m + 1) + std::lgamma(l - m + 1) +
                              std::lgamma(l + mp + 1) + std::lgamma(l - mp + 1));
-                             
+
     for(int64_t k = k_min; k <= k_max && res.num_terms < 4; ++k) {
         int64_t a = l + m - k;
         int64_t b = k;
         int64_t c = mp - m + k;
         int64_t d = l - mp - k;
-        
+
         if (a < 0 || b < 0 || c < 0 || d < 0) continue;
-        
-        double log_denom = std::lgamma(a + 1) + std::lgamma(b + 1) + 
+
+        double log_denom = std::lgamma(a + 1) + std::lgamma(b + 1) +
                            std::lgamma(c + 1) + std::lgamma(d + 1);
-        
+
         double sign = ((k + mp - m) % 2 != 0) ? -1.0 : 1.0;
-        
+
         res.p_ct[res.num_terms] = (int)(2 * l + m - mp - 2 * k);
         res.p_st[res.num_terms] = (int)(mp - m + 2 * k);
         res.coeff[res.num_terms] = sign * std::exp(log_pref - log_denom);
@@ -2426,11 +2426,11 @@ static WignerDCoeffs get_wigner_d_coeffs(int64_t l, int64_t m, int64_t mp) {
 
 static inline double eval_wigner_d(const WignerDCoeffs& coeffs, double theta) {
     if (coeffs.num_terms == 0) return 0.0;
-    
+
     double sin_half = std::sin(theta * 0.5);
     double cos_half = std::cos(theta * 0.5);
     double sum = 0.0;
-    
+
     for (int i = 0; i < coeffs.num_terms; ++i) {
         double term = coeffs.coeff[i];
         if (coeffs.p_ct[i] > 0) term *= fast_pow(cos_half, coeffs.p_ct[i]);
@@ -2480,13 +2480,13 @@ torch::Tensor healpix_spin_integrate_recurrence_cpu(
     auto sm_a = sm_f.accessor<c10::complex<double>, 2>();
     auto th_ptr = theta.data_ptr<double>();
     auto w_ptr = weight.data_ptr<double>();
-    
+
     int64_t nrings = theta.size(0);
     int64_t n_eff = (nrings + 1) / 2;
     int64_t n_pairs = nrings / 2;
     bool has_equator = (nrings % 2 != 0);
     ensure_l_factors(lmax);
-    
+
     auto options = torch::TensorOptions().dtype(torch::kComplexDouble).device(torch::kCPU);
     torch::Tensor alms_plus = torch::zeros({alm_size(lmax, mmax)}, options);
     torch::Tensor alms_minus = torch::zeros({alm_size(lmax, mmax)}, options);
@@ -2684,7 +2684,7 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
     torch::Tensor s_modes = torch::zeros({2, mmax + 1, nrings}, options);
     auto s_modes_a = s_modes.accessor<c10::complex<double>, 3>();
     auto th_ptr = theta.data_ptr<double>();
-    
+
     std::vector<int64_t> m_offsets(mmax + 1);
     int64_t current_lut_off = 0;
     for (int64_t m = 0; m <= mmax; ++m) {
@@ -2838,7 +2838,7 @@ torch::Tensor healpix_spin_interpolate_recurrence_cpu(
                     { auto t = dm2; dm2 = dm1; dm1 = dmc; dmc = t; }
                 }
             }
-            
+
             for(int i=0; i<n_eff; ++i) {
                 if (!active[i]) {
                     continue;

@@ -35,16 +35,16 @@ public:
     MMapHandle() = default;
     explicit MMapHandle(const std::string& filename);
     explicit MMapHandle(const std::string& filename, bool writable);
-    
+
     // Move constructor
-    MMapHandle(MMapHandle&& other) noexcept 
+    MMapHandle(MMapHandle&& other) noexcept
         : ptr(other.ptr), size(other.size), fd(other.fd), owner(other.owner) {
         other.ptr = nullptr;
         other.size = 0;
         other.fd = -1;
         other.owner = false;
     }
-    
+
     // Move assignment
     MMapHandle& operator=(MMapHandle&& other) noexcept {
         if (this != &other) {
@@ -64,7 +64,7 @@ public:
     ~MMapHandle() {
         cleanup();
     }
-    
+
     void cleanup(); // Implementation in hardware.cpp or inline if header-only
 };
 

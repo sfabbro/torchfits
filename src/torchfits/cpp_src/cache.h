@@ -1,6 +1,6 @@
 /**
  * Multi-level caching system header
- * 
+ *
  * Implements L1 (memory) and L2 (disk) caching for FITS data
  */
 
@@ -19,11 +19,11 @@ void clear_cache();
 class CacheManager {
 public:
     static CacheManager& instance();
-    
+
     void set_memory_limit(size_t limit_mb);
     void set_disk_cache_dir(const std::string& dir);
     void clear_all();
-    
+
 private:
     CacheManager() = default;
     size_t memory_limit_;

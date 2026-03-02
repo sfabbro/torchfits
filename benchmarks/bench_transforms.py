@@ -221,8 +221,8 @@ def main():
         print("\nRanked Summary (Transforms):")
         # Rank transforms by average time across sizes.
         agg = {}
-        for size_key, transforms in results.items():
-            for tname, m in transforms.items():
+        for size_key, transforms_data in results.items():
+            for tname, m in transforms_data.items():
                 agg.setdefault(tname, []).append(float(m.get("avg_time_ms", 0.0)))
         items = []
         for tname, vals in agg.items():

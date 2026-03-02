@@ -453,7 +453,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_ang2pix.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -473,7 +477,10 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            frac=frac,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_pix2ang.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     frac=frac,
@@ -544,7 +551,10 @@ def main() -> int:
                     results.append(
                         _run_named(
                             f"test_boundaries.inner(nside_pow={nside_pow},nest={nest},step={step},frac={frac})",
-                            lambda nside_pow=nside_pow, frac=frac, step=step, nest=nest: (
+                            lambda nside_pow=nside_pow,
+                            frac=frac,
+                            step=step,
+                            nest=nest: (
                                 mod.test_boundaries.hypothesis.inner_test(
                                     nside_pow=nside_pow, frac=frac, step=step, nest=nest
                                 )
@@ -589,7 +599,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_interp_weights.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -609,7 +623,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_interp_val.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,

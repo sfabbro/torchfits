@@ -15,33 +15,33 @@ import json
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import random
-import sys
-import tempfile
-import threading
-import time
-from contextlib import contextmanager
-from pathlib import Path
-from statistics import mean, stdev, median
-from typing import Any, Dict, List, Optional
+import random  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from pathlib import Path  # noqa: E402
+from statistics import mean, stdev, median  # noqa: E402
+from typing import Any, Dict, List, Optional  # noqa: E402
 
 # Add benchmarks and src to path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mpl_config import configure
+from mpl_config import configure  # noqa: E402
 
-import fitsio
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import psutil
-import torch
-from astropy.io import fits as astropy_fits
-from astropy.io.fits import CompImageHDU
+import fitsio  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import seaborn as sns  # noqa: E402
+import psutil  # noqa: E402
+import torch  # noqa: E402
+from astropy.io import fits as astropy_fits  # noqa: E402
+from astropy.io.fits import CompImageHDU  # noqa: E402
 
-import torchfits
+import torchfits  # noqa: E402
 
 
 class ExhaustiveBenchmarkSuite:

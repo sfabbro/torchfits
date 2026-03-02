@@ -20,7 +20,7 @@ size_t detect_storage_speed(const std::string& filepath) {
     // Check if on SSD (most Macs are NVMe)
     return 3 * 1024 * 1024 * 1024ULL;  // 3GB/s NVMe
     #endif
-    
+
     #ifdef __linux__
     // Check filesystem type or device info
     // For now, assume NVMe if file path suggests it
@@ -30,14 +30,14 @@ size_t detect_storage_speed(const std::string& filepath) {
         return 500 * 1024 * 1024ULL;  // 500MB/s SATA SSD
     }
     #endif
-    
+
     // Default to fast storage
     return 3 * 1024 * 1024 * 1024ULL;
 }
 
 HardwareInfo detect_hardware() {
     HardwareInfo info;
-    
+
     // Detect L3 cache size (Linux/macOS)
     #ifdef __APPLE__
     FILE* fp = popen("sysctl -n hw.l3cachesize", "r");
@@ -48,7 +48,7 @@ HardwareInfo detect_hardware() {
         }
         pclose(fp);
     }
-    
+
     // Detect memory size
     fp = popen("sysctl -n hw.memsize", "r");
     if (fp) {
@@ -59,7 +59,7 @@ HardwareInfo detect_hardware() {
         pclose(fp);
     }
     #endif
-    
+
     #ifdef __linux__
     // Read /proc/cpuinfo for cache info
     std::ifstream cpuinfo("/proc/cpuinfo");
@@ -75,7 +75,7 @@ HardwareInfo detect_hardware() {
             }
         }
     }
-    
+
     // Read /proc/meminfo for memory
     std::ifstream meminfo("/proc/meminfo");
     while (std::getline(meminfo, line)) {
@@ -90,38 +90,38 @@ HardwareInfo detect_hardware() {
         }
     }
     #endif
-    
+
     return info;
 }
 
 size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, const std::string& filepath) {
     // CFITSIO MINDIRECT threshold - 3 FITS blocks (8640 bytes)
     const size_t CFITSIO_MINDIRECT = 8640;
-    
+
     // Small data: single read if fits in L3 cache OR above MINDIRECT threshold
     if (data_size <= hw.l3_cache_size || data_size >= CFITSIO_MINDIRECT) {
         return data_size;
     }
-    
+
     // Detect storage speed for this file
     size_t storage_speed = detect_storage_speed(filepath);
-    
+
     // Medium data: use L3 cache sized chunks
     if (data_size <= hw.available_memory / 4) {
         return std::min(hw.l3_cache_size, data_size / 4);
     }
-    
+
     // Large data: optimize for storage vs memory bandwidth
     // Target ~100ms per chunk at limiting bandwidth
     size_t storage_chunk = storage_speed / 10;  // 100ms at storage speed
     size_t memory_chunk = hw.memory_bandwidth / 10;  // 100ms at memory speed
-    
+
     // Use the limiting factor
     size_t bandwidth_chunk = std::min(storage_chunk, memory_chunk);
-    
+
     // But don't exceed 1/8 of available memory
     size_t memory_limit = hw.available_memory / 8;
-    
+
     return std::min(std::min(bandwidth_chunk, memory_limit), data_size / 2);
 }
 
@@ -132,14 +132,14 @@ MMapHandle::MMapHandle(const std::string& filename, bool writable) {
     if (fd == -1) {
         throw std::runtime_error("Failed to open file descriptor: " + filename);
     }
-    
+
     struct stat st;
     if (fstat(fd, &st) == -1) {
         close(fd);
         throw std::runtime_error("Failed to stat file: " + filename);
     }
     size = st.st_size;
-    
+
     int prot = PROT_READ | (writable ? PROT_WRITE : 0);
     ptr = mmap(nullptr, size, prot, MAP_PRIVATE, fd, 0);
     if (ptr == MAP_FAILED) {

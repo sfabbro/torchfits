@@ -1749,9 +1749,10 @@ class WCS:
                 xi, eta = deproject_allsky(phi, theta, "HPX", self.wcs_params)
 
                 pix_internal_flat = self._alloc_pix_internal_like(world_flat)
-                pix_internal_flat[:, 0], pix_internal_flat[:, 1] = (
-                    self._apply_cd_inv_2d(xi, eta)
-                )
+                (
+                    pix_internal_flat[:, 0],
+                    pix_internal_flat[:, 1],
+                ) = self._apply_cd_inv_2d(xi, eta)
             else:
                 analytic_projections = (
                     "TAN",

@@ -27,14 +27,16 @@ _ALM_M_CACHE: dict[tuple[int, int], Tensor] = {}
 _SPIN_YLM_CACHE: dict[
     tuple[int, bool, int, int, int], tuple[tuple[Tensor, ...], tuple[Tensor, ...]]
 ] = {}
-_SPIN_MAP2ALM_MAT_CACHE: "OrderedDict[tuple[int, bool, int, int, int], tuple[Tensor, Tensor]]" = OrderedDict()
+_SPIN_MAP2ALM_MAT_CACHE: (
+    "OrderedDict[tuple[int, bool, int, int, int], tuple[Tensor, Tensor]]"
+) = OrderedDict()
 _SPIN_ALM2MAP_MAT_CACHE: "OrderedDict[tuple[int, bool, int, int, int], tuple[Tensor, Tensor, Tensor, Tensor]]" = OrderedDict()
-_SCALAR_MAP2ALM_MAT_CACHE: "OrderedDict[tuple[int, bool, int, int], Tensor]" = (
-    OrderedDict()
-)
-_SCALAR_ALM2MAP_MAT_CACHE: "OrderedDict[tuple[int, bool, int, int], Tensor]" = (
-    OrderedDict()
-)
+_SCALAR_MAP2ALM_MAT_CACHE: (
+    "OrderedDict[tuple[int, bool, int, int], Tensor]"
+) = OrderedDict()
+_SCALAR_ALM2MAP_MAT_CACHE: (
+    "OrderedDict[tuple[int, bool, int, int], Tensor]"
+) = OrderedDict()
 _RING_LAYOUT_CACHE: dict[int, tuple[Tensor, Tensor, Tensor, Tensor]] = {}
 _RING_SCALAR_BASIS_CACHE: dict[tuple[int, int, int], tuple[Tensor, ...]] = {}
 _RING_PHI0_PHASE_CACHE: dict[tuple[int, int, int], Tensor] = {}

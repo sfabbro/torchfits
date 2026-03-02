@@ -29,7 +29,7 @@ endif()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
     # Enable SSSE3 for Rice compression optimization (reasonable baseline for modern PyTorch)
     add_compile_definitions(CFITSIO_HAVE_SSSE3)
-    add_compile_options(-mssse3) 
+    add_compile_options(-mssse3)
     message(STATUS "Enabled x86_64 optimizations (SSSE3)")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     # ARM64 implies NEON, -O3 handles vectorization well.
@@ -96,7 +96,7 @@ execute_process(
     COMMAND ${Python_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('purelib'))"
     OUTPUT_VARIABLE PYTHON_SITE_PACKAGES
     OUTPUT_STRIP_TRAILING_WHITESPACE
-) 
+)
 find_package(nanobind CONFIG REQUIRED)
 
 message(STATUS "DEBUG: Python_EXECUTABLE: ${Python_EXECUTABLE}")
@@ -237,18 +237,18 @@ else()
                 endif()
             endif()
         endif()
-        
+
         # CFITSIO Build Options
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
         set(TESTS OFF CACHE BOOL "Disable tests" FORCE)
         set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
         set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
-        
+
         # Force position-independent code for static library to be linked into shared library
         set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-        
+
         add_subdirectory("${CFITSIO_SOURCE_DIR}" cfitsio_build)
-        
+
         # CFITSIO target is named 'cfitsio'
         set(CFITSIO_LIBRARY cfitsio)
         set(CFITSIO_INCLUDE_DIR "${CFITSIO_SOURCE_DIR}")

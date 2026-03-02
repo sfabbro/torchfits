@@ -259,9 +259,9 @@ std::pair<torch::Tensor, torch::Tensor> wcs_zenithal_project(
     auto r = (xi_deg * xi_deg + eta_deg * eta_deg).sqrt();
     auto r_rad = r * D2R;
     auto phi = torch::atan2(xi_deg, -eta_deg) * R2D;
-    
+
     torch::Tensor theta;
-    
+
     if (proj_code == "TAN") {
         theta = torch::atan2(torch::ones_like(r_rad), r_rad) * R2D;
     } else if (proj_code == "SIN") {
@@ -277,7 +277,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_zenithal_project(
     } else {
         throw std::runtime_error("Unknown zenithal projection: " + proj_code);
     }
-    
+
     return {phi, theta};
 }
 
@@ -288,7 +288,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_zenithal_deproject(
 ) {
     torch::Tensor r;
     auto theta_rad = theta_deg * D2R;
-    
+
     if (proj_code == "TAN") {
         auto tan_theta = theta_rad.tan();
         r = R2D / (tan_theta + 1e-12);
@@ -303,11 +303,11 @@ std::pair<torch::Tensor, torch::Tensor> wcs_zenithal_deproject(
     } else {
         throw std::runtime_error("Unknown zenithal projection: " + proj_code);
     }
-    
+
     auto phi_rad = phi_deg * D2R;
     auto xi = r * phi_rad.sin();
     auto eta = -r * phi_rad.cos();
-    
+
     return {xi, eta};
 }
 
@@ -318,7 +318,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_cylindrical_project(
     double lambda_param
 ) {
     torch::Tensor phi, theta;
-    
+
     if (proj_code == "CEA") {
         phi = xi_deg;
         auto val = (lambda_param * eta_deg * D2R).clamp(-1.0, 1.0);
@@ -331,7 +331,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_cylindrical_project(
     } else {
         throw std::runtime_error("Unknown cylindrical projection: " + proj_code);
     }
-    
+
     return {phi, theta};
 }
 
@@ -342,7 +342,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_cylindrical_deproject(
     double lambda_param
 ) {
     torch::Tensor xi, eta;
-    
+
     if (proj_code == "CEA") {
         xi = phi_deg;
         eta = (R2D / lambda_param) * (theta_deg * D2R).sin();
@@ -354,7 +354,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_cylindrical_deproject(
     } else {
         throw std::runtime_error("Unknown cylindrical projection: " + proj_code);
     }
-    
+
     return {xi, eta};
 }
 
@@ -382,7 +382,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_ait_project(
     auto invalid = ~valid;
     phi = phi.masked_fill(invalid, std::nan(""));
     theta = theta.masked_fill(invalid, std::nan(""));
-    
+
     return {phi, theta};
 }
 
@@ -392,17 +392,17 @@ std::pair<torch::Tensor, torch::Tensor> wcs_ait_deproject(
 ) {
     auto phi_rad = phi_deg * D2R;
     auto theta_rad = theta_deg * D2R;
-    
+
     auto half_phi = phi_rad / 2.0;
     auto cos_theta = theta_rad.cos();
     auto sin_theta = theta_rad.sin();
     auto cos_half_phi = half_phi.cos();
-    
+
     auto denom = (0.5 * (1.0 + cos_theta * cos_half_phi)).sqrt();
-    
+
     auto xi = 2.0 * cos_theta * half_phi.sin() / denom * R2D;
     auto eta = sin_theta / denom * R2D;
-    
+
     return {xi, eta};
 }
 
@@ -412,9 +412,9 @@ std::pair<torch::Tensor, torch::Tensor> wcs_mol_project(
 ) {
     auto X = xi_deg * D2R;
     auto Y = eta_deg * D2R;
-    
+
     auto valid = Y.abs() <= SQRT2;
-    
+
     auto sin_gamma = (Y / SQRT2).clamp(-1.0, 1.0);
     auto gamma = sin_gamma.asin();
     auto cos_gamma = (1.0 - sin_gamma * sin_gamma).clamp_min(0.0).sqrt();
@@ -428,14 +428,14 @@ std::pair<torch::Tensor, torch::Tensor> wcs_mol_project(
     auto denom_safe = torch::where(good, denom, torch::ones_like(denom));
     auto phi_rad = WCS_PI * X / denom_safe;
     phi_rad = torch::where(good, phi_rad, torch::zeros_like(phi_rad));
-    
+
     auto phi = phi_rad * R2D;
     auto theta = theta_rad * R2D;
-    
+
     auto invalid = ~valid;
     phi = phi.masked_fill(invalid, std::nan(""));
     theta = theta.masked_fill(invalid, std::nan(""));
-    
+
     return {phi, theta};
 }
 
@@ -445,22 +445,22 @@ std::pair<torch::Tensor, torch::Tensor> wcs_mol_deproject(
 ) {
     auto phi_rad = phi_deg * D2R;
     auto theta_rad = theta_deg * D2R;
-    
+
     auto sin_theta = theta_rad.sin();
-    
+
     auto gamma = torch::zeros_like(theta_rad);
     for (int i = 0; i < 10; ++i) {
         auto f = 2.0 * gamma + (2.0 * gamma).sin() - WCS_PI * sin_theta;
         auto fp = 2.0 + 2.0 * (2.0 * gamma).cos();
         gamma = gamma - f / (fp + 1e-12);
     }
-    
+
     auto cos_gamma = gamma.cos();
     auto sin_gamma = gamma.sin();
-    
+
     auto xi = 2.0 * SQRT2 * phi_rad * cos_gamma / WCS_PI * R2D;
     auto eta = SQRT2 * sin_gamma * R2D;
-    
+
     return {xi, eta};
 }
 
@@ -499,7 +499,7 @@ std::pair<torch::Tensor, torch::Tensor> wcs_hpx_project(
     auto theta = torch::where(mask_eq, theta_eq, theta_pol);
     phi = phi.masked_fill(invalid, std::nan(""));
     theta = theta.masked_fill(invalid, std::nan(""));
-    
+
     return {phi, theta};
 }
 
@@ -712,21 +712,21 @@ std::tuple<torch::Tensor, torch::Tensor, int64_t, std::vector<int64_t>, int64_t>
 inline std::pair<double, double> eval_tpv_scalar(
     double u, double v,
     const torch::Tensor& idx1, const torch::Tensor& c1,
-    const torch::Tensor& idx2, const torch::Tensor& c2) 
+    const torch::Tensor& idx2, const torch::Tensor& c2)
 {
     if (c1.numel() == 0 && c2.numel() == 0) return {u, v};
     double r = std::sqrt(u * u + v * v);
     double xp[8] = {1.0, u, u*u, u*u*u, u*u*u*u, u*u*u*u*u, u*u*u*u*u*u, u*u*u*u*u*u*u};
     double yp[8] = {1.0, v, v*v, v*v*v, v*v*v*v, v*v*v*v*v, v*v*v*v*v*v, v*v*v*v*v*v*v};
     double rp[8] = {1.0, r, r*r, r*r*r, r*r*r*r, r*r*r*r*r, r*r*r*r*r*r, r*r*r*r*r*r*r};
-    
+
     double xi = 0.0;
     const int64_t* idx1_p = idx1.data_ptr<int64_t>();
     const double* c1_p = c1.data_ptr<double>();
     for (int k = 0; k < c1.size(0); ++k) {
         xi += xp[idx1_p[k*3]] * yp[idx1_p[k*3+1]] * rp[idx1_p[k*3+2]] * c1_p[k];
     }
-    
+
     double eta = 0.0;
     const int64_t* idx2_p = idx2.data_ptr<int64_t>();
     const double* c2_p = c2.data_ptr<double>();
@@ -746,7 +746,7 @@ inline std::tuple<double, double, double, double, double, double> eval_tpv_jac_s
     double xp[8] = {1.0, u, u*u, u*u*u, u*u*u*u, u*u*u*u*u, u*u*u*u*u*u, u*u*u*u*u*u*u};
     double yp[8] = {1.0, v, v*v, v*v*v, v*v*v*v, v*v*v*v*v, v*v*v*v*v*v, v*v*v*v*v*v*v};
     double rp[8] = {1.0, r, r*r, r*r*r, r*r*r*r, r*r*r*r*r, r*r*r*r*r*r, r*r*r*r*r*r*r};
-    
+
     double dr_du = (r > 0) ? u / r : 0.0;
     double dr_dv = (r > 0) ? v / r : 0.0;
 
@@ -778,7 +778,7 @@ inline std::pair<double, double> invert_tpv_scalar(
     const torch::Tensor& idx2, const torch::Tensor& c2)
 {
     if (c1.numel() == 0 && c2.numel() == 0) return {xi_target, eta_target};
-    
+
     auto p = tpv_extract_affine_seed_params(idx1, c1, idx2, c2);
     double u, v;
     if (p.valid) {
@@ -791,7 +791,7 @@ inline std::pair<double, double> invert_tpv_scalar(
     } else {
         u = xi_target; v = eta_target;
     }
-    
+
     double tol2 = 1e-22;
     for (int i = 0; i < 20; ++i) {
         auto [xi, eta, j11, j12, j21, j22] = eval_tpv_jac_scalar(u, v, idx1, c1, idx2, c2);
@@ -980,7 +980,7 @@ void wcs_world_to_pixel_fused_cpu(
         // 1. Inverse Spherical Rotation (ra, dec) -> (phi, theta)
         double ra_deg = ra_ptr[i];
         double dec_deg = dec_ptr[i];
-        
+
         double phi, theta;
         if (use_center_equator_fast) {
             double phi_p_deg = phi_p_rad * R2D;

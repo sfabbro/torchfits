@@ -574,7 +574,7 @@ NB_MODULE(cpp, m) {
                     nb::gil_scoped_release release;
                     t = read_rice_parallel(filename, hdu_num + file.get_start_hdu() - 1, -1);
                 }
-                
+
                 // Copy from tensor to numpy-allocated buffer 'dst'
                 std::memcpy(dst, t.data_ptr(), total_elements * torchfits::datatype_elem_size(datatype));
                 return out;
@@ -718,7 +718,7 @@ NB_MODULE(cpp, m) {
     m.def("compute_stats", [](torchfits::FITSFile& file, int hdu_num) {
         return file.compute_stats(hdu_num);
     });
-    
+
     m.def("write_fits_file", [](const std::string& path, nb::list hdus, bool overwrite) {
         std::string final_path = path;
         if (overwrite) {
@@ -855,11 +855,11 @@ NB_MODULE(cpp, m) {
     m.def("read_fits_table", [](const std::string& filename, int hdu_num) -> nb::object {
         // Release GIL for I/O operations
         nb::gil_scoped_release release;
-        
+
         torchfits::TableReader reader(filename, hdu_num);
         // read_columns now returns C++ types (ColumnData), so it's safe to run without GIL
         auto result_map = reader.read_columns({}, 1, -1);
-        
+
         // Acquire GIL to create Python objects
         nb::gil_scoped_acquire acquire;
 
@@ -992,8 +992,8 @@ NB_MODULE(cpp, m) {
                 return nb::object(numpy_result);
             } catch (const std::exception& e) {
                 // Return empty dict on error? Or throw?
-                // throw e; 
-                // For now, consistent with other methods if they fail? 
+                // throw e;
+                // For now, consistent with other methods if they fail?
                 // Actually others throw.
                 throw;
             }
@@ -1012,16 +1012,16 @@ NB_MODULE(cpp, m) {
     m.def("read_fits_table_filtered", [](const std::string& filename, int hdu_num,
                                          const std::vector<std::string>& column_names,
                                          nb::list filters_py) -> nb::object {
-        
+
         std::vector<torchfits::TableFilter> filters;
         for (auto handle : filters_py) {
             nb::tuple item = nb::cast<nb::tuple>(handle);
             if (item.size() != 3) throw std::runtime_error("Filter must be (col, op, val)");
-            
+
             torchfits::TableFilter f;
             f.col_name = nb::cast<std::string>(item[0]);
             std::string op = nb::cast<std::string>(item[1]);
-            
+
             if (op == "==" || op == "eq") f.op = torchfits::FilterOp::EQ;
             else if (op == "!=" || op == "ne") f.op = torchfits::FilterOp::NE;
             else if (op == ">" || op == "gt") f.op = torchfits::FilterOp::GT;
@@ -1029,7 +1029,7 @@ NB_MODULE(cpp, m) {
             else if (op == ">=" || op == "ge") f.op = torchfits::FilterOp::GE;
             else if (op == "<=" || op == "le") f.op = torchfits::FilterOp::LE;
             else throw std::runtime_error("Unknown operator: " + op);
-            
+
             nb::handle val = item[2];
             if (nb::isinstance<float>(val)) { // Python float is C++ double
                  f.val_d = nb::cast<double>(val);
@@ -1047,13 +1047,13 @@ NB_MODULE(cpp, m) {
         torchfits::TableReader reader(filename, hdu_num);
         auto result_map = reader.read_columns_mmap_filtered(column_names, filters);
         nb::gil_scoped_acquire acquire;
-        
+
         nb::dict result;
         for (auto& [key, val] : result_map) {
              result[key.c_str()] = tensor_to_python(val);
         }
         return result;
-        
+
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
        nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("filters"));
@@ -1072,11 +1072,11 @@ NB_MODULE(cpp, m) {
         nb::gil_scoped_release release;
         auto result = torchfits::open_and_read_headers(path, mode);
         nb::gil_scoped_acquire acquire;
-        
+
         // Explicitly transfer ownership of the file pointer to Python
         nb::object file_obj = nb::cast(result.first, nb::rv_policy::take_ownership);
         nb::object infos_obj = nb::cast(result.second);
-        
+
         return nb::make_tuple(file_obj, infos_obj);
     });
 
@@ -1087,9 +1087,9 @@ NB_MODULE(cpp, m) {
         int mode_int = (mode == "w" || mode == "w+") ? 1 : 0;
         return new torchfits::FITSFile(path.c_str(), mode_int);
     }, nb::rv_policy::take_ownership);
-    
+
     // close_fits_file removed, handled by destructor
-    
+
     m.def("read_header", [](torchfits::FITSFile& file, int hdu_num) {
         return file.get_header(hdu_num);
     });
@@ -1108,7 +1108,7 @@ NB_MODULE(cpp, m) {
     m.def("get_hdu_type", [](torchfits::FITSFile& file, int hdu_num) {
         return file.get_hdu_type(hdu_num);
     });
-    
+
     m.def("read_image_from_handle", [](torchfits::FITSFile& file, int hdu_num) {
         torch::Tensor tensor;
         {
@@ -1122,7 +1122,7 @@ NB_MODULE(cpp, m) {
         nb::gil_scoped_release release;
         auto tensors = torchfits::read_images_batch(paths, hdu_num);
         nb::gil_scoped_acquire acquire;
-        
+
         nb::list result;
         for (const auto& t : tensors) {
             result.append(tensor_to_python(t));

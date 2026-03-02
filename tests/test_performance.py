@@ -3,17 +3,13 @@ Performance tests for torchfits.
 """
 
 import os
-import sys
 import tempfile
 import time
-from pathlib import Path
 
 import numpy as np
 import psutil
 import pytest
 import torch
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import torchfits
 

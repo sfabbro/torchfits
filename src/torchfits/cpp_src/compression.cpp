@@ -17,25 +17,25 @@
 // -----------------------------------------------------------------------------
 
 static const int nonzero_count[256] = {
-0, 
-1, 
-2, 2, 
-3, 3, 3, 3, 
-4, 4, 4, 4, 4, 4, 4, 4, 
-5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 
-6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 
-6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 
-7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 
-7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 
-7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 
-7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
-8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 
+0,
+1,
+2, 2,
+3, 3, 3, 3,
+4, 4, 4, 4, 4, 4, 4, 4,
+5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8};
 
 static int tf_rdecomp(const unsigned char *c, int clen, unsigned int array[], int nx, int nblock) {
@@ -60,7 +60,7 @@ static int tf_rdecomp(const unsigned char *c, int clen, unsigned int array[], in
     bytevalue = c[2]; lastpix |= (bytevalue<<8);
     bytevalue = c[3]; lastpix |= bytevalue;
 
-    c += 4;  
+    c += 4;
     cend = c + clen - 4;
 
     b = *c++;		    /* bit buffer */
@@ -97,7 +97,7 @@ static int tf_rdecomp(const unsigned char *c, int clen, unsigned int array[], in
                 }
                 if ((diff & 1) == 0) diff = diff>>1;
                 else diff = ~(diff>>1);
-                
+
                 array[i] = diff+lastpix;
                 lastpix = array[i];
             }
@@ -120,7 +120,7 @@ static int tf_rdecomp(const unsigned char *c, int clen, unsigned int array[], in
 
                 if ((diff & 1) == 0) diff = diff>>1;
                 else diff = ~(diff>>1);
-                
+
                 array[i] = diff+lastpix;
                 lastpix = array[i];
             }
@@ -172,7 +172,7 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     fitsfile* fptr = nullptr;
     fits_open_file(&fptr, path.c_str(), READONLY, &status);
     check_status(status, "open_file");
-    
+
     struct FileGuard { fitsfile* f; ~FileGuard() { int s=0; if(f) fits_close_file(f, &s); } } file_guard{fptr};
 
     fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
@@ -191,7 +191,7 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     long width=0, height=0;
     fits_read_key(fptr, TLONG, "ZNAXIS1", &width, nullptr, &status);
     fits_read_key(fptr, TLONG, "ZNAXIS2", &height, nullptr, &status);
-    
+
     long tile_w=0, tile_h=0;
     fits_read_key(fptr, TLONG, "ZTILE1", &tile_w, nullptr, &status);
     fits_read_key(fptr, TLONG, "ZTILE2", &tile_h, nullptr, &status);
@@ -201,55 +201,55 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
 
     long long headstart, data_start, data_end;
     fits_get_hduaddrll(fptr, &headstart, &data_start, &data_end, &status);
-    
+
     long table_width = 0;
     fits_read_key(fptr, TLONG, "NAXIS1", &table_width, nullptr, &status);
-    
+
     long nrows = 0;
     fits_read_key(fptr, TLONG, "NAXIS2", &nrows, nullptr, &status);
-    
+
     long theap = 0;
     int s2 = 0;
     fits_read_key(fptr, TLONG, "THEAP", &theap, nullptr, &s2);
     if (s2 != 0) theap = nrows * table_width;
-    
+
     int64_t heap_abs_start = data_start + theap;
 
     int col_idx = 0;
     int ncols = 0;
     fits_get_num_cols(fptr, &ncols, &status);
-    
+
     char colname[FLEN_VALUE];
     fits_get_colname(fptr, FALSE, (char*)"*COMPRESSED_DATA*", colname, &col_idx, &status);
     if (col_idx == 0) throw std::runtime_error("COMPRESSED_DATA column not found");
-    
+
     int typecode;
     long repeat, col_w;
     fits_get_coltype(fptr, col_idx, &typecode, &repeat, &col_w, &status);
-    
+
     char tform[FLEN_VALUE];
     char key[20]; snprintf(key, 20, "TFORM%d", col_idx);
     fits_read_key(fptr, TSTRING, key, tform, nullptr, &status);
     bool descriptor_is_64bit = (strchr(tform, 'Q') != nullptr);
-    
+
     MMapFile mapped(path);
     uint8_t* map_ptr = (uint8_t*)mapped.ptr;
-    
-    auto options = torch::TensorOptions().dtype(torch::kInt32); 
+
+    auto options = torch::TensorOptions().dtype(torch::kInt32);
     if (zbitpix == 16) options = options.dtype(torch::kShort);
     else if (zbitpix == 8) options = options.dtype(torch::kUInt8);
-    else if (zbitpix == -32) options= options.dtype(torch::kFloat32); 
-    
+    else if (zbitpix == -32) options= options.dtype(torch::kFloat32);
+
     torch::Tensor output;
     if (zbitpix == -32) output = torch::empty({height, width}, torch::kFloat32);
-    else output = torch::empty({height, width}, torch::kInt32); 
-    
-    
+    else output = torch::empty({height, width}, torch::kInt32);
+
+
     long tiles_x = (width + tile_w - 1) / tile_w;
-    int64_t table_start_offset = data_start; 
-    
+    int64_t table_start_offset = data_start;
+
     if (num_threads < 1) num_threads = at::get_num_threads();
-    
+
     // Debug Prints
     // if (num_threads > 1) {
     //       std::cout << "Debug: Image (" << width << "x" << height << ") Tiles(" << tile_w << "x" << tile_h << ") Count=" << nrows << " Threads=" << num_threads << std::endl;
@@ -262,12 +262,12 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     auto worker_func = [&](int64_t begin, int64_t end, int tid) {
         std::vector<unsigned int> scratch(tile_w * tile_h);
         // if (tid == 0) std::cout << "Debug: Thread " << tid << " processing " << begin << " to " << end << " (chunk size " << (end-begin) << ")" << std::endl;
-        
+
         for (int64_t r = begin; r < end; ++r) {
             uint64_t len = 0;
             uint64_t off = 0;
             uint8_t* desc_ptr = map_ptr + table_start_offset + r * table_width;
-            
+
             if (descriptor_is_64bit) {
                 uint64_t* p = (uint64_t*)desc_ptr;
                 len = bswap64(p[0]);
@@ -277,11 +277,11 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
                 len = bswap32(p[0]);
                 off = bswap32(p[1]);
             }
-            
+
             if (len == 0) continue;
-            
+
             uint8_t* cdata = map_ptr + heap_abs_start + off;
-            
+
             long ty = r / tiles_x;
             long tx = r % tiles_x;
             long pix_y = ty * tile_h;
@@ -289,20 +289,20 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
             long valid_w = std::min(tile_w, width - pix_x);
             long valid_h = std::min(tile_h, height - pix_y);
             long npix = valid_w * valid_h;
-            
+
             // Call vendored logic
             int err = tf_rdecomp(cdata, (int)len, scratch.data(), (int)npix, 32);
             if (err) {
                  memset(scratch.data(), 0, npix * sizeof(unsigned int));
             }
-            
+
             if (output.scalar_type() == torch::kFloat32) {
                 float* out_f = output.data_ptr<float>();
                 for (int y=0; y<valid_h; ++y) {
                     float* dst_row = out_f + (pix_y + y) * width + pix_x;
                     unsigned int* src_row = scratch.data() + y * valid_w;
                     for (int x=0; x<valid_w; ++x) {
-                        dst_row[x] = (float)((int)src_row[x]); 
+                        dst_row[x] = (float)((int)src_row[x]);
                     }
                 }
             } else if (output.scalar_type() == torch::kInt32) {
@@ -322,7 +322,7 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
         if (begin >= end) break;
         workers.emplace_back(worker_func, begin, end, t);
     }
-    
+
     for (auto& w : workers) {
         if (w.joinable()) w.join();
     }

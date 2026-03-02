@@ -5,20 +5,20 @@ This directory contains the GitHub Actions CI/CD workflows for torchfits.
 ## Active Workflows
 
 ### `ci.yml` - Comprehensive CI Pipeline
-**Triggers:** Push to main/develop branches, Pull Requests, Releases  
+**Triggers:** Push to main/develop branches, Pull Requests, Releases
 **Purpose:** Complete build, test, quality assurance, and deployment pipeline
 
 **Jobs:**
 1. **Code Quality** - Code formatting and linting (Python 3.12)
    - black (formatting)
    - ruff (linting)
-   
+
 2. **Build & Test** - Multi-version builds and tests
    - **OS:** Ubuntu
    - **Python:** 3.11, 3.12
    - **System deps:** cfitsio, wcslib
    - **Tests:** Full pytest suite
-   
+
 3. **Memory Safety** - Memory leak detection (placeholder for valgrind)
 
 4. **Performance Benchmarks** - Performance regression testing (placeholder)

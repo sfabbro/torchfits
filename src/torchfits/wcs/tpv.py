@@ -29,12 +29,16 @@ class TPV:
         self.terms1 = self._build_terms(self.idx1, self.c1)
         self.terms2 = self._build_terms(self.idx2, self.c2)
 
-        self.terms1_dx_poly, self.terms1_dy_poly, self.terms1_rad = (
-            self._build_derivative_terms(self.terms1)
-        )
-        self.terms2_dx_poly, self.terms2_dy_poly, self.terms2_rad = (
-            self._build_derivative_terms(self.terms2)
-        )
+        (
+            self.terms1_dx_poly,
+            self.terms1_dy_poly,
+            self.terms1_rad,
+        ) = self._build_derivative_terms(self.terms1)
+        (
+            self.terms2_dx_poly,
+            self.terms2_dy_poly,
+            self.terms2_rad,
+        ) = self._build_derivative_terms(self.terms2)
 
         (
             self._affine_seed_b1,

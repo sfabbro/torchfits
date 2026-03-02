@@ -6,8 +6,8 @@ import fitsio
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
-import torchfits
-from astropy.io import fits
+import torchfits  # noqa: E402
+from astropy.io import fits  # noqa: E402
 
 
 def create_compressed_fits(filename, shape=(4096, 4096), dtype="int32"):

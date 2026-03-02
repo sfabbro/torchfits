@@ -274,10 +274,10 @@ std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::string& file
     }
 
     const int64_t now_ns = monotonic_now_ns();
-    
+
     // Use the meta->mutex to protect all stat-related fields
     std::lock_guard<std::mutex> meta_lock(meta->mutex);
-    
+
     if (kSharedMetaValidateIntervalNs > 0 && meta->last_stat_check_ns != 0 &&
         (now_ns - meta->last_stat_check_ns) < kSharedMetaValidateIntervalNs) {
         return meta;
@@ -760,11 +760,11 @@ public:
             current_hdu_ = start_hdu_;
         }
     }
-    
+
     ~FITSFile() {
         close();
     }
-    
+
     void close() {
         close_raw_fd();
         if (fptr_) {
@@ -977,14 +977,14 @@ public:
 
     torch::Tensor read_image(int hdu_num, bool use_mmap = true) {
         int status = 0;
-        
+
         ensure_hdu(hdu_num, &status);
         if (status != 0) {
             throw std::runtime_error("Could not move to HDU");
         }
 
         const bool want_mmap = use_mmap;
-        
+
         int bitpix = 0;
         int naxis = 0;
         std::array<LONGLONG, 9> naxes_ll{};
@@ -1019,7 +1019,7 @@ public:
             nelements *= naxes_ll[i];
         }
         }
-        
+
         int64_t torch_shape[9];
         for (int i = 0; i < naxis; ++i) {
             torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]); // Reverse for C-contiguous
@@ -1280,7 +1280,7 @@ public:
 
     torch::Tensor read_image_raw(int hdu_num, bool use_mmap = true) {
         int status = 0;
-        
+
         ensure_hdu(hdu_num, &status);
         if (status != 0) {
             throw std::runtime_error("Could not move to HDU");
@@ -1468,13 +1468,13 @@ public:
 
     bool write_image(nb::ndarray<> tensor, int hdu_num, double bscale, double bzero) {
         int status = 0;
-        
+
         int naxis = tensor.ndim();
         std::vector<long> naxes(naxis);
         for (int i = 0; i < naxis; ++i) {
             naxes[i] = tensor.shape(i);
         }
-        
+
         // FITS expects C-contiguous (row-major) order for dimensions?
         // Actually, FITS is Fortran-order (column-major) conceptually, but C libraries usually handle it.
         // cfitsio expects naxes[0] to be the fastest varying dimension (width).
@@ -1484,21 +1484,21 @@ public:
         // Or does cfitsio handle C arrays correctly?
         // Let's stick to what we had: reverse the shape.
         std::reverse(naxes.begin(), naxes.end());
-        
+
         int bitpix = FLOAT_IMG;
         int datatype = TFLOAT;
         nb::dlpack::dtype dt = tensor.dtype();
-        
+
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) { bitpix = BYTE_IMG; datatype = TBYTE; }
         else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) { bitpix = SHORT_IMG; datatype = TSHORT; }
         else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) { bitpix = LONG_IMG; datatype = TINT; }
         else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) { bitpix = FLOAT_IMG; datatype = TFLOAT; }
         else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 64) { bitpix = DOUBLE_IMG; datatype = TDOUBLE; }
         else throw std::runtime_error("Unsupported tensor dtype");
-        
+
         long nelements = 1;
         for (long dim : naxes) nelements *= dim;
-        
+
         if (hdu_num == 0) {
             // Create Primary HDU
             fits_create_img(fptr_, bitpix, naxis, naxes.data(), &status);
@@ -1506,17 +1506,17 @@ public:
             // Create new HDU
             fits_create_img(fptr_, bitpix, naxis, naxes.data(), &status);
         }
-        
+
         if (status != 0) {
             char err_text[31];
             fits_get_errstatus(status, err_text);
             throw std::runtime_error("Error creating image: status=" + std::to_string(status) + " msg=" + std::string(err_text));
         }
-        
+
         // Write data
         // nb::ndarray::data() returns void*
         fits_write_img(fptr_, datatype, 1, nelements, tensor.data(), &status);
-        
+
         if (status != 0) {
             char err_text[31];
             fits_get_errstatus(status, err_text);
@@ -1531,26 +1531,26 @@ public:
         int status = 0;
         ensure_hdu(hdu_num, &status);
         if (status != 0) throw std::runtime_error("Could not move to HDU");
-        
+
         int nkeys = 0;
         int morekeys = 0;
         fits_get_hdrspace(fptr_, &nkeys, &morekeys, &status);
-        
+
         std::vector<std::tuple<std::string, std::string, std::string>> header;
         header.reserve(nkeys);
-        
+
         char keyname[FLEN_KEYWORD];
         char value[FLEN_VALUE];
         char comment[FLEN_COMMENT];
         int length;
-        
+
         for (int i = 1; i <= nkeys; i++) {
             fits_read_keyn(fptr_, i, keyname, value, comment, &status);
             if (status == 0) {
                 std::string key_str(keyname);
                 std::string val_str(value);
                 std::string com_str(comment);
-                
+
                 // Sanitize string (keep only ASCII printable)
                 val_str.erase(std::remove_if(val_str.begin(), val_str.end(), [](unsigned char c) {
                     return c < 32 || c > 126;
@@ -1578,7 +1578,7 @@ public:
                         }
                     }
                 }
-                
+
                 // For HISTORY and COMMENT, value is often empty and content is in comment?
                 // Or fits_read_keyn puts the text in comment?
                 // Let's check if key is HISTORY or COMMENT
@@ -1595,7 +1595,7 @@ public:
                          com_str = "";
                      }
                 }
-                
+
                 header.emplace_back(key_str, val_str, com_str);
             } else {
                 status = 0; // Ignore error for single key
@@ -1607,12 +1607,12 @@ public:
     std::vector<long> get_shape(int hdu_num) {
         int status = 0;
         ensure_hdu(hdu_num, &status);
-        
+
         int naxis = 0;
         fits_get_img_dim(fptr_, &naxis, &status);
         std::vector<long> naxes(naxis);
         fits_get_img_size(fptr_, naxis, naxes.data(), &status);
-        
+
         // Return in numpy/torch order (C-contiguous)
         std::reverse(naxes.begin(), naxes.end());
         return naxes;
@@ -1621,7 +1621,7 @@ public:
     int get_dtype(int hdu_num) {
         int status = 0;
         ensure_hdu(hdu_num, &status);
-        
+
         int bitpix = 0;
         fits_get_img_type(fptr_, &bitpix, &status);
         return bitpix;
@@ -1691,10 +1691,10 @@ public:
         std::vector<long> fpixel(naxis, 1);
         std::vector<long> lpixel(naxis, 1);
         std::vector<long> inc(naxis, 1);
-        
+
         fpixel[0] = x1 + 1; fpixel[1] = y1 + 1;
         lpixel[0] = x2; lpixel[1] = y2;
-        
+
         int anynul = 0;
 
         fits_read_subset(
@@ -1736,10 +1736,10 @@ public:
 
     bool write_hdus(nb::list hdus, bool overwrite) {
         int hdu_count = 0;
-        
+
         for (auto handle : hdus) {
             nb::object hdu_obj = nb::cast<nb::object>(handle);
-            
+
             // Check for TableHDU (prefer raw data to preserve strings/VLA)
             if (nb::hasattr(hdu_obj, "_raw_data")) {
                 nb::dict data_dict = nb::cast<nb::dict>(hdu_obj.attr("_raw_data"));
@@ -1761,11 +1761,11 @@ public:
                 hdu_count++;
                 continue;
             }
-            
+
             // Assume TensorHDU or Image
             nb::object data_obj;
             bool has_data = false;
-            
+
             if (nb::hasattr(hdu_obj, "to_tensor")) {
                  // Use to_tensor() to get data
                  try {
@@ -1773,7 +1773,7 @@ public:
                      has_data = true;
                  } catch (...) {}
             }
-            
+
             if (!has_data && nb::hasattr(hdu_obj, "data")) {
                 data_obj = hdu_obj.attr("data");
                 has_data = true;
@@ -1784,7 +1784,7 @@ public:
                     has_data = true;
                 }
             }
-            
+
             if (has_data) {
                 try {
                     nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(data_obj);
@@ -1800,7 +1800,7 @@ public:
                 long naxes[1] = {0};
                 fits_create_img(fptr_, BYTE_IMG, 0, naxes, &status);
             }
-            
+
             // Write header
             nb::object header_obj;
             if (nb::hasattr(hdu_obj, "header")) {
@@ -1811,7 +1811,7 @@ public:
                     header_obj = d["header"];
                 }
             }
-            
+
             if (header_obj.is_valid()) {
                 try {
                     nb::dict header = nb::cast<nb::dict>(header_obj);
@@ -1837,7 +1837,7 @@ public:
                             key_upper.rfind("NAXIS", 0) == 0) {
                             continue;
                         }
-                        
+
                         try {
                             int key_status = 0;
                             if (nb::isinstance<nb::str>(item.second)) {
@@ -1861,7 +1861,7 @@ public:
                     }
                 } catch (...) {}
             }
-            
+
             hdu_count++;
         }
         return true;
@@ -2681,7 +2681,7 @@ read_full_cached_fallback:
     }
 
     status = 0;
-    
+
     // Chunking threshold to avoid huge temporary buffers in CFITSIO during type conversion.
     // 128 MB per chunk roughly.
     static const size_t kChunkSizeBytes = 128 * 1024 * 1024;
@@ -2707,7 +2707,7 @@ read_full_cached_fallback:
         LONGLONG remain = nelements;
         LONGLONG offset = 0;
         char* dst_ptr = static_cast<char*>(tensor.data_ptr());
-        
+
         while (remain > 0 && status == 0) {
             LONGLONG n_read = (remain > chunk_pixels) ? chunk_pixels : remain;
             fits_read_img(
@@ -2830,10 +2830,10 @@ struct HDUInfo {
 std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::string& path, int mode) {
     auto* file = new FITSFile(path.c_str(), mode);
     std::vector<HDUInfo> hdus;
-    
+
     int num_hdus = file->get_num_hdus();
     hdus.reserve(num_hdus);
-    
+
     for (int i = 0; i < num_hdus; ++i) {
         HDUInfo info;
         info.index = i;
@@ -2841,7 +2841,7 @@ std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::stri
         info.header = file->get_header(i);
         hdus.push_back(info);
     }
-    
+
     return {file, hdus};
 }
 
@@ -3774,7 +3774,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             }
         }
     }
-    
+
     for (auto item : header) {
         std::string key = nb::cast<std::string>(item.first);
         key = sanitize_fits_key(key);
@@ -3798,7 +3798,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             }
         } catch (...) {}
     }
-    
+
     for (int i = 0; i < num_cols; ++i) {
         const auto& col = columns[i];
         if (col.has_tnull) {

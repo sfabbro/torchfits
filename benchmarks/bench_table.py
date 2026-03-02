@@ -15,11 +15,11 @@ import numpy as np
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-import fitsio
-from astropy.io import fits as astropy_fits
-from astropy.table import Table
+import fitsio  # noqa: E402
+from astropy.io import fits as astropy_fits  # noqa: E402
+from astropy.table import Table  # noqa: E402
 
-import torchfits
+import torchfits  # noqa: E402
 
 # Table test configurations
 TABLE_SIZES = [1000, 10000, 100000, 1000000]

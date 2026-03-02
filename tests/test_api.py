@@ -3,15 +3,11 @@ Test the main torchfits API functions.
 """
 
 import os
-import sys
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import torchfits
 
