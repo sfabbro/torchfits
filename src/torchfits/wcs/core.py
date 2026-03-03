@@ -9,13 +9,15 @@ try:
 except Exception:  # pragma: no cover - optional fast path
     _cpp = None
 
-from .tpv import TPV
+from .tpv import TPV, PV1_KEYS, PV2_KEYS
 from .sip import SIP
 from .zenithal import project_zenithal, deproject_zenithal
 from .cylindrical import project_cylindrical, deproject_cylindrical
 from .allsky import project_allsky, deproject_allsky
 from .legacy import project_tnx, project_zpx
 from .utils import solve_newton_raphson
+
+
 
 
 def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
@@ -57,8 +59,8 @@ class WCS:
 
             # Check for TPV (Tangent with PV distortion)
             # SCAMP often uses CTYPE = RA---TAN with PV1_j keywords
-            has_pv = any(f"PV1_{j}" in self.wcs_params for j in range(40)) or any(
-                f"PV2_{j}" in self.wcs_params for j in range(40)
+            has_pv = any(k in self.wcs_params for k in PV1_KEYS) or any(
+                k in self.wcs_params for k in PV2_KEYS
             )
             is_tpv_ctype = (
                 self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
@@ -126,11 +128,12 @@ class WCS:
 
         # Capture PV keywords (PVi_j)
         # SCAMP/PV distortions can have many terms (0..39 typically)
-        for i in [1, 2]:
-            for j in range(40):
-                key = f"PV{i}_{j}"
-                if key in header:
-                    self.wcs_params[key] = float(header[key])
+        for key in PV1_KEYS:
+            if key in header:
+                self.wcs_params[key] = float(header[key])
+        for key in PV2_KEYS:
+            if key in header:
+                self.wcs_params[key] = float(header[key])
 
         # Capture WAT keywords for TNX/ZPX
         # Reconstruct them here to avoid doing it every call
@@ -378,8 +381,8 @@ class WCS:
         )
 
         # Pre-tensorize PV parameters to avoid dict lookups in compiled hot paths.
-        pv1_data = [self.wcs_params.get(f"PV1_{j}", 0.0) for j in range(40)]
-        pv2_data = [self.wcs_params.get(f"PV2_{j}", 0.0) for j in range(40)]
+        pv1_data = [self.wcs_params.get(k, 0.0) for k in PV1_KEYS]
+        pv2_data = [self.wcs_params.get(k, 0.0) for k in PV2_KEYS]
         self._pv1_tensor = torch.tensor(
             pv1_data, dtype=torch.float64, device=self.device
         )

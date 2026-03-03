@@ -14,6 +14,10 @@ except Exception:  # pragma: no cover - optional fast path
     _cpp = None
 
 
+PV1_KEYS = tuple(f"PV1_{i}" for i in range(40))
+PV2_KEYS = tuple(f"PV2_{i}" for i in range(40))
+
+
 class TPV:
     """
     Tangent PV (TPV) distortion correction.
@@ -81,8 +85,8 @@ class TPV:
     def _parse_pv(self, header: Dict[str, Any], axis: int):
         indices = []
         coeffs = []
-        for j in range(40):
-            key = f"PV{axis}_{j}"
+        keys = PV1_KEYS if axis == 1 else PV2_KEYS
+        for j, key in enumerate(keys):
             if key in header:
                 val = float(header[key])
                 if val != 0 and j in self.power_map:
