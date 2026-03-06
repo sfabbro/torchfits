@@ -23,9 +23,6 @@ class FastHeaderParser:
 
     # FITS value type patterns
     _STRING_PATTERN = re.compile(r"'([^']*(?:''[^']*)*)'")
-    _INTEGER_PATTERN = re.compile(r"^[+-]?\d+$")
-    _FLOAT_PATTERN = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
-    _LOGICAL_PATTERN = re.compile(r"^[TF]$")
     _COMPLEX_PATTERN = re.compile(
         r"^\(\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*,\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\)$"
     )
@@ -195,32 +192,31 @@ class FastHeaderParser:
             return cls._parse_string_value(value_str)
 
         # 2. Logical values
-        logical_match = cls._LOGICAL_PATTERN.match(value_str)
-        if logical_match:
-            return value_str == "T"
+        if value_str == "T":
+            return True
+        if value_str == "F":
+            return False
 
-        # 3. Complex numbers
-        complex_match = cls._COMPLEX_PATTERN.match(value_str)
-        if complex_match:
-            real_part = float(complex_match.group(1))
-            imag_part = float(complex_match.group(2))
-            return complex(real_part, imag_part)
+        first_char = value_str[0] if value_str else ""
 
-        # 4. Integer values
-        if cls._INTEGER_PATTERN.match(value_str):
+        # 3. Fast path for numbers without regex
+        if first_char in "+-0123456789.":
             try:
+                if '.' in value_str or 'e' in value_str or 'E' in value_str:
+                    return float(value_str)
                 return int(value_str)
             except ValueError:
                 pass
 
-        # 5. Float values
-        if cls._FLOAT_PATTERN.match(value_str):
-            try:
-                return float(value_str)
-            except ValueError:
-                pass
+        # 4. Complex numbers
+        if first_char == "(":
+            complex_match = cls._COMPLEX_PATTERN.match(value_str)
+            if complex_match:
+                real_part = float(complex_match.group(1))
+                imag_part = float(complex_match.group(2))
+                return complex(real_part, imag_part)
 
-        # 6. Default to string
+        # 5. Default to string
         return value_str
 
     @classmethod
