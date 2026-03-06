@@ -2,7 +2,6 @@
 Tests for torchfits transforms module.
 """
 
-
 import pytest
 import torch
 
