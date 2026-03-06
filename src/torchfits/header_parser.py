@@ -72,9 +72,11 @@ class FastHeaderParser:
             return {}
 
         header = {}
-        cards = cls._split_into_cards(header_string)
 
-        for card in cards:
+        # Iterate directly over the string by 80-character chunks
+        # instead of building an intermediate list of cards
+        for i in range(0, len(header_string), 80):
+            card = header_string[i : i + 80]
             if not card.strip():
                 continue
 
@@ -87,17 +89,6 @@ class FastHeaderParser:
                     header[f"{keyword}_COMMENT"] = comment.strip()
 
         return header
-
-    @classmethod
-    def _split_into_cards(cls, header_string: str) -> list:
-        """Split header string into 80-character FITS cards."""
-        cards = []
-        for i in range(0, len(header_string), 80):
-            card = header_string[i : i + 80]
-            if len(card) < 80:
-                card = card.ljust(80)  # Pad short cards
-            cards.append(card)
-        return cards
 
     @classmethod
     def _parse_card(cls, card: str) -> tuple:
