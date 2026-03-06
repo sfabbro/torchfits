@@ -30,6 +30,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import fitsio  # noqa: E402
+import sys  # noqa: E402
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import psutil  # noqa: E402
@@ -3864,7 +3875,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("bench_results"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Output directory",
     )
     parser.add_argument(

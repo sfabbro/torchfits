@@ -312,6 +312,17 @@ class CacheBenchmark:
             print(f"  📄 Results saved to {csv_path}")
 
 
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
+
 def main():
     """Run cache benchmarks."""
     import argparse
@@ -320,7 +331,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("bench_results"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Output directory",
     )
     parser.add_argument(

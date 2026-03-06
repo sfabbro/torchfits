@@ -2,6 +2,7 @@
 """Authoritative FITS I/O benchmark domain runner (images + MEFs + cutouts + headers)."""
 
 from __future__ import annotations
+from benchmarks.config import DEFAULT_OUTPUT_DIR
 
 import argparse
 import gc
@@ -448,7 +449,7 @@ def run_fits_domain(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("benchmarks_results"))
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--profile", choices=["user", "lab"], default="user")
     parser.add_argument("--mmap", action="store_true")

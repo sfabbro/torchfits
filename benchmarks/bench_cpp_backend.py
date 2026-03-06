@@ -5,18 +5,28 @@ Diagnostic microbenchmark for C++/image read paths.
 This script is informational (non-gating) and uses robust timing statistics.
 """
 
-import argparse
-import json
-import os
-import random
 import sys
-import tempfile
-import time
+import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
-import torch
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+import random  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable, Dict, List, Optional  # noqa: E402
+
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -639,7 +649,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--json-out",
         type=Path,
-        default=Path("bench_results") / "cpp_backend_results.json",
+        default=DEFAULT_OUTPUT_DIR / "cpp_backend_results.json",
         help="Output JSON path",
     )
     return parser.parse_args()

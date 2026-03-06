@@ -2,6 +2,7 @@
 """Authoritative WCS benchmark sweep runner."""
 
 from __future__ import annotations
+from benchmarks.config import DEFAULT_OUTPUT_DIR
 
 import argparse
 import math
@@ -507,7 +508,7 @@ def run_wcs_domain(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("benchmarks_results"))
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--device", choices=["cpu", "auto", "cuda"], default="cpu")
     parser.add_argument("--origin", type=int, choices=[0, 1], default=0)

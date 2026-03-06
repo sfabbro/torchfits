@@ -9,6 +9,7 @@ Domains:
 """
 
 from __future__ import annotations
+from benchmarks.config import DEFAULT_OUTPUT_DIR
 
 import argparse
 import json
@@ -61,7 +62,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("benchmarks_results"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Root output directory",
     )
     parser.add_argument("--run-id", type=str, default="", help="Optional run id")

@@ -2,6 +2,7 @@
 """Sphere benchmark domain orchestrator (geometry/advanced/sparse/spectral/polygon/core)."""
 
 from __future__ import annotations
+from benchmarks.config import DEFAULT_OUTPUT_DIR
 
 import argparse
 import json
@@ -1240,7 +1241,7 @@ def run_sphere_domain(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("benchmarks_results"))
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--no-gpu", action="store_true")
     return parser.parse_args()
