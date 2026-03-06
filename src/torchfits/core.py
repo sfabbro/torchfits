@@ -48,20 +48,22 @@ class FITSDataTypeHandler:
             raise ValueError(f"Unsupported BITPIX: {bitpix}")
         return dtype
 
-    @staticmethod
-    def to_numpy_dtype(bitpix: int) -> "np.dtype":
-        """Convert FITS BITPIX to NumPy dtype - fast direct lookup."""
-        import numpy as np
+    _BITPIX_TO_NUMPY = None
 
-        _BITPIX_TO_NUMPY = {
-            8: np.uint8,
-            16: np.int16,
-            32: np.int32,
-            64: np.int64,
-            -32: np.float32,
-            -64: np.float64,
-        }
-        dtype = _BITPIX_TO_NUMPY.get(bitpix)
+    @classmethod
+    def to_numpy_dtype(cls, bitpix: int) -> "np.dtype":
+        """Convert FITS BITPIX to NumPy dtype - fast direct lookup."""
+        if cls._BITPIX_TO_NUMPY is None:
+            import numpy as np
+            cls._BITPIX_TO_NUMPY = {
+                8: np.uint8,
+                16: np.int16,
+                32: np.int32,
+                64: np.int64,
+                -32: np.float32,
+                -64: np.float64,
+            }
+        dtype = cls._BITPIX_TO_NUMPY.get(bitpix)
         if dtype is None:
             raise ValueError(f"Unsupported BITPIX: {bitpix}")
         return dtype
@@ -134,6 +136,9 @@ class ChecksumVerifier:
         return True
 
 
+import re
+_CUTOUT_SPEC_RE = re.compile(r"(.+?)\[(\d+)\]\[(.+?)\]")
+
 class FITSCore:
     """Core FITS functionality."""
 
@@ -148,10 +153,8 @@ class FITSCore:
         Returns:
             A tuple containing the file path, HDU index, and a tuple of slices.
         """
-        import re
-
         # Pattern: filename[hdu_index][slice_spec] - e.g., 'image.fits[1][10:20,30:40]'
-        match = re.match(r"(.+?)\[(\d+)\]\[(.+?)\]", spec)
+        match = _CUTOUT_SPEC_RE.match(spec)
         if not match:
             raise ValueError(f"Invalid cutout specification: {spec}")
 
