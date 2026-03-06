@@ -23,7 +23,7 @@ class CacheBenchmark:
     """Benchmark suite for cache performance."""
 
     def __init__(self, output_dir: Path = None):
-        self.output_dir = output_dir or Path("bench_results")
+        self.output_dir = output_dir or DEFAULT_OUTPUT_DIR
         self.output_dir.mkdir(exist_ok=True)
 
         # Test configurations

@@ -3,6 +3,17 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
+
 import argparse
 import json
 import time
@@ -43,7 +54,7 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument(
-        "--json-out", type=Path, default=Path("bench_results/sphere_sparse.json")
+        "--json-out", type=Path, default=DEFAULT_OUTPUT_DIR / "sphere_sparse.json"
     )
     parser.add_argument("--min-ratio-sparse-udgrade-vs-dense", type=float, default=1.0)
     args = parser.parse_args()

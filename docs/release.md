@@ -20,7 +20,7 @@ Run exhaustive benchmark:
 pixi run python benchmarks/bench_all.py \
   --profile user \
   --include-tables \
-  --output-dir bench_results/release_<version>_$(date +%Y%m%d_%H%M%S)
+  --output-dir benchmarks_results/release_<version>_$(date +%Y%m%d_%H%M%S)
 ```
 
 Run ML loader benchmark:

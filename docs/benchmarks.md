@@ -166,7 +166,7 @@ For a concise log of attempted optimizations and outcomes (including dead ends),
 
 Run metadata:
 - Date: `2026-02-14`
-- Exhaustive output: `bench_results/exhaustive_20260214_211602`
+- Exhaustive output: `benchmarks_results/exhaustive_20260214_211602`
 - Profile: `user` (`cache=10`, `handle_cache=16`, `hot_cache=10`)
 - Tables included: `True`
 

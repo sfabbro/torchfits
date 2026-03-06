@@ -321,9 +321,9 @@ def write_summary(
         "specialized": "torchfits_specialized",
         "numpy": "torchfits_numpy",
     }
-    grouped: dict[
-        tuple[str, str, str], list[tuple[dict[str, Any], float]]
-    ] = defaultdict(list)
+    grouped: dict[tuple[str, str, str], list[tuple[dict[str, Any], float]]] = (
+        defaultdict(list)
+    )
     for row in rows:
         if not bool(row.get("comparable", False)):
             continue

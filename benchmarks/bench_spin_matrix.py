@@ -3,6 +3,17 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
+
 import argparse
 import json
 import statistics
@@ -66,12 +77,12 @@ def main() -> int:
     parser.add_argument(
         "--json-out",
         type=Path,
-        default=Path("bench_results/upstream_replay_healpy_spin_matrix.json"),
+        default=DEFAULT_OUTPUT_DIR / "upstream_replay_healpy_spin_matrix.json",
     )
     parser.add_argument(
         "--raw-json-out",
         type=Path,
-        default=Path("bench_results/upstream_replay_healpy_spin_extended_raw.json"),
+        default=DEFAULT_OUTPUT_DIR / "upstream_replay_healpy_spin_extended_raw.json",
     )
     parser.add_argument(
         "--baseline-json",

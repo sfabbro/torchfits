@@ -3,6 +3,17 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+
+
 import argparse
 import importlib
 import json
@@ -376,7 +387,7 @@ def main() -> int:
     parser.add_argument(
         "--source-root",
         type=Path,
-        default=Path("bench_results/upstream_fixtures/sources/astropy-healpix-1.1.3"),
+        default=DEFAULT_OUTPUT_DIR / "upstream_fixtures/sources/astropy-healpix-1.1.3",
     )
     parser.add_argument("--n-points", type=int, default=200_000)
     parser.add_argument("--runs", type=int, default=5)
@@ -384,7 +395,7 @@ def main() -> int:
     parser.add_argument(
         "--json-out",
         type=Path,
-        default=Path("bench_results/upstream_replay_test_functions.json"),
+        default=DEFAULT_OUTPUT_DIR / "upstream_replay_test_functions.json",
     )
     args = parser.parse_args()
 
@@ -453,11 +464,7 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow,
-                            lon=lon,
-                            lat=lat,
-                            nest=nest,
-                            lonlat=lonlat: (
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
                                 mod.test_ang2pix.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -477,10 +484,7 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow,
-                            frac=frac,
-                            nest=nest,
-                            lonlat=lonlat: (
+                            lambda nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat: (
                                 mod.test_pix2ang.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     frac=frac,
@@ -551,10 +555,7 @@ def main() -> int:
                     results.append(
                         _run_named(
                             f"test_boundaries.inner(nside_pow={nside_pow},nest={nest},step={step},frac={frac})",
-                            lambda nside_pow=nside_pow,
-                            frac=frac,
-                            step=step,
-                            nest=nest: (
+                            lambda nside_pow=nside_pow, frac=frac, step=step, nest=nest: (
                                 mod.test_boundaries.hypothesis.inner_test(
                                     nside_pow=nside_pow, frac=frac, step=step, nest=nest
                                 )
@@ -599,11 +600,7 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow,
-                            lon=lon,
-                            lat=lat,
-                            nest=nest,
-                            lonlat=lonlat: (
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
                                 mod.test_interp_weights.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -623,11 +620,7 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow,
-                            lon=lon,
-                            lat=lat,
-                            nest=nest,
-                            lonlat=lonlat: (
+                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
                                 mod.test_interp_val.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,

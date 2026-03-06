@@ -75,7 +75,7 @@ class ExhaustiveBenchmarkSuite:
         payload_min_ratio: float = 0.60,
     ):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="torchfits_exhaustive_"))
-        self.output_dir = output_dir or Path("bench_results")
+        self.output_dir = output_dir or DEFAULT_OUTPUT_DIR
         # Allow nested output dirs like bench_results/exhaustive_YYYYmmdd_HHMMSS
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = {}

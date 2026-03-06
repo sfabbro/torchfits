@@ -611,7 +611,7 @@ class CPPBackendBenchmark:
             json_out
             if json_out is not None
             else Path(__file__).parent.parent
-            / "bench_results"
+            / "benchmarks_results"
             / "cpp_backend_results.json"
         )
         self.save_results_json(output_file, summary)
