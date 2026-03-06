@@ -20,8 +20,6 @@ from .utils import solve_newton_raphson
 _HAS_TORCH_SINCOS = hasattr(torch, "sincos")
 
 
-
-
 def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
     """Return sin(x), cos(x) with a torch.sincos fast path when available."""
     if _HAS_TORCH_SINCOS:

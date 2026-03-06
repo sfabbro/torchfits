@@ -45,39 +45,20 @@ def read(
             data = [t.to(device) for t in data]
         return data
 
-    if (
-        scale_on_device
-        and not raw_scale
-        and device == "cpu"
-        and hasattr(cpp, "read_full_raw_with_scale")
-    ):
+    if scale_on_device and not raw_scale and hasattr(cpp, "read_full_raw_with_scale"):
         data, scaled, bscale, bzero = cpp.read_full_raw_with_scale(path, hdu, mmap)
         if scaled:
-            data = data.to(dtype=torch.float32)
+            target_device = device if device != "cpu" else None
+            data = data.to(device=target_device, dtype=torch.float32)
             if bscale != 1.0:
                 data.mul_(bscale)
             if bzero != 0.0:
                 data.add_(bzero)
-        return data
-    if scale_on_device and not raw_scale:
-        if device == "cpu" and hasattr(cpp, "read_full_raw_with_scale"):
-            data, scaled, bscale, bzero = cpp.read_full_raw_with_scale(path, hdu, mmap)
-            if scaled:
-                data = data.to(dtype=torch.float32)
-                if bscale != 1.0:
-                    data.mul_(bscale)
-                if bzero != 0.0:
-                    data.add_(bzero)
-        elif hasattr(cpp, "read_full_raw_with_scale"):
-            data, scaled, bscale, bzero = cpp.read_full_raw_with_scale(path, hdu, mmap)
-            if scaled:
-                data = data.to(device=device, dtype=torch.float32)
-                if bscale != 1.0:
-                    data.mul_(bscale)
-                if bzero != 0.0:
-                    data.add_(bzero)
-            else:
-                data = data.to(device)
+        elif device != "cpu":
+            data = data.to(device)
+
+        if device == "cpu":
+            return data
     elif use_cache:
         if raw_scale and hasattr(cpp, "read_full_raw"):
             data = cpp.read_full_raw(path, hdu, mmap)
