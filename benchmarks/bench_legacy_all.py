@@ -29,19 +29,19 @@ from typing import Any, Dict, List, Optional  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mpl_config import configure  # noqa: E402
-
 import fitsio  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-import seaborn as sns  # noqa: E402
 import psutil  # noqa: E402
 import torch  # noqa: E402
 from astropy.io import fits as astropy_fits  # noqa: E402
 from astropy.io.fits import CompImageHDU  # noqa: E402
 
 import torchfits  # noqa: E402
+
+configure = None
+plt = None
+sns = None
 
 
 class ExhaustiveBenchmarkSuite:
@@ -2634,6 +2634,18 @@ class ExhaustiveBenchmarkSuite:
     def generate_plots(self, results: List[Dict]):
         """Generate comprehensive plots from benchmark results."""
         print("\nGenerating exhaustive plots...")
+        global configure, plt, sns
+        if configure is None or plt is None or sns is None:
+            from mpl_config import configure as _configure
+
+            _configure()
+            import matplotlib.pyplot as _plt
+            import seaborn as _sns
+
+            configure = _configure
+            plt = _plt
+            sns = _sns
+
         df = pd.DataFrame(results)
         if df.empty:
             print("No results to plot.")

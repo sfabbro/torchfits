@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import json
 import sys
 import time
@@ -244,13 +245,44 @@ def _time_many(fn, runs: int, sync_device: torch.device | None = None) -> float:
         _sync(sync_device)
 
     samples = []
-    for _ in range(runs):
-        t0 = time.perf_counter()
-        fn()
-        if sync_device is not None:
-            _sync(sync_device)
-        samples.append(time.perf_counter() - t0)
+    min_total_s = 0.20 if runs <= 7 else 0.0
+    max_runs = max(int(runs), int(runs) * 8)
+    elapsed_total = 0.0
+    n_done = 0
+    gc_enabled = gc.isenabled()
+    if gc_enabled:
+        gc.disable()
+    try:
+        while True:
+            if n_done >= runs and elapsed_total >= min_total_s:
+                break
+            if n_done >= max_runs:
+                break
+            t0 = time.perf_counter()
+            fn()
+            if sync_device is not None:
+                _sync(sync_device)
+            dt = time.perf_counter() - t0
+            samples.append(dt)
+            elapsed_total += dt
+            n_done += 1
+    finally:
+        if gc_enabled:
+            gc.enable()
     return float(np.median(samples))
+
+
+def _to_torch_on_device(
+    a: np.ndarray, b: np.ndarray, *, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert astropy numpy outputs into torch tensors on the target device."""
+    ta = torch.from_numpy(np.ascontiguousarray(a)).to(
+        device=device, dtype=torch.float64
+    )
+    tb = torch.from_numpy(np.ascontiguousarray(b)).to(
+        device=device, dtype=torch.float64
+    )
+    return ta, tb
 
 
 def _angular_sep_deg(
@@ -275,10 +307,13 @@ def _bench_case(
     torch_compile: bool,
     profile: str,
     rng: np.random.Generator,
+    sampled_xy: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     header = _make_header(case)
     awcs = AstropyWCS(header)
-    if case.is_allsky:
+    if sampled_xy is not None:
+        x, y = sampled_xy
+    elif case.is_allsky:
         x, y = _sample_allsky_pixels_from_world(
             awcs,
             header,
@@ -299,7 +334,14 @@ def _bench_case(
     y_t = torch.from_numpy(y).to(device=device, dtype=torch.float64)
 
     with torch.no_grad():
-        ast_fw_s = _time_many(lambda: awcs.all_pix2world(x, y, origin), runs)
+        ast_fw_s = _time_many(
+            lambda: _to_torch_on_device(
+                *awcs.all_pix2world(x, y, origin),
+                device=device,
+            ),
+            runs,
+            sync_device=device if device.type != "cpu" else None,
+        )
         torch_fw_s = _time_many(
             lambda: twcs.pixel_to_world(x_t, y_t, origin=origin),
             runs,
@@ -357,8 +399,12 @@ def _bench_case(
         try:
             with torch.no_grad():
                 ast_inv_s = _time_many(
-                    lambda: awcs.all_world2pix(ra_valid, dec_valid, origin),
+                    lambda: _to_torch_on_device(
+                        *awcs.all_world2pix(ra_valid, dec_valid, origin),
+                        device=device,
+                    ),
                     runs,
+                    sync_device=device if device.type != "cpu" else None,
                 )
             x_a_inv, y_a_inv = awcs.all_world2pix(ra_valid, dec_valid, origin)
             pix_err = np.hypot(x_t_inv_np - x_a_inv, y_t_inv_np - y_a_inv)
@@ -400,6 +446,7 @@ def _bench_case(
         "projection": case.projection,
         "sample_profile": profile,
         "device": device.type,
+        "torch_compile_enabled": bool(torch_compile),
         "origin": origin,
         "n_points": int(n_points),
         "n_valid": valid_count,

@@ -17,25 +17,60 @@ from .allsky import project_allsky, deproject_allsky
 from .legacy import project_tnx, project_zpx
 from .utils import solve_newton_raphson
 
+_HAS_TORCH_SINCOS = hasattr(torch, "sincos")
+
 
 def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
     """Return sin(x), cos(x) with a torch.sincos fast path when available."""
-    if hasattr(torch, "sincos"):
+    if _HAS_TORCH_SINCOS:
         return torch.sincos(x)
     return torch.sin(x), torch.cos(x)
 
 
 def _wrap_lon360(angle: Tensor) -> Tensor:
     """Wrap longitudes to [0, 360)."""
-    wrapped = torch.fmod(angle, 360.0)
-    return torch.where(wrapped < 0.0, wrapped + 360.0, wrapped)
+    if angle.requires_grad:
+        return torch.remainder(angle, 360.0)
+    mn = torch.amin(angle)
+    mx = torch.amax(angle)
+    if bool((mn >= 0.0) and (mx < 360.0)):
+        return angle
+    if bool((mn >= -360.0) and (mx < 720.0)):
+        out = angle
+        if bool(mn < 0.0):
+            out = torch.where(out < 0.0, out + 360.0, out)
+        if bool(mx >= 360.0):
+            out = torch.where(out >= 360.0, out - 360.0, out)
+        return out
+    return torch.remainder(angle, 360.0)
+
+
+def _wrap_lon360_checked(angle: Tensor) -> Tensor:
+    """Compatibility alias; direct wrap is faster than range-check reductions."""
+    return _wrap_lon360(angle)
 
 
 def _wrap_lon180(angle: Tensor) -> Tensor:
     """Wrap longitudes to [-180, 180)."""
-    wrapped = torch.fmod(angle + 180.0, 360.0)
-    wrapped = torch.where(wrapped < 0.0, wrapped + 360.0, wrapped)
-    return wrapped - 180.0
+    if angle.requires_grad:
+        return torch.remainder(angle + 180.0, 360.0) - 180.0
+    mn = torch.amin(angle)
+    mx = torch.amax(angle)
+    if bool((mn >= -180.0) and (mx < 180.0)):
+        return angle
+    if bool((mn >= -540.0) and (mx < 540.0)):
+        out = angle
+        if bool(mn < -180.0):
+            out = torch.where(out < -180.0, out + 360.0, out)
+        if bool(mx >= 180.0):
+            out = torch.where(out >= 180.0, out - 360.0, out)
+        return out
+    return torch.remainder(angle + 180.0, 360.0) - 180.0
+
+
+def _wrap_lon180_checked(angle: Tensor) -> Tensor:
+    """Compatibility alias; direct wrap is faster than range-check reductions."""
+    return _wrap_lon180(angle)
 
 
 class WCS:
@@ -235,6 +270,7 @@ class WCS:
         self._cd01 = float(self.cd[0, 1].item())
         self._cd10 = float(self.cd[1, 0].item())
         self._cd11 = float(self.cd[1, 1].item())
+        self._cd_is_diag = abs(self._cd01) < 1e-15 and abs(self._cd10) < 1e-15
         self._cdi00 = float(self.cd_inv[0, 0].item())
         self._cdi01 = float(self.cd_inv[0, 1].item())
         self._cdi10 = float(self.cd_inv[1, 0].item())
@@ -364,10 +400,18 @@ class WCS:
         self._hpx_k = float(
             self.wcs_params.get("PV1_2", self.wcs_params.get("PV2_2", 3.0))
         )
+        if abs(self._hpx_h) < 1e-12:
+            self._hpx_h = 4.0
+        if abs(self._hpx_k) < 1e-12:
+            self._hpx_k = 3.0
         self._hpx_eta_scale = 90.0 * (self._hpx_k / self._hpx_h)
+        if abs(self._hpx_eta_scale) < 1e-12:
+            self._hpx_eta_scale = 67.5
+        self._hpx_inv_eta_scale = 1.0 / self._hpx_eta_scale
         self._hpx_eta_boundary = self._hpx_eta_scale * (2.0 / 3.0)
         self._hpx_eta_pole = 90.0
         self._hpx_polar_denom = self._hpx_eta_pole - self._hpx_eta_boundary
+        self._hpx_inv_polar_denom = 1.0 / self._hpx_polar_denom
 
         # Precompute fused arguments to avoid overhead
         self._fused_proj_code = "TAN" if self._is_tpv else self._proj_code
@@ -408,7 +452,12 @@ class WCS:
             zpn_last = int(zpn_valid[-1].item())
             self._zpn_coeffs_cpu = zpn_all[: zpn_last + 1].contiguous()
         else:
-            self._zpn_coeffs_cpu = torch.empty((0,), dtype=torch.float64)
+            # Default ZPN behavior (no explicit polynomial terms): r = w.
+            # Keep a linear coefficient vector so C++ direct ZPN path remains enabled.
+            if self._proj_code == "ZPN":
+                self._zpn_coeffs_cpu = torch.tensor([0.0, 1.0], dtype=torch.float64)
+            else:
+                self._zpn_coeffs_cpu = torch.empty((0,), dtype=torch.float64)
 
         # Precompute projection flags for compile-friendly dispatch.
         self._is_tan = self._proj_code == "TAN"
@@ -417,6 +466,14 @@ class WCS:
         self._is_zea = self._proj_code == "ZEA"
         self._is_stg = self._proj_code == "STG"
         self._is_zpn = self._proj_code == "ZPN"
+        self._is_zpn_linear = False
+        if self._is_zpn:
+            if self._zpn_coeffs_cpu.numel() == 0:
+                self._is_zpn_linear = True
+            elif self._zpn_coeffs_cpu.numel() == 2:
+                c0 = float(self._zpn_coeffs_cpu[0].item())
+                c1 = float(self._zpn_coeffs_cpu[1].item())
+                self._is_zpn_linear = abs(c0) <= 1e-15 and abs(c1 - 1.0) <= 1e-15
         self._is_ait = self._proj_code == "AIT"
         self._is_mol = self._proj_code == "MOL"
         self._is_hpx = self._proj_code == "HPX"
@@ -520,8 +577,17 @@ class WCS:
                 self._cpp_p2w_direct_kind = "mol"
             elif self._is_hpx and self._cpp_hpx_project is not None:
                 self._cpp_p2w_direct_kind = "hpx"
+            elif self._cpp_zenithal_project is not None and (
+                self._is_tan
+                or self._is_sin
+                or self._is_arc
+                or self._is_zea
+                or self._is_stg
+            ):
+                self._cpp_p2w_direct_kind = "zenithal"
             elif (
                 self._is_zpn
+                and not self._is_zpn_linear
                 and self._cpp_zpn_project is not None
                 and self._zpn_coeffs_cpu.numel() > 0
             ):
@@ -532,6 +598,51 @@ class WCS:
                 self._cpp_w2p_direct_kind = "ait"
             elif self._is_hpx and self._cpp_hpx_deproject is not None:
                 self._cpp_w2p_direct_kind = "hpx"
+            elif self._cpp_zenithal_deproject is not None and (
+                self._is_tan
+                or self._is_sin
+                or self._is_arc
+                or self._is_zea
+                or self._is_stg
+            ):
+                self._cpp_w2p_direct_kind = "zenithal"
+        self._has_cpp_direct_p2w = bool(self._cpp_p2w_direct_kind)
+        self._has_cpp_direct_w2p = bool(self._cpp_w2p_direct_kind)
+        self._can_use_fused_p2w_static = (
+            self._enable_fused_wcs
+            and _cpp is not None
+            and hasattr(_cpp, "wcs_pixel_to_world_fused_cpu")
+            and self.sip is None
+            and not self._is_tnx
+            and not self._is_zpx
+            and (
+                self._proj_code
+                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
+                or (self._is_tpv and self._proj_code == "TAN")
+            )
+        )
+        self._can_use_fused_w2p_static = (
+            self._enable_fused_wcs
+            and _cpp is not None
+            and hasattr(_cpp, "wcs_world_to_pixel_fused_cpu")
+            and self.sip is None
+            and not self._is_tnx
+            and not self._is_zpx
+            and (not self._is_tpv or not self.tpv._invert_trace_enabled)
+            and (
+                self._proj_code
+                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
+                or (self._is_tpv and self._proj_code == "TAN")
+            )
+        )
+        self._disable_cpp_pixel_to_world = False
+        self._disable_cpp_world_to_pixel = False
+        self._disable_fused_pixel_to_world = False
+        self._disable_fused_world_to_pixel = False
+        self._cpp_direct_p2w_verified = False
+        self._cpp_direct_w2p_verified = False
+        self._fused_p2w_verified = False
+        self._fused_w2p_verified = False
         self._setup_projection_dispatch()
 
     def _setup_projection_dispatch(self) -> None:
@@ -586,6 +697,14 @@ class WCS:
         # Use pre-tensorized PV parameters for modern projections
         return fn(xi, eta, self._proj_code, self._pv1_tensor, self._pv2_tensor)
 
+    def _apply_cd_2d(self, rel_x: Tensor, rel_y: Tensor) -> Tuple[Tensor, Tensor]:
+        """Apply cached 2x2 CD transform with diagonal fast path."""
+        if self._cd_is_diag:
+            return self._cd00 * rel_x, self._cd11 * rel_y
+        xi = self._cd00 * rel_x + self._cd01 * rel_y
+        eta = self._cd10 * rel_x + self._cd11 * rel_y
+        return xi, eta
+
     def _apply_cd_inv_2d(self, xi: Tensor, eta: Tensor) -> Tuple[Tensor, Tensor]:
         """Apply cached 2x2 inverse CD transform using scalar coefficients."""
         rel0 = self._cdi00 * xi + self._cdi01 * eta
@@ -603,6 +722,35 @@ class WCS:
     def _contiguous_if_needed(t: Tensor) -> Tensor:
         """Avoid unnecessary contiguous copies on already contiguous benchmark inputs."""
         return t if t.is_contiguous() else t.contiguous()
+
+    def _cpp_project_direct_p2w(
+        self, xi: Tensor, eta: Tensor, cpp_kind: str
+    ) -> Tuple[Tensor, Tensor]:
+        """Direct C++ projection dispatch used by pixel->world fast path."""
+        if cpp_kind == "ait":
+            return self._cpp_ait_project(xi, eta)
+        if cpp_kind == "mol":
+            return self._cpp_mol_project(xi, eta)
+        if cpp_kind == "hpx":
+            return self._cpp_hpx_project(xi, eta, self._hpx_h, self._hpx_k)
+        if cpp_kind == "zenithal":
+            phi, theta = self._cpp_zenithal_project(xi, eta, self._proj_code)
+            return -phi, theta
+        if cpp_kind == "zpn":
+            return self._cpp_zpn_project(xi, eta, self._zpn_coeffs_cpu)
+        raise RuntimeError("unsupported_cpp_direct_projection")
+
+    def _cpp_deproject_direct_w2p(
+        self, phi_w: Tensor, theta: Tensor, cpp_kind: str
+    ) -> Tuple[Tensor, Tensor]:
+        """Direct C++ deprojection dispatch used by world->pixel fast path."""
+        if cpp_kind == "ait":
+            return self._cpp_ait_deproject(phi_w, theta)
+        if cpp_kind == "hpx":
+            return self._cpp_hpx_deproject(phi_w, theta, self._hpx_h, self._hpx_k)
+        if cpp_kind == "zenithal":
+            return self._cpp_zenithal_deproject(-phi_w, theta, self._proj_code)
+        raise RuntimeError("unsupported_cpp_direct_projection")
 
     def _local_uvw_from_radec(
         self, ra: Tensor, dec: Tensor
@@ -685,8 +833,7 @@ class WCS:
             rel_x, rel_y = self.sip.distort(rel_x, rel_y)
 
         # Apply CD matrix
-        xi = self._cd00 * rel_x + self._cd01 * rel_y
-        eta = self._cd10 * rel_x + self._cd11 * rel_y
+        xi, eta = self._apply_cd_2d(rel_x, rel_y)
 
         # Common center-equator specializations avoid full spherical rotation.
         if self._use_center_equator_fast and self._is_car:
@@ -695,11 +842,7 @@ class WCS:
         if self._use_center_equator_fast and self._is_sfl:
             dec = eta
             cos_dec = torch.cos(dec * self._d2r)
-            cos_safe = torch.where(
-                torch.abs(cos_dec) < 1e-12,
-                torch.where(cos_dec < 0.0, -1e-12, 1e-12),
-                cos_dec,
-            )
+            cos_safe = torch.sign(cos_dec) * torch.clamp(torch.abs(cos_dec), min=1e-12)
             ra = _wrap_lon360((xi / cos_safe) + self.alpha0)
             return ra, dec
         if self._use_center_equator_fast and self._is_cea:
@@ -725,58 +868,54 @@ class WCS:
             xi, eta = project_zpx(xi, eta, self.wcs_params, self.wat_data)
 
         # 4. Projection
-        if self._is_tan or self._is_tpv:
-            r = torch.sqrt(xi * xi + eta * eta)
-            phi = torch.rad2deg(torch.atan2(-xi, -eta))
-            theta = torch.atan2(torch.ones_like(r), r * self._d2r) * self._r2d
-        elif self._is_sin:
-            r = torch.sqrt(xi * xi + eta * eta)
-            phi = torch.rad2deg(torch.atan2(-xi, -eta))
-            r_dim = torch.deg2rad(r)
-            theta = torch.rad2deg(torch.acos(torch.clamp(r_dim, -1.0, 1.0)))
-        elif self._is_arc:
-            r = torch.sqrt(xi * xi + eta * eta)
-            phi = torch.rad2deg(torch.atan2(-xi, -eta))
-            theta = 90.0 - r
-        elif self._is_zea:
-            r = torch.sqrt(xi * xi + eta * eta)
-            phi = torch.rad2deg(torch.atan2(-xi, -eta))
-            r_rad = torch.deg2rad(r)
-            theta = 90.0 - 2.0 * torch.rad2deg(
-                torch.asin(torch.clamp(r_rad / 2.0, -1.0, 1.0))
-            )
-        elif self._is_stg:
-            r = torch.sqrt(xi * xi + eta * eta)
-            phi = torch.rad2deg(torch.atan2(-xi, -eta))
-            theta = 90.0 - 2.0 * torch.rad2deg(torch.atan(torch.deg2rad(r) / 2.0))
+        if (
+            self._is_tan
+            or self._is_tpv
+            or self._is_sin
+            or self._is_arc
+            or self._is_zea
+            or self._is_stg
+        ):
+            r = torch.hypot(xi, eta)
+            phi = torch.atan2(-xi, -eta) * self._r2d
+            if self._is_tan or self._is_tpv:
+                theta = torch.atan2(torch.ones_like(r), r * self._d2r) * self._r2d
+            elif self._is_sin:
+                theta = torch.acos(torch.clamp(r * self._d2r, -1.0, 1.0)) * self._r2d
+            elif self._is_arc:
+                theta = 90.0 - r
+            elif self._is_zea:
+                theta = (
+                    90.0
+                    - 2.0
+                    * torch.asin(torch.clamp((r * self._d2r) * 0.5, -1.0, 1.0))
+                    * self._r2d
+                )
+            else:
+                theta = 90.0 - 2.0 * torch.atan((r * self._d2r) * 0.5) * self._r2d
         elif self._is_ait:
-            phi, theta = project_allsky(xi, eta, "AIT")
+            phi, theta = self._native_from_ait_fast(xi, eta)
         elif self._is_mol:
             phi, theta = project_allsky(xi, eta, "MOL")
         elif self._is_hpx:
             abs_eta = torch.abs(eta)
             mask_eq = abs_eta <= self._hpx_eta_boundary
+            sigma = (self._hpx_eta_pole - abs_eta) * self._hpx_inv_polar_denom
             s_theta = torch.where(
                 mask_eq,
-                eta / self._hpx_eta_scale,
-                torch.sign(eta)
-                * (
-                    1.0
-                    - (((self._hpx_eta_pole - abs_eta) / self._hpx_polar_denom) ** 2)
-                    / 3.0
-                ),
+                eta * self._hpx_inv_eta_scale,
+                torch.sign(eta) * (1.0 - (sigma * sigma) * (1.0 / 3.0)),
             )
             theta = torch.asin(torch.clamp(s_theta, -1.0, 1.0)) * self._r2d
-            sigma = (self._hpx_eta_pole - abs_eta) / self._hpx_polar_denom
             xc = torch.round((xi - 45.0) / 90.0) * 90.0 + 45.0
-            sigma_safe = torch.where(
-                torch.abs(sigma) < 1e-9, torch.ones_like(sigma), sigma
+            phi = torch.where(
+                mask_eq, xi, xc + (xi - xc) / torch.clamp(sigma, min=1e-9)
             )
-            phi = torch.where(mask_eq, xi, xc + (xi - xc) / sigma_safe)
             invalid = abs_eta > self._hpx_eta_pole
-            nan = torch.full_like(phi, float("nan"))
-            phi = torch.where(invalid, nan, phi)
-            theta = torch.where(invalid, nan, theta)
+            if bool(invalid.any()):
+                nan = torch.full_like(phi, float("nan"))
+                phi = torch.where(invalid, nan, phi)
+                theta = torch.where(invalid, nan, theta)
         elif self._is_cea:
             phi = xi
             theta = (
@@ -794,7 +933,12 @@ class WCS:
             theta = eta
             phi = xi / torch.clamp(torch.cos(theta * self._d2r), min=1e-12)
         elif self._is_zpn:
-            phi, theta = project_zenithal(xi, eta, "ZPN", None, self._pv2_tensor)
+            if self._is_zpn_linear:
+                r = torch.hypot(xi, eta)
+                phi = torch.atan2(-xi, -eta) * self._r2d
+                theta = 90.0 - r
+            else:
+                phi, theta = project_zenithal(xi, eta, "ZPN", None, self._pv2_tensor)
         else:
             # Linear fallback
             phi, theta = xi, eta
@@ -817,49 +961,45 @@ class WCS:
         device_ok = x.device.type == "cpu" and y.device.type == "cpu"
         dtype_ok = x.dtype == torch.float64 and y.dtype == torch.float64
 
+        if (
+            self._use_center_equator_fast
+            and self._cpp_center_pixel_to_world is not None
+            and device_ok
+            and dtype_ok
+            and not x.requires_grad
+            and not y.requires_grad
+            and self._is_ait
+        ):
+            return self._cpp_center_pixel_to_world(
+                x,
+                y,
+                float(origin),
+                self._crpix0,
+                self._crpix1,
+                self._cd00,
+                self._cd01,
+                self._cd10,
+                self._cd11,
+                self._proj_code,
+                self.alpha0,
+                self._cea_eta_scale,
+                self._hpx_h,
+                self._hpx_k,
+            )
+
         if self._use_center_equator_fast and (
             self._is_car or self._is_sfl or self._is_cea or self._is_mer
         ):
-            if (
-                self._cpp_center_pixel_to_world is not None
-                and device_ok
-                and dtype_ok
-                and not x.requires_grad
-                and not y.requires_grad
-                and (self._is_car or self._is_sfl)
-            ):
-                try:
-                    return self._cpp_center_pixel_to_world(
-                        x + (1.0 - origin),
-                        y + (1.0 - origin),
-                        self._crpix0,
-                        self._crpix1,
-                        self._cd00,
-                        self._cd01,
-                        self._cd10,
-                        self._cd11,
-                        self._proj_code,
-                        self.alpha0,
-                        self._cea_eta_scale,
-                        self._hpx_h,
-                        self._hpx_k,
-                    )
-                except (TypeError, RuntimeError):
-                    pass
-
             rel_x = x + (1.0 - origin) - self._crpix0
             rel_y = y + (1.0 - origin) - self._crpix1
-            xi = self._cd00 * rel_x + self._cd01 * rel_y
-            eta = self._cd10 * rel_x + self._cd11 * rel_y
+            xi, eta = self._apply_cd_2d(rel_x, rel_y)
             if self._is_car:
                 return _wrap_lon360(xi + self.alpha0), eta
             if self._is_sfl:
                 dec = eta
                 cos_dec = torch.cos(dec * self._d2r)
-                cos_safe = torch.where(
-                    torch.abs(cos_dec) < 1e-12,
-                    torch.where(cos_dec < 0.0, -1e-12, 1e-12),
-                    cos_dec,
+                cos_safe = torch.sign(cos_dec) * torch.clamp(
+                    torch.abs(cos_dec), min=1e-12
                 )
                 return _wrap_lon360((xi / cos_safe) + self.alpha0), dec
             if self._is_cea:
@@ -874,8 +1014,8 @@ class WCS:
 
         cpp_kind = self._cpp_p2w_direct_kind
         use_cpp_direct = (
-            bool(cpp_kind)
-            and not getattr(self, "_disable_cpp_pixel_to_world", False)
+            self._has_cpp_direct_p2w
+            and not self._disable_cpp_pixel_to_world
             and device_ok
             and dtype_ok
             and not x.requires_grad
@@ -884,43 +1024,44 @@ class WCS:
         if use_cpp_direct:
             rel_x = x + (1.0 - origin) - self._crpix0
             rel_y = y + (1.0 - origin) - self._crpix1
-            xi = self._cd00 * rel_x + self._cd01 * rel_y
-            eta = self._cd10 * rel_x + self._cd11 * rel_y
-            try:
-                if cpp_kind == "ait":
-                    phi, theta = self._cpp_ait_project(xi, eta)
-                elif cpp_kind == "mol":
-                    phi, theta = self._cpp_mol_project(xi, eta)
-                elif cpp_kind == "hpx":
-                    phi, theta = self._cpp_hpx_project(
-                        xi, eta, self._hpx_h, self._hpx_k
-                    )
-                elif cpp_kind == "zpn":
-                    phi, theta = self._cpp_zpn_project(xi, eta, self._zpn_coeffs_cpu)
-                else:
-                    raise RuntimeError("unsupported_cpp_direct_projection")
-            except (TypeError, RuntimeError):
-                self._disable_cpp_pixel_to_world = True
+            xi, eta = self._apply_cd_2d(rel_x, rel_y)
+            if self._cpp_direct_p2w_verified:
+                phi, theta = self._cpp_project_direct_p2w(xi, eta, cpp_kind)
             else:
+                try:
+                    phi, theta = self._cpp_project_direct_p2w(xi, eta, cpp_kind)
+                    self._cpp_direct_p2w_verified = True
+                except (TypeError, RuntimeError):
+                    self._disable_cpp_pixel_to_world = True
+                else:
+                    pass
+            if not self._disable_cpp_pixel_to_world:
                 if self._use_center_equator_fast:
                     return _wrap_lon360(phi + self.alpha0), theta
+                if (
+                    self._native_type == "pole"
+                    and self._cpp_spherical_rotation_pole is not None
+                ):
+                    return self._cpp_spherical_rotation_pole(
+                        phi,
+                        theta,
+                        self._phi_p_rad,
+                        self._pole_east_x,
+                        self._pole_east_y,
+                        self._pole_north_x,
+                        self._pole_north_y,
+                        self._pole_north_z,
+                        self._pole_radial_x,
+                        self._pole_radial_y,
+                        self._pole_radial_z,
+                    )
                 return self._spherical_rotation_optimized(phi, theta, self._native_type)
 
         # Environment-controlled fused C++ path. Default is False because vectorized
         # PyTorch + torch.compile is typically 2x-4x faster than the scalar C++ loop.
         use_fused = (
-            self._enable_fused_wcs
-            and _cpp is not None
-            and hasattr(_cpp, "wcs_pixel_to_world_fused_cpu")
-            and not getattr(self, "_disable_fused_pixel_to_world", False)
-            and self.sip is None
-            and not self._is_tnx
-            and not self._is_zpx
-            and (
-                self._proj_code
-                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
-                or (self._is_tpv and self._proj_code == "TAN")
-            )
+            self._can_use_fused_p2w_static
+            and not self._disable_fused_pixel_to_world
             and device_ok
             and dtype_ok
             and not x.requires_grad
@@ -1007,6 +1148,8 @@ class WCS:
                 phi, theta = self._cpp_zenithal_project(
                     xi_cpp, eta_cpp, self._proj_code
                 )
+                # Match Python zenithal convention (phi sign).
+                phi = -phi
             else:
                 phi, theta = project_zenithal(
                     xi, eta, self._proj_code, self._pv1_tensor, self._pv2_tensor
@@ -1119,33 +1262,38 @@ class WCS:
 
     def _native_from_mol_fast(self, xi: Tensor, eta: Tensor) -> Tuple[Tensor, Tensor]:
         """Fast MOL inverse projection: intermediate (deg) -> native (deg)."""
-        phi = torch.empty_like(xi)
-        theta = torch.empty_like(eta)
-
         valid = torch.abs(eta) <= self._mol_abs_eta_max
-        if valid.any():
-            xv = (xi[valid]) * self._d2r
-            yv = (eta[valid]) * self._d2r
-
+        if bool(valid.all()):
+            xv = xi * self._d2r
+            yv = eta * self._d2r
             sin_gamma = torch.clamp(yv / self._sqrt2, -1.0, 1.0)
             gamma = torch.asin(sin_gamma)
             cos_gamma = torch.cos(gamma)
-
             t_val = (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / math.pi
-            theta_v = torch.asin(torch.clamp(t_val, -1.0, 1.0)) * self._r2d
+            theta = torch.asin(torch.clamp(t_val, -1.0, 1.0)) * self._r2d
+            denom = 2.0 * self._sqrt2 * cos_gamma
+            phi = torch.zeros_like(xi)
+            good = torch.abs(denom) >= 1e-12
+            if bool(good.any()):
+                phi[good] = (math.pi * xv[good] / denom[good]) * self._r2d
+            return phi, theta
 
+        phi = torch.full_like(xi, float("nan"))
+        theta = torch.full_like(eta, float("nan"))
+        if bool(valid.any()):
+            xv = (xi[valid]) * self._d2r
+            yv = (eta[valid]) * self._d2r
+            sin_gamma = torch.clamp(yv / self._sqrt2, -1.0, 1.0)
+            gamma = torch.asin(sin_gamma)
+            cos_gamma = torch.cos(gamma)
+            t_val = (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / math.pi
+            theta[valid] = torch.asin(torch.clamp(t_val, -1.0, 1.0)) * self._r2d
             denom = 2.0 * self._sqrt2 * cos_gamma
             phi_v = torch.zeros_like(xv)
             good = torch.abs(denom) >= 1e-12
-            if good.any():
+            if bool(good.any()):
                 phi_v[good] = (math.pi * xv[good] / denom[good]) * self._r2d
-
             phi[valid] = phi_v
-            theta[valid] = theta_v
-
-        if (~valid).any():
-            phi[~valid] = float("nan")
-            theta[~valid] = float("nan")
         return phi, theta
 
     def _native_from_hpx_fast(self, xi: Tensor, eta: Tensor) -> Tuple[Tensor, Tensor]:
@@ -1158,7 +1306,7 @@ class WCS:
 
         mask_eq = (~invalid) & (abs_eta <= self._hpx_eta_boundary)
         if mask_eq.any():
-            s_theta_eq = torch.clamp(eta[mask_eq] / self._hpx_eta_scale, -1.0, 1.0)
+            s_theta_eq = torch.clamp(eta[mask_eq] * self._hpx_inv_eta_scale, -1.0, 1.0)
             theta[mask_eq] = torch.asin(s_theta_eq) * self._r2d
             phi[mask_eq] = xi[mask_eq]
 
@@ -1169,7 +1317,7 @@ class WCS:
             abs_eta_p = torch.abs(eta_p)
 
             sigma = torch.clamp(
-                (self._hpx_eta_pole - abs_eta_p) / self._hpx_polar_denom, min=0.0
+                (self._hpx_eta_pole - abs_eta_p) * self._hpx_inv_polar_denom, min=0.0
             )
             s_theta_pol = torch.sign(eta_p) * (1.0 - (sigma * sigma) / 3.0)
             theta[mask_pol] = (
@@ -1198,7 +1346,7 @@ class WCS:
         self, phi: Tensor, theta: Tensor
     ) -> Tuple[Tensor, Tensor]:
         """Fast AIT forward projection: native (deg) -> intermediate (deg)."""
-        phi_wrapped = _wrap_lon180(phi)
+        phi_wrapped = _wrap_lon180_checked(phi)
         phi_rad = phi_wrapped * self._d2r
         theta_rad = theta * self._d2r
         cos_theta = torch.cos(theta_rad)
@@ -1215,7 +1363,7 @@ class WCS:
         self, phi: Tensor, theta: Tensor
     ) -> Tuple[Tensor, Tensor]:
         """Fast MOL forward projection: native (deg) -> intermediate (deg)."""
-        phi_wrapped = _wrap_lon180(phi)
+        phi_wrapped = _wrap_lon180_checked(phi)
         phi_rad = phi_wrapped * self._d2r
         theta_rad = theta * self._d2r
         target = math.pi * torch.sin(theta_rad)
@@ -1235,7 +1383,7 @@ class WCS:
         self, phi: Tensor, theta: Tensor
     ) -> Tuple[Tensor, Tensor]:
         """Fast HPX forward projection: native (deg) -> intermediate (deg)."""
-        phi_w = _wrap_lon180(phi)
+        phi_w = _wrap_lon180_checked(phi)
         s_theta = torch.sin(theta * self._d2r)
         abs_s = torch.abs(s_theta)
         mask_eq = abs_s <= (2.0 / 3.0)
@@ -1304,32 +1452,37 @@ class WCS:
             phi, theta = self._inverse_spherical_rotation(ra, dec, self._native_type)
 
         # 2. Inverse Projection (Native -> Intermediate)
-        if self._is_tan or self._is_tpv:
-            # TAN inverse: phi, theta -> xi, eta
-            # R = 180/pi * cot(theta)
-            # xi = R * sin(phi)
-            # eta = -R * cos(phi)
-            tan_theta = torch.tan(torch.deg2rad(theta))
-            r = torch.rad2deg(1.0 / (tan_theta + 1e-15))
-            phi_rad = torch.deg2rad(phi)
-            xi = -r * torch.sin(phi_rad)
-            eta = -r * torch.cos(phi_rad)
-        elif self._is_sin:
-            r = torch.rad2deg(torch.cos(torch.deg2rad(theta)))
-            phi_rad = torch.deg2rad(phi)
-            xi = -r * torch.sin(phi_rad)
-            eta = -r * torch.cos(phi_rad)
-        elif self._is_arc:
-            r = 90.0 - theta
-            phi_rad = torch.deg2rad(phi)
-            xi = -r * torch.sin(phi_rad)
-            eta = -r * torch.cos(phi_rad)
+        if (
+            self._is_tan
+            or self._is_tpv
+            or self._is_sin
+            or self._is_arc
+            or self._is_zea
+            or self._is_stg
+        ):
+            phi_rad = phi * self._d2r
+            sin_phi, cos_phi = _sincos(phi_rad)
+            if self._is_tan or self._is_tpv:
+                tan_theta = torch.tan(theta * self._d2r)
+                r = self._r2d / (tan_theta + 1e-15)
+            elif self._is_sin:
+                r = self._r2d * torch.cos(theta * self._d2r)
+            elif self._is_arc:
+                r = 90.0 - theta
+            elif self._is_zea:
+                w = (90.0 - theta) * self._d2r
+                r = 2.0 * self._r2d * torch.sin(0.5 * w)
+            else:
+                w = (90.0 - theta) * self._d2r
+                r = 2.0 * self._r2d * torch.tan(0.5 * w)
+            xi = -r * sin_phi
+            eta = -r * cos_phi
         elif self._is_ait:
             xi, eta = deproject_allsky(phi, theta, "AIT")
         elif self._is_mol:
             xi, eta = deproject_allsky(phi, theta, "MOL")
         elif self._is_hpx:
-            phi_w = _wrap_lon180(phi)
+            phi_w = _wrap_lon180_checked(phi)
             s_theta = torch.sin(theta * self._d2r)
             abs_s = torch.abs(s_theta)
             mask_eq = abs_s <= (2.0 / 3.0)
@@ -1342,26 +1495,30 @@ class WCS:
             xi = torch.where(mask_eq, phi_w, xc + sigma * (phi_w - xc))
             eta = torch.where(mask_eq, self._hpx_eta_scale * s_theta, eta_pol)
         elif self._is_cea:
-            xi = _wrap_lon180(phi)
+            xi = _wrap_lon180_checked(phi)
             eta = self._cea_eta_scale * torch.sin(theta * self._d2r)
         elif self._is_mer:
-            xi = _wrap_lon180(phi)
+            xi = _wrap_lon180_checked(phi)
             tan_arg = torch.tan((45.0 + theta * 0.5) * self._d2r)
             tan_arg = torch.clamp(tan_arg, min=1e-12)
             eta = self._r2d * torch.log(tan_arg)
         elif self._is_car:
             # Inline trivial CAR projection: native RA -> intermediate xi, native Dec -> intermediate eta
-            xi = _wrap_lon180(phi)
+            xi = _wrap_lon180_checked(phi)
             eta = theta
         elif self._is_sfl:
-            xi = _wrap_lon180(phi) * torch.cos(theta * self._d2r)
+            xi = _wrap_lon180_checked(phi) * torch.cos(theta * self._d2r)
             eta = theta
-        elif self._is_zea:
-            xi, eta = deproject_zenithal(phi, theta, "ZEA")
-        elif self._is_stg:
-            xi, eta = deproject_zenithal(phi, theta, "STG")
         elif self._is_zpn:
-            xi, eta = deproject_zenithal(phi, theta, "ZPN", None, self._pv2_tensor)
+            if self._is_zpn_linear:
+                phi_w = _wrap_lon180(phi)
+                r = 90.0 - theta
+                phi_rad = phi_w * self._d2r
+                sin_phi, cos_phi = _sincos(phi_rad)
+                xi = -r * sin_phi
+                eta = -r * cos_phi
+            else:
+                xi, eta = deproject_zenithal(phi, theta, "ZPN", None, self._pv2_tensor)
         else:
             # Fallback
             xi, eta = deproject_zenithal(
@@ -1396,6 +1553,25 @@ class WCS:
         device_ok = ra.device.type == "cpu" and dec.device.type == "cpu"
         dtype_ok = ra.dtype == torch.float64 and dec.dtype == torch.float64
 
+        # Exact TAN analytic inverse: use direct intermediate coordinates instead of
+        # inverse-rotation + zenithal deprojection chain.
+        if self._is_tan and not self._is_tpv and not self._is_tnx and not self._is_zpx:
+            xi, eta = self._tan_intermediate_from_radec(ra, dec)
+            if self.sip is None:
+                px, py = self._apply_cd_inv_2d(xi, eta)
+            else:
+                rel_x = self._cdi00 * xi + self._cdi01 * eta
+                rel_y = self._cdi10 * xi + self._cdi11 * eta
+                rel_x, rel_y = self.sip.invert_distortion(rel_x, rel_y)
+                px = rel_x + self._crpix0
+                py = rel_y + self._crpix1
+            if origin == 1:
+                return px, py
+            if origin == 0:
+                return px.sub(1.0), py.sub(1.0)
+            off = float(origin - 1)
+            return px.add(off), py.add(off)
+
         if self._use_center_equator_fast and (
             self._is_car or self._is_sfl or self._is_cea or self._is_mer
         ):
@@ -1405,7 +1581,11 @@ class WCS:
                 and dtype_ok
                 and not ra.requires_grad
                 and not dec.requires_grad
-                and self._is_sfl
+                and (
+                    self._is_sfl
+                    or self._is_ait
+                    or (self._is_cea and ra.numel() <= 2_048)
+                )
             ):
                 try:
                     return self._cpp_center_world_to_pixel(
@@ -1451,8 +1631,8 @@ class WCS:
 
         cpp_kind = self._cpp_w2p_direct_kind
         use_cpp_direct = (
-            bool(cpp_kind)
-            and not getattr(self, "_disable_cpp_world_to_pixel", False)
+            self._has_cpp_direct_w2p
+            and not self._disable_cpp_world_to_pixel
             and device_ok
             and dtype_ok
             and not ra.requires_grad
@@ -1485,18 +1665,15 @@ class WCS:
                     ra, dec, self._native_type
                 )
                 phi_w = _wrap_lon180(phi)
-            try:
-                if cpp_kind == "ait":
-                    xi, eta = self._cpp_ait_deproject(phi_w, theta)
-                elif cpp_kind == "hpx":
-                    xi, eta = self._cpp_hpx_deproject(
-                        phi_w, theta, self._hpx_h, self._hpx_k
-                    )
-                else:
-                    raise RuntimeError("unsupported_cpp_direct_projection")
-            except (TypeError, RuntimeError):
-                self._disable_cpp_world_to_pixel = True
+            if self._cpp_direct_w2p_verified:
+                xi, eta = self._cpp_deproject_direct_w2p(phi_w, theta, cpp_kind)
             else:
+                try:
+                    xi, eta = self._cpp_deproject_direct_w2p(phi_w, theta, cpp_kind)
+                    self._cpp_direct_w2p_verified = True
+                except (TypeError, RuntimeError):
+                    self._disable_cpp_world_to_pixel = True
+            if not self._disable_cpp_world_to_pixel:
                 rel_x = self._cdi00 * xi + self._cdi01 * eta
                 rel_y = self._cdi10 * xi + self._cdi11 * eta
                 px = rel_x + self._crpix0 - (1.0 - origin)
@@ -1504,21 +1681,10 @@ class WCS:
                 return px, py
 
         use_fused = (
-            self._enable_fused_wcs
-            and _cpp is not None
-            and hasattr(_cpp, "wcs_world_to_pixel_fused_cpu")
-            and not getattr(self, "_disable_fused_world_to_pixel", False)
+            self._can_use_fused_w2p_static
+            and not self._disable_fused_world_to_pixel
             and device_ok
             and dtype_ok
-            and self.sip is None
-            and not self._is_tnx
-            and not self._is_zpx
-            and (not self._is_tpv or not self.tpv._invert_trace_enabled)
-            and (
-                self._proj_code
-                in ("TAN", "SIN", "CEA", "AIT", "HPX", "CAR", "SFL", "MOL", "TPV")
-                or (self._is_tpv and self._proj_code == "TAN")
-            )
             and not ra.requires_grad
             and not dec.requires_grad
         )
@@ -1915,7 +2081,7 @@ class WCS:
         """
         if native_type != "pole":
             if self._use_center_equator_fast:
-                phi = _wrap_lon180(ra - self.alpha0)
+                phi = _wrap_lon180_checked(ra - self.alpha0)
                 return phi, dec
             return self._spherical_rotation(ra, dec, native_type)
 
@@ -2480,7 +2646,7 @@ class WCS:
         pix_internal = self._alloc_pix_internal_like(world)
 
         if self._use_center_fast:
-            phi = _wrap_lon180(ra)
+            phi = _wrap_lon180_checked(ra)
             theta = dec
         else:
             phi, theta = self._inverse_spherical_rotation(ra, dec, self._native_type)
@@ -2500,7 +2666,7 @@ class WCS:
         pix_internal = self._alloc_pix_internal_like(world)
 
         if self._use_center_fast:
-            xi = torch.fmod(ra + 180.0, 360.0) - 180.0
+            xi = torch.remainder(ra + 180.0, 360.0) - 180.0
             eta = self._cea_eta_scale * torch.sin(dec * self._d2r)
         else:
             phi, theta = self._inverse_spherical_rotation(ra, dec, self._native_type)
@@ -2519,7 +2685,7 @@ class WCS:
         pix_internal = self._alloc_pix_internal_like(world)
 
         if self._use_center_fast:
-            phi = _wrap_lon180(ra)
+            phi = _wrap_lon180_checked(ra)
             theta = dec
         else:
             phi, theta = self._inverse_spherical_rotation(ra, dec, self._native_type)

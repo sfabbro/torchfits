@@ -3,6 +3,27 @@ from torch import Tensor
 from typing import Tuple, Optional
 import math
 
+D2R = 0.017453292519943295
+R2D = 57.29577951308232
+SQRT2 = 1.4142135623730951
+_HAS_TORCH_SINCOS = hasattr(torch, "sincos")
+
+
+def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
+    if _HAS_TORCH_SINCOS:
+        return torch.sincos(x)
+    return torch.sin(x), torch.cos(x)
+
+
+def _wrap_lon180_checked(angle: Tensor) -> Tensor:
+    if angle.requires_grad:
+        return torch.remainder(angle + 180.0, 360.0) - 180.0
+    mn = torch.amin(angle)
+    mx = torch.amax(angle)
+    if bool((mn >= -180.0) and (mx < 180.0)):
+        return angle
+    return torch.remainder(angle + 180.0, 360.0) - 180.0
+
 
 def project_allsky(
     xi: Tensor,
@@ -18,18 +39,9 @@ def project_allsky(
     xi, eta: Degrees (Standard FITS Intermediate).
     Returns: phi, theta (Degrees)
     """
-    # Constants
-    d2r = math.pi / 180.0
-    r2d = 180.0 / math.pi
-
-    # Convert inputs to radians for calculation
-    x = xi * d2r
-    y = eta * d2r
-
-    phi = torch.zeros_like(xi)
-    theta = torch.zeros_like(eta)
-
     if projection_code == "AIT":
+        x = xi * D2R
+        y = eta * D2R
         X = x
         Y = y
         r2 = (X * 0.25) ** 2 + (Y * 0.5) ** 2
@@ -38,46 +50,43 @@ def project_allsky(
         phi_rad = 2.0 * torch.atan2(0.5 * z * X, 2.0 * z * z - 1.0)
         sin_theta = torch.clamp(z * Y, -1.0, 1.0)
         theta_rad = torch.asin(sin_theta)
-        phi = phi_rad * r2d
-        theta = theta_rad * r2d
-        phi = torch.where(
-            mask, phi, torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype)
-        )
-        theta = torch.where(
-            mask,
-            theta,
-            torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype),
-        )
+        phi = phi_rad * R2D
+        theta = theta_rad * R2D
+        nan_phi = torch.full_like(phi, float("nan"))
+        nan_theta = torch.full_like(theta, float("nan"))
+        phi = torch.where(mask, phi, nan_phi)
+        theta = torch.where(mask, theta, nan_theta)
 
     elif projection_code == "MOL":
+        x = xi * D2R
+        y = eta * D2R
         X = x
         Y = y
-        sqrt2 = math.sqrt(2.0)
-        sin_gamma = torch.clamp(Y / sqrt2, -1.0, 1.0)
+        valid = torch.abs(Y) <= (SQRT2 + 1e-9)
+        sin_gamma = torch.clamp(Y / SQRT2, -1.0, 1.0)
         gamma = torch.asin(sin_gamma)
+        cos_gamma = torch.cos(gamma)
         # sin(2x) = 2 sin(x) cos(x)
-        t_val = (2.0 * gamma + torch.sin(2.0 * gamma)) / math.pi
+        t_val = (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / math.pi
         theta_rad = torch.asin(torch.clamp(t_val, -1.0, 1.0))
-        denom = 2.0 * sqrt2 * torch.cos(gamma)
-        mask_pole = torch.abs(denom) < 1e-8
-        phi_rad = torch.where(
-            mask_pole,
-            torch.zeros_like(X),
-            math.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom),
-        )
-        phi = phi_rad * r2d
-        theta = theta_rad * r2d
-        mask_valid = torch.abs(Y) <= (sqrt2 + 1e-9)
-        phi = torch.where(
-            mask_valid,
-            phi,
-            torch.tensor(float("nan"), device=phi.device, dtype=phi.dtype),
-        )
-        theta = torch.where(
-            mask_valid,
-            theta,
-            torch.tensor(float("nan"), device=theta.device, dtype=theta.dtype),
-        )
+        theta = theta_rad * R2D
+        if bool(valid.all()):
+            denom = torch.clamp(2.0 * SQRT2 * cos_gamma, min=1e-8)
+            phi = (math.pi * X / denom) * R2D
+        else:
+            denom = 2.0 * SQRT2 * cos_gamma
+            mask_pole = torch.abs(denom) < 1e-8
+            phi_rad = torch.where(
+                mask_pole,
+                torch.zeros_like(X),
+                math.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom),
+            )
+            phi = phi_rad * R2D
+            if bool((~valid).any()):
+                nan_phi = torch.full_like(phi, float("nan"))
+                nan_theta = torch.full_like(theta, float("nan"))
+                phi = torch.where(valid, phi, nan_phi)
+                theta = torch.where(valid, theta, nan_theta)
 
     elif projection_code == "HPX":
         H = 4.0
@@ -94,37 +103,33 @@ def project_allsky(
                 K = pv2[2]
 
         eta_scale = 90.0 * (K / H)
+        inv_eta_scale = 1.0 / eta_scale
         eta_boundary = eta_scale * (2.0 / 3.0)
+        inv_polar_denom = 1.0 / (90.0 - eta_boundary)
         abs_eta = torch.abs(eta)
         mask_eq = abs_eta <= eta_boundary
-        theta = (
-            torch.asin(
-                torch.clamp(
-                    torch.where(
-                        mask_eq,
-                        eta / eta_scale,
-                        torch.sign(eta)
-                        * (1.0 - ((90.0 - abs_eta) / (90.0 - eta_boundary)) ** 2 / 3.0),
-                    ),
-                    -1.0,
-                    1.0,
-                )
-            )
-            * r2d
+        sigma = (90.0 - abs_eta) * inv_polar_denom
+        s_theta = torch.where(
+            mask_eq,
+            eta * inv_eta_scale,
+            torch.sign(eta) * (1.0 - (sigma * sigma) * (1.0 / 3.0)),
         )
-        sigma = (90.0 - abs_eta) / (90.0 - eta_boundary)
+        theta = torch.asin(torch.clamp(s_theta, -1.0, 1.0)) * R2D
         xc = torch.round((xi - 45.0) * (1.0 / 90.0)) * 90.0 + 45.0
         phi = torch.where(mask_eq, xi, xc + (xi - xc) / torch.clamp(sigma, min=1e-9))
         invalid = abs_eta > 90.0
-        phi = torch.where(invalid, torch.tensor(float("nan"), device=phi.device), phi)
-        theta = torch.where(
-            invalid, torch.tensor(float("nan"), device=theta.device), theta
-        )
+        if bool(invalid.any()):
+            nan_phi = torch.full_like(phi, float("nan"))
+            nan_theta = torch.full_like(theta, float("nan"))
+            phi = torch.where(invalid, nan_phi, phi)
+            theta = torch.where(invalid, nan_theta, theta)
 
     elif projection_code == "SFL":
         theta = eta
         # SFL: phi = xi / cos(theta)
-        phi = xi / torch.clamp(torch.cos(theta * 0.017453292519943295), min=1e-12)
+        phi = xi / torch.clamp(torch.cos(theta * D2R), min=1e-12)
+    else:
+        phi, theta = xi, eta
 
     return phi, theta
 
@@ -137,26 +142,21 @@ def deproject_allsky(
     pv2: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Forward all-sky projection."""
-    d2r = math.pi / 180.0
-    r2d = 180.0 / math.pi
-
     if projection_code == "AIT":
-        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
-        phi_rad = phi_wrapped * d2r
-        theta_rad = theta * d2r
-        cos_theta = torch.cos(theta_rad)
-        sin_theta = torch.sin(theta_rad)
-        cos_half_phi = torch.cos(phi_rad * 0.5)
-        sin_half_phi = torch.sin(phi_rad * 0.5)
+        phi_wrapped = _wrap_lon180_checked(phi)
+        phi_rad = phi_wrapped * D2R
+        theta_rad = theta * D2R
+        sin_theta, cos_theta = _sincos(theta_rad)
+        sin_half_phi, cos_half_phi = _sincos(phi_rad * 0.5)
         denom = torch.sqrt(0.5 * (1.0 + cos_theta * cos_half_phi))
-        xi = 2.0 * cos_theta * sin_half_phi / denom * r2d
-        eta = sin_theta / denom * r2d
+        xi = 2.0 * cos_theta * sin_half_phi / denom * R2D
+        eta = sin_theta / denom * R2D
         return xi, eta
 
     elif projection_code == "MOL":
-        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
-        phi_rad = phi_wrapped * d2r
-        theta_rad = theta * d2r
+        phi_wrapped = _wrap_lon180_checked(phi)
+        phi_rad = phi_wrapped * D2R
+        theta_rad = theta * D2R
         sin_theta = torch.sin(theta_rad)
         target = math.pi * sin_theta
         gamma = theta_rad.clone()  # Better initial guess than zero
@@ -170,9 +170,8 @@ def deproject_allsky(
                 break
 
             gamma = gamma - res / (2.0 + 2.0 * cos_2g + 1e-12)
-        sqrt2 = math.sqrt(2.0)
-        xi = 2.0 * sqrt2 * phi_rad * torch.cos(gamma) / math.pi * r2d
-        eta = sqrt2 * torch.sin(gamma) * r2d
+        xi = 2.0 * SQRT2 * phi_rad * torch.cos(gamma) / math.pi * R2D
+        eta = SQRT2 * torch.sin(gamma) * R2D
         return xi, eta
 
     elif projection_code == "HPX":
@@ -187,8 +186,8 @@ def deproject_allsky(
                 H = pv2[1]
             if pv2[2] != 0:
                 K = pv2[2]
-        phi_w = torch.remainder(phi + 180.0, 360.0) - 180.0
-        s_theta = torch.sin(theta * d2r)
+        phi_w = _wrap_lon180_checked(phi)
+        s_theta = torch.sin(theta * D2R)
         abs_s = torch.abs(s_theta)
         eta_scale = 90.0 * (K / H)
         mask_eq = abs_s <= (2.0 / 3.0)
@@ -202,8 +201,8 @@ def deproject_allsky(
         return xi, eta
 
     elif projection_code == "SFL":
-        phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
-        xi = phi_wrapped * torch.cos(theta * d2r)
+        phi_wrapped = _wrap_lon180_checked(phi)
+        xi = phi_wrapped * torch.cos(theta * D2R)
         eta = theta
         return xi, eta
 

@@ -1,7 +1,19 @@
 import torch
 from torch import Tensor
 from typing import Tuple, Optional
-import math
+
+D2R = 0.017453292519943295
+R2D = 57.29577951308232
+
+
+def _wrap_lon180_checked(angle: Tensor) -> Tensor:
+    if angle.requires_grad:
+        return torch.remainder(angle + 180.0, 360.0) - 180.0
+    mn = torch.amin(angle)
+    mx = torch.amax(angle)
+    if bool((mn >= -180.0) and (mx < 180.0)):
+        return angle
+    return torch.remainder(angle + 180.0, 360.0) - 180.0
 
 
 def project_cylindrical(
@@ -18,10 +30,8 @@ def project_cylindrical(
 
     if projection_code == "CEA":
         phi = xi
-        lambda_val = pv2_1
-        val = (lambda_val * eta) * (math.pi / 180.0)
-        val = torch.clamp(val, -1.0, 1.0)
-        theta = torch.rad2deg(torch.asin(val))
+        val = torch.clamp(eta * (pv2_1 * D2R), -1.0, 1.0)
+        theta = torch.asin(val) * R2D
 
     elif projection_code == "CAR":
         phi = xi
@@ -29,10 +39,10 @@ def project_cylindrical(
 
     elif projection_code == "MER":
         phi = xi
-        arg = eta * (math.pi / 180.0)
+        arg = eta * D2R
         arg = torch.clamp(arg, -20.0, 20.0)
         exp_val = torch.exp(arg)
-        theta = 2.0 * (torch.rad2deg(torch.atan(exp_val)) - 45.0)
+        theta = 2.0 * (torch.atan(exp_val) * R2D - 45.0)
 
     elif projection_code == "CYP":
         raise NotImplementedError("CYP inversion not yet implemented.")
@@ -59,18 +69,14 @@ def deproject_cylindrical(
                 where phi is in [0, 360) and needs to be wrapped to [-180, 180] for xi.
     Returns: xi, eta in degrees.
     """
-    d2r = math.pi / 180.0
-    r2d = 180.0 / math.pi
-
     pv2_1 = pv2[1] if pv2 is not None else 1.0
 
     # Wrap phi to [-180, 180] range for cylindrical projections
-    phi_wrapped = torch.remainder(phi + 180.0, 360.0) - 180.0
+    phi_wrapped = _wrap_lon180_checked(phi)
 
     if projection_code == "CEA":
         xi = phi_wrapped
-        lambda_val = pv2_1
-        eta = (r2d / lambda_val) * torch.sin(theta * d2r)
+        eta = (R2D / pv2_1) * torch.sin(theta * D2R)
         return xi, eta
 
     elif projection_code == "CAR":
@@ -81,9 +87,9 @@ def deproject_cylindrical(
     elif projection_code == "MER":
         xi = phi_wrapped
         half_theta = theta / 2.0
-        tan_arg = torch.tan((45.0 + half_theta) * d2r)
+        tan_arg = torch.tan((45.0 + half_theta) * D2R)
         tan_arg = torch.clamp(tan_arg, min=1e-12)
-        eta = r2d * torch.log(tan_arg)
+        eta = R2D * torch.log(tan_arg)
         return xi, eta
 
     elif projection_code == "CYP":

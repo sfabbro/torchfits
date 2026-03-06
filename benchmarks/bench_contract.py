@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import ast
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -51,7 +52,13 @@ DEFICIT_COLUMNS = [
     "best_time_s",
     "lag_ratio",
     "pct_behind",
+    "n_points",
+    "perceived_impact",
 ]
+
+LARGE_N_THRESHOLD = 100_000
+SMALL_N_PERCEIVED_LATENCY_S = 5e-4
+SMALL_N_MAX_LAG_RATIO = 10.0
 
 
 def make_run_id() -> str:
@@ -68,6 +75,34 @@ def _to_float(value: Any) -> float | None:
     if v != v:  # NaN
         return None
     return v
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(float(value))
+        except Exception:
+            return None
+
+
+def _extract_n_points(row: dict[str, Any]) -> int | None:
+    n = _to_int(row.get("n_points"))
+    if n is not None and n >= 0:
+        return n
+    case_id = str(row.get("case_id") or "")
+    # Case format: "<name>::n1000::<op>"
+    marker = "::n"
+    i = case_id.find(marker)
+    if i < 0:
+        return None
+    j = case_id.find("::", i + len(marker))
+    if j < 0:
+        return None
+    return _to_int(case_id[i + len(marker) : j])
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> None:
@@ -203,6 +238,24 @@ def compute_deficits(rows: list[dict[str, Any]], run_id: str) -> list[dict[str, 
                 "best_time_s": best_t,
                 "lag_ratio": lag_ratio,
                 "pct_behind": ((lag_ratio - 1.0) * 100.0) if lag_ratio else "",
+                "n_points": _extract_n_points(torch_row),
+                "perceived_impact": (
+                    "ratio_outlier"
+                    if (
+                        tf_time is not None
+                        and tf_time < SMALL_N_PERCEIVED_LATENCY_S
+                        and lag_ratio is not None
+                        and lag_ratio >= SMALL_N_MAX_LAG_RATIO
+                    )
+                    else (
+                        "negligible"
+                        if (
+                            tf_time is not None
+                            and tf_time < SMALL_N_PERCEIVED_LATENCY_S
+                        )
+                        else "visible"
+                    )
+                ),
             }
         )
 
@@ -246,6 +299,92 @@ def write_summary(
     for d in deficits:
         by_domain_family[(str(d.get("domain")), str(d.get("family")))].append(d)
 
+    def _metadata_dict(row: dict[str, Any]) -> dict[str, Any]:
+        md = row.get("metadata")
+        if isinstance(md, dict):
+            return md
+        if isinstance(md, str):
+            txt = md.strip()
+            if not txt:
+                return {}
+            try:
+                parsed = ast.literal_eval(txt)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                return {}
+        return {}
+
+    # Build astronomer-facing performance scorecard from comparable groups.
+    preferred_method_by_family = {
+        "smart": "torchfits",
+        "specialized": "torchfits_specialized",
+        "numpy": "torchfits_numpy",
+    }
+    grouped: dict[
+        tuple[str, str, str], list[tuple[dict[str, Any], float]]
+    ] = defaultdict(list)
+    for row in rows:
+        if not bool(row.get("comparable", False)):
+            continue
+        if str(row.get("status")) != "OK":
+            continue
+        t = _to_float(row.get("time_s"))
+        if t is None or t <= 0:
+            continue
+        grouped[
+            (str(row.get("domain")), str(row.get("case_id")), str(row.get("family")))
+        ].append((row, t))
+
+    scorecard: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+        lambda: {"wins": 0, "total": 0, "legacy_groups": 0}
+    )
+    large_n_scorecard: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+        lambda: {"wins": 0, "total": 0}
+    )
+    for (domain, _case_id, family), grp in grouped.items():
+        grp.sort(key=lambda x: x[1])
+        tf_candidates = [r for (r, _t) in grp if str(r.get("library")) == "torchfits"]
+        if not tf_candidates:
+            continue
+
+        preferred = preferred_method_by_family.get(family)
+        torch_row = None
+        if preferred is not None:
+            for r in tf_candidates:
+                if str(r.get("method")) == preferred:
+                    torch_row = r
+                    break
+        if torch_row is None:
+            for r in tf_candidates:
+                if str(r.get("method", "")).startswith("torchfits"):
+                    torch_row = r
+                    break
+        if torch_row is None:
+            torch_row = tf_candidates[0]
+
+        key = (domain, family)
+        scorecard[key]["total"] += 1
+        if grp[0][0] is torch_row:
+            scorecard[key]["wins"] += 1
+        n_points = _extract_n_points(torch_row)
+        if n_points is not None and n_points >= LARGE_N_THRESHOLD:
+            large_n_scorecard[key]["total"] += 1
+            if grp[0][0] is torch_row:
+                large_n_scorecard[key]["wins"] += 1
+
+        has_legacy = any(bool(_metadata_dict(r).get("cross_env")) for (r, _t) in grp)
+        if has_legacy:
+            scorecard[key]["legacy_groups"] += 1
+
+    torch_devices: set[str] = set()
+    for row in rows:
+        if str(row.get("library")) != "torchfits":
+            continue
+        dev = str(_metadata_dict(row).get("device", "")).strip()
+        if dev:
+            torch_devices.add(dev)
+
     with path.open("w", encoding="utf-8") as f:
         f.write("# Benchmark Summary\n\n")
         f.write(f"- Run ID: `{run_id}`\n")
@@ -262,6 +401,85 @@ def write_summary(
             )
         f.write("\n")
 
+        f.write("## Astronomer Scorecard\n\n")
+        f.write(
+            "| Domain | Family | TorchFits First | Win Rate | Legacy In Ranking |\n"
+        )
+        f.write("|---|---|---:|---:|---:|\n")
+        if scorecard:
+            for (domain, family), stats in sorted(scorecard.items()):
+                total = int(stats.get("total", 0))
+                wins = int(stats.get("wins", 0))
+                legacy_groups = int(stats.get("legacy_groups", 0))
+                rate = (100.0 * wins / total) if total > 0 else 0.0
+                f.write(
+                    f"| {domain} | {family} | {wins}/{total} | {rate:.1f}% | {legacy_groups} |\n"
+                )
+        else:
+            f.write("| - | - | 0/0 | 0.0% | 0 |\n")
+        devices_txt = ", ".join(sorted(torch_devices)) if torch_devices else "-"
+        f.write("\n")
+        f.write(f"- TorchFits devices observed in this run: `{devices_txt}`\n")
+        f.write(
+            "- Smart-family tables are the primary adoption view for astronomers (performance + portability).\n\n"
+        )
+
+        f.write("## Adoption Checks\n\n")
+        f.write(f"- `large-N` threshold: `n_points >= {LARGE_N_THRESHOLD}`\n")
+        f.write(
+            f"- `small-N perceived` threshold: `torchfits_time_s < {SMALL_N_PERCEIVED_LATENCY_S:.6f}s`\n"
+        )
+        f.write(
+            f"- `small-N max lag` threshold: `lag_ratio < {SMALL_N_MAX_LAG_RATIO:.1f}x`\n\n"
+        )
+        f.write("### Large-N Leadership\n\n")
+        f.write("| Domain | Family | TorchFits First (large-N) | Win Rate |\n")
+        f.write("|---|---|---:|---:|\n")
+        if large_n_scorecard:
+            for (domain, family), stats in sorted(large_n_scorecard.items()):
+                total = int(stats.get("total", 0))
+                wins = int(stats.get("wins", 0))
+                rate = (100.0 * wins / total) if total > 0 else 0.0
+                f.write(f"| {domain} | {family} | {wins}/{total} | {rate:.1f}% |\n")
+        else:
+            f.write("| - | - | 0/0 | 0.0% |\n")
+        f.write("\n")
+
+        large_n_deficits = [
+            d
+            for d in deficits
+            if (_to_int(d.get("n_points")) or 0) >= LARGE_N_THRESHOLD
+        ]
+        if large_n_deficits:
+            f.write("Large-N deficits detected:\n\n")
+            f.write("| Case | n_points | Lag (x) | Behind (%) |\n")
+            f.write("|---|---:|---:|---:|\n")
+            for row in large_n_deficits:
+                f.write(
+                    f"| {row.get('case_label')} | {row.get('n_points')} | {_fmt_float(row.get('lag_ratio'), 3)} | {_fmt_float(row.get('pct_behind'), 2)} |\n"
+                )
+            f.write("\n")
+        else:
+            f.write("No large-N deficits detected.\n\n")
+
+        visible_small_deficits = [
+            d
+            for d in deficits
+            if (_to_int(d.get("n_points")) or 0) < LARGE_N_THRESHOLD
+            and str(d.get("perceived_impact")) in {"visible", "ratio_outlier"}
+        ]
+        f.write("### Small-N Visible Deficits\n\n")
+        if visible_small_deficits:
+            f.write("| Case | TorchFits (s) | Lag (x) | Behind (%) | Impact |\n")
+            f.write("|---|---:|---:|---:|---|\n")
+            for row in visible_small_deficits:
+                f.write(
+                    f"| {row.get('case_label')} | {_fmt_float(row.get('torchfits_time_s'), 6)} | {_fmt_float(row.get('lag_ratio'), 3)} | {_fmt_float(row.get('pct_behind'), 2)} | {row.get('perceived_impact')} |\n"
+                )
+            f.write("\n")
+        else:
+            f.write("No small-N visible deficits detected.\n\n")
+
         f.write("## TorchFits Deficits (Not First)\n\n")
         if not deficits:
             f.write("No comparable cases where TorchFits is behind.\n\n")
@@ -269,9 +487,9 @@ def write_summary(
             for (domain, family), items in sorted(by_domain_family.items()):
                 f.write(f"### {domain.upper()} - {family}\n\n")
                 f.write(
-                    "| Case | Operation | TorchFits | Best | Lag (x) | Behind (%) | mmap |\n"
+                    "| Case | Operation | TorchFits (s) | Winner | Winner (s) | Lag (x) | Behind (%) | mmap |\n"
                 )
-                f.write("|---|---|---:|---:|---:|---:|---|\n")
+                f.write("|---|---|---:|---|---:|---:|---:|---|\n")
                 for row in items:
                     tf_time = _fmt_float(row.get("torchfits_time_s"), 6)
                     best_time = _fmt_float(row.get("best_time_s"), 6)
@@ -279,8 +497,13 @@ def write_summary(
                     pct = _fmt_float(row.get("pct_behind"), 2)
                     mmap = row.get("mmap_target") or "-"
                     case_label = row.get("case_label") or row.get("case_id")
+                    best_library = str(row.get("best_library") or "-")
+                    best_method = str(row.get("best_method") or "-")
+                    winner = f"{best_library}:{best_method}"
+                    if best_library in {"pyast", "kapteyn"}:
+                        winner += " (legacy)"
                     f.write(
-                        f"| {case_label} | {row.get('operation')} | {tf_time} | {best_time} | {lag} | {pct} | {mmap} |\n"
+                        f"| {case_label} | {row.get('operation')} | {tf_time} | {winner} | {best_time} | {lag} | {pct} | {mmap} |\n"
                     )
                 f.write("\n")
 
@@ -290,4 +513,7 @@ def write_summary(
         )
         f.write(
             "- Rankings are family-specific and never mix smart vs specialized method families.\n"
+        )
+        f.write(
+            "- WCS smart rankings can include cross-environment legacy comparators (`pyast`, `kapteyn`) when bridge data is available.\n"
         )

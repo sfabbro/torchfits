@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -13,11 +14,6 @@ import numpy as np
 
 from bench_contract import RESULT_COLUMNS, annotate_rankings, write_csv
 from bench_wcs import CASES, _bench_case, _resolve_device
-
-try:
-    from bench_competitors import run_case as run_legacy_case
-except Exception:
-    run_legacy_case = None
 
 
 REQUIRED_PROJECTIONS = [
@@ -38,6 +34,19 @@ REQUIRED_PROJECTIONS = [
     "TPV",
 ]
 
+WCS_SAMPLE_SEED_BASE = 12345
+
+
+def _legacy_runner():
+    """Load same-env legacy comparators only on compatible interpreters."""
+    if sys.version_info >= (3, 14):
+        return None
+    try:
+        from bench_competitors import run_case as run_legacy_case
+    except Exception:
+        return None
+    return run_legacy_case
+
 
 def _runs_for_points(n_points: int) -> int:
     if n_points <= 10_000:
@@ -57,6 +66,17 @@ def _ok_time(v: Any) -> float | None:
     if not math.isfinite(x) or x <= 0:
         return None
     return x
+
+
+def _sample_seed(i_case: int, i_tier: int, i_rep: int) -> int:
+    # Shared seed contract with bench_wcs_legacy_only.py for cross-env parity.
+    return int(WCS_SAMPLE_SEED_BASE + i_case * 100_000 + i_tier * 1_000 + i_rep)
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(np.median(np.asarray(values, dtype=np.float64)))
 
 
 def _base_row(
@@ -118,15 +138,18 @@ def run_wcs_domain(
     origin: int = 0,
     sample_profile: str = "mixed",
     include_legacy: bool = False,
+    torch_compile: bool = False,
+    replicates: int = 1,
 ) -> list[dict[str, Any]]:
     _ = output_dir
     tiers = n_tiers or [1_000, 10_000, 100_000, 1_000_000, 10_000_000]
     requested = projections or list(REQUIRED_PROJECTIONS)
+    run_legacy_case = _legacy_runner() if include_legacy else None
 
     device = _resolve_device(device_choice)
     rows: list[dict[str, Any]] = []
 
-    for case_name in requested:
+    for i_case, case_name in enumerate(requested):
         case = CASES.get(case_name)
         if case is None:
             # Explicitly report unsupported projections as non-fatal skips.
@@ -175,26 +198,42 @@ def run_wcs_domain(
                 )
             continue
 
-        for i, n in enumerate(tiers):
+        for i_tier, n in enumerate(tiers):
             runs = _runs_for_points(n)
-            rng = np.random.default_rng(12345 + i)
             print(
-                f"[wcs] case={case_name} n={n} runs={runs} device={device.type}",
+                f"[wcs] case={case_name} n={n} runs={runs} reps={max(1, int(replicates))} device={device.type}",
                 flush=True,
             )
-            try:
-                result = _bench_case(
-                    case,
-                    n_points=n,
-                    runs=runs,
-                    device=device,
-                    origin=origin,
-                    torch_compile=False,
-                    profile=sample_profile,
-                    rng=rng,
-                )
-            except Exception as exc:
-                reason = f"case_failed: {exc}"
+            rep_results: list[dict[str, Any]] = []
+            rep_seeds: list[int] = []
+            rep_errors: list[str] = []
+            rep_count = max(1, int(replicates))
+            for i_rep in range(rep_count):
+                sample_seed = _sample_seed(i_case, i_tier, i_rep)
+                rep_seeds.append(sample_seed)
+                rng = np.random.default_rng(sample_seed)
+                try:
+                    result = _bench_case(
+                        case,
+                        n_points=n,
+                        runs=runs,
+                        device=device,
+                        origin=origin,
+                        torch_compile=bool(torch_compile),
+                        profile=sample_profile,
+                        rng=rng,
+                    )
+                except Exception as exc:
+                    rep_errors.append(
+                        f"seed={sample_seed}: {type(exc).__name__}: {exc}"
+                    )
+                    continue
+                rep_results.append(result)
+
+            if not rep_results:
+                reason = "case_failed_all_replicates"
+                if rep_errors:
+                    reason += f": {rep_errors[0]}"
                 rows.append(
                     _base_row(
                         run_id=run_id,
@@ -239,18 +278,83 @@ def run_wcs_domain(
                 )
                 continue
 
-            tf_fw = _ok_time(result.get("torch_forward_ms", 0.0) / 1000.0)
-            as_fw = _ok_time(result.get("astropy_forward_ms", 0.0) / 1000.0)
-            tf_inv = _ok_time(result.get("torch_inverse_ms", 0.0) / 1000.0)
-            as_inv = _ok_time(result.get("astropy_inverse_ms", 0.0) / 1000.0)
+            tf_fw = _median(
+                [
+                    t
+                    for t in (
+                        _ok_time(r.get("torch_forward_ms", 0.0) / 1000.0)
+                        for r in rep_results
+                    )
+                    if t is not None
+                ]
+            )
+            as_fw = _median(
+                [
+                    t
+                    for t in (
+                        _ok_time(r.get("astropy_forward_ms", 0.0) / 1000.0)
+                        for r in rep_results
+                    )
+                    if t is not None
+                ]
+            )
+            tf_inv = _median(
+                [
+                    t
+                    for t in (
+                        _ok_time(r.get("torch_inverse_ms", 0.0) / 1000.0)
+                        for r in rep_results
+                    )
+                    if t is not None
+                ]
+            )
+            as_inv = _median(
+                [
+                    t
+                    for t in (
+                        _ok_time(r.get("astropy_inverse_ms", 0.0) / 1000.0)
+                        for r in rep_results
+                    )
+                    if t is not None
+                ]
+            )
+
+            n_valid_vals = [
+                int(v)
+                for v in (r.get("n_valid") for r in rep_results)
+                if isinstance(v, (int, np.integer))
+            ]
+            n_valid_agg = min(n_valid_vals) if n_valid_vals else 0
+            inv_refs = [r.get("inverse_reference") for r in rep_results]
+            if any(ref == "astropy" for ref in inv_refs):
+                inv_ref_agg = "astropy"
+            elif any(ref == "roundtrip" for ref in inv_refs):
+                inv_ref_agg = "roundtrip"
+            else:
+                inv_ref_agg = "none"
+
+            def _max_finite(key: str) -> float | None:
+                vals = []
+                for r in rep_results:
+                    v = _ok_time(r.get(key))
+                    if v is not None:
+                        vals.append(v)
+                if not vals:
+                    return None
+                return float(max(vals))
 
             meta = {
-                "n_valid": result.get("n_valid"),
-                "inverse_reference": result.get("inverse_reference"),
-                "max_angular_error_arcsec": result.get("max_angular_error_arcsec"),
-                "p99_angular_error_arcsec": result.get("p99_angular_error_arcsec"),
-                "max_inverse_pixel_error": result.get("max_inverse_pixel_error"),
-                "p99_inverse_pixel_error": result.get("p99_inverse_pixel_error"),
+                "n_valid": n_valid_agg,
+                "inverse_reference": inv_ref_agg,
+                "sample_seed_base": WCS_SAMPLE_SEED_BASE,
+                "sample_seeds": rep_seeds,
+                "replicates": rep_count,
+                "replicates_ok": len(rep_results),
+                "replicates_failed": len(rep_errors),
+                "max_angular_error_arcsec": _max_finite("max_angular_error_arcsec"),
+                "p99_angular_error_arcsec": _max_finite("p99_angular_error_arcsec"),
+                "max_inverse_pixel_error": _max_finite("max_inverse_pixel_error"),
+                "p99_inverse_pixel_error": _max_finite("p99_inverse_pixel_error"),
             }
 
             rows.append(
@@ -265,7 +369,7 @@ def run_wcs_domain(
                     method="torchfits",
                     mode="smart",
                     time_s=tf_fw,
-                    throughput=float(result.get("torch_forward_mpts_s", 0.0)),
+                    throughput=(n / tf_fw / 1e6) if tf_fw else None,
                     status="OK" if tf_fw is not None else "FAILED",
                     skip_reason="",
                     comparable=tf_fw is not None,
@@ -286,7 +390,7 @@ def run_wcs_domain(
                     method="astropy_torch",
                     mode="smart",
                     time_s=as_fw,
-                    throughput=float(result.get("astropy_forward_mpts_s", 0.0)),
+                    throughput=(n / as_fw / 1e6) if as_fw else None,
                     status="OK" if as_fw is not None else "FAILED",
                     skip_reason="",
                     comparable=as_fw is not None,
@@ -296,7 +400,7 @@ def run_wcs_domain(
                 )
             )
 
-            inv_ok = result.get("inverse_reference") not in {"none", None}
+            inv_ok = inv_ref_agg not in {"none", None}
             astropy_inv_skip_reason = ""
             if not inv_ok:
                 astropy_inv_skip_reason = "inverse_not_available"
@@ -346,16 +450,27 @@ def run_wcs_domain(
             )
 
             if include_legacy and run_legacy_case is not None:
-                try:
-                    leg = run_legacy_case(case_name, n, origin, 123 + i, sample_profile)
-                except Exception as exc:
-                    leg = {"error": str(exc)}
+                legacy_times: dict[str, list[float]] = {"pyast": [], "kapteyn": []}
+                for i_rep in range(rep_count):
+                    rep_seed = _sample_seed(i_case, i_tier, i_rep)
+                    try:
+                        leg = run_legacy_case(
+                            case_name, n, origin, rep_seed, sample_profile
+                        )
+                    except Exception:
+                        leg = {}
+                    if not isinstance(leg, dict):
+                        leg = {}
+                    for lib_key in ("pyast", "kapteyn"):
+                        ms = leg.get(f"{lib_key}_ms")
+                        t = _ok_time((float(ms) / 1000.0) if ms is not None else None)
+                        if t is not None:
+                            legacy_times[lib_key].append(t)
                 for lib_key, mode in (
                     ("pyast", "specialized"),
                     ("kapteyn", "specialized"),
                 ):
-                    ms = leg.get(f"{lib_key}_ms") if isinstance(leg, dict) else None
-                    t = _ok_time((float(ms) / 1000.0) if ms is not None else None)
+                    t = _median(legacy_times[lib_key])
                     status = "OK" if t is not None else "SKIPPED"
                     rows.append(
                         _base_row(
@@ -377,7 +492,12 @@ def run_wcs_domain(
                             comparable=False,
                             sample_profile=sample_profile,
                             device="cpu",
-                            metadata={"legacy": True},
+                            metadata={
+                                "legacy": True,
+                                "sample_seed_base": WCS_SAMPLE_SEED_BASE,
+                                "replicates": rep_count,
+                                "replicates_ok": len(legacy_times[lib_key]),
+                            },
                         )
                     )
 
@@ -396,7 +516,18 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--include-legacy", action="store_true")
     parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Enable torch.compile() for TorchFits WCS transforms",
+    )
+    parser.add_argument(
         "--n-tiers", type=str, default="1000,10000,100000,1000000,10000000"
+    )
+    parser.add_argument(
+        "--replicates",
+        type=int,
+        default=1,
+        help="Number of repeated seeded runs per case/tier (aggregated by median)",
     )
     return parser.parse_args()
 
@@ -417,6 +548,8 @@ def main() -> int:
         origin=args.origin,
         sample_profile=args.sample_profile,
         include_legacy=args.include_legacy,
+        torch_compile=args.torch_compile,
+        replicates=max(1, int(args.replicates)),
     )
 
     out_csv = run_dir / "wcs_results.csv"

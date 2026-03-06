@@ -524,8 +524,9 @@ std::pair<torch::Tensor, torch::Tensor> wcs_cylindrical_deproject(
 }
 
 std::pair<torch::Tensor, torch::Tensor> wcs_center_pixel_to_world(
-    const torch::Tensor& x_adj,
-    const torch::Tensor& y_adj,
+    const torch::Tensor& x_in,
+    const torch::Tensor& y_in,
+    double origin,
     double crpix0,
     double crpix1,
     double cd00,
@@ -538,8 +539,8 @@ std::pair<torch::Tensor, torch::Tensor> wcs_center_pixel_to_world(
     double hpx_H,
     double hpx_K
 ) {
-    auto x_flat = x_adj.contiguous().view({-1});
-    auto y_flat = y_adj.contiguous().view({-1});
+    auto x_flat = x_in.contiguous().view({-1});
+    auto y_flat = y_in.contiguous().view({-1});
     auto ra_flat = torch::empty_like(x_flat);
     auto dec_flat = torch::empty_like(y_flat);
 
@@ -549,109 +550,110 @@ std::pair<torch::Tensor, torch::Tensor> wcs_center_pixel_to_world(
     double* ra_ptr = ra_flat.data_ptr<double>();
     double* dec_ptr = dec_flat.data_ptr<double>();
     const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double pix_shift = 1.0 - origin;
     const double hpx_eta_scale = 90.0 * (hpx_K / hpx_H);
     const double hpx_eta_boundary = hpx_eta_scale * (2.0 / 3.0);
     const double hpx_eta_pole = 90.0;
     const double hpx_polar_denom = hpx_eta_pole - hpx_eta_boundary;
 
     for (int64_t i = 0; i < n; ++i) {
-        const double rel_x = x_ptr[i] - crpix0;
-        const double rel_y = y_ptr[i] - crpix1;
-        const double xi = cd00 * rel_x + cd01 * rel_y;
-        const double eta = cd10 * rel_x + cd11 * rel_y;
+            const double rel_x = x_ptr[i] + pix_shift - crpix0;
+            const double rel_y = y_ptr[i] + pix_shift - crpix1;
+            const double xi = cd00 * rel_x + cd01 * rel_y;
+            const double eta = cd10 * rel_x + cd11 * rel_y;
 
-        if (proj_code == "CAR") {
-            ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
-            dec_ptr[i] = eta;
-        } else if (proj_code == "SFL") {
-            const double dec = eta;
-            double c = std::cos(dec * D2R);
-            if (std::abs(c) < 1e-12) c = (c < 0.0) ? -1e-12 : 1e-12;
-            ra_ptr[i] = wrap_lon360_scalar((xi / c) + alpha0);
-            dec_ptr[i] = dec;
-        } else if (proj_code == "CEA") {
-            const double s = std::clamp(eta / cea_eta_scale, -1.0, 1.0);
-            ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
-            dec_ptr[i] = std::asin(s) * R2D;
-        } else if (proj_code == "MER") {
-            const double arg = std::clamp(eta * D2R, -20.0, 20.0);
-            ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
-            dec_ptr[i] = 2.0 * (std::atan(std::exp(arg)) * R2D - 45.0);
-        } else if (proj_code == "AIT") {
-            const double X = xi * D2R;
-            const double Y = eta * D2R;
-            const double xq = X * 0.25;
-            const double yq = Y * 0.5;
-            const double r2 = xq * xq + yq * yq;
-            if (r2 > 1.0) {
-                ra_ptr[i] = nan;
-                dec_ptr[i] = nan;
-                continue;
-            }
-            const double z = std::sqrt(std::max(0.0, 1.0 - r2));
-            const double z2 = z * z;
-            const double phi = 2.0 * std::atan2(0.5 * z * X, 2.0 * z2 - 1.0) * R2D;
-            const double s = std::clamp(z * Y, -1.0, 1.0);
-            const double theta = std::asin(s) * R2D;
-            ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
-            dec_ptr[i] = theta;
-        } else if (proj_code == "MOL") {
-            const double X = xi * D2R;
-            const double Y = eta * D2R;
-            if (std::abs(Y) > SQRT2) {
-                ra_ptr[i] = nan;
-                dec_ptr[i] = nan;
-                continue;
-            }
-            const double sin_gamma = std::clamp(Y / SQRT2, -1.0, 1.0);
-            const double gamma = std::asin(sin_gamma);
-            const double cos_gamma = std::sqrt(std::max(0.0, 1.0 - sin_gamma * sin_gamma));
-            const double t_val = std::clamp(
-                (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / WCS_PI, -1.0, 1.0
-            );
-            const double theta = std::asin(t_val) * R2D;
-            const double denom = 2.0 * SQRT2 * cos_gamma;
-            double phi = 0.0;
-            if (std::abs(denom) >= 1e-12) {
-                phi = WCS_PI * X / denom * R2D;
-            }
-            ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
-            dec_ptr[i] = theta;
-        } else if (proj_code == "HPX") {
-            const double abs_eta = std::abs(eta);
-            if (abs_eta > hpx_eta_pole) {
-                ra_ptr[i] = nan;
-                dec_ptr[i] = nan;
-                continue;
-            }
-            double phi = xi;
-            double theta = 0.0;
-            if (abs_eta <= hpx_eta_boundary) {
-                const double s = std::clamp(eta / hpx_eta_scale, -1.0, 1.0);
-                theta = std::asin(s) * R2D;
-            } else {
-                const double sigma = std::max((hpx_eta_pole - abs_eta) / hpx_polar_denom, 0.0);
-                const double s = std::clamp(std::copysign(1.0, eta) * (1.0 - (sigma * sigma) / 3.0), -1.0, 1.0);
-                theta = std::asin(s) * R2D;
-                const double xc = std::round((xi - 45.0) / 90.0) * 90.0 + 45.0;
-                const double dx = xi - xc;
-                if (std::abs(dx) > (45.0 * sigma + 1e-8)) {
+            if (proj_code == "CAR") {
+                ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
+                dec_ptr[i] = eta;
+            } else if (proj_code == "SFL") {
+                const double dec = eta;
+                double c = std::cos(dec * D2R);
+                if (std::abs(c) < 1e-12) c = (c < 0.0) ? -1e-12 : 1e-12;
+                ra_ptr[i] = wrap_lon360_scalar((xi / c) + alpha0);
+                dec_ptr[i] = dec;
+            } else if (proj_code == "CEA") {
+                const double s = std::clamp(eta / cea_eta_scale, -1.0, 1.0);
+                ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
+                dec_ptr[i] = std::asin(s) * R2D;
+            } else if (proj_code == "MER") {
+                const double arg = std::clamp(eta * D2R, -20.0, 20.0);
+                ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
+                dec_ptr[i] = 2.0 * (std::atan(std::exp(arg)) * R2D - 45.0);
+            } else if (proj_code == "AIT") {
+                const double X = xi * D2R;
+                const double Y = eta * D2R;
+                const double xq = X * 0.25;
+                const double yq = Y * 0.5;
+                const double r2 = xq * xq + yq * yq;
+                if (r2 > 1.0) {
                     ra_ptr[i] = nan;
                     dec_ptr[i] = nan;
                     continue;
                 }
-                const double sigma_safe = (std::abs(sigma) < 1e-12) ? 1.0 : sigma;
-                phi = xc + dx / sigma_safe;
+                const double z = std::sqrt(std::max(0.0, 1.0 - r2));
+                const double z2 = z * z;
+                const double phi = 2.0 * std::atan2(0.5 * z * X, 2.0 * z2 - 1.0) * R2D;
+                const double s = std::clamp(z * Y, -1.0, 1.0);
+                const double theta = std::asin(s) * R2D;
+                ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
+                dec_ptr[i] = theta;
+            } else if (proj_code == "MOL") {
+                const double X = xi * D2R;
+                const double Y = eta * D2R;
+                if (std::abs(Y) > SQRT2) {
+                    ra_ptr[i] = nan;
+                    dec_ptr[i] = nan;
+                    continue;
+                }
+                const double sin_gamma = std::clamp(Y / SQRT2, -1.0, 1.0);
+                const double gamma = std::asin(sin_gamma);
+                const double cos_gamma = std::sqrt(std::max(0.0, 1.0 - sin_gamma * sin_gamma));
+                const double t_val = std::clamp(
+                    (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / WCS_PI, -1.0, 1.0
+                );
+                const double theta = std::asin(t_val) * R2D;
+                const double denom = 2.0 * SQRT2 * cos_gamma;
+                double phi = 0.0;
+                if (std::abs(denom) >= 1e-12) {
+                    phi = WCS_PI * X / denom * R2D;
+                }
+                ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
+                dec_ptr[i] = theta;
+            } else if (proj_code == "HPX") {
+                const double abs_eta = std::abs(eta);
+                if (abs_eta > hpx_eta_pole) {
+                    ra_ptr[i] = nan;
+                    dec_ptr[i] = nan;
+                    continue;
+                }
+                double phi = xi;
+                double theta = 0.0;
+                if (abs_eta <= hpx_eta_boundary) {
+                    const double s = std::clamp(eta / hpx_eta_scale, -1.0, 1.0);
+                    theta = std::asin(s) * R2D;
+                } else {
+                    const double sigma = std::max((hpx_eta_pole - abs_eta) / hpx_polar_denom, 0.0);
+                    const double s = std::clamp(std::copysign(1.0, eta) * (1.0 - (sigma * sigma) / 3.0), -1.0, 1.0);
+                    theta = std::asin(s) * R2D;
+                    const double xc = std::round((xi - 45.0) / 90.0) * 90.0 + 45.0;
+                    const double dx = xi - xc;
+                    if (std::abs(dx) > (45.0 * sigma + 1e-8)) {
+                        ra_ptr[i] = nan;
+                        dec_ptr[i] = nan;
+                        continue;
+                    }
+                    const double sigma_safe = (std::abs(sigma) < 1e-12) ? 1.0 : sigma;
+                    phi = xc + dx / sigma_safe;
+                }
+                ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
+                dec_ptr[i] = theta;
+            } else {
+                ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
+                dec_ptr[i] = eta;
             }
-            ra_ptr[i] = wrap_lon360_scalar(phi + alpha0);
-            dec_ptr[i] = theta;
-        } else {
-            ra_ptr[i] = wrap_lon360_scalar(xi + alpha0);
-            dec_ptr[i] = eta;
-        }
     }
 
-    return {ra_flat.view(x_adj.sizes()), dec_flat.view(y_adj.sizes())};
+    return {ra_flat.view(x_in.sizes()), dec_flat.view(y_in.sizes())};
 }
 
 std::pair<torch::Tensor, torch::Tensor> wcs_center_world_to_pixel(
@@ -1206,6 +1208,149 @@ std::pair<torch::Tensor, torch::Tensor> wcs_tpv_invert(
     }
 
     return {u, v};
+}
+
+std::pair<torch::Tensor, torch::Tensor> wcs_tpv_distort(
+    const torch::Tensor& u_in,
+    const torch::Tensor& v_in,
+    const torch::Tensor& idx1,
+    const torch::Tensor& c1,
+    const torch::Tensor& idx2,
+    const torch::Tensor& c2
+) {
+    if (
+        u_in.device().is_cpu() && v_in.device().is_cpu() &&
+        idx1.device().is_cpu() && c1.device().is_cpu() &&
+        idx2.device().is_cpu() && c2.device().is_cpu() &&
+        u_in.scalar_type() == torch::kFloat64 && v_in.scalar_type() == torch::kFloat64 &&
+        c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
+        idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64
+    ) {
+        auto shape = u_in.sizes();
+        auto u = u_in.contiguous().view({-1});
+        auto v = v_in.contiguous().view({-1});
+        auto xi = torch::empty_like(u);
+        auto eta = torch::empty_like(v);
+
+        auto idx1c = idx1.contiguous();
+        auto idx2c = idx2.contiguous();
+        auto c1c = c1.contiguous();
+        auto c2c = c2.contiguous();
+
+        const auto n = u.numel();
+        const auto n1 = idx1c.size(0);
+        const auto n2 = idx2c.size(0);
+
+        const double* u_ptr = u.data_ptr<double>();
+        const double* v_ptr = v.data_ptr<double>();
+        double* xi_ptr = xi.data_ptr<double>();
+        double* eta_ptr = eta.data_ptr<double>();
+        const int64_t* idx1_ptr = idx1c.data_ptr<int64_t>();
+        const int64_t* idx2_ptr = idx2c.data_ptr<int64_t>();
+        const double* c1_ptr = c1c.data_ptr<double>();
+        const double* c2_ptr = c2c.data_ptr<double>();
+
+        for (int64_t i = 0; i < n; ++i) {
+            const double uu = u_ptr[i];
+            const double vv = v_ptr[i];
+            const double rr = std::sqrt(uu * uu + vv * vv);
+
+            double xp[8], yp[8], rp[8];
+            xp[0] = 1.0;
+            yp[0] = 1.0;
+            rp[0] = 1.0;
+            xp[1] = uu;
+            yp[1] = vv;
+            rp[1] = rr;
+            for (int j = 2; j < 8; ++j) {
+                xp[j] = xp[j - 1] * uu;
+                yp[j] = yp[j - 1] * vv;
+                rp[j] = rp[j - 1] * rr;
+            }
+
+            double out_x = 0.0;
+            for (int64_t k = 0; k < n1; ++k) {
+                const int64_t px = idx1_ptr[3 * k + 0];
+                const int64_t py = idx1_ptr[3 * k + 1];
+                const int64_t pr = idx1_ptr[3 * k + 2];
+                out_x += c1_ptr[k] * xp[px] * yp[py] * rp[pr];
+            }
+
+            double out_y = 0.0;
+            for (int64_t k = 0; k < n2; ++k) {
+                const int64_t px = idx2_ptr[3 * k + 0];
+                const int64_t py = idx2_ptr[3 * k + 1];
+                const int64_t pr = idx2_ptr[3 * k + 2];
+                out_y += c2_ptr[k] * yp[px] * xp[py] * rp[pr];
+            }
+
+            xi_ptr[i] = out_x;
+            eta_ptr[i] = out_y;
+        }
+
+        return {xi.view(shape), eta.view(shape)};
+    }
+
+    auto r = (u_in * u_in + v_in * v_in).sqrt();
+    auto x_p = tpv_make_pow_cache(u_in);
+    auto y_p = tpv_make_pow_cache(v_in);
+    auto r_p = tpv_make_pow_cache(r);
+    auto [xi, _, __] = tpv_eval_axis_with_jacobian(
+        u_in, idx1, c1, x_p, y_p, r_p, torch::zeros_like(u_in), torch::zeros_like(u_in)
+    );
+    auto [eta, ___, ____] = tpv_eval_axis_with_jacobian(
+        u_in, idx2, c2, y_p, x_p, r_p, torch::zeros_like(u_in), torch::zeros_like(u_in)
+    );
+    return {xi, eta};
+}
+
+std::pair<torch::Tensor, torch::Tensor> wcs_sip_quadratic_distort(
+    const torch::Tensor& u_in,
+    const torch::Tensor& v_in,
+    double a20,
+    double a11,
+    double a02,
+    double b20,
+    double b11,
+    double b02
+) {
+    if (
+        u_in.device().is_cpu() && v_in.device().is_cpu() &&
+        u_in.scalar_type() == torch::kFloat64 && v_in.scalar_type() == torch::kFloat64
+    ) {
+        auto shape = u_in.sizes();
+        auto u = u_in.contiguous().view({-1});
+        auto v = v_in.contiguous().view({-1});
+        auto out_u = torch::empty_like(u);
+        auto out_v = torch::empty_like(v);
+
+        const auto n = u.numel();
+        const double* up = u.data_ptr<double>();
+        const double* vp = v.data_ptr<double>();
+        double* uo = out_u.data_ptr<double>();
+        double* vo = out_v.data_ptr<double>();
+
+        for (int64_t i = 0; i < n; ++i) {
+            const double uu = up[i];
+            const double vv = vp[i];
+            const double uv = uu * vv;
+            const double u2 = uu * uu;
+            const double v2 = vv * vv;
+            const double fu = a20 * u2 + a11 * uv + a02 * v2;
+            const double gv = b20 * u2 + b11 * uv + b02 * v2;
+            uo[i] = uu + fu;
+            vo[i] = vv + gv;
+        }
+
+        return {out_u.view(shape), out_v.view(shape)};
+    }
+
+    auto uv = u_in * v_in;
+    auto u2 = u_in * u_in;
+    auto v2 = v_in * v_in;
+    auto f_uv = a20 * u2 + a11 * uv + a02 * v2;
+    auto g_uv = b20 * u2 + b11 * uv + b02 * v2;
+    return {u_in + f_uv, v_in + g_uv};
 }
 
 std::tuple<torch::Tensor, torch::Tensor, int64_t, std::vector<int64_t>, int64_t> wcs_tpv_invert_trace(

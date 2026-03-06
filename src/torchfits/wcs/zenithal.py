@@ -2,6 +2,16 @@ import torch
 from torch import Tensor
 from typing import Tuple, Optional
 
+D2R = 0.017453292519943295
+R2D = 57.29577951308232
+_HAS_TORCH_SINCOS = hasattr(torch, "sincos")
+
+
+def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
+    if _HAS_TORCH_SINCOS:
+        return torch.sincos(x)
+    return torch.sin(x), torch.cos(x)
+
 
 def project_zenithal(
     xi: Tensor,
@@ -15,7 +25,7 @@ def project_zenithal(
     for Zenithal projections.
     """
     # 1. R and Phi
-    r = torch.sqrt(xi * xi + eta * eta)
+    r = torch.hypot(xi, eta)
 
     # Handle R=0 case to avoid division/singularities
     # If R=0, phi is undefined (usually 0), theta = 90.
@@ -25,8 +35,8 @@ def project_zenithal(
     # For zenithal projections, the native longitude phi is measured from the
     # direction toward the celestial pole. With phi_p = 180°, the formula is:
     # phi = atan2(-xi, -eta)
-    phi_rad = torch.atan2(-xi, -eta)
-    phi = torch.rad2deg(phi_rad)
+    # 57.29577951308232 = 180.0 / math.pi
+    phi = torch.atan2(-xi, -eta) * R2D
 
     theta = torch.zeros_like(r)
 
@@ -39,8 +49,8 @@ def project_zenithal(
     # No, usually we solve for theta directly.
 
     if projection_code == "TAN":
-        r_rad = torch.deg2rad(r)
-        theta = torch.rad2deg(torch.atan2(torch.ones_like(r_rad), r_rad))
+        r_rad = r * D2R
+        theta = torch.atan2(torch.ones_like(r_rad), r_rad) * R2D
 
         # Wait, atan2(1, r_rad) is behavior of cot(theta) = r_rad?
         # If R_true = tan(90-theta)
@@ -73,10 +83,10 @@ def project_zenithal(
         # But xi, eta are degrees.
         # So R_dim = R_deg / (180/pi).
 
-        r_dim = torch.deg2rad(r)
+        r_dim = r * D2R
         # Clamp to [-1, 1] to avoid NaN
         r_dim = torch.clamp(r_dim, -1.0, 1.0)
-        theta = torch.rad2deg(torch.acos(r_dim))
+        theta = torch.acos(r_dim) * R2D
 
         # Wait, standard SIN WCS usually has specific limits.
         # If R > 90 deg, it clips or wraps?
@@ -86,16 +96,16 @@ def project_zenithal(
         # Zenithal Equal Area
         # R = 2 * (180/pi) * sin(theta_co / 2)
         # 90 - theta = 2 * asin( R / (2 * 180/pi) )
-        r_rad = torch.deg2rad(r)
+        r_rad = r * D2R
         val = torch.clamp(r_rad / 2.0, -1.0, 1.0)
-        theta = 90.0 - 2.0 * torch.rad2deg(torch.asin(val))
+        theta = 90.0 - 2.0 * torch.asin(val) * R2D
 
     elif projection_code == "STG":
         # Stereographic
         # R = 2 * (180/pi) * tan(theta_co / 2)
         # 90 - theta = 2 * atan( R / (2 * 180/pi) )
-        r_rad = torch.deg2rad(r)
-        theta = 90.0 - 2.0 * torch.rad2deg(torch.atan(r_rad / 2.0))
+        r_rad = r * D2R
+        theta = 90.0 - 2.0 * torch.atan(r_rad / 2.0) * R2D
 
     elif projection_code == "ARC":
         # Zenithal Equidistant
@@ -105,44 +115,49 @@ def project_zenithal(
 
     elif projection_code == "ZPN":
         if pv2 is None:
-            w = torch.deg2rad(r)
+            w = r * D2R
         else:
             # PV2_3 is C0, PV2_4 is C1, ...
             # Extract coefficients from PV2 tensor [3:31]
             p_coeffs = pv2[3:31]
             mask_valid = p_coeffs != 0.0
             if not mask_valid.any():
-                w = torch.deg2rad(r)
+                w = r * D2R
             else:
                 # Find last valid coefficient for order
                 # Use a small epsilon to detect non-zero coefficients
                 valid_indices = torch.nonzero(p_coeffs.abs() > 1e-15, as_tuple=True)[0]
                 if valid_indices.numel() == 0:
-                    w = torch.deg2rad(r)
+                    w = r * D2R
                 else:
                     max_m = valid_indices[-1].item()
                     coeffs = p_coeffs[: max_m + 1]
 
-                    r_rad_target = torch.deg2rad(r)
+                    r_rad_target = r * D2R
                     w = r_rad_target.clone()
                     target_eps = 1e-12
 
                     # Newton-Raphson (Horner's method)
                     rev_c = torch.flip(coeffs, dims=(0,))
+                    c0 = rev_c[0]
                     for _ in range(12):
-                        val = rev_c[0].expand_as(w).clone()
+                        val = torch.full_like(w, c0)
                         der = torch.zeros_like(w)
-                        for i in range(1, len(rev_c)):
-                            der = der * w + val
-                            val = val * w + rev_c[i]
+                        for c in rev_c[1:]:
+                            der.mul_(w).add_(val)
+                            val.mul_(w).add_(c)
 
-                        diff = val - r_rad_target
+                        diff = val.sub_(r_rad_target)
                         if diff.abs().max() < target_eps:
                             break
-                        mask_nz = der.abs() > 1e-15
-                        w = torch.where(mask_nz, w - diff / der, w)
 
-        theta = 90.0 - torch.rad2deg(w)
+                        mask_nz = der.abs() > 1e-15
+                        der.masked_fill_(~mask_nz, 1.0)
+                        diff.masked_fill_(~mask_nz, 0.0)
+                        w.sub_(diff.div_(der))
+
+        # 57.29577951308232 = 180.0 / math.pi
+        theta = 90.0 - w * R2D
 
     else:
         raise NotImplementedError(f"Zenithal code {projection_code} not implemented.")
@@ -171,22 +186,22 @@ def deproject_zenithal(
         # Avoid theta=0 singularity
         # theta in degrees.
         # cot(theta) = 1/tan(theta)
-        tan_theta = torch.tan(torch.deg2rad(theta))
+        tan_theta = torch.tan(theta * D2R)
         # Mask zeros?
-        r = torch.rad2deg(1.0 / (tan_theta + 1e-12))
+        r = (1.0 / (tan_theta + 1e-12)) * R2D
 
     elif projection_code == "SIN":
         # R = 180/pi * cos(theta)
-        r = torch.rad2deg(torch.cos(torch.deg2rad(theta)))
+        r = torch.cos(theta * D2R) * R2D
 
     elif projection_code == "ARC":
         r = 90.0 - theta
 
     elif projection_code == "ZEA":
-        r = 2.0 * torch.rad2deg(torch.sin(torch.deg2rad(90.0 - theta) / 2.0))
+        r = 2.0 * torch.sin((90.0 - theta) * (0.5 * D2R)) * R2D
 
     elif projection_code == "STG":
-        r = 2.0 * torch.rad2deg(torch.tan(torch.deg2rad(90.0 - theta) / 2.0))
+        r = 2.0 * torch.tan((90.0 - theta) * (0.5 * D2R)) * R2D
 
     elif projection_code == "ZPN":
         if pv2 is not None:
@@ -205,9 +220,10 @@ def deproject_zenithal(
                 # w is colatitude in degrees
                 w = 90.0 - theta
                 rev_c = torch.flip(coeffs, dims=(0,))
-                val = rev_c[0].expand_as(w).clone()
-                for i in range(1, len(rev_c)):
-                    val = val * w + rev_c[i]
+                c0 = rev_c[0]
+                val = torch.full_like(w, c0)
+                for c in rev_c[1:]:
+                    val.mul_(w).add_(c)
                 r = val
         else:
             r = 90.0 - theta
@@ -215,8 +231,9 @@ def deproject_zenithal(
     # xi = -R * sin(phi)
     # eta = -R * cos(phi)  (standard convention for phi measured from North)
 
-    phi_rad = torch.deg2rad(phi)
-    xi = -r * torch.sin(phi_rad)
-    eta = -r * torch.cos(phi_rad)
+    phi_rad = phi * D2R
+    sin_phi, cos_phi = _sincos(phi_rad)
+    xi = -r * sin_phi
+    eta = -r * cos_phi
 
     return xi, eta

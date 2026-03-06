@@ -3,6 +3,11 @@ from torch import Tensor
 from typing import Dict, Any, Tuple
 
 try:
+    import torchfits.cpp as _cpp
+except Exception:  # pragma: no cover - optional fast path
+    _cpp = None
+
+try:
     from torch.func import vmap, jacrev
 except ImportError:
     # Fallback for very old torch versions if needed, though we assume modern torch
@@ -71,6 +76,20 @@ class SIP:
 
         self.has_forward = bool(self.a_coeffs) or bool(self.b_coeffs)
         self.has_inverse = bool(self.ap_coeffs) or bool(self.bp_coeffs)
+        self._quad_forward_fast = False
+        self._quad_a20 = 0.0
+        self._quad_a11 = 0.0
+        self._quad_a02 = 0.0
+        self._quad_b20 = 0.0
+        self._quad_b11 = 0.0
+        self._quad_b02 = 0.0
+        self._quad_inverse_fast = False
+        self._cpp_sip_quadratic_distort = (
+            getattr(_cpp, "wcs_sip_quadratic_distort", None)
+            if _cpp is not None
+            else None
+        )
+        self._init_quadratic_forward_fastpath()
 
     def to(self, device: torch.device) -> "SIP":
         """Move SIP tensors to device."""
@@ -82,6 +101,20 @@ class SIP:
         self._ap_pq = self._ap_pq.to(device)
         self._bp_c = self._bp_c.to(device)
         self._bp_pq = self._bp_pq.to(device)
+        for pack_name in (
+            "_a_pack",
+            "_b_pack",
+            "_ap_pack",
+            "_bp_pack",
+            "_a_du_pack",
+            "_a_dv_pack",
+            "_b_du_pack",
+            "_b_dv_pack",
+        ):
+            pack = getattr(self, pack_name)
+            pack["p"] = pack["p"].to(device)
+            pack["q"] = pack["q"].to(device)
+            pack["c"] = pack["c"].to(device)
         return self
 
     def _parse_coeffs(
@@ -105,6 +138,26 @@ class SIP:
                 if key in header:
                     coeffs[(p, q)] = float(header[key])
         return coeffs
+
+    def _init_quadratic_forward_fastpath(self) -> None:
+        """Enable a fast path when forward SIP distortion is purely quadratic."""
+        if not self.has_forward:
+            return
+        for p, q, _ in self.a_terms:
+            if p + q > 2:
+                return
+        for p, q, _ in self.b_terms:
+            if p + q > 2:
+                return
+        self._quad_a20 = float(self.a_coeffs.get((2, 0), 0.0))
+        self._quad_a11 = float(self.a_coeffs.get((1, 1), 0.0))
+        self._quad_a02 = float(self.a_coeffs.get((0, 2), 0.0))
+        self._quad_b20 = float(self.b_coeffs.get((2, 0), 0.0))
+        self._quad_b11 = float(self.b_coeffs.get((1, 1), 0.0))
+        self._quad_b02 = float(self.b_coeffs.get((0, 2), 0.0))
+        self._quad_forward_fast = True
+        # Inverse fast path uses Newton on the same quadratic forward map.
+        self._quad_inverse_fast = True
 
     @staticmethod
     def _coeff_terms(
@@ -142,11 +195,16 @@ class SIP:
     def _sum_terms_from_pack(
         pack: Dict[str, Tensor], u_stack: Tensor, v_stack: Tensor, out_like: Tensor
     ) -> Tensor:
-        c = pack["c"].to(device=out_like.device, dtype=out_like.dtype)
+        c = pack["c"]
+        if c.device != out_like.device or c.dtype != out_like.dtype:
+            c = c.to(device=out_like.device, dtype=out_like.dtype)
         if c.numel() == 0:
             return torch.zeros_like(out_like)
-        p = pack["p"].to(out_like.device)
-        q = pack["q"].to(out_like.device)
+        p = pack["p"]
+        q = pack["q"]
+        if p.device != out_like.device:
+            p = p.to(out_like.device)
+            q = q.to(out_like.device)
         vals = u_stack.index_select(0, p) * v_stack.index_select(0, q)
         return (vals * c[:, None]).sum(dim=0)
 
@@ -189,6 +247,32 @@ class SIP:
         """
         if u.numel() == 0 or not self.has_forward:
             return u, v
+        if self._quad_forward_fast:
+            if (
+                self._cpp_sip_quadratic_distort is not None
+                and u.device.type == "cpu"
+                and v.device.type == "cpu"
+                and u.dtype == torch.float64
+                and v.dtype == torch.float64
+                and not u.requires_grad
+                and not v.requires_grad
+            ):
+                return self._cpp_sip_quadratic_distort(
+                    u,
+                    v,
+                    self._quad_a20,
+                    self._quad_a11,
+                    self._quad_a02,
+                    self._quad_b20,
+                    self._quad_b11,
+                    self._quad_b02,
+                )
+            uv = u * v
+            u2 = u * u
+            v2 = v * v
+            f_uv = self._quad_a20 * u2 + self._quad_a11 * uv + self._quad_a02 * v2
+            g_uv = self._quad_b20 * u2 + self._quad_b11 * uv + self._quad_b02 * v2
+            return u + f_uv, v + g_uv
 
         max_order = max(self.a_order, self.b_order)
         u_p = [torch.ones_like(u)]
@@ -197,24 +281,31 @@ class SIP:
             u_p.append(u_p[-1] * u)
             v_p.append(v_p[-1] * v)
 
+        # Sparse SIP term sets (typical in astronomy headers) are faster with
+        # direct accumulation than dense basis materialization.
+        n_terms = len(self.a_terms) + len(self.b_terms)
+        if n_terms <= 24:
+            f_uv = torch.zeros_like(u)
+            g_uv = torch.zeros_like(v)
+            for p, q, coeff in self.a_terms:
+                f_uv.add_(u_p[p] * v_p[q], alpha=float(coeff))
+            for p, q, coeff in self.b_terms:
+                g_uv.add_(u_p[p] * v_p[q], alpha=float(coeff))
+            return u + f_uv, v + g_uv
+
         u_stack = torch.stack(u_p, dim=0)
         v_stack = torch.stack(v_p, dim=0)
 
         def eval_poly(pq, c):
             if c.numel() == 0:
                 return torch.zeros_like(u)
-            # Basis: u^p * v^q
-            # pq is (N_terms, 2)
             p = pq[:, 0]
             q = pq[:, 1]
-            basis = u_stack.index_select(0, p) * v_stack.index_select(
-                0, q
-            )  # (N_terms, N_points)
+            basis = u_stack.index_select(0, p) * v_stack.index_select(0, q)
             return torch.matmul(c.to(u.dtype), basis)
 
         f_uv = eval_poly(self._a_pq, self._a_c)
         g_uv = eval_poly(self._b_pq, self._b_c)
-
         return u + f_uv, v + g_uv
 
     def _distort_smallvec(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
@@ -245,6 +336,18 @@ class SIP:
         Returns:
             xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
         """
+        if self._quad_forward_fast:
+            uv = u * v
+            u2 = u * u
+            v2 = v * v
+            xd = u + self._quad_a20 * u2 + self._quad_a11 * uv + self._quad_a02 * v2
+            yd = v + self._quad_b20 * u2 + self._quad_b11 * uv + self._quad_b02 * v2
+            dxd_du = 1.0 + 2.0 * self._quad_a20 * u + self._quad_a11 * v
+            dxd_dv = self._quad_a11 * u + 2.0 * self._quad_a02 * v
+            dyd_du = 2.0 * self._quad_b20 * u + self._quad_b11 * v
+            dyd_dv = 1.0 + self._quad_b11 * u + 2.0 * self._quad_b02 * v
+            return xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
+
         if u.numel() <= self._SMALL_VEC_MAX_POINTS:
             return self._forward_and_jacobian_smallvec(u, v)
 
@@ -271,21 +374,19 @@ class SIP:
         dyd_dv = torch.ones_like(v)
 
         for p, q, coeff in self.a_terms:
-            base = coeff * u_p[p] * v_p[q]
-            xd = xd + base
+            xd.add_(u_p[p] * v_p[q], alpha=float(coeff))
 
         for p, q, coeff in self.a_du_terms:
-            dxd_du = dxd_du + coeff * u_p[p] * v_p[q]
+            dxd_du.add_(u_p[p] * v_p[q], alpha=float(coeff))
         for p, q, coeff in self.a_dv_terms:
-            dxd_dv = dxd_dv + coeff * u_p[p] * v_p[q]
+            dxd_dv.add_(u_p[p] * v_p[q], alpha=float(coeff))
 
         for p, q, coeff in self.b_terms:
-            base = coeff * u_p[p] * v_p[q]
-            yd = yd + base
+            yd.add_(u_p[p] * v_p[q], alpha=float(coeff))
         for p, q, coeff in self.b_du_terms:
-            dyd_du = dyd_du + coeff * u_p[p] * v_p[q]
+            dyd_du.add_(u_p[p] * v_p[q], alpha=float(coeff))
         for p, q, coeff in self.b_dv_terms:
-            dyd_dv = dyd_dv + coeff * u_p[p] * v_p[q]
+            dyd_dv.add_(u_p[p] * v_p[q], alpha=float(coeff))
 
         return xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv
 
@@ -333,6 +434,16 @@ class SIP:
             u_p.append(u_p[-1] * u)
             v_p.append(v_p[-1] * v)
 
+        n_terms = len(self.ap_terms) + len(self.bp_terms)
+        if n_terms <= 24:
+            delta_u = torch.zeros_like(u)
+            delta_v = torch.zeros_like(v)
+            for p, q, coeff in self.ap_terms:
+                delta_u.add_(u_p[p] * v_p[q], alpha=float(coeff))
+            for p, q, coeff in self.bp_terms:
+                delta_v.add_(u_p[p] * v_p[q], alpha=float(coeff))
+            return u + delta_u, v + delta_v
+
         u_stack = torch.stack(u_p, dim=0)
         v_stack = torch.stack(v_p, dim=0)
 
@@ -362,6 +473,51 @@ class SIP:
         """
         if u_dist.numel() == 0 or not self.has_forward:
             return u_dist, v_dist
+        if self._quad_inverse_fast:
+            u_f = u_dist.reshape(-1)
+            v_f = v_dist.reshape(-1)
+            u_curr = u_f.clone()
+            v_curr = v_f.clone()
+            for _ in range(max_iter):
+                uv = u_curr * v_curr
+                u2 = u_curr * u_curr
+                v2 = v_curr * v_curr
+                xd = (
+                    u_curr
+                    + self._quad_a20 * u2
+                    + self._quad_a11 * uv
+                    + self._quad_a02 * v2
+                )
+                yd = (
+                    v_curr
+                    + self._quad_b20 * u2
+                    + self._quad_b11 * uv
+                    + self._quad_b02 * v2
+                )
+                du_res = xd - u_f
+                dv_res = yd - v_f
+                if bool(
+                    torch.all(du_res.abs() < tol) and torch.all(dv_res.abs() < tol)
+                ):
+                    break
+
+                dxd_du = 1.0 + 2.0 * self._quad_a20 * u_curr + self._quad_a11 * v_curr
+                dxd_dv = self._quad_a11 * u_curr + 2.0 * self._quad_a02 * v_curr
+                dyd_du = 2.0 * self._quad_b20 * u_curr + self._quad_b11 * v_curr
+                dyd_dv = 1.0 + self._quad_b11 * u_curr + 2.0 * self._quad_b02 * v_curr
+
+                det = dxd_du * dyd_dv - dxd_dv * dyd_du
+                det_sign = torch.sign(det)
+                det_sign = torch.where(
+                    det_sign == 0, torch.ones_like(det_sign), det_sign
+                )
+                det = torch.where(det.abs() < 1e-15, det_sign * 1e-15, det)
+
+                du_step = (dyd_dv * du_res - dxd_dv * dv_res) / det
+                dv_step = (-dyd_du * du_res + dxd_du * dv_res) / det
+                u_curr = u_curr - du_step
+                v_curr = v_curr - dv_step
+            return u_curr.reshape(u_dist.shape), v_curr.reshape(v_dist.shape)
 
         u_f = u_dist.reshape(-1)
         v_f = v_dist.reshape(-1)
@@ -369,39 +525,88 @@ class SIP:
         # Initial guess from inverse coefficients if available
         if self.has_inverse:
             u_curr, v_curr = self.undistort(u_f, v_f)
+            # Most points are already within tolerance after AP/BP inversion.
+            xd0, yd0 = self.distort(u_curr, v_curr)
+            active_mask = (xd0 - u_f).abs() >= tol
+            active_mask |= (yd0 - v_f).abs() >= tol
+            if not bool(active_mask.any()):
+                return u_curr.reshape(u_dist.shape), v_curr.reshape(v_dist.shape)
+            active_idx = None
+            if not bool(active_mask.all()):
+                active_idx = torch.nonzero(active_mask, as_tuple=False).squeeze(1)
         else:
             u_curr, v_curr = u_f.clone(), v_f.clone()
+            active_idx = None
 
-        # Vectorized Newton iteration: x = x - inv(J) * f(x)
-        # where f(x) = distort(x) - target_dist
-        for _ in range(max_iter):
-            # Compute current forward map and its Jacobian at guess (u_curr, v_curr)
-            xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv = self._forward_and_jacobian(
-                u_curr, v_curr
-            )
+        if active_idx is None:
+            # Dense Newton path.
+            for _ in range(max_iter):
+                xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv = self._forward_and_jacobian(
+                    u_curr, v_curr
+                )
 
-            # Residuals
-            du_res = xd - u_f
-            dv_res = yd - v_f
+                du_res = xd - u_f
+                dv_res = yd - v_f
+                if torch.all(du_res.abs() < tol) and torch.all(dv_res.abs() < tol):
+                    break
 
-            # Check convergence
-            if torch.all(du_res.abs() < tol) and torch.all(dv_res.abs() < tol):
-                break
+                det = dxd_du * dyd_dv - dxd_dv * dyd_du
+                det_sign = torch.sign(det)
+                det_sign = torch.where(
+                    det_sign == 0, torch.ones_like(det_sign), det_sign
+                )
+                det = torch.where(det.abs() < 1e-15, det_sign * 1e-15, det)
 
-            # Solve linear system J * [du, dv]^T = [du_res, dv_res]^T
-            # [ dxd_du  dxd_dv ] [ du ] = [ du_res ]
-            # [ dyd_du  dyd_dv ] [ dv ]   [ dv_res ]
-            det = dxd_du * dyd_dv - dxd_dv * dyd_du
+                du_step = (dyd_dv * du_res - dxd_dv * dv_res) / det
+                dv_step = (-dyd_du * du_res + dxd_du * dv_res) / det
+                u_curr = u_curr - du_step
+                v_curr = v_curr - dv_step
+        else:
+            # Sparse active-set Newton path.
+            for _ in range(max_iter):
+                if active_idx.numel() == 0:
+                    break
 
-            # Avoid division by zero
-            det_sign = torch.sign(det)
-            det_sign = torch.where(det_sign == 0, torch.ones_like(det_sign), det_sign)
-            det = torch.where(det.abs() < 1e-15, det_sign * 1e-15, det)
+                u_a = u_curr.index_select(0, active_idx)
+                v_a = v_curr.index_select(0, active_idx)
+                u_t = u_f.index_select(0, active_idx)
+                v_t = v_f.index_select(0, active_idx)
 
-            du_step = (dyd_dv * du_res - dxd_dv * dv_res) / det
-            dv_step = (-dyd_du * du_res + dxd_du * dv_res) / det
+                xd, yd, dxd_du, dxd_dv, dyd_du, dyd_dv = self._forward_and_jacobian(
+                    u_a, v_a
+                )
 
-            u_curr = u_curr - du_step
-            v_curr = v_curr - dv_step
+                du_res = xd - u_t
+                dv_res = yd - v_t
+
+                keep_active = du_res.abs() >= tol
+                keep_active |= dv_res.abs() >= tol
+                if not bool(keep_active.any()):
+                    break
+
+                local_idx = torch.nonzero(keep_active, as_tuple=False).squeeze(1)
+                u_k = u_a.index_select(0, local_idx)
+                v_k = v_a.index_select(0, local_idx)
+                du_k = du_res.index_select(0, local_idx)
+                dv_k = dv_res.index_select(0, local_idx)
+                dxd_du_k = dxd_du.index_select(0, local_idx)
+                dxd_dv_k = dxd_dv.index_select(0, local_idx)
+                dyd_du_k = dyd_du.index_select(0, local_idx)
+                dyd_dv_k = dyd_dv.index_select(0, local_idx)
+
+                det = dxd_du_k * dyd_dv_k - dxd_dv_k * dyd_du_k
+                det_sign = torch.sign(det)
+                det_sign = torch.where(
+                    det_sign == 0, torch.ones_like(det_sign), det_sign
+                )
+                det = torch.where(det.abs() < 1e-15, det_sign * 1e-15, det)
+
+                du_step = (dyd_dv_k * du_k - dxd_dv_k * dv_k) / det
+                dv_step = (-dyd_du_k * du_k + dxd_du_k * dv_k) / det
+
+                global_idx = active_idx.index_select(0, local_idx)
+                u_curr.index_copy_(0, global_idx, u_k - du_step)
+                v_curr.index_copy_(0, global_idx, v_k - dv_step)
+                active_idx = global_idx
 
         return u_curr.reshape(u_dist.shape), v_curr.reshape(v_dist.shape)

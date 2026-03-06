@@ -199,6 +199,15 @@ class TPV:
     def distort(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         if u.numel() == 0:
             return u, v
+        if self._can_use_cpp_distort(u, v):
+            return _cpp.wcs_tpv_distort(
+                u.contiguous(),
+                v.contiguous(),
+                self.idx1,
+                self.c1,
+                self.idx2,
+                self.c2,
+            )
         return self._distort_impl(u, v)
 
     def _distort_impl(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
@@ -363,6 +372,22 @@ class TPV:
             and eta_t.device.type == "cpu"
             and xi_t.dtype == torch.float64
             and eta_t.dtype == torch.float64
+            and self.idx1.device.type == "cpu"
+            and self.idx2.device.type == "cpu"
+            and self.c1.device.type == "cpu"
+            and self.c2.device.type == "cpu"
+        )
+
+    def _can_use_cpp_distort(self, u_t, v_t):
+        return bool(
+            _cpp is not None
+            and hasattr(_cpp, "wcs_tpv_distort")
+            and u_t.device.type == "cpu"
+            and v_t.device.type == "cpu"
+            and u_t.dtype == torch.float64
+            and v_t.dtype == torch.float64
+            and not u_t.requires_grad
+            and not v_t.requires_grad
             and self.idx1.device.type == "cpu"
             and self.idx2.device.type == "cpu"
             and self.c1.device.type == "cpu"

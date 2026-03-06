@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import time
 from dataclasses import dataclass
@@ -67,6 +68,7 @@ CASES: dict[str, CaseSpec] = {
 
 
 REQUIRED_PROJECTIONS = list(CASES.keys())
+WCS_SAMPLE_SEED_BASE = 12345
 
 
 def _runs_for_points(n_points: int) -> int:
@@ -83,10 +85,28 @@ def _time_median(fn, *, runs: int, warmup: int = 1) -> float:
     for _ in range(max(0, warmup)):
         fn()
     samples: list[float] = []
-    for _ in range(max(1, runs)):
-        t0 = time.perf_counter()
-        fn()
-        samples.append(time.perf_counter() - t0)
+    min_total_s = 0.20 if runs <= 7 else 0.0
+    max_runs = max(int(runs), int(runs) * 8)
+    elapsed_total = 0.0
+    n_done = 0
+    gc_enabled = gc.isenabled()
+    if gc_enabled:
+        gc.disable()
+    try:
+        while True:
+            if n_done >= max(1, runs) and elapsed_total >= min_total_s:
+                break
+            if n_done >= max_runs:
+                break
+            t0 = time.perf_counter()
+            fn()
+            dt = time.perf_counter() - t0
+            samples.append(dt)
+            elapsed_total += dt
+            n_done += 1
+    finally:
+        if gc_enabled:
+            gc.enable()
     return float(np.median(samples))
 
 
@@ -186,6 +206,73 @@ def _sample_pixels(
     return x, y
 
 
+def _sample_allsky_pixels_from_world(
+    awcs: AstropyWCS,
+    header: fits.Header,
+    case: CaseSpec,
+    n_points: int,
+    rng: np.random.Generator,
+    profile: str,
+    origin: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if profile == "mixed":
+        n0 = n_points // 2
+        n1 = n_points - n0
+        x0, y0 = _sample_allsky_pixels_from_world(
+            awcs, header, case, n0, rng, "interior", origin
+        )
+        x1, y1 = _sample_allsky_pixels_from_world(
+            awcs, header, case, n1, rng, "boundary", origin
+        )
+        return np.concatenate([x0, x1]), np.concatenate([y0, y1])
+
+    x_parts: list[np.ndarray] = []
+    y_parts: list[np.ndarray] = []
+    total = 0
+
+    min_x = 0.0 if origin == 0 else 1.0
+    min_y = 0.0 if origin == 0 else 1.0
+    max_x = float(header["NAXIS1"] - 1.0) if origin == 0 else float(header["NAXIS1"])
+    max_y = float(header["NAXIS2"] - 1.0) if origin == 0 else float(header["NAXIS2"])
+
+    for _ in range(12):
+        if total >= n_points:
+            break
+        batch = max((n_points - total) * 4, 8192)
+        ra = rng.uniform(0.0, 360.0, size=batch)
+
+        if profile == "interior":
+            u = rng.uniform(
+                -np.sin(np.deg2rad(60.0)), np.sin(np.deg2rad(60.0)), size=batch
+            )
+            dec = np.rad2deg(np.arcsin(u))
+        else:
+            sign = np.where(rng.random(size=batch) < 0.5, -1.0, 1.0)
+            dec = sign * rng.uniform(60.0, 89.9, size=batch)
+
+        x, y = awcs.all_world2pix(ra, dec, origin)
+        valid = np.isfinite(x) & np.isfinite(y)
+        valid &= (x >= min_x) & (x <= max_x) & (y >= min_y) & (y <= max_y)
+
+        if np.any(valid):
+            x_parts.append(np.asarray(x[valid], dtype=np.float64))
+            y_parts.append(np.asarray(y[valid], dtype=np.float64))
+            total += int(np.sum(valid))
+
+    if total < n_points:
+        return _sample_pixels(header, n_points, rng, case, profile)
+
+    x_all = np.concatenate(x_parts)[:n_points]
+    y_all = np.concatenate(y_parts)[:n_points]
+    return x_all, y_all
+
+
+def _sample_seed(i_case: int, i_tier: int, i_rep: int, base_seed: int) -> int:
+    if base_seed == WCS_SAMPLE_SEED_BASE:
+        return int(WCS_SAMPLE_SEED_BASE + i_case * 100_000 + i_tier * 1_000 + i_rep)
+    return int(base_seed + i_case * 100_000 + i_tier * 1_000 + i_rep)
+
+
 def _row(
     *,
     case_name: str,
@@ -263,7 +350,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sample-profile", choices=["interior", "boundary", "mixed"], default="mixed"
     )
+    parser.add_argument(
+        "--replicates",
+        type=int,
+        default=1,
+        help="Number of repeated seeded runs per case/tier (aggregated by median)",
+    )
     parser.add_argument("--seed", type=int, default=12345)
+    parser.add_argument("--origin", type=int, default=0, choices=[0, 1])
     parser.add_argument("--json-out", type=Path, required=True)
     return parser.parse_args()
 
@@ -286,95 +380,87 @@ def main() -> int:
         case = CASES[case_name]
         for i_tier, n_points in enumerate(n_tiers):
             runs = _runs_for_points(n_points)
-            rng = np.random.default_rng(args.seed + i_case * 100 + i_tier)
-            header = _make_header(case)
-            # Validate the WCS payload and ensure parity with the main sweep inputs.
-            _ = AstropyWCS(header)
-            x, y = _sample_pixels(header, n_points, rng, case, args.sample_profile)
+            rep_count = max(1, int(args.replicates))
+            pyast_times: list[float] = []
+            kapteyn_times: list[float] = []
+            pyast_err = ""
+            kapteyn_err = ""
 
             print(
-                f"[wcs-legacy] case={case_name} n={n_points} runs={runs}",
+                f"[wcs-legacy] case={case_name} n={n_points} runs={runs} reps={rep_count}",
                 flush=True,
             )
 
-            header_dict = dict(header)
-            try:
-                pyast_t = _time_pyast(header_dict, x, y, runs=runs)
-                if pyast_t is None:
-                    rows.append(
-                        _row(
-                            case_name=case_name,
-                            projection=case.projection,
-                            n_points=n_points,
-                            library="pyast",
-                            status="SKIPPED",
-                            skip_reason="pyast_not_available",
-                            time_s=None,
-                        )
+            for i_rep in range(rep_count):
+                sample_seed = _sample_seed(i_case, i_tier, i_rep, args.seed)
+                rng = np.random.default_rng(sample_seed)
+                header = _make_header(case)
+                awcs = AstropyWCS(header)
+                if case.is_allsky:
+                    x, y = _sample_allsky_pixels_from_world(
+                        awcs,
+                        header,
+                        case,
+                        n_points,
+                        rng,
+                        args.sample_profile,
+                        args.origin,
                     )
                 else:
-                    rows.append(
-                        _row(
-                            case_name=case_name,
-                            projection=case.projection,
-                            n_points=n_points,
-                            library="pyast",
-                            status="OK",
-                            skip_reason="",
-                            time_s=pyast_t,
-                        )
+                    x, y = _sample_pixels(
+                        header, n_points, rng, case, args.sample_profile
                     )
-            except Exception as exc:
-                rows.append(
-                    _row(
-                        case_name=case_name,
-                        projection=case.projection,
-                        n_points=n_points,
-                        library="pyast",
-                        status="SKIPPED",
-                        skip_reason=f"pyast_failed: {type(exc).__name__}: {exc}",
-                        time_s=None,
-                    )
-                )
 
-            try:
-                kapteyn_t = _time_kapteyn(header_dict, x, y, runs=runs)
-                if kapteyn_t is None:
-                    rows.append(
-                        _row(
-                            case_name=case_name,
-                            projection=case.projection,
-                            n_points=n_points,
-                            library="kapteyn",
-                            status="SKIPPED",
-                            skip_reason="kapteyn_not_available",
-                            time_s=None,
-                        )
-                    )
-                else:
-                    rows.append(
-                        _row(
-                            case_name=case_name,
-                            projection=case.projection,
-                            n_points=n_points,
-                            library="kapteyn",
-                            status="OK",
-                            skip_reason="",
-                            time_s=kapteyn_t,
-                        )
-                    )
-            except Exception as exc:
-                rows.append(
-                    _row(
-                        case_name=case_name,
-                        projection=case.projection,
-                        n_points=n_points,
-                        library="kapteyn",
-                        status="SKIPPED",
-                        skip_reason=f"kapteyn_failed: {type(exc).__name__}: {exc}",
-                        time_s=None,
-                    )
+                header_dict = dict(header)
+                try:
+                    pyast_t = _time_pyast(header_dict, x, y, runs=runs)
+                    if pyast_t is not None:
+                        pyast_times.append(pyast_t)
+                except Exception as exc:
+                    if not pyast_err:
+                        pyast_err = f"pyast_failed: {type(exc).__name__}: {exc}"
+
+                try:
+                    kapteyn_t = _time_kapteyn(header_dict, x, y, runs=runs)
+                    if kapteyn_t is not None:
+                        kapteyn_times.append(kapteyn_t)
+                except Exception as exc:
+                    if not kapteyn_err:
+                        kapteyn_err = f"kapteyn_failed: {type(exc).__name__}: {exc}"
+
+            pyast_med = float(np.median(pyast_times)) if pyast_times else None
+            rows.append(
+                _row(
+                    case_name=case_name,
+                    projection=case.projection,
+                    n_points=n_points,
+                    library="pyast",
+                    status="OK" if pyast_med is not None else "SKIPPED",
+                    skip_reason=(
+                        ""
+                        if pyast_med is not None
+                        else (pyast_err or "pyast_not_available")
+                    ),
+                    time_s=pyast_med,
                 )
+            )
+
+            kapteyn_med = float(np.median(kapteyn_times)) if kapteyn_times else None
+            rows.append(
+                _row(
+                    case_name=case_name,
+                    projection=case.projection,
+                    n_points=n_points,
+                    library="kapteyn",
+                    status="OK" if kapteyn_med is not None else "SKIPPED",
+                    skip_reason=(
+                        ""
+                        if kapteyn_med is not None
+                        else (kapteyn_err or "kapteyn_not_available")
+                    ),
+                    time_s=kapteyn_med,
+                )
+            )
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
     args.json_out.write_text(json.dumps(rows, indent=2), encoding="utf-8")

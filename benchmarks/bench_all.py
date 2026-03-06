@@ -19,7 +19,10 @@ from typing import Any
 
 from bench_contract import (
     DEFICIT_COLUMNS,
+    LARGE_N_THRESHOLD,
     RESULT_COLUMNS,
+    SMALL_N_MAX_LAG_RATIO,
+    SMALL_N_PERCEIVED_LATENCY_S,
     annotate_rankings,
     compute_deficits,
     make_run_id,
@@ -29,7 +32,7 @@ from bench_contract import (
 from bench_fits_io import run_fits_domain
 from bench_fitstable_io import run_fitstable_domain
 from bench_sphere_suite import run_sphere_domain
-from bench_wcs_suite import REQUIRED_PROJECTIONS, run_wcs_domain
+from bench_wcs_suite import REQUIRED_PROJECTIONS, WCS_SAMPLE_SEED_BASE, run_wcs_domain
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +94,17 @@ def _parse_args() -> argparse.Namespace:
         choices=["cpu", "auto", "cuda"],
         default="cpu",
         help="WCS benchmark device",
+    )
+    parser.add_argument(
+        "--wcs-compile",
+        action="store_true",
+        help="Enable torch.compile() in WCS domain (disabled by default)",
+    )
+    parser.add_argument(
+        "--wcs-replicates",
+        type=int,
+        default=3,
+        help="Number of repeated seeded runs per WCS case/tier (aggregated by median)",
     )
 
     parser.add_argument(
@@ -155,17 +169,77 @@ def _print_deficit_summary(deficits: list[dict[str, Any]]) -> None:
         print("No comparable deficits found.", flush=True)
         return
 
+    large_n_deficits = [
+        d for d in deficits if (_to_int(d.get("n_points")) or 0) >= LARGE_N_THRESHOLD
+    ]
+    small_n_visible = [
+        d
+        for d in deficits
+        if (_to_int(d.get("n_points")) or 0) < LARGE_N_THRESHOLD
+        and str(d.get("perceived_impact")) in {"visible", "ratio_outlier"}
+    ]
+    small_n_negligible = [
+        d
+        for d in deficits
+        if (_to_int(d.get("n_points")) or 0) < LARGE_N_THRESHOLD
+        and str(d.get("perceived_impact")) == "negligible"
+    ]
+
+    print("adoption_policy:", flush=True)
     print(
-        "domain | family | case | torchfits_s | best | lag_x | pct_behind", flush=True
+        f"  large_n_threshold={LARGE_N_THRESHOLD} | small_n_time_s<{SMALL_N_PERCEIVED_LATENCY_S:.6f} | small_n_lag_x<{SMALL_N_MAX_LAG_RATIO:.1f}",
+        flush=True,
+    )
+    print(
+        f"  large_n_deficits={len(large_n_deficits)} | small_n_visible={len(small_n_visible)} | small_n_negligible={len(small_n_negligible)}",
+        flush=True,
+    )
+
+    if large_n_deficits:
+        print(
+            "large_n: case | n_points | torchfits_s | best | lag_x | pct_behind",
+            flush=True,
+        )
+        for row in large_n_deficits:
+            best_lbl = f"{row.get('best_library')}:{row.get('best_method')}"
+            tf_s = row.get("torchfits_time_s")
+            lag_x = row.get("lag_ratio")
+            pct = row.get("pct_behind")
+            print(
+                f"  {row.get('case_label')} | {row.get('n_points')} | {tf_s:.6f} | "
+                f"{best_lbl} | {lag_x:.3f} | {pct:.2f}%",
+                flush=True,
+            )
+
+    if small_n_visible:
+        print(
+            "small_n_visible: case | torchfits_s | best | lag_x | pct_behind | impact",
+            flush=True,
+        )
+        for row in small_n_visible:
+            best_lbl = f"{row.get('best_library')}:{row.get('best_method')}"
+            tf_s = row.get("torchfits_time_s")
+            lag_x = row.get("lag_ratio")
+            pct = row.get("pct_behind")
+            print(
+                f"  {row.get('case_label')} | {tf_s:.6f} | {best_lbl} | "
+                f"{lag_x:.3f} | {pct:.2f}% | {row.get('perceived_impact')}",
+                flush=True,
+            )
+
+    print(
+        "domain | family | case | torchfits_s | best | lag_x | pct_behind | n_points",
+        flush=True,
     )
     for row in deficits:
         best_lbl = f"{row.get('best_library')}:{row.get('best_method')}"
         tf_s = row.get("torchfits_time_s")
         lag_x = row.get("lag_ratio")
         pct = row.get("pct_behind")
+        n_points = row.get("n_points", "")
         print(
             f"{row.get('domain')} | {row.get('family')} | {row.get('case_label')} | "
-            f"{tf_s:.6f} | {best_lbl} | {lag_x:.3f} | {pct:.2f}%",
+            f"{tf_s:.6f} | {best_lbl} | {lag_x:.3f} | {pct:.2f}% | {n_points}",
             flush=True,
         )
 
@@ -207,12 +281,27 @@ def _to_float(value: Any) -> float | None:
     return v
 
 
+def _to_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except Exception:
+        try:
+            return int(float(value))
+        except Exception:
+            return None
+
+
 def _run_wcs_legacy_bridge(
     *,
     run_id: str,
     run_dir: Path,
     n_tiers: list[int],
     projections: list[str],
+    origin: int,
+    sample_profile: str,
+    replicates: int,
 ) -> tuple[list[dict[str, Any]], str]:
     bridge_root = run_dir / "_raw" / "wcs_legacy_bridge"
     bridge_run_id = f"{run_id}_legacy"
@@ -230,6 +319,14 @@ def _run_wcs_legacy_bridge(
         ",".join(str(x) for x in n_tiers),
         "--cases",
         ",".join(projections),
+        "--sample-profile",
+        sample_profile,
+        "--origin",
+        str(origin),
+        "--seed",
+        str(WCS_SAMPLE_SEED_BASE),
+        "--replicates",
+        str(max(1, int(replicates))),
         "--json-out",
         str(bridge_json),
     ]
@@ -380,6 +477,7 @@ def main() -> int:
     if "wcs" in scopes:
         try:
             tiers = [1_000] if args.quick else _parse_int_list(args.wcs_n_tiers)
+            wcs_reps = 1 if args.quick else max(1, int(args.wcs_replicates))
             projections = (
                 list(REQUIRED_PROJECTIONS[:QUICK_CASES_PER_DOMAIN])
                 if args.quick
@@ -395,6 +493,8 @@ def main() -> int:
                     origin=0,
                     sample_profile="mixed",
                     include_legacy=args.legacy_wcs,
+                    torch_compile=args.wcs_compile,
+                    replicates=wcs_reps,
                 )
             )
             use_legacy_bridge = not args.no_legacy_wcs_bridge
@@ -408,6 +508,9 @@ def main() -> int:
                     run_dir=run_dir,
                     n_tiers=tiers,
                     projections=projections,
+                    origin=0,
+                    sample_profile="mixed",
+                    replicates=wcs_reps,
                 )
                 if bridge_err:
                     print(

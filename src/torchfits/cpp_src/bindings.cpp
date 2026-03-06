@@ -1723,6 +1723,7 @@ NB_MODULE(cpp, m) {
     m.def("wcs_center_pixel_to_world",
           [](nb::object x_obj,
              nb::object y_obj,
+             double origin,
              double crpix0,
              double crpix1,
              double cd00,
@@ -1740,12 +1741,12 @@ NB_MODULE(cpp, m) {
               {
                   nb::gil_scoped_release release;
                   out = torchfits::wcs_center_pixel_to_world(
-                      x, y, crpix0, crpix1, cd00, cd01, cd10, cd11, proj_code, alpha0, cea_eta_scale, hpx_H, hpx_K
+                      x, y, origin, crpix0, crpix1, cd00, cd01, cd10, cd11, proj_code, alpha0, cea_eta_scale, hpx_H, hpx_K
                   );
               }
               return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
           },
-          nb::arg("x"), nb::arg("y"), nb::arg("crpix0"), nb::arg("crpix1"),
+          nb::arg("x"), nb::arg("y"), nb::arg("origin"), nb::arg("crpix0"), nb::arg("crpix1"),
           nb::arg("cd00"), nb::arg("cd01"), nb::arg("cd10"), nb::arg("cd11"),
           nb::arg("proj_code"), nb::arg("alpha0"), nb::arg("cea_eta_scale"), nb::arg("hpx_H"), nb::arg("hpx_K"));
 
@@ -2014,6 +2015,76 @@ NB_MODULE(cpp, m) {
           },
           nb::arg("xi"), nb::arg("eta"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"),
           nb::arg("max_iter") = 10, nb::arg("tol") = 1e-11);
+
+    m.def("wcs_tpv_distort",
+          [](nb::object u_obj,
+             nb::object v_obj,
+             nb::object idx1_obj,
+             nb::object c1_obj,
+             nb::object idx2_obj,
+             nb::object c2_obj) {
+              auto u = python_to_tensor(u_obj);
+              auto v = python_to_tensor(v_obj);
+              auto idx1 = python_to_tensor(idx1_obj);
+              auto c1 = python_to_tensor(c1_obj);
+              auto idx2 = python_to_tensor(idx2_obj);
+              auto c2 = python_to_tensor(c2_obj);
+              if (!(u.device().is_cpu() && v.device().is_cpu() &&
+                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
+                    c1.device().is_cpu() && c2.device().is_cpu())) {
+                  throw std::runtime_error("wcs_tpv_distort expects CPU tensors");
+              }
+              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64 &&
+                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
+                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
+                  throw std::runtime_error("wcs_tpv_distort expects float64 inputs and int64 indices");
+              }
+              if (!u.is_contiguous()) u = u.contiguous();
+              if (!v.is_contiguous()) v = v.contiguous();
+              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
+              if (!c1.is_contiguous()) c1 = c1.contiguous();
+              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
+              if (!c2.is_contiguous()) c2 = c2.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_tpv_distort(u, v, idx1, c1, idx2, c2);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("u"), nb::arg("v"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"));
+
+    m.def("wcs_sip_quadratic_distort",
+          [](nb::object u_obj,
+             nb::object v_obj,
+             double a20,
+             double a11,
+             double a02,
+             double b20,
+             double b11,
+             double b02) {
+              auto u = python_to_tensor(u_obj);
+              auto v = python_to_tensor(v_obj);
+              if (!(u.device().is_cpu() && v.device().is_cpu())) {
+                  throw std::runtime_error("wcs_sip_quadratic_distort expects CPU tensors");
+              }
+              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64)) {
+                  throw std::runtime_error("wcs_sip_quadratic_distort expects float64 inputs");
+              }
+              if (!u.is_contiguous()) u = u.contiguous();
+              if (!v.is_contiguous()) v = v.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_sip_quadratic_distort(
+                      u, v, a20, a11, a02, b20, b11, b02
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("u"), nb::arg("v"),
+          nb::arg("a20"), nb::arg("a11"), nb::arg("a02"),
+          nb::arg("b20"), nb::arg("b11"), nb::arg("b02"));
 
     m.def("wcs_tpv_invert_trace",
           [](nb::object xi_obj,
