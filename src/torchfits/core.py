@@ -10,10 +10,13 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 
+import re
 import torch
 
 if TYPE_CHECKING:
     import numpy as np
+
+_CUTOUT_SPEC_RE = re.compile(r"(.+?)\[(\d+)\]\[(.+?)\]")
 
 # Fast direct lookup tables - no enum overhead
 _BITPIX_TO_TORCH = {
@@ -55,6 +58,7 @@ class FITSDataTypeHandler:
         """Convert FITS BITPIX to NumPy dtype - fast direct lookup."""
         if cls._BITPIX_TO_NUMPY is None:
             import numpy as np
+
             cls._BITPIX_TO_NUMPY = {
                 8: np.uint8,
                 16: np.int16,
@@ -135,9 +139,6 @@ class ChecksumVerifier:
         """Placeholder until CFITSIO-native CHECKSUM/DATASUM validation is wired in."""
         return True
 
-
-import re
-_CUTOUT_SPEC_RE = re.compile(r"(.+?)\[(\d+)\]\[(.+?)\]")
 
 class FITSCore:
     """Core FITS functionality."""
