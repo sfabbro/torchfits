@@ -141,6 +141,7 @@ atexit.register(_close_all_cached_handles)
 def _require_pyarrow():
     try:
         import pyarrow as pa
+        import pyarrow.compute as pc  # noqa: F401 # preload compute module to avoid slow first-call overhead
     except ImportError as exc:
         raise ImportError(
             "pyarrow is required for torchfits.table APIs. Install pyarrow to use Arrow-native tables."
@@ -884,8 +885,6 @@ def _compile_where_to_simple_predicates(
 
 
 def _where_mask_for_table(table, where: str, parsed_ast=None) -> "np.ndarray":
-    import numpy as np
-
     pa = _require_pyarrow()
     import pyarrow.compute as pc
 
@@ -995,8 +994,7 @@ def _where_mask_for_table(table, where: str, parsed_ast=None) -> "np.ndarray":
             return pc.invert(child)
         raise ValueError("Invalid where AST")
 
-    mask = pc.fill_null(_eval(ast), False)
-    return np.asarray(mask.to_pylist(), dtype=np.bool_)
+    return pc.fill_null(_eval(ast), False)
 
 
 def _row_slice_from_start_num(start_row: int, num_rows: int) -> Optional[slice]:
@@ -1017,8 +1015,6 @@ def _resolve_rows_from_where_cpp(
     mmap: bool,
     apply_fits_nulls: bool,
 ) -> Optional[list[int]]:
-    import numpy as np
-
     where_ast = _parse_where_expression(where)
     where_columns = _where_columns_from_ast(where_ast)
     predicate_table = _read_cpp_numpy_table(
@@ -1040,13 +1036,20 @@ def _resolve_rows_from_where_cpp(
     if predicate_table.num_rows == 0:
         return []
 
+    import pyarrow.compute as pc
+
     mask = _where_mask_for_table(predicate_table, where, parsed_ast=where_ast)
-    if mask.size == 0:
+    if len(mask) == 0 or pc.sum(mask).as_py() == 0:
         return []
 
     base_row0 = start_row - 1
-    selected = np.flatnonzero(mask)
-    return [base_row0 + int(idx) for idx in selected]
+    # Use Arrow to find indices of True values, then convert to numpy for offset addition
+    selected = pc.indices_nonzero(mask).to_numpy()
+    if selected.size == 0:
+        return []
+    # Vectorized addition and then conversion to list is faster than list comprehension
+    # base_row0 is start_row - 1, which is 0-based.
+    return (selected + base_row0).tolist()
 
 
 def _split_io_kwargs(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1674,22 +1677,33 @@ def read(
     pa = _require_pyarrow()
 
     if backend in {"auto", "cpp_numpy"}:
-        single = _read_cpp_numpy_table(
-            path=path,
-            hdu=hdu,
-            columns=columns,
-            row_slice=row_slice,
-            rows=rows,
-            where=where,
-            mmap=mmap,
-            decode_bytes=decode_bytes,
-            encoding=encoding,
-            strip=strip,
-            include_fits_metadata=include_fits_metadata,
-            apply_fits_nulls=apply_fits_nulls,
-        )
-        if single is not None:
-            return single
+        # For large tables with a where clause, the cpp_numpy backend (which resolves
+        # indices first and then reads) can be very slow due to scattered IO.
+        # We skip it in 'auto' mode if we think the pushdown scanner will be faster.
+        skip_cpp_numpy = False
+        if backend == "auto" and where is not None:
+            # Always skip cpp_numpy when a where clause is provided in auto mode.
+            # Scattered index-based reads are extremely slow compared to full-table reads
+            # (for small tables) or the C++ pushdown scanner (for large tables).
+            skip_cpp_numpy = True
+
+        if not skip_cpp_numpy:
+            single = _read_cpp_numpy_table(
+                path=path,
+                hdu=hdu,
+                columns=columns,
+                row_slice=row_slice,
+                rows=rows,
+                where=where,
+                mmap=mmap,
+                decode_bytes=decode_bytes,
+                encoding=encoding,
+                strip=strip,
+                include_fits_metadata=include_fits_metadata,
+                apply_fits_nulls=apply_fits_nulls,
+            )
+            if single is not None:
+                return single
 
     if where is not None:
         # Hybrid strategy: for small-to-medium tables, reading the full projected table
@@ -1738,12 +1752,12 @@ def read(
                 strip=strip,
                 include_fits_metadata=include_fits_metadata,
                 apply_fits_nulls=apply_fits_nulls,
-                backend="torch" if backend == "auto" else backend,
+                backend="cpp_numpy" if backend == "auto" else backend,
             )
             mask = _where_mask_for_table(base, where)
-            if mask.size == 0:
+            if len(mask) == 0 or pa.compute.sum(mask).as_py() == 0:
                 return base.slice(0, 0)
-            return base.filter(_pa_array(pa, mask))
+            return base.filter(mask)
 
         # For larger tables, try fast path: Predicate Pushdown (C++ scanner)
         import torchfits.cpp as cpp
@@ -1814,12 +1828,12 @@ def read(
             strip=strip,
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
-            backend="torch",
+            backend="cpp_numpy" if backend == "auto" else backend,
         )
         mask = _where_mask_for_table(base, where)
-        if mask.size == 0:
+        if len(mask) == 0 or pa.compute.sum(mask).as_py() == 0:
             return base.slice(0, 0)
-        return base.filter(_pa_array(pa, mask))
+        return base.filter(mask)
 
     scan_backend = backend
     batches = list(

@@ -1,6 +1,6 @@
 # TorchFits Benchmarks
 
-This page documents the benchmark methodology. The snapshot tables below reflect the **0.2.1** release; update with each release run.
+This page documents the benchmark methodology. The snapshot tables below reflect the **0.3.0** release; update with each release run.
 
 ## Main Scripts
 
@@ -162,7 +162,7 @@ pixi run -e sphere-bench sphere-bench-geometry-gate-small
 For a concise log of attempted optimizations and outcomes (including dead ends), see:
 - `docs/performance_attempts.md`
 
-## 0.2.1 Release Snapshot
+## 0.3.0 Release Snapshot
 
 Run metadata:
 - Date: `2026-02-14`
@@ -225,7 +225,7 @@ Worst compressed case in this run: `compressed_rice_1` at `1.021x` (near parity)
 - **No regressions found** (100% win rate against baseline).
 - `medium_float64_2d` gap is closed (now `1.14x` faster).
 
-## ML Loader Snapshot (0.2.1)
+## ML Loader Snapshot (0.3.0)
 
 Command used:
 

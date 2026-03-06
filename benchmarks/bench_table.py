@@ -201,7 +201,7 @@ class TableBenchmarkSuite:
 
                         # Multiple column access
                         start_time = time.perf_counter()
-                        table.to_tensor_dict()
+                        table.read()
                         multi_time = time.perf_counter() - start_time
                         print(f"  All columns: {multi_time:.4f}s")
                     else:

@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "0.3.0.dev0"
+version = "0.3.0"
 description = "High-performance FITS I/O for PyTorch"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
