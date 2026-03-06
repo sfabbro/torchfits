@@ -15,17 +15,17 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import json
-import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
+import argparse  # noqa: E402
+import json  # noqa: E402
+import time  # noqa: E402
+from dataclasses import asdict, dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-import healpy as hp
-import numpy as np
-import torch
+import healpy as hp  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits.sphere.spectral import alm2map_spin, alm_index, alm_size, map2alm_spin
+from torchfits.sphere.spectral import alm2map_spin, alm_index, alm_size, map2alm_spin  # noqa: E402
 
 
 @dataclass

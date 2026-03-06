@@ -76,7 +76,7 @@ class ExhaustiveBenchmarkSuite:
     ):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="torchfits_exhaustive_"))
         self.output_dir = output_dir or DEFAULT_OUTPUT_DIR
-        # Allow nested output dirs like bench_results/exhaustive_YYYYmmdd_HHMMSS
+        # Allow nested output dirs like benchmarks_results/exhaustive_YYYYmmdd_HHMMSS
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = {}
         self.csv_file = self.output_dir / "exhaustive_results.csv"

@@ -14,23 +14,23 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import codecs
-import importlib.metadata as importlib_metadata
-import json
-import math
-import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Any
+import argparse  # noqa: E402
+import codecs  # noqa: E402
+import importlib.metadata as importlib_metadata  # noqa: E402
+import json  # noqa: E402
+import math  # noqa: E402
+import time  # noqa: E402
+from dataclasses import asdict, dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
-import numpy as np
-import torch
-from spherical_geometry import polygon as sg_polygon
-from spherical_geometry.tests.helpers import ROOT_DIR as SG_ROOT_DIR
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from spherical_geometry import polygon as sg_polygon  # noqa: E402
+from spherical_geometry.tests.helpers import ROOT_DIR as SG_ROOT_DIR  # noqa: E402
 
-from torchfits.sphere.geom import SphericalPolygon, spherical_polygon_contains
-from torchfits.wcs.healpix import (
+from torchfits.sphere.geom import SphericalPolygon, spherical_polygon_contains  # noqa: E402
+from torchfits.wcs.healpix import (  # noqa: E402
     ang2pix as hp_ang2pix,
     get_all_neighbours as hp_get_all_neighbours,
     max_pixrad as hp_max_pixrad,

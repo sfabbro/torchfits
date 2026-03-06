@@ -1,4 +1,4 @@
-# TorchFits Benchmarks
+# torchfits Benchmarks
 
 This page documents the benchmark methodology. The snapshot tables below reflect the **0.3.0** release; update with each release run.
 
@@ -21,14 +21,14 @@ This page documents the benchmark methodology. The snapshot tables below reflect
 | `bench_wcs.py` | WCS transform throughput checks. |
 | `bench_healpix.py` | HEALPix CPU/CUDA parity + throughput + quality gates (`ang2pix`, `pix2ang`, `ring/nest`). |
 | `bench_healpix_advanced.py` | Advanced HEALPix parity + throughput checks (`get_all_neighbours`, `get_interp_weights`, `get_interp_val`). |
-| `bench_sphere_geometry.py` | Cross-library spherical geometry benchmark (TorchFits vs HEALPix ecosystem releases). |
+| `bench_sphere_geometry.py` | Cross-library spherical geometry benchmark (torchfits vs HEALPix ecosystem releases). |
 | `bench_sphere_core.py` | Sphere-core primitives benchmark (multi-band sampling, pairwise distances, ellipse query). |
 | `bench_sphere_polygons.py` | Non-convex spherical polygon benchmark (contains/query/area with optional spherical-geometry parity). |
 | `bench_sphere_spectral.py` | CPU-first spherical harmonic primitive benchmark (`map2alm`, `map2alm_lsq`, `alm2map`, `almxfl`, `alm2cl`, `anafast`, `map2alm_spin`, `alm2map_spin`) plus compatibility-generation paths (`synalm`, `synfast`, `bl2beam`, `beam2bl`) as needed. |
 | `bench_pipeline_table_sphere.py` | End-to-end benchmark: table predicate pushdown (`where`) + HEALPix spherical reduction pipeline. |
 | `replay_upstream_healpy_interp_edges.py` | Replays interpolation edge cases (lon wrap, poles, pixel-center inputs) against official healpy with parity/perf gates. |
 | `replay_upstream_healpy_spin.py` | Replays spin transform parity/throughput against official healpy releases (`map2alm_spin`, `alm2map_spin`). |
-| `replay_upstream_spherical_geometry_polygons.py` | Replays spherical-geometry upstream polygon fixtures/data (`test_intersects_*`, `difficult_intersections.txt`) against TorchFits with multi-NSIDE difficult-overlap area gates. |
+| `replay_upstream_spherical_geometry_polygons.py` | Replays spherical-geometry upstream polygon fixtures/data (`test_intersects_*`, `difficult_intersections.txt`) against torchfits with multi-NSIDE difficult-overlap area gates. |
 
 ## Standard Commands
 
@@ -109,7 +109,7 @@ pixi run -e sphere-bench sphere-bench-bootstrap-core
 # Sync upstream release source artifacts and extract tests/data fixtures
 pixi run -e sphere-bench sphere-upstream-sync
 
-# Replay astropy-healpix upstream test-style HEALPix cases on TorchFits vs healpy
+# Replay astropy-healpix upstream test-style HEALPix cases on torchfits vs healpy
 pixi run -e sphere-bench sphere-upstream-gate
 
 # Replay upstream test functions directly (including shape semantics + hypothesis inner tests)
@@ -144,12 +144,12 @@ pixi run -e sphere-bench sphere-bench-geometry-gate-small
 
 - Comparator libraries must come from official released distributions (pip/uv/conda), not local repo clones.
 - `bench_healpix.py` and `bench_sphere_geometry.py` now print comparator package provenance and fail by default on local/editable/VCS installs.
-- `bench_sphere_matrix.py` runs `uniform/boundary/mixed` profiles and can enforce median TorchFits/healpy speed-ratio floors.
+- `bench_sphere_matrix.py` runs `uniform/boundary/mixed` profiles and can enforce median torchfits/healpy speed-ratio floors.
 - `bench_sphere_polygons.py` benchmarks non-convex polygon contains/query/area and optionally checks parity against released `spherical-geometry`.
 - `replay_upstream_spherical_geometry_polygons.py` replays polygon fixtures/data from upstream spherical-geometry test suite with correctness gates (contains + pair intersections + difficult-case nonempty parity + multi-NSIDE overlap-area/convergence checks, default ladder `128..16384`).
 - `sync_upstream_sphere_sources.py` downloads release artifacts for selected packages and extracts upstream `tests/` + `data/` trees with a pinned manifest.
-- `replay_upstream_astropy_healpy.py` replays astropy-healpix test-style HEALPix cases (same NSIDE range and boundary example-style vectors) against TorchFits/healpy with correctness + ratio gates.
-- `replay_upstream_test_functions.py` executes selected upstream astropy-healpix test functions directly against TorchFits adapters for closer semantic parity checks.
+- `replay_upstream_astropy_healpy.py` replays astropy-healpix test-style HEALPix cases (same NSIDE range and boundary example-style vectors) against torchfits/healpy with correctness + ratio gates.
+- `replay_upstream_test_functions.py` executes selected upstream astropy-healpix test functions directly against torchfits adapters for closer semantic parity checks.
 - `replay_upstream_healpy_interp_edges.py` replays interpolation edge cases (lon wrap, poles, edge pixels) against healpy with mismatch/error and ratio gates.
 - `replay_upstream_healpy_spin.py` replays spin transform cases (`map2alm_spin`, `alm2map_spin`) against healpy with per-case error gates and median throughput ratio thresholds.
 - Spin replay defaults to the current validated profile (`TORCHFITS_RING_FOURIER_CPP=1`, recurrence off, `TORCHFITS_SPIN_RING_AUTO_MIN_BYTES=32 MiB`) unless explicitly overridden in the environment.
@@ -165,65 +165,36 @@ For a concise log of attempted optimizations and outcomes (including dead ends),
 ## 0.3.0 Release Snapshot
 
 Run metadata:
-- Date: `2026-02-14`
-- Exhaustive output: `benchmarks_results/exhaustive_20260214_211602`
+- Date: `2026-03-06`
+- Exhaustive output: `benchmarks_results/release_0.3.0_exhaustive/20260306_120104`
 - Profile: `user` (`cache=10`, `handle_cache=16`, `hot_cache=10`)
 - Tables included: `True`
 
-### Exhaustive Read Results (`operation=read_full`)
+### Astronomer Scorecard (Win Rates)
 
-Rows: `88`
+| Domain | Family | torchfits First | Win Rate | Legacy In Ranking |
+|---|---|---:|---:|---:|
+| fits | smart | 84/84 | 100.0% | 0 |
+| fits | specialized | 165/165 | 100.0% | 0 |
+| fitstable | smart | 70/70 | 100.0% | 0 |
+| fitstable | specialized | 70/70 | 100.0% | 0 |
+| sphere | specialized | 16/18 | 88.9% | 0 |
+| wcs | smart | 109/150 | 72.7% | 75 |
 
-| Baseline | Wins | Median speedup | Min speedup | P10 | P90 |
-|----------|-----:|---------------:|------------:|----:|----:|
-| `fitsio` | 88/88 | 2.478x | 1.01x | 1.14x | 5.34x |
-| `fitsio_torch` | 88/88 | 2.651x | 1.01x | 1.14x | 5.86x |
-| `astropy` | 88/88 | 37.577x | 1.617x | 2.335x | 126.868x |
-| `astropy_torch` | 88/88 | 28.727x | 1.351x | 2.057x | 124.898x |
+### FITS I/O Representative Medians (vs `fitsio`)
 
-Speedup definition: `baseline_median_time / torchfits_median_time`.
+| Case | torchfits median (s) | Fitsio median (s) | Speedup vs Fitsio |
+|------|---------------------:|------------------:|------------------:|
+| `tiny_int8_1d [read_full]` | 0.000044 | 0.000185 | 4.20x |
+| `small_float32_2d [read_full]` | 0.000075 | 0.000212 | 2.82x |
+| `medium_int16_3d [read_full]` | 0.000524 | 0.000782 | 1.49x |
+| `large_float64_2d [read_full]` | 0.005312 | 0.005470 | 1.03x |
 
-### Size Breakdown (vs `fitsio`)
+### Known Deficits (Target for 0.3.1)
 
-| Size | Rows | Wins | Median | Min |
-|------|-----:|-----:|-------:|----:|
-| `tiny` | 18 | 18 | 4.412x | 3.19x |
-| `small` | 18 | 18 | 2.512x | 1.33x |
-| `medium` | 18 | 18 | 1.392x | 1.08x |
-| `large` | 12 | 12 | 1.151x | 1.01x |
-
-### Data-Type Breakdown (vs `fitsio`)
-
-| Data type | Rows | Wins | Median | Min |
-|-----------|-----:|-----:|-------:|----:|
-| `int8` | 11 | 11 | 4.62x | 3.47x |
-| `int16` | 11 | 11 | 2.20x | 1.16x |
-| `int32` | 11 | 11 | 2.26x | 1.06x |
-| `int64` | 11 | 11 | 1.99x | 1.08x |
-| `float32` | 11 | 11 | 2.16x | 1.15x |
-| `float64` | 11 | 11 | 1.68x | 1.08x |
-
-### Compression Snapshot (`read_full`, vs `fitsio`)
-
-| Group | Rows | Wins | Median | Min |
-|-------|-----:|-----:|-------:|----:|
-| Uncompressed | 84 | 83 | 2.548x | 0.949x |
-| Compressed | 4 | 4 | 1.386x | 1.021x |
-
-Worst compressed case in this run: `compressed_rice_1` at `1.021x` (near parity).
-
-### Cutout / Extension Access Rows (`operation != read_full`)
-
-| Case | TorchFits median (s) | Fitsio median (s) | Astropy median (s) | Speedup vs Fitsio |
-|------|---------------------:|------------------:|-------------------:|------------------:|
-| `multi_mef_10ext cutout_100x100` | 0.000061 | 0.000387 | 0.006587 | 6.390x |
-| `compressed_rice_1 cutout_100x100` | 0.000771 | 0.001041 | 0.011462 | 1.351x |
-| `multi_mef_10ext random_ext_full_reads_200` | 0.007146 | 0.008494 | 0.010003 | 1.189x |
-
-### Known Weak Spots (Release Snapshot)
-
-- **No regressions found** (100% win rate against baseline).
-- `medium_float64_2d` gap is closed (now `1.14x` faster).
+- **Sphere (Spin Transforms)**: `map2alm_spin` and `alm2map_spin` show ~4x lag vs `healpy`. These currently use C++ recurrence paths and will be optimized with a custom RING-Fouier kernel.
+- **WCS (Small-N)**: Forward transformations for small coordinate arrays (N < 1000) show lag vs `pyast` (legacy). torchfits is optimized for batch throughput (N > 10k), where it leads by 1.1x - 1.3x.
+- **ZPN/AIT Projections**: Slight visible deficits (1.2x-1.4x) in intermediate size tiers (N=10k) for some spherical projections.
 
 ## ML Loader Snapshot (0.3.0)
 
@@ -233,15 +204,6 @@ Command used:
 pixi run python benchmarks/bench_ml_loader.py --device cpu --shape 2048,2048 --n-files 50 --batch-size 4 --num-workers 4 --epochs 3 --repeats 5 --warm-cache
 ```
 
-Uncompressed benchmark (`torchfits` / `fitsio + numpy`):
-- Run speedups: `1.074x`, `0.969x`, `0.982x`, `1.131x`, `0.959x`
-- Median speedup: `0.985x`
-
-Compressed benchmark (`torchfits (comp)` / `fitsio (comp)`):
-- Run speedups: `0.990x`, `1.009x`, `1.079x`, `1.033x`, `1.008x`
-- Median speedup: `1.008x`
-
-Interpretation:
-- Uncompressed loader path is currently near parity but slightly behind on median.
-- Compressed loader path is effectively parity/slight win.
-- Always report repeat medians/ranges, not single runs.
+Results (Median of 5 runs):
+- Uncompressed: `0.985x` (vs `fitsio + numpy`)
+- Compressed (RICE): `1.008x` (vs `fitsio`)

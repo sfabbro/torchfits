@@ -14,21 +14,21 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import importlib
-import json
-import math
-import sys
-import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable
+import argparse  # noqa: E402
+import importlib  # noqa: E402
+import json  # noqa: E402
+import math  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable  # noqa: E402
 
-import healpy as hp
-import numpy as np
-import torch
+import healpy as hp  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits.wcs.healpix import (
+from torchfits.wcs.healpix import (  # noqa: E402
     ang2vec as tf_ang2vec,
     boundaries as tf_boundaries,
     get_interp_val as tf_get_interp_val,
@@ -464,7 +464,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_ang2pix.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -484,7 +488,10 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, frac=frac, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            frac=frac,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_pix2ang.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     frac=frac,
@@ -555,7 +562,10 @@ def main() -> int:
                     results.append(
                         _run_named(
                             f"test_boundaries.inner(nside_pow={nside_pow},nest={nest},step={step},frac={frac})",
-                            lambda nside_pow=nside_pow, frac=frac, step=step, nest=nest: (
+                            lambda nside_pow=nside_pow,
+                            frac=frac,
+                            step=step,
+                            nest=nest: (
                                 mod.test_boundaries.hypothesis.inner_test(
                                     nside_pow=nside_pow, frac=frac, step=step, nest=nest
                                 )
@@ -600,7 +610,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_interp_weights.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,
@@ -620,7 +634,11 @@ def main() -> int:
                     results.append(
                         _run_named(
                             name,
-                            lambda nside_pow=nside_pow, lon=lon, lat=lat, nest=nest, lonlat=lonlat: (
+                            lambda nside_pow=nside_pow,
+                            lon=lon,
+                            lat=lat,
+                            nest=nest,
+                            lonlat=lonlat: (
                                 mod.test_interp_val.hypothesis.inner_test(
                                     nside_pow=nside_pow,
                                     lon=lon,

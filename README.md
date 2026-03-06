@@ -57,9 +57,9 @@ for batch in torchfits.table.scan("survey.fits", batch_size=50_000):
 
 ## Performance Snapshot (v0.3.0 Readiness)
 
-TorchFits is designed to saturate modern IO subsystems, achieving a **97.6% win rate** against standard baselines across our exhaustive benchmark suite. It delivers median speedups of **~2.5x** over `fitsio` and **>30x** over `astropy` for image I/O, while maintaining strict memory safety for massively large files. For machine learning pipelines, the custom `FITSDataset` and loader implementations match or exceed the throughput of optimized NumPy-based data loaders.
+torchfits is designed for high-throughput astronomical workflows, delivering **10x-100x speedups** over `astropy` for large arrays and tables. In the 0.3.0 exhaustive suite, it maintains a strong lead in FITS image and table I/O (1.5x-4x median speedups vs `fitsio`) while achieving parity or better in the HEALPix sphere domain (~89% win rate). While Batch WCS throughput (N > 100k) excels, small-N coordinate transforms and complex spin-harmonic operations (sphere) remain current targets for the 0.3.x optimization roadmap.
 
-Full benchmarks: [`docs/benchmarks.md`](docs/benchmarks.md)
+Full benchmarks and known deficits: [`docs/benchmarks.md`](docs/benchmarks.md)
 
 ## Documentation
 

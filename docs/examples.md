@@ -1,4 +1,4 @@
-# TorchFits Examples
+# torchfits Examples
 
 This directory contains examples of common `torchfits` workflows.
 

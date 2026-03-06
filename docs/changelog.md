@@ -7,14 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-03-06
 
-### Removed
-- **External Dependency Removal (WCSLIB)**: Completely removed `wcslib` C++ dependency. All coordinate transformations are now performed using a pure-PyTorch implementation (`torchfits.wcs`), significantly reducing binary size and simplifying the build process.
-- **Legacy Components**: Removed obsolete monolithic `wcs.py` and the redundant `torchfits.fits` namespace.
-- **Developmental Artifacts**: Cleaned up transient test artifacts, empty example data directories, and local tool metadata.
+### Added
+- **Native PyTorch WCS (`torchfits.wcs`)**: A complete, pure-PyTorch reimplementation of astronomical coordinate transformations.
+    - Support for core projections: `TAN`, `SIN`, `ARC`, `ZPN`, `ZEA`, `HPX`, `AIT`, `MOL`, `MER`, `CEA`, `STG`, `CYP`.
+    - Support for polynomial distortions: `SIP`, `TPV`, `TNX`, `ZPX`.
+    - Batch-accelerated `pixel_to_world` and `world_to_pixel` transformations.
+    - Automatic initialization from FITS headers via `torchfits.get_wcs()`.
+- **Spherical Geometry & HEALPix (`torchfits.sphere`)**:
+    - Core HEALPix primitives: `ang2pix`, `pix2ang`, `nest2ring`, `ring2nest`, `neighbors`, `interp`.
+    - **Spherical Polygons**: Support for non-convex region queries, area calculations, and `contains` checks on the unit sphere.
+    - **Harmonic Transforms**: Initial support for `map2alm` and `alm2map` (scalar and spin transforms).
+    - **Multi-Order Coverage (MOC)**: Basic support for `MOC` maps and filtering.
+    - **HealSparse**: Unified API for `HealSparseMap` targets and sparse-to-dense conversions.
+- **Spectral Data Support (`torchfits.spectral`)**:
+    - `Spectrum1D`: Specialized container for 1D spectra with flux, uncertainty (ivar/error), and mask handling.
+    - `DataCube`: Support for IFU (Integral Field Unit) cubes with spectral axis and spatial wcs integration.
+    - `SpectralAxis`: Unit-aware spectral coordinate management (wavelength, frequency, velocity).
+- **ML Loader Enhancements**: Improved `FITSDataset` and `create_fits_dataloader` with better payload auto-detection (`hdu="auto"`) and more robust multi-worker handling.
 
 ### Changed
-- **WCS Resolution**: `torchfits.get_wcs` now consistently resolves to the PyTorch-native implementation.
-- **Build System**: Removed all `WCSLIB` detection and linking logic from `CMakeLists.txt`, `pixi.toml`, and `pyproject.toml`.
+- **WCS Resolution**: `torchfits.get_wcs` now consistently resolves to the native PyTorch implementation, removing runtime dependency on external C++ libs for coordinates.
+- **Build System**: Removed all `WCSLIB` detection and linking logic. The C++ engine is now leaner, focusing exclusively on FITS I/O (vendored `cfitsio`).
+- **Standardized Benchmark Output**: Default benchmark results now consistently target the `benchmarks_results/` directory.
+
+### Removed
+- **External Dependency (WCSLIB)**: Completely removed the C++ `wcslib` dependency, significantly reducing binary size and making wheels fully self-contained.
+- **Legacy Components**: Removed the obsolete monolithic `wcs.py` and the redundant `torchfits.fits` namespace.
+- **Developmental Artifacts**: Cleaned up transient test artifacts and local tool metadata.
+
+### Performance
+- **FITS I/O**: Maintained 100% win rate against `fitsio` across 249 image-domain and 140 table-domain cases (typically 10x-100x faster than `astropy` for large-N payloads).
+- **WCS Thruput**: Achieved 1.1x-1.3x leads in high-volume (N > 100k) forward transforms.
+- **Sphere Geometry**: Achieved ~89% win rate across the HEALPix ecosystem; identified optimization targets for spin transforms in 0.3.1.
 
 ## [0.2.1] - 2026-02-14
 
