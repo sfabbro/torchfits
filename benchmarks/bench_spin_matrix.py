@@ -14,12 +14,12 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import json
-import statistics
-import subprocess
-import sys
-from pathlib import Path
+import argparse  # noqa: E402
+import json  # noqa: E402
+import statistics  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 
 OPS = ("map2alm_spin", "alm2map_spin")

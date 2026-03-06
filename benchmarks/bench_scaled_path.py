@@ -14,14 +14,14 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import time
-from statistics import median
-from pathlib import Path
+import time  # noqa: E402
+from statistics import median  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-import torch
-import torchfits
+import torch  # noqa: E402
+import torchfits  # noqa: E402
 
-from bench_all import ExhaustiveBenchmarkSuite
+from bench_all import ExhaustiveBenchmarkSuite  # noqa: E402
 
 
 def _time(fn, iters: int = 20) -> float:

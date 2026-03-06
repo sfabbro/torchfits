@@ -14,16 +14,16 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import json
-import time
-from pathlib import Path
-from typing import Any, Callable
+import argparse  # noqa: E402
+import json  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable  # noqa: E402
 
-import numpy as np
-import torch
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits.sphere.geom import (
+from torchfits.sphere.geom import (  # noqa: E402
     SphericalPolygon,
     query_polygon_general,
     spherical_polygon_contains,

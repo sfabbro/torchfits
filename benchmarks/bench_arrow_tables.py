@@ -22,20 +22,20 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import csv
-import tempfile
-import time
-from pathlib import Path
-from statistics import mean, stdev
+import argparse  # noqa: E402
+import csv  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+from statistics import mean, stdev  # noqa: E402
 
-import numpy as np
-from astropy.table import Table
-import pyarrow as pa
-import torch
+import numpy as np  # noqa: E402
+from astropy.table import Table  # noqa: E402
+import pyarrow as pa  # noqa: E402
+import torch  # noqa: E402
 
-import fitsio
-import torchfits
+import fitsio  # noqa: E402
+import torchfits  # noqa: E402
 
 
 def _build_table(path: Path, rows: int) -> None:

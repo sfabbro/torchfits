@@ -14,18 +14,18 @@ if repo_root not in sys.path:
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 
-import argparse
-import csv
-import json
-import time
-from pathlib import Path
-from typing import Any, Callable
+import argparse  # noqa: E402
+import csv  # noqa: E402
+import json  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable  # noqa: E402
 
-import healpy
-import numpy as np
-import torch
+import healpy  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from torchfits.wcs.healpix import get_all_neighbours, get_interp_val, get_interp_weights
+from torchfits.wcs.healpix import get_all_neighbours, get_interp_val, get_interp_weights  # noqa: E402
 
 
 def _parse_ratio_spec(spec: str | None, allowed_ops: set[str]) -> dict[str, float]:
