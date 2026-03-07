@@ -1,7 +1,5 @@
 """Arrow-native table I/O helpers."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Iterator
 from collections import OrderedDict
 import atexit
