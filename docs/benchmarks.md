@@ -1,6 +1,6 @@
 # torchfits Benchmarks
 
-This page documents the benchmark methodology. The snapshot tables below reflect the **0.3.0** release; update with each release run.
+This page documents the benchmark methodology. The snapshot tables below reflect the **0.3.1** release; update with each release run.
 
 ## Main Scripts
 
@@ -162,11 +162,11 @@ pixi run -e sphere-bench sphere-bench-geometry-gate-small
 For a concise log of attempted optimizations and outcomes (including dead ends), see:
 - `docs/performance_attempts.md`
 
-## 0.3.0 Release Snapshot
+## 0.3.1 Release Snapshot
 
 Run metadata:
 - Date: `2026-03-06`
-- Exhaustive output: `benchmarks_results/release_0.3.0_exhaustive/20260306_120104`
+- Exhaustive output: `benchmarks_results/20260306_191113`
 - Profile: `user` (`cache=10`, `handle_cache=16`, `hot_cache=10`)
 - Tables included: `True`
 
@@ -174,12 +174,12 @@ Run metadata:
 
 | Domain | Family | torchfits First | Win Rate | Legacy In Ranking |
 |---|---|---:|---:|---:|
-| fits | smart | 84/84 | 100.0% | 0 |
+| fits | smart | 83/84 | 98.8% | 0 |
 | fits | specialized | 165/165 | 100.0% | 0 |
 | fitstable | smart | 70/70 | 100.0% | 0 |
 | fitstable | specialized | 70/70 | 100.0% | 0 |
 | sphere | specialized | 16/18 | 88.9% | 0 |
-| wcs | smart | 109/150 | 72.7% | 75 |
+| wcs | smart | 121/150 | 80.7% | 75 |
 
 ### FITS I/O Representative Medians (vs `fitsio`)
 
@@ -190,11 +190,11 @@ Run metadata:
 | `medium_int16_3d [read_full]` | 0.000524 | 0.000782 | 1.49x |
 | `large_float64_2d [read_full]` | 0.005312 | 0.005470 | 1.03x |
 
-### Known Deficits (Target for 0.3.1)
+### Known Deficits (Target for 0.4.0)
 
-- **Sphere (Spin Transforms)**: `map2alm_spin` and `alm2map_spin` show ~4x lag vs `healpy`. These currently use C++ recurrence paths and will be optimized with a custom RING-Fouier kernel.
+- **Sphere (Spin Transforms)**: `map2alm_spin` and `alm2map_spin` show ~6x-7x lag vs `healpy`. These will be optimized with a custom RING-Fouier kernel.
 - **WCS (Small-N)**: Forward transformations for small coordinate arrays (N < 1000) show lag vs `pyast` (legacy). torchfits is optimized for batch throughput (N > 10k), where it leads by 1.1x - 1.3x.
-- **ZPN/AIT Projections**: Slight visible deficits (1.2x-1.4x) in intermediate size tiers (N=10k) for some spherical projections.
+- **ZPN/AIT Projections**: Slight visible deficits in intermediate size tiers.
 
 ## ML Loader Snapshot (0.3.0)
 

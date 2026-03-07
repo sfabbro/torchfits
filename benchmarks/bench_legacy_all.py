@@ -1,54 +1,40 @@
-#!/usr/bin/env python3
-"""
-Exhaustive torchfits benchmark suite.
+import sys
+from pathlib import Path
 
-Tests all data types, formats, and operations with detailed reporting.
-Covers: spectra, images, cubes, tables, MEFs, multi-MEFs, cutouts,
-multi-cutouts, multi-files, compression, WCS, scaling, all sizes.
+# Add project root to sys.path to allow imports from the 'benchmarks' package
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
-Produces comprehensive tables, plots, and summaries.
-"""
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
+import argparse
 import csv
 import gc
 import json
 import os
+import random
+import re
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
+from statistics import mean, median, stdev
+from typing import Any, Dict, List, Optional
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import random  # noqa: E402
-import sys  # noqa: E402
-import tempfile  # noqa: E402
-import threading  # noqa: E402
-import time  # noqa: E402
-from contextlib import contextmanager  # noqa: E402
-from pathlib import Path  # noqa: E402
-from statistics import mean, stdev, median  # noqa: E402
-from typing import Any, Dict, List, Optional  # noqa: E402
 
-# Add benchmarks and src to path
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+import fitsio
+import numpy as np
+import pandas as pd
+import psutil
+import torch
+from astropy.io import fits as astropy_fits
+from astropy.io.fits import CompImageHDU
 
-import fitsio  # noqa: E402
-import sys  # noqa: E402
-import os  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-# Ensure the repository root is in sys.path so we can import benchmarks.config
-repo_root = str(Path(__file__).resolve().parent.parent)
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-
-from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
-
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import psutil  # noqa: E402
-import torch  # noqa: E402
-from astropy.io import fits as astropy_fits  # noqa: E402
-from astropy.io.fits import CompImageHDU  # noqa: E402
-
-import torchfits  # noqa: E402
+import torchfits
 
 configure = None
 plt = None
@@ -2144,8 +2130,6 @@ class ExhaustiveBenchmarkSuite:
         extra_args: Optional[List[str]] = None,
         label: Optional[str] = None,
     ) -> Optional[Any]:
-        import subprocess
-
         cmd = [
             sys.executable,
             script_name,
@@ -2155,11 +2139,13 @@ class ExhaustiveBenchmarkSuite:
         ]
         title = label or script_name
         print(f"[benchmark] Running {title}...")
+        env = {**os.environ, "PYTHONPATH": str(repo_root)}
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             cwd=Path(__file__).parent,
+            env=env,
         )
         if result.returncode != 0:
             print(f"⚠️ {title} failed with exit code {result.returncode}")
@@ -3542,7 +3528,6 @@ class ExhaustiveBenchmarkSuite:
 
     def cleanup(self):
         """Clean up temporary files."""
-        import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         print(f"✓ Cleaned up temporary directory: {self.temp_dir}")
@@ -3570,14 +3555,15 @@ class ExhaustiveBenchmarkSuite:
         command: List[str],
         emit_stdout: bool = False,
     ) -> Dict[str, Any]:
-        import re
         import subprocess
 
+        env = {**os.environ, "PYTHONPATH": str(repo_root)}
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
             cwd=Path(__file__).parent,
+            env=env,
         )
         details: Dict[str, Any] = {"command": command, "returncode": result.returncode}
         speedups = []
@@ -3856,7 +3842,6 @@ class ExhaustiveBenchmarkSuite:
 
 
 def main():
-    import argparse
     import sys
 
     try:

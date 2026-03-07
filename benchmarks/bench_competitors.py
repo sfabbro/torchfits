@@ -14,13 +14,17 @@ import numpy as np
 import torch
 from astropy.wcs import WCS as AstropyWCS
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+root = Path(__file__).resolve().parent.parent
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+# Also add src to sys.path for torchfits development
+src = root / "src"
+if str(src) not in sys.path:
+    sys.path.insert(0, str(src))
 
 from torchfits.wcs.core import WCS as TorchWCS  # noqa: E402
-from bench_wcs import CASES, _make_header, _sample_pixels  # noqa: E402
+from benchmarks.bench_wcs import CASES, _make_header, _sample_pixels  # noqa: E402
 
 try:
     import starlink.Ast as Ast  # type: ignore

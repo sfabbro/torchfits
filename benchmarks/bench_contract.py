@@ -5,10 +5,18 @@ from __future__ import annotations
 
 import csv
 import ast
+import json
 import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+
+def write_json(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2)
+
 
 RESULT_COLUMNS = [
     "run_id",

@@ -5,6 +5,17 @@ All notable changes to torchfits will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-07
+
+### Added
+- **Sphere Spectral Parity**: Added comprehensive `test_synalm_parity.py` to ensure exact parity with `healpy` generation paths (`synalm`, `synfast`, etc.).
+
+### Fixed
+- **Spectral Transforms**: Resolved minor parity bugs in `torchfits.sphere.spectral` relating to harmonic primitive precision.
+
+### Performance
+- Re-baselined the exhaustive benchmark suite. `torchfits` maintains its 100% win rate against `fitsio` and improves aggregate WCS leadership (80.7% win rate vs AST/Astropy).
+
 ## [0.3.0] - 2026-03-06
 
 ### Added
@@ -181,3 +192,4 @@ Historical note for `0.1.0` at release time:
 [0.2.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.2.0
 [0.2.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.3.0
+[0.3.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.3.1

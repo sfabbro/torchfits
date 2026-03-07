@@ -1,20 +1,27 @@
-#!/usr/bin/env python3
-"""Authoritative WCS benchmark sweep runner."""
+import sys
+from pathlib import Path
 
-from __future__ import annotations
-from benchmarks.config import DEFAULT_OUTPUT_DIR
+# Add project root to sys.path to allow imports from the 'benchmarks' package
+root = Path(__file__).resolve().parent.parent
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 import argparse
 import math
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from bench_contract import RESULT_COLUMNS, annotate_rankings, write_csv
-from bench_wcs import CASES, _bench_case, _resolve_device
+from benchmarks.bench_contract import (
+    RESULT_COLUMNS,
+    annotate_rankings,
+    write_csv,
+    write_json,
+)  # noqa: E402
+from benchmarks.bench_wcs import CASES, _bench_case, _resolve_device  # noqa: E402
 
 
 REQUIRED_PROJECTIONS = [
@@ -530,6 +537,7 @@ def _parse_args() -> argparse.Namespace:
         default=1,
         help="Number of repeated seeded runs per case/tier (aggregated by median)",
     )
+    parser.add_argument("--json-out", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -555,6 +563,8 @@ def main() -> int:
 
     out_csv = run_dir / "wcs_results.csv"
     write_csv(out_csv, rows, RESULT_COLUMNS)
+    if args.json_out:
+        write_json(args.json_out, rows)
     print(f"[wcs] wrote {len(rows)} rows to {out_csv}")
     return 0
 

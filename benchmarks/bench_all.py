@@ -9,16 +9,26 @@ Domains:
 """
 
 from __future__ import annotations
-from benchmarks.config import DEFAULT_OUTPUT_DIR
+
+import sys
+from pathlib import Path
+
+# Add project root to sys.path to allow imports from the 'benchmarks' package
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 import argparse
 import json
+import os
 import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
-from bench_contract import (
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+from benchmarks.bench_contract import (  # noqa: E402
     DEFICIT_COLUMNS,
     LARGE_N_THRESHOLD,
     RESULT_COLUMNS,
@@ -30,13 +40,16 @@ from bench_contract import (
     write_csv,
     write_summary,
 )
-from bench_fits_io import run_fits_domain
-from bench_fitstable_io import run_fitstable_domain
-from bench_sphere_suite import run_sphere_domain
-from bench_wcs_suite import REQUIRED_PROJECTIONS, WCS_SAMPLE_SEED_BASE, run_wcs_domain
+from benchmarks.bench_fits_io import run_fits_domain  # noqa: E402
+from benchmarks.bench_fitstable_io import run_fitstable_domain  # noqa: E402
+from benchmarks.bench_sphere_suite import run_sphere_domain  # noqa: E402
+from benchmarks.bench_wcs_suite import (
+    REQUIRED_PROJECTIONS,
+    WCS_SAMPLE_SEED_BASE,
+    run_wcs_domain,
+)  # noqa: E402
 
 
-ROOT = Path(__file__).resolve().parents[1]
 QUICK_CASES_PER_DOMAIN = 3
 
 
@@ -331,12 +344,14 @@ def _run_wcs_legacy_bridge(
         "--json-out",
         str(bridge_json),
     ]
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
     proc = subprocess.run(
         cmd,
         cwd=str(ROOT),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=env,
     )
     log_path = bridge_root / "bridge.log"
     log_path.write_text(proc.stdout or "", encoding="utf-8")

@@ -1,21 +1,31 @@
-#!/usr/bin/env python3
-"""Sphere benchmark domain orchestrator (geometry/advanced/sparse/spectral/polygon/core)."""
+import sys
+from pathlib import Path
 
-from __future__ import annotations
-from benchmarks.config import DEFAULT_OUTPUT_DIR
+# Add project root to sys.path to allow imports from the 'benchmarks' package
+root = Path(__file__).resolve().parent.parent
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 import argparse
 import json
 import math
+import os
 import subprocess
-import sys
 import time
-from pathlib import Path
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from typing import Any
 
 import torch
 
-from bench_contract import RESULT_COLUMNS, annotate_rankings, write_csv
+from benchmarks.bench_contract import (
+    RESULT_COLUMNS,
+    annotate_rankings,
+    write_csv,
+    write_json,
+)  # noqa: E402
 
 
 REQUIRED_COMPARATORS = ["healpy", "hpgeom", "astropy-healpix", "healsparse"]
@@ -25,8 +35,9 @@ def _run_json_command(
     name: str, cmd: list[str], out_json: Path
 ) -> tuple[bool, list[dict[str, Any]], str]:
     out_json.parent.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "PYTHONPATH": str(root)}
     proc = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
     )
     if proc.returncode != 0:
         return (
@@ -1244,6 +1255,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--no-gpu", action="store_true")
+    parser.add_argument("--json-out", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -1257,6 +1269,8 @@ def main() -> int:
     )
     out_csv = run_dir / "sphere_results.csv"
     write_csv(out_csv, rows, RESULT_COLUMNS)
+    if args.json_out:
+        write_json(args.json_out, rows)
     print(f"[sphere] wrote {len(rows)} rows to {out_csv}")
     return 0
 
