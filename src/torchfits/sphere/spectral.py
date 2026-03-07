@@ -4023,14 +4023,6 @@ def alm2map_spin(
         # OR torch.mv(Y.T, C)? Y is (Nalm, Npix). Y.T is (Npix, Nalm).
         # P = Y.T @ C
 
-        # But we also have the complex conjugation symmetry logic from original code?
-        # Original:
-        # p_plus = p_plus + p_plus_m
-        # p_minus = p_minus + p_minus_m
-        # if m > 0:
-        #     p_plus = p_plus + torch.conj(p_minus_m)
-        #     p_minus = p_minus + torch.conj(p_plus_m)
-
         # This implies cross-contribution for m > 0.
         # This relationship P_- = conj(P_+) holds for real tensor fields.
         # But here we are computing P from alms.
