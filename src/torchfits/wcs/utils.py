@@ -47,13 +47,13 @@ def solve_newton_raphson(
     def get_residuals(curr_ra, curr_dec):
         # Calculate angular distance robustly
         d_dec = curr_dec - target_dec
-        d_ra = curr_ra - target_ra
 
-        # Handle RA wrap around
-        d_ra = (d_ra + 180) % 360 - 180
+        # Handle RA wrap around and scaling in-place for performance
+        d_ra = curr_ra.sub(target_ra).add_(180)
+        torch.remainder(d_ra, 360, out=d_ra)
+        d_ra.sub_(180).mul_(target_cos_dec)
 
-        # Scaling RA by cos(dec) for linear-ish residuals
-        return d_ra * target_cos_dec, d_dec
+        return d_ra, d_dec
 
     # Step size for numerical Jacobian (in pixels).
     eps = 1e-3 if x.dtype == torch.float64 else 5e-3
@@ -81,9 +81,10 @@ def solve_newton_raphson(
 
         def get_residuals_active(curr_ra_a, curr_dec_a):
             d_dec = curr_dec_a - t_dec_a
-            d_ra = curr_ra_a - t_ra_a
-            d_ra = (d_ra + 180) % 360 - 180
-            return d_ra * cos_dec_a, d_dec
+            d_ra = curr_ra_a.sub(t_ra_a).add_(180)
+            torch.remainder(d_ra, 360, out=d_ra)
+            d_ra.sub_(180).mul_(cos_dec_a)
+            return d_ra, d_dec
 
         r_ra, r_dec = get_residuals_active(curr_ra, curr_dec)
         dist2 = r_ra**2 + r_dec**2
