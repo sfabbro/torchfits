@@ -386,5 +386,125 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
+from unittest.mock import patch, MagicMock
+from torchfits.cache import CacheConfig
+
+class TestCacheConfig:
+    """Test CacheConfig functionality."""
+
+    def test_default_initialization(self):
+        config = CacheConfig()
+        assert config.max_files == 100
+        assert config.max_memory_mb == 1024
+        assert config.disk_cache_gb == 10
+        assert config.prefetch_enabled is True
+
+    def test_custom_initialization(self):
+        config = CacheConfig(
+            max_files=50,
+            max_memory_mb=512,
+            disk_cache_gb=5,
+            prefetch_enabled=False
+        )
+        assert config.max_files == 50
+        assert config.max_memory_mb == 512
+        assert config.disk_cache_gb == 5
+        assert config.prefetch_enabled is False
+
+    @patch("torchfits.cache.psutil", None)
+    def test_for_environment_no_psutil(self):
+        config = CacheConfig.for_environment()
+        assert config.max_files == 100
+        assert config.max_memory_mb == 1024
+        assert config.disk_cache_gb == 5
+        assert config.prefetch_enabled is False
+
+    @patch("torchfits.cache.psutil")
+    @patch.object(CacheConfig, "_is_hpc_environment", return_value=True)
+    def test_for_environment_hpc(self, mock_hpc, mock_psutil):
+        mock_memory = MagicMock()
+        mock_memory.total = 100 * (1024**3)  # 100 GB
+        mock_psutil.virtual_memory.return_value = mock_memory
+
+        config = CacheConfig.for_environment()
+        assert config.max_files == 1000
+        assert config.max_memory_mb == int(100 * 1024 * 0.3)
+        assert config.disk_cache_gb == 50
+        assert config.prefetch_enabled is True
+
+    @patch("torchfits.cache.psutil")
+    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
+    @patch.object(CacheConfig, "_is_cloud_environment", return_value=True)
+    def test_for_environment_cloud(self, mock_cloud, mock_hpc, mock_psutil):
+        mock_memory = MagicMock()
+        mock_memory.total = 16 * (1024**3)  # 16 GB
+        mock_psutil.virtual_memory.return_value = mock_memory
+
+        config = CacheConfig.for_environment()
+        assert config.max_files == 500
+        assert config.max_memory_mb == int(16 * 1024 * 0.2)
+        assert config.disk_cache_gb == 20
+        assert config.prefetch_enabled is True
+
+    @patch("torchfits.cache.psutil")
+    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
+    @patch.object(CacheConfig, "_is_cloud_environment", return_value=False)
+    @patch.object(CacheConfig, "_is_gpu_environment", return_value=True)
+    def test_for_environment_gpu(self, mock_gpu, mock_cloud, mock_hpc, mock_psutil):
+        mock_memory = MagicMock()
+        mock_memory.total = 32 * (1024**3)  # 32 GB
+        mock_psutil.virtual_memory.return_value = mock_memory
+
+        config = CacheConfig.for_environment()
+        assert config.max_files == 200
+        assert config.max_memory_mb == int(32 * 1024 * 0.4)
+        assert config.disk_cache_gb == 30
+        assert config.prefetch_enabled is True
+
+    @patch("torchfits.cache.psutil")
+    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
+    @patch.object(CacheConfig, "_is_cloud_environment", return_value=False)
+    @patch.object(CacheConfig, "_is_gpu_environment", return_value=False)
+    def test_for_environment_default(self, mock_gpu, mock_cloud, mock_hpc, mock_psutil):
+        mock_memory = MagicMock()
+        mock_memory.total = 8 * (1024**3)  # 8 GB
+        mock_psutil.virtual_memory.return_value = mock_memory
+
+        config = CacheConfig.for_environment()
+        assert config.max_files == 100
+        assert config.max_memory_mb == min(2048, int(8 * 1024 * 0.1))
+        assert config.disk_cache_gb == 5
+        assert config.prefetch_enabled is False
+
+    @patch.dict(os.environ, {"SLURM_JOB_ID": "12345"})
+    def test_is_hpc_environment_true(self):
+        assert CacheConfig._is_hpc_environment() is True
+
+    @patch.dict(os.environ, clear=True)
+    def test_is_hpc_environment_false(self):
+        assert CacheConfig._is_hpc_environment() is False
+
+    @patch.dict(os.environ, {"AWS_EXECUTION_ENV": "AWS_Lambda"})
+    def test_is_cloud_environment_true(self):
+        assert CacheConfig._is_cloud_environment() is True
+
+    @patch.dict(os.environ, clear=True)
+    def test_is_cloud_environment_false(self):
+        assert CacheConfig._is_cloud_environment() is False
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.device_count", return_value=1)
+    def test_is_gpu_environment_true(self, mock_count, mock_available):
+        assert CacheConfig._is_gpu_environment() is True
+
+    @patch("torch.cuda.is_available", return_value=False)
+    def test_is_gpu_environment_false_not_available(self, mock_available):
+        assert CacheConfig._is_gpu_environment() is False
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.device_count", return_value=0)
+    def test_is_gpu_environment_false_no_devices(self, mock_count, mock_available):
+        assert CacheConfig._is_gpu_environment() is False
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
