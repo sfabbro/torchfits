@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Dict
 
 import torch
@@ -15,7 +13,7 @@ def to_pandas(
     encoding: str = "ascii",
     strip: bool = True,
     vla_policy: str = "object",
-) -> pd.DataFrame:
+) -> "pd.DataFrame":
     """
     Convert a dictionary of PyTorch tensors to a Pandas DataFrame.
     Attempts to use zero-copy conversion where possible (via numpy).
@@ -70,7 +68,7 @@ def to_arrow(
     encoding: str = "ascii",
     strip: bool = True,
     vla_policy: str = "list",
-) -> pa.Table:
+) -> "pa.Table":
     """
     Convert a dictionary of PyTorch tensors to a PyArrow Table.
     Attempts to use zero-copy conversion where possible.
