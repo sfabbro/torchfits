@@ -250,18 +250,12 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
 
     if (num_threads < 1) num_threads = at::get_num_threads();
 
-    // Debug Prints
-    // if (num_threads > 1) {
-    //       std::cout << "Debug: Image (" << width << "x" << height << ") Tiles(" << tile_w << "x" << tile_h << ") Count=" << nrows << " Threads=" << num_threads << std::endl;
-    // }
-
     std::vector<std::thread> workers;
     workers.reserve(num_threads);
     int64_t chunk_size = (nrows + num_threads - 1) / num_threads;
 
     auto worker_func = [&](int64_t begin, int64_t end, int tid) {
         std::vector<unsigned int> scratch(tile_w * tile_h);
-        // if (tid == 0) std::cout << "Debug: Thread " << tid << " processing " << begin << " to " << end << " (chunk size " << (end-begin) << ")" << std::endl;
 
         for (int64_t r = begin; r < end; ++r) {
             uint64_t len = 0;
