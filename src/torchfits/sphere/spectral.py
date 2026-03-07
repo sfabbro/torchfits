@@ -376,7 +376,7 @@ def _legendre_rec_coeffs(m: int, lmax: int) -> tuple[list[float], list[float]]:
         b_lm = math.sqrt(
             (2.0 * ell + 1.0)
             / (2.0 * ell - 3.0)
-            * ((ell - 1.0) ** 2 - m * m)
+            * (((ell - 1.0) * (ell - 1.0)) - m * m)
             / (ell * ell - m * m)
         )
         a_list.append(a_lm)
@@ -572,7 +572,7 @@ def _wigner_d_l_sequence(
         # (ell-1)^2 - m^2 ...
         # Actually it's cleaner to compute just what's needed.
 
-        sq_lm1 = math.sqrt(((ell - 1) ** 2 - m * m) * ((ell - 1) ** 2 - mp * mp))
+        sq_lm1 = math.sqrt((((ell - 1) * (ell - 1)) - m * m) * (((ell - 1) * (ell - 1)) - mp * mp))
 
         # Coefficients
         # LHS factor: pre_factor = l / K_l

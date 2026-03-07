@@ -190,13 +190,13 @@ class MOC:
             return 0.0
         nsides, _ = uniq2nest(self.uniq)
         # Area of a pixel at nside is 4pi / (12 * nside^2)
-        pix_areas = (4.0 * math.pi) / (12.0 * nsides.to(torch.float64) ** 2)
+        pix_areas = (4.0 * math.pi) / (12.0 * torch.square(nsides.to(torch.float64)))
         return float(pix_areas.sum().item())
 
     @property
     def area_sq_deg(self) -> float:
         """Total area covered by the MOC in square degrees."""
-        return self.area * (180.0 / math.pi) ** 2
+        return self.area * ((180.0 / math.pi) * (180.0 / math.pi))
 
     def contains_moc(self, other: "MOC") -> bool:
         """Return True if this MOC contains all of other MOC (subset check)."""

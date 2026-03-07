@@ -50,7 +50,8 @@ class SparseHealpixMap:
     def pixels_per_cov(self) -> int:
         if self.nside_coverage is None:
             return 1
-        return (self.nside // self.nside_coverage) ** 2
+        ratio = self.nside // self.nside_coverage
+        return ratio * ratio
 
     @classmethod
     def from_dense(
@@ -179,7 +180,8 @@ class SparseHealpixMap:
         if self.pixels.numel() == 0:
             return
 
-        ratio2 = (self.nside // self.nside_coverage) ** 2
+        ratio = self.nside // self.nside_coverage
+        ratio2 = ratio * ratio
         cov_pixels = torch.div(self.pixels, ratio2, rounding_mode="floor")
         unique_cov = torch.unique(cov_pixels)
 
