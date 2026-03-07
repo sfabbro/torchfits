@@ -144,20 +144,39 @@ def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
 
     data = {}
 
-    # Extract numerical columns
-    if stype.numerical in tf.feat_dict:
-        tensor = tf.feat_dict[stype.numerical]
-        names = tf.col_names_dict[stype.numerical]
-        for i, name in enumerate(names):
-            data[name] = tensor[:, i]
+    # Process all available stypes dynamically
+    for stype_enum, tensor in tf.feat_dict.items():
+        names = tf.col_names_dict[stype_enum]
 
-    # Extract categorical columns
-    if stype.categorical in tf.feat_dict:
-        tensor = tf.feat_dict[stype.categorical]
-        names = tf.col_names_dict[stype.categorical]
-        for i, name in enumerate(names):
-            data[name] = tensor[:, i]
+        # 1D/2D continuous types
+        if stype_enum in [stype.numerical, stype.categorical, getattr(stype, "timestamp", None)]:
+            for i, name in enumerate(names):
+                data[name] = tensor[:, i]
 
-    # TODO: Handle other stypes if needed
+        # 3D continuous types (e.g. embeddings)
+        elif stype_enum in [getattr(stype, "embedding", None), getattr(stype, "text_embedded", None), getattr(stype, "image_embedded", None)]:
+            for i, name in enumerate(names):
+                data[name] = tensor[:, i, :]
+
+        # Variable-length nested types
+        elif stype_enum in [getattr(stype, "sequence_numerical", None), getattr(stype, "multicategorical", None)]:
+            from torch_frame.data import MultiNestedTensor
+            if isinstance(tensor, MultiNestedTensor):
+                num_rows = tensor.num_rows
+                num_cols = tensor.num_cols
+                values = tensor.values
+                offset = tensor.offset
+
+                for j, name in enumerate(names):
+                    col_data = []
+                    for i in range(num_rows):
+                        start = offset[i * num_cols + j].item()
+                        end = offset[i * num_cols + j + 1].item()
+                        col_data.append(values[start:end])
+                    data[name] = col_data
+            else:
+                warnings.warn(f"Expected MultiNestedTensor for stype {stype_enum.name}, got {type(tensor)}")
+        else:
+            warnings.warn(f"Skipping unsupported stype: {stype_enum.name}")
 
     torchfits.write(path, data, overwrite=overwrite)
