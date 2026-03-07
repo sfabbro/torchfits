@@ -101,24 +101,6 @@ class WCS:
         if header is not None:
             self.naxis = int(header.get("NAXIS", 2))
             self._parse_header(header)
-            # Check for SIP
-            if "A_ORDER" in header or "B_ORDER" in header:
-                self.sip = SIP(header)
-
-            # Check for TPV (Tangent with PV distortion)
-            # SCAMP often uses CTYPE = RA---TAN with PV1_j keywords
-            has_pv = any(k in self.wcs_params for k in PV1_KEYS) or any(
-                k in self.wcs_params for k in PV2_KEYS
-            )
-            is_tpv_ctype = (
-                self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
-            )
-
-            if is_tpv_ctype or (
-                self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TAN")
-                and has_pv
-            ):
-                self.tpv = TPV(self.wcs_params)
 
         # Override with kwargs
         for k, v in kwargs.items():
@@ -147,12 +129,8 @@ class WCS:
         self._compiled_pixel_to_world_2d_fn = None
         self._compiled_world_to_pixel_2d_fn = None
 
-    def _parse_header(self, header: Dict[str, Any]):
-        """Parse standard FITS WCS keywords."""
-        # Standard defaults
-        self.wcs_params["NAXIS"] = header.get("NAXIS", 2)
-
-        # CTYPEs
+    def _parse_core(self, header: Dict[str, Any]) -> None:
+        """Parse core WCS keywords (CTYPE, CRPIX, CRVAL, CDELT, CUNIT)."""
         for i in range(1, self.naxis + 1):
             self.wcs_params[f"CTYPE{i}"] = str(header.get(f"CTYPE{i}", ""))
             self.wcs_params[f"CRPIX{i}"] = float(header.get(f"CRPIX{i}", 0.0))
@@ -161,7 +139,8 @@ class WCS:
             if f"CUNIT{i}" in header:
                 self.wcs_params[f"CUNIT{i}"] = str(header.get(f"CUNIT{i}", ""))
 
-        # Capture CD/PC matrix keywords
+    def _parse_cd_pc(self, header: Dict[str, Any]) -> None:
+        """Parse CD and PC matrix keywords."""
         for i in range(1, self.naxis + 1):
             for j in range(1, self.naxis + 1):
                 cd_key = f"CD{i}_{j}"
@@ -171,14 +150,15 @@ class WCS:
                 if pc_key in header:
                     self.wcs_params[pc_key] = float(header[pc_key])
 
-        # Pole defaults can be projection dependent, but preserve explicit header values
+    def _parse_pole(self, header: Dict[str, Any]) -> None:
+        """Parse LONPOLE and LATPOLE keywords."""
         if "LONPOLE" in header:
             self.wcs_params["LONPOLE"] = float(header["LONPOLE"])
         if "LATPOLE" in header:
             self.wcs_params["LATPOLE"] = float(header["LATPOLE"])
 
-        # Capture PV keywords (PVi_j)
-        # SCAMP/PV distortions can have many terms (0..39 typically)
+    def _parse_pv(self, header: Dict[str, Any]) -> None:
+        """Parse PV distortion keywords."""
         for key in PV1_KEYS:
             if key in header:
                 self.wcs_params[key] = float(header[key])
@@ -186,21 +166,47 @@ class WCS:
             if key in header:
                 self.wcs_params[key] = float(header[key])
 
-        # Capture WAT keywords for TNX/ZPX
-        # Reconstruct them here to avoid doing it every call
+    def _parse_wat(self, header: Dict[str, Any]) -> None:
+        """Parse WAT keywords for TNX/ZPX projections."""
         self.wat_data = {}
-        from .legacy import parse_wat_keywords  # Helper
-
-        # Check for WAT1_*, WAT2_*
-        has_wat = False
-        for k in header.keys():
-            if k.startswith("WAT"):
-                has_wat = True
-                break
-
+        has_wat = any(k.startswith("WAT") for k in header.keys())
         if has_wat:
+            from .legacy import parse_wat_keywords
+
             self.wat_data[1] = parse_wat_keywords(header, 1)
             self.wat_data[2] = parse_wat_keywords(header, 2)
+
+    def _parse_sip(self, header: Dict[str, Any]) -> None:
+        """Parse SIP distortion keywords."""
+        if "A_ORDER" in header or "B_ORDER" in header:
+            self.sip = SIP(header)
+
+    def _parse_tpv(self) -> None:
+        """Determine if TPV distortion is present."""
+        has_pv = any(k in self.wcs_params for k in PV1_KEYS) or any(
+            k in self.wcs_params for k in PV2_KEYS
+        )
+        is_tpv_ctype = (
+            self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
+        )
+
+        if is_tpv_ctype or (
+            self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TAN")
+            and has_pv
+        ):
+            self.tpv = TPV(self.wcs_params)
+
+    def _parse_header(self, header: Dict[str, Any]):
+        """Parse standard FITS WCS keywords."""
+        self.wcs_params["NAXIS"] = header.get("NAXIS", 2)
+
+        self._parse_core(header)
+        self._parse_cd_pc(header)
+        self._parse_pole(header)
+        self._parse_pv(header)
+        self._parse_wat(header)
+        self._parse_sip(header)
+        self._parse_tpv()
 
     def _setup_tensors(self):
         """Convert scalar params to PyTorch tensors for computation."""
