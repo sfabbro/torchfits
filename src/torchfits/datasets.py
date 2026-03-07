@@ -150,7 +150,7 @@ class IterableFITSDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[Any]:
         """Iterate over the dataset."""
-        # Get worker info for distributed processing
+        # Get worker info for distributed processing (already highly optimized)
         worker_info = torch.utils.data.get_worker_info()
 
         if worker_info is None:
