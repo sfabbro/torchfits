@@ -3,20 +3,10 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Ensure the repository root is in sys.path so we can import benchmarks.config
-repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-
-from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
-
-
 import argparse
 import json
 import time
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,7 +15,13 @@ import healpy
 import numpy as np
 import torch
 
-from torchfits.wcs.healpix import get_interp_val, get_interp_weights
+# Ensure the repository root is in sys.path so we can import benchmarks.config
+repo_root = str(Path(__file__).resolve().parent.parent.parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
+from torchfits.wcs.healpix import get_interp_val, get_interp_weights  # noqa: E402
 
 
 @dataclass

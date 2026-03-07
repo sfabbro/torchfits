@@ -1,8 +1,7 @@
-import os
 from unittest.mock import MagicMock
-import pytest
-from torchfits.cache import get_optimal_cache_config, CacheConfig
+from torchfits.cache import CacheConfig, get_optimal_cache_config
 import torchfits.cache
+
 
 def test_optimal_cache_config_no_psutil(monkeypatch):
     """Test fallback when psutil is not available."""
@@ -20,6 +19,7 @@ def test_optimal_cache_config_no_psutil(monkeypatch):
     assert config["disk_cache_gb"] == 5
     assert config["prefetch_enabled"] is False
     assert config["environment"] == "local"
+
 
 def test_optimal_cache_config_local(monkeypatch):
     """Test default local environment."""
@@ -42,6 +42,7 @@ def test_optimal_cache_config_local(monkeypatch):
     assert config["max_memory_mb"] == 1638
     assert config["disk_cache_gb"] == 5
 
+
 def test_optimal_cache_config_hpc(monkeypatch):
     """Test HPC environment detection."""
     mock_psutil = MagicMock()
@@ -60,6 +61,7 @@ def test_optimal_cache_config_hpc(monkeypatch):
     assert config["disk_cache_gb"] == 50
     assert config["prefetch_enabled"] is True
 
+
 def test_optimal_cache_config_cloud(monkeypatch):
     """Test cloud environment detection."""
     mock_psutil = MagicMock()
@@ -77,6 +79,7 @@ def test_optimal_cache_config_cloud(monkeypatch):
     assert config["max_files"] == 500
     assert config["disk_cache_gb"] == 20
     assert config["prefetch_enabled"] is True
+
 
 def test_optimal_cache_config_gpu(monkeypatch):
     """Test GPU workstation detection."""

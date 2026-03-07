@@ -5,28 +5,24 @@ This module provides focused benchmarks for buffer management performance,
 including memory pools, streaming buffers, and allocation patterns.
 """
 
-# Add benchmarks and src to path for imports
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict
 
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-import pandas as pd  # noqa: E402
-import sys
-from pathlib import Path
+import pandas as pd
+import torch
 
 # Ensure the repository root is in sys.path so we can import benchmarks.config
 repo_root = str(Path(__file__).resolve().parent.parent)
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
+# Standard benchmark path setup
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
-
-import torch  # noqa: E402
-
 from torchfits import buffer  # noqa: E402
 
 

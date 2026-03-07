@@ -4,12 +4,14 @@ Test caching functionality.
 
 import os
 import tempfile
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
 import torchfits
+from torchfits.cache import CacheConfig
 
 
 class TestCaching:
@@ -386,9 +388,6 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
-from unittest.mock import patch, MagicMock
-from torchfits.cache import CacheConfig
-
 class TestCacheConfig:
     """Test CacheConfig functionality."""
 
@@ -401,10 +400,7 @@ class TestCacheConfig:
 
     def test_custom_initialization(self):
         config = CacheConfig(
-            max_files=50,
-            max_memory_mb=512,
-            disk_cache_gb=5,
-            prefetch_enabled=False
+            max_files=50, max_memory_mb=512, disk_cache_gb=5, prefetch_enabled=False
         )
         assert config.max_files == 50
         assert config.max_memory_mb == 512
@@ -505,6 +501,7 @@ class TestCacheConfig:
     @patch("torch.cuda.device_count", return_value=0)
     def test_is_gpu_environment_false_no_devices(self, mock_count, mock_available):
         assert CacheConfig._is_gpu_environment() is False
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
