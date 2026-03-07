@@ -1246,7 +1246,7 @@ class WCS:
         X = xi * self._d2r
         Y = eta * self._d2r
 
-        r2 = (X * 0.25) ** 2 + (Y * 0.5) ** 2
+        r2 = torch.square(X * 0.25) + torch.square(Y * 0.5)
         valid = r2 <= 1.0
         z = torch.sqrt(torch.clamp(1.0 - r2, min=0.0))
 

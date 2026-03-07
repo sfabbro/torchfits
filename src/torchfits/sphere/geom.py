@@ -442,7 +442,7 @@ def spherical_triangle_area(
     c = lonlat_to_unit_xyz(lon3_deg, lat3_deg)
     area_sr = torch.abs(_signed_area_triangle(a, b, c))
     if degrees:
-        return area_sr * (180.0 / math.pi) ** 2
+        return area_sr * ((180.0 / math.pi) * (180.0 / math.pi))
     return area_sr
 
 
@@ -468,7 +468,7 @@ def spherical_polygon_signed_area(
     c = v[2:]
     area = _signed_area_triangle(a, b, c).sum()
     if degrees:
-        return area * (180.0 / math.pi) ** 2
+        return area * ((180.0 / math.pi) * (180.0 / math.pi))
     return area
 
 
@@ -494,7 +494,7 @@ def spherical_polygon_area(
         if float(area.item()) > 2.0 * math.pi:
             area = torch.tensor(full, dtype=area.dtype, device=area.device) - area
     if degrees:
-        return area * (180.0 / math.pi) ** 2
+        return area * ((180.0 / math.pi) * (180.0 / math.pi))
     return area
 
 
@@ -805,7 +805,7 @@ def _estimate_area_from_query(
         convergence_rel = abs(prev_area - a_prev) / max(abs(prev_area), 1e-15)
     return RegionAreaEstimate(
         area_sr=prev_area,
-        area_deg2=prev_area * (180.0 / math.pi) ** 2,
+        area_deg2=prev_area * ((180.0 / math.pi) * (180.0 / math.pi)),
         nside=ladder[-1],
         pixels=pixels_by_nside[str(ladder[-1])],
         convergence_rel=convergence_rel,
@@ -1509,7 +1509,7 @@ class ExactSphericalRegion:
     def area(self, *, degrees: bool = False) -> float:
         area_sr = float(self._sg_poly.area())
         if degrees:
-            return area_sr * (180.0 / math.pi) ** 2
+            return area_sr * ((180.0 / math.pi) * (180.0 / math.pi))
         return area_sr
 
     def intersects(self, other: RegionOperand, *, cap_steps: int = 256) -> bool:

@@ -352,7 +352,7 @@ def _pix2thetaphi_ring(nside: int, pix: Tensor) -> tuple[Tensor, Tensor]:
         p = pix_t[north]
         iring = (1 + _isqrt(1 + 2 * p)) >> 1
         iphi = (p + 1) - 2 * iring * (iring - 1)
-        tmp = (iring.to(f_dtype) ** 2) * fact2
+        tmp = torch.square(iring.to(f_dtype)) * fact2
         z[north] = 1.0 - tmp
         sint = torch.sqrt(torch.clamp(tmp * (2.0 - tmp), min=0.0))
         theta[north] = torch.atan2(sint, z[north])
@@ -374,7 +374,7 @@ def _pix2thetaphi_ring(nside: int, pix: Tensor) -> tuple[Tensor, Tensor]:
         ip = npix - p
         iring = (1 + _isqrt(2 * ip - 1)) >> 1
         iphi = 4 * iring + 1 - (ip - 2 * iring * (iring - 1))
-        tmp = (iring.to(f_dtype) ** 2) * fact2
+        tmp = torch.square(iring.to(f_dtype)) * fact2
         z[south] = -1.0 + tmp
         sint = torch.sqrt(torch.clamp(tmp * (2.0 - tmp), min=0.0))
         theta[south] = math.pi - torch.atan2(sint, 1.0 - tmp)
@@ -516,10 +516,10 @@ def pix2ang_nested(nside: int, pix: Tensor) -> Tuple[Tensor, Tensor]:
     equat = ~(north | south)
 
     nr[north] = jr[north]
-    z[north] = 1.0 - (nr[north].to(f_dtype) ** 2) * fact2
+    z[north] = 1.0 - torch.square(nr[north].to(f_dtype)) * fact2
 
     nr[south] = nl4 - jr[south]
-    z[south] = (nr[south].to(f_dtype) ** 2) * fact2 - 1.0
+    z[south] = torch.square(nr[south].to(f_dtype)) * fact2 - 1.0
 
     if equat.any():
         nr[equat] = nside
@@ -642,7 +642,7 @@ def nside2pixarea(nside: int, degrees: bool = False) -> float:
     area_sr = 4.0 * math.pi / float(nside2npix(nside))
     if not degrees:
         return area_sr
-    return area_sr * ((180.0 / math.pi) ** 2)
+    return area_sr * ((180.0 / math.pi) * (180.0 / math.pi))
 
 
 def nside2resol(nside: int, arcmin: bool = False) -> float:
@@ -830,9 +830,9 @@ def boundaries(nside: int, pix: Tensor, step: int = 1, nest: bool = False) -> Te
     equat = ~(north | south)
 
     nr[north] = jr[north]
-    z[north] = 1.0 - (nr[north] ** 2) * fact2
+    z[north] = 1.0 - torch.square(nr[north]) * fact2
     nr[south] = 4 * nside - jr[south]
-    z[south] = -1.0 + (nr[south] ** 2) * fact2
+    z[south] = -1.0 + torch.square(nr[south]) * fact2
     nr[equat] = nside
     z[equat] = (2 * nside - jr[equat]) * fact1
 
@@ -2037,9 +2037,7 @@ def angular_distance_deg(
 
     dr = r1 - r2
     dd = d1 - d2
-    a = torch.sin(dd * 0.5) ** 2 + torch.cos(d1) * torch.cos(d2) * (
-        torch.sin(dr * 0.5) ** 2
-    )
+    a = torch.square(torch.sin(dd * 0.5)) + torch.cos(d1) * torch.cos(d2) * torch.square(torch.sin(dr * 0.5))
     return torch.rad2deg(2.0 * torch.asin(torch.sqrt(torch.clamp(a, 0.0, 1.0))))
 
 
