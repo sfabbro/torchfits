@@ -1,7 +1,5 @@
 """Compatibility-focused spherical API surface."""
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 import math
 from typing import Literal
