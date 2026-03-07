@@ -1,7 +1,5 @@
 """CPU-first spherical harmonic primitives for HEALPix maps."""
 
-from __future__ import annotations
-
 import os
 import math
 from collections import OrderedDict
