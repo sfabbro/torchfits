@@ -1,7 +1,5 @@
 """Minimal I/O helpers for fast image reads."""
 
-from __future__ import annotations
-
 from typing import Union
 
 import torch
