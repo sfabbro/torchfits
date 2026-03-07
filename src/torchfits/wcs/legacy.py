@@ -231,6 +231,9 @@ def project_tnx(
     return xi_out, eta_out
 
 
+_ZPX_PATTERN = re.compile(r"projp(\d+)\s*=\s*(\S+)", re.IGNORECASE)
+
+
 def extract_zpx_params(wat_data: Dict[int, str]) -> Dict[str, float]:
     """
     Extract ZPN coefficients (projp_i) from WAT strings and return as PV2_i.
@@ -245,10 +248,8 @@ def extract_zpx_params(wat_data: Dict[int, str]) -> Dict[str, float]:
     # e.g. "projp1 = 0.5"
     # Case insensitive?
 
-    pattern = re.compile(r"projp(\d+)\s*=\s*(\S+)", re.IGNORECASE)
-
     for axis, wstr in wat_data.items():
-        matches = pattern.findall(wstr)
+        matches = _ZPX_PATTERN.findall(wstr)
         for m in matches:
             idx = int(m[0])
             val = float(m[1])
