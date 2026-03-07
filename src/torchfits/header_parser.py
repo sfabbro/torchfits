@@ -202,7 +202,7 @@ class FastHeaderParser:
         # 3. Fast path for numbers without regex
         if first_char in "+-0123456789.":
             try:
-                if '.' in value_str or 'e' in value_str or 'E' in value_str:
+                if "." in value_str or "e" in value_str or "E" in value_str:
                     return float(value_str)
                 return int(value_str)
             except ValueError:
