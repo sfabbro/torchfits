@@ -178,8 +178,7 @@ inline torch::Tensor as_f64_contig(nb::object obj) {
 
 }  // namespace
 
-NB_MODULE(cpp, m) {
-
+void bind_wcs(nb::module_& m) {
     m.def(
         "wcs_pixel_to_world_fused_cpu",
         [](nb::object x_obj, nb::object y_obj, nb::object ra_obj, nb::object dec_obj,
@@ -270,6 +269,1443 @@ NB_MODULE(cpp, m) {
         "tpv_idx2"_a = nb::none(), "tpv_c2"_a = nb::none()
     );
 
+    m.def("wcs_zenithal_project",
+          [](nb::object xi_obj, nb::object eta_obj, std::string proj_code) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_zenithal_project(xi, eta, proj_code);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("proj_code"));
+
+    m.def("wcs_zpn_project",
+          [](nb::object xi_obj, nb::object eta_obj, nb::object coeffs_obj) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              auto coeffs = as_f64_contig(coeffs_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_zpn_project(xi, eta, coeffs);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("coeffs"));
+
+    m.def("wcs_zenithal_deproject",
+          [](nb::object phi_obj, nb::object theta_obj, std::string proj_code) {
+              auto phi = as_f64_contig(phi_obj);
+              auto theta = as_f64_contig(theta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_zenithal_deproject(phi, theta, proj_code);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"), nb::arg("proj_code"));
+
+    m.def("wcs_cylindrical_project",
+          [](nb::object xi_obj, nb::object eta_obj, std::string proj_code, double lambda_param) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_cylindrical_project(xi, eta, proj_code, lambda_param);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("proj_code"), nb::arg("lambda_param") = 1.0);
+
+    m.def("wcs_cylindrical_deproject",
+          [](nb::object phi_obj, nb::object theta_obj, std::string proj_code, double lambda_param) {
+              auto phi = as_f64_contig(phi_obj);
+              auto theta = as_f64_contig(theta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_cylindrical_deproject(phi, theta, proj_code, lambda_param);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"), nb::arg("proj_code"), nb::arg("lambda_param") = 1.0);
+
+    m.def("wcs_center_pixel_to_world",
+          [](nb::object x_obj,
+             nb::object y_obj,
+             double origin,
+             double crpix0,
+             double crpix1,
+             double cd00,
+             double cd01,
+             double cd10,
+             double cd11,
+             std::string proj_code,
+             double alpha0,
+             double cea_eta_scale,
+             double hpx_H,
+             double hpx_K) {
+              auto x = as_f64_contig(x_obj);
+              auto y = as_f64_contig(y_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_center_pixel_to_world(
+                      x, y, origin, crpix0, crpix1, cd00, cd01, cd10, cd11, proj_code, alpha0, cea_eta_scale, hpx_H, hpx_K
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("x"), nb::arg("y"), nb::arg("origin"), nb::arg("crpix0"), nb::arg("crpix1"),
+          nb::arg("cd00"), nb::arg("cd01"), nb::arg("cd10"), nb::arg("cd11"),
+          nb::arg("proj_code"), nb::arg("alpha0"), nb::arg("cea_eta_scale"), nb::arg("hpx_H"), nb::arg("hpx_K"));
+
+    m.def("wcs_center_world_to_pixel",
+          [](nb::object ra_obj,
+             nb::object dec_obj,
+             double crpix0,
+             double crpix1,
+             double cdi00,
+             double cdi01,
+             double cdi10,
+             double cdi11,
+             std::string proj_code,
+             double alpha0,
+             double cea_eta_scale,
+             double origin,
+             double hpx_H,
+             double hpx_K) {
+              auto ra = as_f64_contig(ra_obj);
+              auto dec = as_f64_contig(dec_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_center_world_to_pixel(
+                      ra, dec, crpix0, crpix1, cdi00, cdi01, cdi10, cdi11,
+                      proj_code, alpha0, cea_eta_scale, origin, hpx_H, hpx_K
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("ra"), nb::arg("dec"), nb::arg("crpix0"), nb::arg("crpix1"),
+          nb::arg("cdi00"), nb::arg("cdi01"), nb::arg("cdi10"), nb::arg("cdi11"),
+          nb::arg("proj_code"), nb::arg("alpha0"), nb::arg("cea_eta_scale"), nb::arg("origin"), nb::arg("hpx_H"), nb::arg("hpx_K"));
+
+    m.def("wcs_ait_project",
+          [](nb::object xi_obj, nb::object eta_obj) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_ait_project(xi, eta);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"));
+
+    m.def("wcs_ait_deproject",
+          [](nb::object phi_obj, nb::object theta_obj) {
+              auto phi = as_f64_contig(phi_obj);
+              auto theta = as_f64_contig(theta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_ait_deproject(phi, theta);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"));
+
+    m.def("wcs_mol_project",
+          [](nb::object xi_obj, nb::object eta_obj) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_mol_project(xi, eta);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"));
+
+    m.def("wcs_mol_deproject",
+          [](nb::object phi_obj, nb::object theta_obj) {
+              auto phi = as_f64_contig(phi_obj);
+              auto theta = as_f64_contig(theta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_mol_deproject(phi, theta);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"));
+
+    m.def("wcs_hpx_project",
+          [](nb::object xi_obj, nb::object eta_obj, double H, double K) {
+              auto xi = as_f64_contig(xi_obj);
+              auto eta = as_f64_contig(eta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_hpx_project(xi, eta, H, K);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("H") = 4.0, nb::arg("K") = 3.0);
+
+    m.def("wcs_hpx_deproject",
+          [](nb::object phi_obj, nb::object theta_obj, double H, double K) {
+              auto phi = as_f64_contig(phi_obj);
+              auto theta = as_f64_contig(theta_obj);
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_hpx_deproject(phi, theta, H, K);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"), nb::arg("H") = 4.0, nb::arg("K") = 3.0);
+
+    m.def("wcs_inverse_spherical_rotation_pole",
+          [](nb::object ra_obj,
+             nb::object dec_obj,
+             double phi_p_rad,
+             double east_x,
+             double east_y,
+             double north_x,
+             double north_y,
+             double north_z,
+             double radial_x,
+             double radial_y,
+             double radial_z) {
+              auto ra = python_to_tensor(ra_obj);
+              auto dec = python_to_tensor(dec_obj);
+              if (!(ra.device().is_cpu() && dec.device().is_cpu())) {
+                  throw std::runtime_error("wcs_inverse_spherical_rotation_pole expects CPU tensors");
+              }
+              if (!(ra.scalar_type() == torch::kFloat64 && dec.scalar_type() == torch::kFloat64)) {
+                  throw std::runtime_error("wcs_inverse_spherical_rotation_pole expects float64 inputs");
+              }
+              if (!ra.is_contiguous()) ra = ra.contiguous();
+              if (!dec.is_contiguous()) dec = dec.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_inverse_spherical_rotation_pole(
+                      ra, dec, phi_p_rad,
+                      east_x, east_y,
+                      north_x, north_y, north_z,
+                      radial_x, radial_y, radial_z
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("ra"), nb::arg("dec"), nb::arg("phi_p_rad"),
+          nb::arg("east_x"), nb::arg("east_y"),
+          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
+          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
+
+    m.def("wcs_spherical_rotation_pole",
+          [](nb::object phi_obj,
+             nb::object theta_obj,
+             double phi_p_rad,
+             double east_x,
+             double east_y,
+             double north_x,
+             double north_y,
+             double north_z,
+             double radial_x,
+             double radial_y,
+             double radial_z) {
+              auto phi = python_to_tensor(phi_obj);
+              auto theta = python_to_tensor(theta_obj);
+              if (!(phi.device().is_cpu() && theta.device().is_cpu())) {
+                  throw std::runtime_error("wcs_spherical_rotation_pole expects CPU tensors");
+              }
+              if (!(phi.scalar_type() == torch::kFloat64 && theta.scalar_type() == torch::kFloat64)) {
+                  throw std::runtime_error("wcs_spherical_rotation_pole expects float64 inputs");
+              }
+              if (!phi.is_contiguous()) phi = phi.contiguous();
+              if (!theta.is_contiguous()) theta = theta.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_spherical_rotation_pole(
+                      phi, theta, phi_p_rad,
+                      east_x, east_y,
+                      north_x, north_y, north_z,
+                      radial_x, radial_y, radial_z
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("phi"), nb::arg("theta"), nb::arg("phi_p_rad"),
+          nb::arg("east_x"), nb::arg("east_y"),
+          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
+          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
+
+    m.def("wcs_tan_intermediate_from_radec",
+          [](nb::object ra_obj,
+             nb::object dec_obj,
+             double east_x,
+             double east_y,
+             double north_x,
+             double north_y,
+             double north_z,
+             double radial_x,
+             double radial_y,
+             double radial_z) {
+              auto ra = python_to_tensor(ra_obj);
+              auto dec = python_to_tensor(dec_obj);
+              if (!(ra.device().is_cpu() && dec.device().is_cpu())) {
+                  throw std::runtime_error("wcs_tan_intermediate_from_radec expects CPU tensors");
+              }
+              if (!(ra.scalar_type() == torch::kFloat64 && dec.scalar_type() == torch::kFloat64)) {
+                  throw std::runtime_error("wcs_tan_intermediate_from_radec expects float64 inputs");
+              }
+              if (!ra.is_contiguous()) ra = ra.contiguous();
+              if (!dec.is_contiguous()) dec = dec.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_tan_intermediate_from_radec(
+                      ra, dec,
+                      east_x, east_y,
+                      north_x, north_y, north_z,
+                      radial_x, radial_y, radial_z
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("ra"), nb::arg("dec"),
+          nb::arg("east_x"), nb::arg("east_y"),
+          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
+          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
+
+    m.def("wcs_tpv_invert",
+          [](nb::object xi_obj,
+             nb::object eta_obj,
+             nb::object idx1_obj,
+             nb::object c1_obj,
+             nb::object idx2_obj,
+             nb::object c2_obj,
+             int64_t max_iter,
+             double tol) {
+              auto xi = python_to_tensor(xi_obj);
+              auto eta = python_to_tensor(eta_obj);
+              auto idx1 = python_to_tensor(idx1_obj);
+              auto c1 = python_to_tensor(c1_obj);
+              auto idx2 = python_to_tensor(idx2_obj);
+              auto c2 = python_to_tensor(c2_obj);
+              if (!(xi.device().is_cpu() && eta.device().is_cpu() &&
+                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
+                    c1.device().is_cpu() && c2.device().is_cpu())) {
+                  throw std::runtime_error("wcs_tpv_invert expects CPU tensors");
+              }
+              if (!(xi.scalar_type() == torch::kFloat64 && eta.scalar_type() == torch::kFloat64 &&
+                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
+                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
+                  throw std::runtime_error("wcs_tpv_invert expects float64 inputs and int64 indices");
+              }
+              if (!xi.is_contiguous()) xi = xi.contiguous();
+              if (!eta.is_contiguous()) eta = eta.contiguous();
+              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
+              if (!c1.is_contiguous()) c1 = c1.contiguous();
+              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
+              if (!c2.is_contiguous()) c2 = c2.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_tpv_invert(xi, eta, idx1, c1, idx2, c2, max_iter, tol);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"),
+          nb::arg("max_iter") = 10, nb::arg("tol") = 1e-11);
+
+    m.def("wcs_tpv_distort",
+          [](nb::object u_obj,
+             nb::object v_obj,
+             nb::object idx1_obj,
+             nb::object c1_obj,
+             nb::object idx2_obj,
+             nb::object c2_obj) {
+              auto u = python_to_tensor(u_obj);
+              auto v = python_to_tensor(v_obj);
+              auto idx1 = python_to_tensor(idx1_obj);
+              auto c1 = python_to_tensor(c1_obj);
+              auto idx2 = python_to_tensor(idx2_obj);
+              auto c2 = python_to_tensor(c2_obj);
+              if (!(u.device().is_cpu() && v.device().is_cpu() &&
+                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
+                    c1.device().is_cpu() && c2.device().is_cpu())) {
+                  throw std::runtime_error("wcs_tpv_distort expects CPU tensors");
+              }
+              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64 &&
+                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
+                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
+                  throw std::runtime_error("wcs_tpv_distort expects float64 inputs and int64 indices");
+              }
+              if (!u.is_contiguous()) u = u.contiguous();
+              if (!v.is_contiguous()) v = v.contiguous();
+              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
+              if (!c1.is_contiguous()) c1 = c1.contiguous();
+              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
+              if (!c2.is_contiguous()) c2 = c2.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_tpv_distort(u, v, idx1, c1, idx2, c2);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("u"), nb::arg("v"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"));
+
+    m.def("wcs_sip_quadratic_distort",
+          [](nb::object u_obj,
+             nb::object v_obj,
+             double a20,
+             double a11,
+             double a02,
+             double b20,
+             double b11,
+             double b02) {
+              auto u = python_to_tensor(u_obj);
+              auto v = python_to_tensor(v_obj);
+              if (!(u.device().is_cpu() && v.device().is_cpu())) {
+                  throw std::runtime_error("wcs_sip_quadratic_distort expects CPU tensors");
+              }
+              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64)) {
+                  throw std::runtime_error("wcs_sip_quadratic_distort expects float64 inputs");
+              }
+              if (!u.is_contiguous()) u = u.contiguous();
+              if (!v.is_contiguous()) v = v.contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_sip_quadratic_distort(
+                      u, v, a20, a11, a02, b20, b11, b02
+                  );
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("u"), nb::arg("v"),
+          nb::arg("a20"), nb::arg("a11"), nb::arg("a02"),
+          nb::arg("b20"), nb::arg("b11"), nb::arg("b02"));
+
+    m.def("wcs_tpv_invert_trace",
+          [](nb::object xi_obj,
+             nb::object eta_obj,
+             nb::object idx1_obj,
+             nb::object c1_obj,
+             nb::object idx2_obj,
+             nb::object c2_obj,
+             int64_t max_iter,
+             double tol) {
+              auto xi = python_to_tensor(xi_obj);
+              auto eta = python_to_tensor(eta_obj);
+              auto idx1 = python_to_tensor(idx1_obj);
+              auto c1 = python_to_tensor(c1_obj);
+              auto idx2 = python_to_tensor(idx2_obj);
+              auto c2 = python_to_tensor(c2_obj);
+              if (!(xi.device().is_cpu() && eta.device().is_cpu() &&
+                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
+                    c1.device().is_cpu() && c2.device().is_cpu())) {
+                  throw std::runtime_error("wcs_tpv_invert_trace expects CPU tensors");
+              }
+              if (!(xi.scalar_type() == torch::kFloat64 && eta.scalar_type() == torch::kFloat64 &&
+                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
+                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
+                  throw std::runtime_error("wcs_tpv_invert_trace expects float64 inputs and int64 indices");
+              }
+              if (!xi.is_contiguous()) xi = xi.contiguous();
+              if (!eta.is_contiguous()) eta = eta.contiguous();
+              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
+              if (!c1.is_contiguous()) c1 = c1.contiguous();
+              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
+              if (!c2.is_contiguous()) c2 = c2.contiguous();
+              std::tuple<torch::Tensor, torch::Tensor, int64_t, std::vector<int64_t>, int64_t> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::wcs_tpv_invert_trace(xi, eta, idx1, c1, idx2, c2, max_iter, tol);
+              }
+              return nb::make_tuple(
+                  tensor_to_python(std::get<0>(out)),
+                  tensor_to_python(std::get<1>(out)),
+                  std::get<2>(out),
+                  std::get<3>(out),
+                  std::get<4>(out)
+              );
+          },
+          nb::arg("xi"), nb::arg("eta"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"),
+          nb::arg("max_iter") = 10, nb::arg("tol") = 1e-11);
+
+}
+
+void bind_healpix(nb::module_& m) {
+    m.def("healpix_ring2nest_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+        std::vector<int64_t> shape;
+        shape.reserve(pix_arr.ndim());
+        int64_t numel = 1;
+        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+            const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
+            shape.push_back(d);
+            numel *= d;
+        }
+        auto pix_view = torch::from_blob(
+            pix_arr.data(),
+            shape,
+            torch::TensorOptions().dtype(torch::kInt64)
+        );
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_ring2nest_cpu(nside, pix_view.reshape({numel}));
+        }
+        out = out.reshape(shape);
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_ring2nest_torch_cpu", [](int64_t nside, nb::object pix_obj) {
+        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_ring2nest_cpu(nside, pix);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix"));
+
+    m.def("healpix_nest2ring_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+        std::vector<int64_t> shape;
+        shape.reserve(pix_arr.ndim());
+        int64_t numel = 1;
+        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+            const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
+            shape.push_back(d);
+            numel *= d;
+        }
+        auto pix_view = torch::from_blob(
+            pix_arr.data(),
+            shape,
+            torch::TensorOptions().dtype(torch::kInt64)
+        );
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_nest2ring_cpu(nside, pix_view.reshape({numel}));
+        }
+        out = out.reshape(shape);
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_nest2ring_torch_cpu", [](int64_t nside, nb::object pix_obj) {
+        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_nest2ring_cpu(nside, pix);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix"));
+
+    m.def("healpix_neighbors_ring_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+        std::vector<int64_t> shape;
+        shape.reserve(pix_arr.ndim());
+        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+            shape.push_back(static_cast<int64_t>(pix_arr.shape(i)));
+        }
+        auto pix_view = torch::from_blob(
+            pix_arr.data(),
+            shape,
+            torch::TensorOptions().dtype(torch::kInt64)
+        );
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_neighbors_ring_cpu(nside, pix_view);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_neighbors_nested_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+        std::vector<int64_t> shape;
+        shape.reserve(pix_arr.ndim());
+        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+            shape.push_back(static_cast<int64_t>(pix_arr.shape(i)));
+        }
+        auto pix_view = torch::from_blob(
+            pix_arr.data(),
+            shape,
+            torch::TensorOptions().dtype(torch::kInt64)
+        );
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_neighbors_nested_cpu(nside, pix_view);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_neighbors_ring_torch_cpu", [](int64_t nside, nb::object pix_obj) {
+        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_neighbors_ring_cpu(nside, pix);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix"));
+
+    m.def("healpix_neighbors_nested_torch_cpu", [](int64_t nside, nb::object pix_obj) {
+        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+        torch::Tensor out;
+        {
+            nb::gil_scoped_release release;
+            out = torchfits::healpix_neighbors_nested_cpu(nside, pix);
+        }
+        return tensor_to_python(out);
+    }, nb::arg("nside"), nb::arg("pix"));
+
+    m.def("healpix_get_interp_weights_ring_cpu",
+          [](int64_t nside,
+             nb::ndarray<nb::numpy, double, nb::c_contig> lon_arr,
+             nb::ndarray<nb::numpy, double, nb::c_contig> lat_arr) {
+              if (lon_arr.ndim() != lat_arr.ndim()) {
+                  throw std::runtime_error("lon/lat ndim mismatch");
+              }
+              std::vector<int64_t> shape;
+              shape.reserve(lon_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < lon_arr.ndim(); ++i) {
+                  const int64_t dlon = static_cast<int64_t>(lon_arr.shape(i));
+                  const int64_t dlat = static_cast<int64_t>(lat_arr.shape(i));
+                  if (dlon != dlat) {
+                      throw std::runtime_error("lon/lat shape mismatch");
+                  }
+                  shape.push_back(dlon);
+                  numel *= dlon;
+              }
+              auto lon_view = torch::from_blob(
+                  lon_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              auto lat_view = torch::from_blob(
+                  lat_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_weights_ring_cpu(
+                      nside, lon_view.reshape({numel}), lat_view.reshape({numel})
+                  );
+              }
+              out.first = out.first.reshape({4, numel});
+              out.second = out.second.reshape({4, numel});
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("lon_arr"), nb::arg("lat_arr"));
+
+    m.def("healpix_get_interp_weights_nested_cpu",
+          [](int64_t nside,
+             nb::ndarray<nb::numpy, double, nb::c_contig> lon_arr,
+             nb::ndarray<nb::numpy, double, nb::c_contig> lat_arr) {
+              if (lon_arr.ndim() != lat_arr.ndim()) {
+                  throw std::runtime_error("lon/lat ndim mismatch");
+              }
+              std::vector<int64_t> shape;
+              shape.reserve(lon_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < lon_arr.ndim(); ++i) {
+                  const int64_t dlon = static_cast<int64_t>(lon_arr.shape(i));
+                  const int64_t dlat = static_cast<int64_t>(lat_arr.shape(i));
+                  if (dlon != dlat) {
+                      throw std::runtime_error("lon/lat shape mismatch");
+                  }
+                  shape.push_back(dlon);
+                  numel *= dlon;
+              }
+              auto lon_view = torch::from_blob(
+                  lon_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              auto lat_view = torch::from_blob(
+                  lat_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_weights_nested_cpu(
+                      nside, lon_view.reshape({numel}), lat_view.reshape({numel})
+                  );
+              }
+              out.first = out.first.reshape({4, numel});
+              out.second = out.second.reshape({4, numel});
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("lon_arr"), nb::arg("lat_arr"));
+
+    m.def("healpix_get_interp_weights_ring_torch_cpu",
+          [](int64_t nside, nb::object lon_obj, nb::object lat_obj) {
+              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
+              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
+              if (!lon.sizes().equals(lat.sizes())) {
+                  throw std::runtime_error("lon/lat shape mismatch");
+              }
+              std::vector<int64_t> out_shape;
+              out_shape.reserve(static_cast<size_t>(lon.dim()) + 1);
+              out_shape.push_back(4);
+              for (const auto s : lon.sizes()) {
+                  out_shape.push_back(static_cast<int64_t>(s));
+              }
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_weights_ring_cpu(nside, lon, lat);
+              }
+              out.first = out.first.reshape(out_shape);
+              out.second = out.second.reshape(out_shape);
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("lon"), nb::arg("lat"));
+
+    m.def("healpix_get_interp_weights_nested_torch_cpu",
+          [](int64_t nside, nb::object lon_obj, nb::object lat_obj) {
+              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
+              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
+              if (!lon.sizes().equals(lat.sizes())) {
+                  throw std::runtime_error("lon/lat shape mismatch");
+              }
+              std::vector<int64_t> out_shape;
+              out_shape.reserve(static_cast<size_t>(lon.dim()) + 1);
+              out_shape.push_back(4);
+              for (const auto s : lon.sizes()) {
+                  out_shape.push_back(static_cast<int64_t>(s));
+              }
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_weights_nested_cpu(nside, lon, lat);
+              }
+              out.first = out.first.reshape(out_shape);
+              out.second = out.second.reshape(out_shape);
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("lon"), nb::arg("lat"));
+
+    m.def("healpix_get_interp_val_ring_torch_cpu",
+          [](int64_t nside, nb::object maps_obj, nb::object lon_obj, nb::object lat_obj) {
+              auto maps = python_to_tensor(maps_obj).contiguous();
+              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
+              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
+              if (!lon.sizes().equals(lat.sizes())) {
+                  throw std::runtime_error("lon/lat shape mismatch");
+              }
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_val_ring_cpu(nside, maps, lon, lat);
+              }
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("maps"), nb::arg("lon"), nb::arg("lat"));
+
+    m.def("healpix_get_interp_val_nested_torch_cpu",
+          [](int64_t nside, nb::object maps_obj, nb::object lon_obj, nb::object lat_obj) {
+              auto maps = python_to_tensor(maps_obj).contiguous();
+              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
+              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
+              if (!lon.sizes().equals(lat.sizes())) {
+                  throw std::runtime_error("lon/lat shape mismatch");
+              }
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_get_interp_val_nested_cpu(nside, maps, lon, lat);
+              }
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("maps"), nb::arg("lon"), nb::arg("lat"));
+
+    m.def("healpix_query_disc_torch_cpu",
+          [](int64_t nside, nb::object vec_obj, double cos_lim, bool nest) {
+              auto vec = python_to_tensor(vec_obj).to(torch::kFloat64).contiguous();
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_query_disc_cpu(nside, vec, cos_lim, nest);
+              }
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("vec"), nb::arg("cos_lim"), nb::arg("nest") = false);
+
+    m.def("healpix_ang2pix_ring_cpu",
+          [](int64_t nside,
+             nb::ndarray<nb::numpy, double, nb::c_contig> ra_arr,
+             nb::ndarray<nb::numpy, double, nb::c_contig> dec_arr) {
+              if (ra_arr.ndim() != dec_arr.ndim()) {
+                  throw std::runtime_error("RA/Dec ndim mismatch");
+              }
+              std::vector<int64_t> shape;
+              shape.reserve(ra_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < ra_arr.ndim(); ++i) {
+                  const int64_t dra = static_cast<int64_t>(ra_arr.shape(i));
+                  const int64_t ddec = static_cast<int64_t>(dec_arr.shape(i));
+                  if (dra != ddec) {
+                      throw std::runtime_error("RA/Dec shape mismatch");
+                  }
+                  shape.push_back(dra);
+                  numel *= dra;
+              }
+              auto ra_view = torch::from_blob(
+                  ra_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              auto dec_view = torch::from_blob(
+                  dec_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_ang2pix_ring_cpu(
+                      nside, ra_view.reshape({numel}), dec_view.reshape({numel})
+                  );
+              }
+              out = out.reshape(shape);
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("ra_arr"), nb::arg("dec_arr"));
+
+    m.def("healpix_ang2pix_ring_torch_cpu",
+          [](int64_t nside, nb::object ra_obj, nb::object dec_obj) {
+              auto ra = python_to_tensor(ra_obj).to(torch::kFloat64).contiguous();
+              auto dec = python_to_tensor(dec_obj).to(torch::kFloat64).contiguous();
+              if (!ra.sizes().equals(dec.sizes())) {
+                  throw std::runtime_error("RA/Dec shape mismatch");
+              }
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_ang2pix_ring_cpu(nside, ra, dec);
+              }
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("ra"), nb::arg("dec"));
+
+    m.def("healpix_ang2pix_nested_cpu",
+          [](int64_t nside,
+             nb::ndarray<nb::numpy, double, nb::c_contig> ra_arr,
+             nb::ndarray<nb::numpy, double, nb::c_contig> dec_arr) {
+              if (ra_arr.ndim() != dec_arr.ndim()) {
+                  throw std::runtime_error("RA/Dec ndim mismatch");
+              }
+              std::vector<int64_t> shape;
+              shape.reserve(ra_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < ra_arr.ndim(); ++i) {
+                  const int64_t dra = static_cast<int64_t>(ra_arr.shape(i));
+                  const int64_t ddec = static_cast<int64_t>(dec_arr.shape(i));
+                  if (dra != ddec) {
+                      throw std::runtime_error("RA/Dec shape mismatch");
+                  }
+                  shape.push_back(dra);
+                  numel *= dra;
+              }
+              auto ra_view = torch::from_blob(
+                  ra_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              auto dec_view = torch::from_blob(
+                  dec_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kFloat64)
+              );
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_ang2pix_nested_cpu(
+                      nside, ra_view.reshape({numel}), dec_view.reshape({numel})
+                  );
+              }
+              out = out.reshape(shape);
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("ra_arr"), nb::arg("dec_arr"));
+
+    m.def("healpix_ang2pix_nested_torch_cpu",
+          [](int64_t nside, nb::object ra_obj, nb::object dec_obj) {
+              auto ra = python_to_tensor(ra_obj).to(torch::kFloat64).contiguous();
+              auto dec = python_to_tensor(dec_obj).to(torch::kFloat64).contiguous();
+              if (!ra.sizes().equals(dec.sizes())) {
+                  throw std::runtime_error("RA/Dec shape mismatch");
+              }
+              torch::Tensor out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_ang2pix_nested_cpu(nside, ra, dec);
+              }
+              return tensor_to_python(out);
+          },
+          nb::arg("nside"), nb::arg("ra"), nb::arg("dec"));
+
+    m.def("healpix_pix2ang_ring_cpu",
+          [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+              std::vector<int64_t> shape;
+              shape.reserve(pix_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+                  const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
+                  shape.push_back(d);
+                  numel *= d;
+              }
+              auto pix_view = torch::from_blob(
+                  pix_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kInt64)
+              );
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_pix2ang_ring_cpu(nside, pix_view.reshape({numel}));
+              }
+              out.first = out.first.reshape(shape);
+              out.second = out.second.reshape(shape);
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_pix2ang_ring_torch_cpu",
+          [](int64_t nside, nb::object pix_obj) {
+              auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_pix2ang_ring_cpu(nside, pix);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("pix"));
+
+    m.def("healpix_pix2ang_nested_cpu",
+          [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
+              std::vector<int64_t> shape;
+              shape.reserve(pix_arr.ndim());
+              int64_t numel = 1;
+              for (size_t i = 0; i < pix_arr.ndim(); ++i) {
+                  const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
+                  shape.push_back(d);
+                  numel *= d;
+              }
+              auto pix_view = torch::from_blob(
+                  pix_arr.data(),
+                  shape,
+                  torch::TensorOptions().dtype(torch::kInt64)
+              );
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_pix2ang_nested_cpu(nside, pix_view.reshape({numel}));
+              }
+              out.first = out.first.reshape(shape);
+              out.second = out.second.reshape(shape);
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("pix_arr"));
+
+    m.def("healpix_pix2ang_nested_torch_cpu",
+          [](int64_t nside, nb::object pix_obj) {
+              auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
+              std::pair<torch::Tensor, torch::Tensor> out;
+              {
+                  nb::gil_scoped_release release;
+                  out = torchfits::healpix_pix2ang_nested_cpu(nside, pix);
+              }
+              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+          },
+          nb::arg("nside"), nb::arg("pix"));
+
+    m.def(
+        "_healpix_scalar_alm2map_direct_cpu",
+        [](nb::object alm_obj,
+           nb::object cos_theta_obj,
+           nb::object phi_obj,
+           int64_t lmax,
+           int64_t mmax) {
+            torch::Tensor alm = python_to_tensor(alm_obj).contiguous();
+            torch::Tensor cos_theta = python_to_tensor(cos_theta_obj).contiguous();
+            torch::Tensor phi = python_to_tensor(phi_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_scalar_alm2map_direct_cpu(alm, cos_theta, phi, lmax, mmax);
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("alm"),
+        nb::arg("cos_theta"),
+        nb::arg("phi"),
+        nb::arg("lmax"),
+        nb::arg("mmax"));
+
+    m.def(
+        "_healpix_ring_fourier_modes_cpu",
+        [](nb::object rows_obj,
+           nb::object starts_obj,
+           nb::object lengths_obj,
+           int64_t mmax) {
+            torch::Tensor rows = python_to_tensor(rows_obj).contiguous();
+            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
+            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_ring_fourier_modes_cpu(rows, starts, lengths, mmax);
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("rows"),
+        nb::arg("starts"),
+        nb::arg("lengths"),
+        nb::arg("mmax"));
+
+    m.def(
+        "_healpix_ring_fourier_modes_spin_conj_cpu",
+        [](nb::object row_obj,
+           nb::object starts_obj,
+           nb::object lengths_obj,
+           int64_t mmax) {
+            torch::Tensor row = python_to_tensor(row_obj).contiguous();
+            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
+            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_ring_fourier_modes_spin_conj_cpu(row, starts, lengths, mmax);
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("row"),
+        nb::arg("starts"),
+        nb::arg("lengths"),
+        nb::arg("mmax"));
+
+    m.def(
+        "_healpix_ring_fourier_synthesis_cpu",
+        [](nb::object s_modes_obj,
+           nb::object starts_obj,
+           nb::object lengths_obj) {
+            torch::Tensor s_modes = python_to_tensor(s_modes_obj).contiguous();
+            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
+            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_ring_fourier_synthesis_cpu(s_modes, starts, lengths);
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("s_modes"),
+        nb::arg("starts"),
+        nb::arg("lengths"));
+
+    m.def(
+        "_healpix_spin_ring_finalize_cpu",
+        [](nb::object s_plus_obj,
+           nb::object s_minus_obj,
+           nb::object starts_obj,
+           nb::object lengths_obj) {
+            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
+            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
+            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
+            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_ring_finalize_cpu(s_plus, s_minus, starts, lengths);
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("s_plus"),
+        nb::arg("s_minus"),
+        nb::arg("starts"),
+        nb::arg("lengths"));
+
+    m.def(
+        "_healpix_spin_map2alm_ring_concat_cpu",
+        [](nb::object p_plus_obj,
+           nb::object starts_obj,
+           nb::object lengths_obj,
+           nb::object phase0_neg_obj,
+           nb::object y_plus_obj,
+           nb::object y_minus_obj,
+           int64_t lmax,
+           int64_t mmax,
+           double pix_w) {
+            torch::Tensor p_plus = python_to_tensor(p_plus_obj).contiguous();
+            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
+            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
+            torch::Tensor phase0_neg = python_to_tensor(phase0_neg_obj).contiguous();
+            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
+            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
+            std::pair<torch::Tensor, torch::Tensor> out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_map2alm_ring_concat_cpu(
+                    p_plus, starts, lengths, phase0_neg, y_plus, y_minus, lmax, mmax, pix_w
+                );
+            }
+            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+        },
+        nb::arg("p_plus"),
+        nb::arg("starts"),
+        nb::arg("lengths"),
+        nb::arg("phase0_neg"),
+        nb::arg("y_plus"),
+        nb::arg("y_minus"),
+        nb::arg("lmax"),
+        nb::arg("mmax"),
+        nb::arg("pix_w"));
+
+    // Experimental spin-2 helper: not part of public stable API.
+    // Kept for local profiling only while the interface/runtime safety is audited.
+    m.def(
+        "_healpix_spin_map2alm_from_basis_cpu",
+        [](nb::object q_obj,
+           nb::object u_obj,
+           nb::object ycp_t_obj,
+           nb::object ycm_t_obj,
+           double pix_w) {
+            torch::Tensor q = python_to_tensor(q_obj).contiguous();
+            torch::Tensor u = python_to_tensor(u_obj).contiguous();
+            torch::Tensor ycp_t = python_to_tensor(ycp_t_obj).contiguous();
+            torch::Tensor ycm_t = python_to_tensor(ycm_t_obj).contiguous();
+            std::pair<torch::Tensor, torch::Tensor> out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_map2alm_from_basis_cpu(q, u, ycp_t, ycm_t, pix_w);
+            }
+            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+        },
+        nb::arg("q"),
+        nb::arg("u"),
+        nb::arg("ycp_t"),
+        nb::arg("ycm_t"),
+        nb::arg("pix_w"));
+
+    m.def(
+        "_healpix_spin_alm2map_from_basis_cpu",
+        [](nb::object coeff_plus_obj,
+           nb::object coeff_minus_obj,
+           nb::object y_plus_obj,
+           nb::object y_minus_obj,
+           nb::object y_plus_m0_obj,
+           nb::object y_minus_m0_obj) {
+            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
+            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
+            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
+            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
+            torch::Tensor y_plus_m0 = python_to_tensor(y_plus_m0_obj).contiguous();
+            torch::Tensor y_minus_m0 = python_to_tensor(y_minus_m0_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_alm2map_from_basis_cpu(
+                    coeff_plus,
+                    coeff_minus,
+                    y_plus,
+                    y_minus,
+                    y_plus_m0,
+                    y_minus_m0
+                );
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("coeff_plus"),
+        nb::arg("coeff_minus"),
+        nb::arg("y_plus"),
+        nb::arg("y_minus"),
+        nb::arg("y_plus_m0"),
+        nb::arg("y_minus_m0"));
+
+    m.def(
+        "_healpix_spin_interpolate_concat_cpu",
+        [](nb::object coeff_plus_obj,
+           nb::object coeff_minus_obj,
+           nb::object y_plus_obj,
+           nb::object y_minus_obj,
+           int64_t lmax,
+           int64_t mmax) {
+            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
+            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
+            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
+            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
+            std::pair<torch::Tensor, torch::Tensor> out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_interpolate_concat_cpu(
+                    coeff_plus, coeff_minus, y_plus, y_minus, lmax, mmax
+                );
+            }
+            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+        },
+        nb::arg("coeff_plus"),
+        nb::arg("coeff_minus"),
+        nb::arg("y_plus"),
+        nb::arg("y_minus"),
+        nb::arg("lmax"),
+        nb::arg("mmax"));
+
+    m.def(
+        "_healpix_spin_integrate_concat_cpu",
+        [](nb::object s_plus_obj,
+           nb::object s_minus_obj,
+           nb::object y_plus_obj,
+           nb::object y_minus_obj,
+           int64_t lmax,
+           int64_t mmax,
+           double pix_w) {
+            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
+            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
+            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
+            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
+            std::pair<torch::Tensor, torch::Tensor> out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_integrate_concat_cpu(
+                    s_plus, s_minus, y_plus, y_minus, lmax, mmax, pix_w
+                );
+            }
+            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
+        },
+        nb::arg("s_plus"),
+        nb::arg("s_minus"),
+        nb::arg("y_plus"),
+        nb::arg("y_minus"),
+        nb::arg("lmax"),
+        nb::arg("mmax"),
+        nb::arg("pix_w"));
+
+    m.def(
+        "_healpix_spin2_block_accumulate_cpu_experimental",
+        [](nb::object coeff_plus_obj,
+           nb::object coeff_minus_obj,
+           nb::list y_plus_blocks_obj,
+           nb::list y_minus_blocks_obj,
+           double neg_sign) {
+            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
+            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
+            if (!coeff_plus.device().is_cpu() || !coeff_minus.device().is_cpu()) {
+                throw std::runtime_error("_healpix_spin2_block_accumulate_cpu_experimental expects CPU tensors");
+            }
+            if (coeff_plus.scalar_type() != torch::kComplexDouble || coeff_minus.scalar_type() != torch::kComplexDouble) {
+                throw std::runtime_error("_healpix_spin2_block_accumulate_cpu_experimental expects complex128 coeff tensors");
+            }
+            if (coeff_plus.dim() != 1 || coeff_minus.dim() != 1 || coeff_plus.numel() != coeff_minus.numel()) {
+                throw std::runtime_error("coeff tensors must be 1D and same length");
+            }
+            if (y_plus_blocks_obj.size() != y_minus_blocks_obj.size()) {
+                throw std::runtime_error("y_plus_blocks and y_minus_blocks must have same length");
+            }
+            if (y_plus_blocks_obj.size() == 0) {
+                throw std::runtime_error("basis blocks must be non-empty");
+            }
+
+            std::vector<torch::Tensor> y_plus_blocks;
+            std::vector<torch::Tensor> y_minus_blocks;
+            y_plus_blocks.reserve(y_plus_blocks_obj.size());
+            y_minus_blocks.reserve(y_minus_blocks_obj.size());
+            for (size_t i = 0; i < y_plus_blocks_obj.size(); ++i) {
+                nb::object yp_obj = nb::borrow<nb::object>(y_plus_blocks_obj[i]);
+                nb::object ym_obj = nb::borrow<nb::object>(y_minus_blocks_obj[i]);
+                auto yp = python_to_tensor(yp_obj).contiguous();
+                auto ym = python_to_tensor(ym_obj).contiguous();
+                if (!yp.device().is_cpu() || !ym.device().is_cpu()) {
+                    throw std::runtime_error("basis blocks must be CPU tensors");
+                }
+                if (yp.scalar_type() != torch::kComplexDouble || ym.scalar_type() != torch::kComplexDouble) {
+                    throw std::runtime_error("basis blocks must be complex128 tensors");
+                }
+                if (yp.dim() != 2 || ym.dim() != 2) {
+                    throw std::runtime_error("basis blocks must be rank-2 tensors");
+                }
+                if (yp.sizes() != ym.sizes()) {
+                    throw std::runtime_error("paired y_plus/y_minus blocks must have matching shapes");
+                }
+                y_plus_blocks.push_back(yp);
+                y_minus_blocks.push_back(ym);
+            }
+
+            const int64_t npix = y_plus_blocks[0].size(1);
+            for (const auto& blk : y_plus_blocks) {
+                if (blk.size(1) != npix) {
+                    throw std::runtime_error("all basis blocks must have the same npix dimension");
+                }
+            }
+
+            auto options = torch::TensorOptions().dtype(torch::kComplexDouble).device(torch::kCPU);
+            torch::Tensor p_plus = torch::zeros({npix}, options);
+            torch::Tensor p_minus = torch::zeros({npix}, options);
+
+            int64_t offset = 0;
+            for (size_t m = 0; m < y_plus_blocks.size(); ++m) {
+                const auto& yp = y_plus_blocks[m];
+                const auto& ym = y_minus_blocks[m];
+                const int64_t l_count = yp.size(0);
+                if (offset + l_count > coeff_plus.numel()) {
+                    throw std::runtime_error("basis block sizes exceed coefficient length");
+                }
+
+                auto cp = coeff_plus.narrow(0, offset, l_count);
+                auto cm = coeff_minus.narrow(0, offset, l_count);
+                auto p_plus_m = torch::matmul(cp, yp);
+                auto p_minus_m = torch::matmul(cm, ym);
+
+                p_plus = p_plus + p_plus_m;
+                p_minus = p_minus + p_minus_m;
+                if (m > 0) {
+                    p_plus = p_plus + neg_sign * torch::conj(p_minus_m);
+                    p_minus = p_minus + neg_sign * torch::conj(p_plus_m);
+                }
+                offset += l_count;
+            }
+
+            if (offset != coeff_plus.numel()) {
+                throw std::runtime_error("basis block sizes do not match coefficient length");
+            }
+            return nb::make_tuple(tensor_to_python(p_plus), tensor_to_python(p_minus));
+        },
+        nb::arg("coeff_plus"),
+        nb::arg("coeff_minus"),
+        nb::arg("y_plus_blocks"),
+        nb::arg("y_minus_blocks"),
+        nb::arg("neg_sign"));
+
+
+    // Experimental recurrence kernels
+    m.def(
+        "_healpix_spin_integrate_recurrence_cpu",
+        [](nb::object s_plus_obj,
+           nb::object s_minus_obj,
+           nb::object theta_obj,
+           nb::object weight_obj,
+           int64_t lmax,
+           int64_t mmax,
+           int64_t spin) {
+            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
+            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
+            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
+            torch::Tensor weight = python_to_tensor(weight_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_integrate_recurrence_cpu(
+                    s_plus, s_minus, theta, weight, lmax, mmax, spin
+                );
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("s_plus"),
+        nb::arg("s_minus"),
+        nb::arg("theta"),
+        nb::arg("weight"),
+        nb::arg("lmax"),
+        nb::arg("mmax"),
+        nb::arg("spin"));
+
+    m.def(
+        "_healpix_spin_interpolate_recurrence_cpu",
+        [](nb::object alms_obj,
+           nb::object theta_obj,
+           int64_t lmax,
+           int64_t mmax,
+           int64_t spin) {
+            torch::Tensor alms = python_to_tensor(alms_obj).contiguous();
+            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_spin_interpolate_recurrence_cpu(
+                    alms, theta, lmax, mmax, spin
+                );
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("alms"),
+        nb::arg("theta"),
+        nb::arg("lmax"),
+        nb::arg("mmax"),
+        nb::arg("spin"));
+
+    // Dedicated scalar (spin=0) recurrence kernels
+    m.def(
+        "_healpix_scalar_integrate_recurrence_cpu",
+        [](nb::object s_modes_obj,
+           nb::object theta_obj,
+           nb::object weight_obj,
+           int64_t lmax,
+           int64_t mmax) {
+            torch::Tensor s_modes = python_to_tensor(s_modes_obj).contiguous();
+            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
+            torch::Tensor weight = python_to_tensor(weight_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_scalar_integrate_recurrence_cpu(
+                    s_modes, theta, weight, lmax, mmax
+                );
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("s_modes"),
+        nb::arg("theta"),
+        nb::arg("weight"),
+        nb::arg("lmax"),
+        nb::arg("mmax"));
+
+    m.def(
+        "_healpix_scalar_interpolate_recurrence_cpu",
+        [](nb::object alm_obj,
+           nb::object theta_obj,
+           int64_t lmax,
+           int64_t mmax) {
+            torch::Tensor alm = python_to_tensor(alm_obj).contiguous();
+            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
+            torch::Tensor out;
+            {
+                nb::gil_scoped_release release;
+                out = torchfits::healpix_scalar_interpolate_recurrence_cpu(
+                    alm, theta, lmax, mmax
+                );
+            }
+            return tensor_to_python(out);
+        },
+        nb::arg("alm"),
+        nb::arg("theta"),
+        nb::arg("lmax"),
+        nb::arg("mmax"));
+
+}
+
+void bind_fits(nb::module_& m) {
     nb::class_<torchfits::FITSFile>(m, "FITSFile")
         .def(nb::init<const char*, int>(), nb::arg("filename"), nb::arg("mode") = 0)
         .def("read_image", [](torchfits::FITSFile& self, int hdu_num, bool use_mmap) {
@@ -300,21 +1736,6 @@ NB_MODULE(cpp, m) {
             }
             return tensor_to_python(tensor);
         });
-
-    nb::class_<torchfits::SubsetReader>(m, "SubsetReader")
-        .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 0)
-        .def("read", [](torchfits::SubsetReader& self, long x1, long y1, long x2, long y2) {
-            torch::Tensor tensor;
-            {
-                nb::gil_scoped_release release;
-                tensor = self.read(x1, y1, x2, y2);
-            }
-            return tensor_to_python(tensor);
-        }, nb::arg("x1"), nb::arg("y1"), nb::arg("x2"), nb::arg("y2"))
-        .def("close", &torchfits::SubsetReader::close)
-        .def_prop_ro("width", &torchfits::SubsetReader::width)
-        .def_prop_ro("height", &torchfits::SubsetReader::height)
-        .def_prop_ro("hdu", &torchfits::SubsetReader::hdu);
 
     nb::class_<torchfits::TableReader>(m, "TableReader")
         .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 1)
@@ -1069,16 +2490,6 @@ NB_MODULE(cpp, m) {
        nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("filters"));
 
-    nb::class_<torchfits::HDUInfo>(m, "HDUInfo")
-        .def_prop_rw("index", [](torchfits::HDUInfo& t) { return t.index; }, [](torchfits::HDUInfo& t, int v) { t.index = v; })
-        .def_prop_rw("type", [](torchfits::HDUInfo& t) { return t.type; }, [](torchfits::HDUInfo& t, std::string v) { t.type = v; })
-        .def_prop_ro("header", [](torchfits::HDUInfo& t) {
-            nb::dict d;
-            for (const auto& kv : t.header) {
-                d[std::get<0>(kv).c_str()] = std::get<1>(kv);
-            }
-            return d;
-        });
     m.def("open_and_read_headers", [](const std::string& path, int mode) {
         nb::gil_scoped_release release;
         auto result = torchfits::open_and_read_headers(path, mode);
@@ -1162,1438 +2573,43 @@ NB_MODULE(cpp, m) {
         return tensor_to_python(tensor);
     }, nb::arg("path"), nb::arg("hdus"), nb::arg("use_mmap") = true);
 
-    m.def("healpix_ring2nest_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-        std::vector<int64_t> shape;
-        shape.reserve(pix_arr.ndim());
-        int64_t numel = 1;
-        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-            const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
-            shape.push_back(d);
-            numel *= d;
-        }
-        auto pix_view = torch::from_blob(
-            pix_arr.data(),
-            shape,
-            torch::TensorOptions().dtype(torch::kInt64)
-        );
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_ring2nest_cpu(nside, pix_view.reshape({numel}));
-        }
-        out = out.reshape(shape);
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_ring2nest_torch_cpu", [](int64_t nside, nb::object pix_obj) {
-        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_ring2nest_cpu(nside, pix);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix"));
-
-    m.def("healpix_nest2ring_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-        std::vector<int64_t> shape;
-        shape.reserve(pix_arr.ndim());
-        int64_t numel = 1;
-        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-            const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
-            shape.push_back(d);
-            numel *= d;
-        }
-        auto pix_view = torch::from_blob(
-            pix_arr.data(),
-            shape,
-            torch::TensorOptions().dtype(torch::kInt64)
-        );
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_nest2ring_cpu(nside, pix_view.reshape({numel}));
-        }
-        out = out.reshape(shape);
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_nest2ring_torch_cpu", [](int64_t nside, nb::object pix_obj) {
-        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_nest2ring_cpu(nside, pix);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix"));
-
-    m.def("healpix_neighbors_ring_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-        std::vector<int64_t> shape;
-        shape.reserve(pix_arr.ndim());
-        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-            shape.push_back(static_cast<int64_t>(pix_arr.shape(i)));
-        }
-        auto pix_view = torch::from_blob(
-            pix_arr.data(),
-            shape,
-            torch::TensorOptions().dtype(torch::kInt64)
-        );
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_neighbors_ring_cpu(nside, pix_view);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_neighbors_nested_cpu", [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-        std::vector<int64_t> shape;
-        shape.reserve(pix_arr.ndim());
-        for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-            shape.push_back(static_cast<int64_t>(pix_arr.shape(i)));
-        }
-        auto pix_view = torch::from_blob(
-            pix_arr.data(),
-            shape,
-            torch::TensorOptions().dtype(torch::kInt64)
-        );
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_neighbors_nested_cpu(nside, pix_view);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_neighbors_ring_torch_cpu", [](int64_t nside, nb::object pix_obj) {
-        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_neighbors_ring_cpu(nside, pix);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix"));
-
-    m.def("healpix_neighbors_nested_torch_cpu", [](int64_t nside, nb::object pix_obj) {
-        auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-        torch::Tensor out;
-        {
-            nb::gil_scoped_release release;
-            out = torchfits::healpix_neighbors_nested_cpu(nside, pix);
-        }
-        return tensor_to_python(out);
-    }, nb::arg("nside"), nb::arg("pix"));
-
-    m.def("healpix_get_interp_weights_ring_cpu",
-          [](int64_t nside,
-             nb::ndarray<nb::numpy, double, nb::c_contig> lon_arr,
-             nb::ndarray<nb::numpy, double, nb::c_contig> lat_arr) {
-              if (lon_arr.ndim() != lat_arr.ndim()) {
-                  throw std::runtime_error("lon/lat ndim mismatch");
-              }
-              std::vector<int64_t> shape;
-              shape.reserve(lon_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < lon_arr.ndim(); ++i) {
-                  const int64_t dlon = static_cast<int64_t>(lon_arr.shape(i));
-                  const int64_t dlat = static_cast<int64_t>(lat_arr.shape(i));
-                  if (dlon != dlat) {
-                      throw std::runtime_error("lon/lat shape mismatch");
-                  }
-                  shape.push_back(dlon);
-                  numel *= dlon;
-              }
-              auto lon_view = torch::from_blob(
-                  lon_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              auto lat_view = torch::from_blob(
-                  lat_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_weights_ring_cpu(
-                      nside, lon_view.reshape({numel}), lat_view.reshape({numel})
-                  );
-              }
-              out.first = out.first.reshape({4, numel});
-              out.second = out.second.reshape({4, numel});
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("lon_arr"), nb::arg("lat_arr"));
-
-    m.def("healpix_get_interp_weights_nested_cpu",
-          [](int64_t nside,
-             nb::ndarray<nb::numpy, double, nb::c_contig> lon_arr,
-             nb::ndarray<nb::numpy, double, nb::c_contig> lat_arr) {
-              if (lon_arr.ndim() != lat_arr.ndim()) {
-                  throw std::runtime_error("lon/lat ndim mismatch");
-              }
-              std::vector<int64_t> shape;
-              shape.reserve(lon_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < lon_arr.ndim(); ++i) {
-                  const int64_t dlon = static_cast<int64_t>(lon_arr.shape(i));
-                  const int64_t dlat = static_cast<int64_t>(lat_arr.shape(i));
-                  if (dlon != dlat) {
-                      throw std::runtime_error("lon/lat shape mismatch");
-                  }
-                  shape.push_back(dlon);
-                  numel *= dlon;
-              }
-              auto lon_view = torch::from_blob(
-                  lon_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              auto lat_view = torch::from_blob(
-                  lat_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_weights_nested_cpu(
-                      nside, lon_view.reshape({numel}), lat_view.reshape({numel})
-                  );
-              }
-              out.first = out.first.reshape({4, numel});
-              out.second = out.second.reshape({4, numel});
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("lon_arr"), nb::arg("lat_arr"));
-
-    m.def("healpix_get_interp_weights_ring_torch_cpu",
-          [](int64_t nside, nb::object lon_obj, nb::object lat_obj) {
-              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
-              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
-              if (!lon.sizes().equals(lat.sizes())) {
-                  throw std::runtime_error("lon/lat shape mismatch");
-              }
-              std::vector<int64_t> out_shape;
-              out_shape.reserve(static_cast<size_t>(lon.dim()) + 1);
-              out_shape.push_back(4);
-              for (const auto s : lon.sizes()) {
-                  out_shape.push_back(static_cast<int64_t>(s));
-              }
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_weights_ring_cpu(nside, lon, lat);
-              }
-              out.first = out.first.reshape(out_shape);
-              out.second = out.second.reshape(out_shape);
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("lon"), nb::arg("lat"));
-
-    m.def("healpix_get_interp_weights_nested_torch_cpu",
-          [](int64_t nside, nb::object lon_obj, nb::object lat_obj) {
-              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
-              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
-              if (!lon.sizes().equals(lat.sizes())) {
-                  throw std::runtime_error("lon/lat shape mismatch");
-              }
-              std::vector<int64_t> out_shape;
-              out_shape.reserve(static_cast<size_t>(lon.dim()) + 1);
-              out_shape.push_back(4);
-              for (const auto s : lon.sizes()) {
-                  out_shape.push_back(static_cast<int64_t>(s));
-              }
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_weights_nested_cpu(nside, lon, lat);
-              }
-              out.first = out.first.reshape(out_shape);
-              out.second = out.second.reshape(out_shape);
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("lon"), nb::arg("lat"));
-
-    m.def("healpix_get_interp_val_ring_torch_cpu",
-          [](int64_t nside, nb::object maps_obj, nb::object lon_obj, nb::object lat_obj) {
-              auto maps = python_to_tensor(maps_obj).contiguous();
-              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
-              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
-              if (!lon.sizes().equals(lat.sizes())) {
-                  throw std::runtime_error("lon/lat shape mismatch");
-              }
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_val_ring_cpu(nside, maps, lon, lat);
-              }
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("maps"), nb::arg("lon"), nb::arg("lat"));
-
-    m.def("healpix_get_interp_val_nested_torch_cpu",
-          [](int64_t nside, nb::object maps_obj, nb::object lon_obj, nb::object lat_obj) {
-              auto maps = python_to_tensor(maps_obj).contiguous();
-              auto lon = python_to_tensor(lon_obj).to(torch::kFloat64).contiguous();
-              auto lat = python_to_tensor(lat_obj).to(torch::kFloat64).contiguous();
-              if (!lon.sizes().equals(lat.sizes())) {
-                  throw std::runtime_error("lon/lat shape mismatch");
-              }
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_get_interp_val_nested_cpu(nside, maps, lon, lat);
-              }
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("maps"), nb::arg("lon"), nb::arg("lat"));
-
-    m.def("healpix_query_disc_torch_cpu",
-          [](int64_t nside, nb::object vec_obj, double cos_lim, bool nest) {
-              auto vec = python_to_tensor(vec_obj).to(torch::kFloat64).contiguous();
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_query_disc_cpu(nside, vec, cos_lim, nest);
-              }
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("vec"), nb::arg("cos_lim"), nb::arg("nest") = false);
-
-    m.def("healpix_ang2pix_ring_cpu",
-          [](int64_t nside,
-             nb::ndarray<nb::numpy, double, nb::c_contig> ra_arr,
-             nb::ndarray<nb::numpy, double, nb::c_contig> dec_arr) {
-              if (ra_arr.ndim() != dec_arr.ndim()) {
-                  throw std::runtime_error("RA/Dec ndim mismatch");
-              }
-              std::vector<int64_t> shape;
-              shape.reserve(ra_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < ra_arr.ndim(); ++i) {
-                  const int64_t dra = static_cast<int64_t>(ra_arr.shape(i));
-                  const int64_t ddec = static_cast<int64_t>(dec_arr.shape(i));
-                  if (dra != ddec) {
-                      throw std::runtime_error("RA/Dec shape mismatch");
-                  }
-                  shape.push_back(dra);
-                  numel *= dra;
-              }
-              auto ra_view = torch::from_blob(
-                  ra_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              auto dec_view = torch::from_blob(
-                  dec_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_ang2pix_ring_cpu(
-                      nside, ra_view.reshape({numel}), dec_view.reshape({numel})
-                  );
-              }
-              out = out.reshape(shape);
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("ra_arr"), nb::arg("dec_arr"));
-
-    m.def("healpix_ang2pix_ring_torch_cpu",
-          [](int64_t nside, nb::object ra_obj, nb::object dec_obj) {
-              auto ra = python_to_tensor(ra_obj).to(torch::kFloat64).contiguous();
-              auto dec = python_to_tensor(dec_obj).to(torch::kFloat64).contiguous();
-              if (!ra.sizes().equals(dec.sizes())) {
-                  throw std::runtime_error("RA/Dec shape mismatch");
-              }
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_ang2pix_ring_cpu(nside, ra, dec);
-              }
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("ra"), nb::arg("dec"));
-
-    m.def("healpix_ang2pix_nested_cpu",
-          [](int64_t nside,
-             nb::ndarray<nb::numpy, double, nb::c_contig> ra_arr,
-             nb::ndarray<nb::numpy, double, nb::c_contig> dec_arr) {
-              if (ra_arr.ndim() != dec_arr.ndim()) {
-                  throw std::runtime_error("RA/Dec ndim mismatch");
-              }
-              std::vector<int64_t> shape;
-              shape.reserve(ra_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < ra_arr.ndim(); ++i) {
-                  const int64_t dra = static_cast<int64_t>(ra_arr.shape(i));
-                  const int64_t ddec = static_cast<int64_t>(dec_arr.shape(i));
-                  if (dra != ddec) {
-                      throw std::runtime_error("RA/Dec shape mismatch");
-                  }
-                  shape.push_back(dra);
-                  numel *= dra;
-              }
-              auto ra_view = torch::from_blob(
-                  ra_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              auto dec_view = torch::from_blob(
-                  dec_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kFloat64)
-              );
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_ang2pix_nested_cpu(
-                      nside, ra_view.reshape({numel}), dec_view.reshape({numel})
-                  );
-              }
-              out = out.reshape(shape);
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("ra_arr"), nb::arg("dec_arr"));
-
-    m.def("healpix_ang2pix_nested_torch_cpu",
-          [](int64_t nside, nb::object ra_obj, nb::object dec_obj) {
-              auto ra = python_to_tensor(ra_obj).to(torch::kFloat64).contiguous();
-              auto dec = python_to_tensor(dec_obj).to(torch::kFloat64).contiguous();
-              if (!ra.sizes().equals(dec.sizes())) {
-                  throw std::runtime_error("RA/Dec shape mismatch");
-              }
-              torch::Tensor out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_ang2pix_nested_cpu(nside, ra, dec);
-              }
-              return tensor_to_python(out);
-          },
-          nb::arg("nside"), nb::arg("ra"), nb::arg("dec"));
-
-    m.def("healpix_pix2ang_ring_cpu",
-          [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-              std::vector<int64_t> shape;
-              shape.reserve(pix_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-                  const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
-                  shape.push_back(d);
-                  numel *= d;
-              }
-              auto pix_view = torch::from_blob(
-                  pix_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kInt64)
-              );
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_pix2ang_ring_cpu(nside, pix_view.reshape({numel}));
-              }
-              out.first = out.first.reshape(shape);
-              out.second = out.second.reshape(shape);
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_pix2ang_ring_torch_cpu",
-          [](int64_t nside, nb::object pix_obj) {
-              auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_pix2ang_ring_cpu(nside, pix);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("pix"));
-
-    m.def("healpix_pix2ang_nested_cpu",
-          [](int64_t nside, nb::ndarray<nb::numpy, int64_t, nb::c_contig> pix_arr) {
-              std::vector<int64_t> shape;
-              shape.reserve(pix_arr.ndim());
-              int64_t numel = 1;
-              for (size_t i = 0; i < pix_arr.ndim(); ++i) {
-                  const int64_t d = static_cast<int64_t>(pix_arr.shape(i));
-                  shape.push_back(d);
-                  numel *= d;
-              }
-              auto pix_view = torch::from_blob(
-                  pix_arr.data(),
-                  shape,
-                  torch::TensorOptions().dtype(torch::kInt64)
-              );
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_pix2ang_nested_cpu(nside, pix_view.reshape({numel}));
-              }
-              out.first = out.first.reshape(shape);
-              out.second = out.second.reshape(shape);
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("pix_arr"));
-
-    m.def("healpix_pix2ang_nested_torch_cpu",
-          [](int64_t nside, nb::object pix_obj) {
-              auto pix = python_to_tensor(pix_obj).to(torch::kInt64).contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::healpix_pix2ang_nested_cpu(nside, pix);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("nside"), nb::arg("pix"));
-
-    m.def("wcs_zenithal_project",
-          [](nb::object xi_obj, nb::object eta_obj, std::string proj_code) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_zenithal_project(xi, eta, proj_code);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("proj_code"));
-
-    m.def("wcs_zpn_project",
-          [](nb::object xi_obj, nb::object eta_obj, nb::object coeffs_obj) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              auto coeffs = as_f64_contig(coeffs_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_zpn_project(xi, eta, coeffs);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("coeffs"));
-
-    m.def("wcs_zenithal_deproject",
-          [](nb::object phi_obj, nb::object theta_obj, std::string proj_code) {
-              auto phi = as_f64_contig(phi_obj);
-              auto theta = as_f64_contig(theta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_zenithal_deproject(phi, theta, proj_code);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"), nb::arg("proj_code"));
-
-    m.def("wcs_cylindrical_project",
-          [](nb::object xi_obj, nb::object eta_obj, std::string proj_code, double lambda_param) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_cylindrical_project(xi, eta, proj_code, lambda_param);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("proj_code"), nb::arg("lambda_param") = 1.0);
-
-    m.def("wcs_cylindrical_deproject",
-          [](nb::object phi_obj, nb::object theta_obj, std::string proj_code, double lambda_param) {
-              auto phi = as_f64_contig(phi_obj);
-              auto theta = as_f64_contig(theta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_cylindrical_deproject(phi, theta, proj_code, lambda_param);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"), nb::arg("proj_code"), nb::arg("lambda_param") = 1.0);
-
-    m.def("wcs_center_pixel_to_world",
-          [](nb::object x_obj,
-             nb::object y_obj,
-             double origin,
-             double crpix0,
-             double crpix1,
-             double cd00,
-             double cd01,
-             double cd10,
-             double cd11,
-             std::string proj_code,
-             double alpha0,
-             double cea_eta_scale,
-             double hpx_H,
-             double hpx_K) {
-              auto x = as_f64_contig(x_obj);
-              auto y = as_f64_contig(y_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_center_pixel_to_world(
-                      x, y, origin, crpix0, crpix1, cd00, cd01, cd10, cd11, proj_code, alpha0, cea_eta_scale, hpx_H, hpx_K
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("x"), nb::arg("y"), nb::arg("origin"), nb::arg("crpix0"), nb::arg("crpix1"),
-          nb::arg("cd00"), nb::arg("cd01"), nb::arg("cd10"), nb::arg("cd11"),
-          nb::arg("proj_code"), nb::arg("alpha0"), nb::arg("cea_eta_scale"), nb::arg("hpx_H"), nb::arg("hpx_K"));
-
-    m.def("wcs_center_world_to_pixel",
-          [](nb::object ra_obj,
-             nb::object dec_obj,
-             double crpix0,
-             double crpix1,
-             double cdi00,
-             double cdi01,
-             double cdi10,
-             double cdi11,
-             std::string proj_code,
-             double alpha0,
-             double cea_eta_scale,
-             double origin,
-             double hpx_H,
-             double hpx_K) {
-              auto ra = as_f64_contig(ra_obj);
-              auto dec = as_f64_contig(dec_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_center_world_to_pixel(
-                      ra, dec, crpix0, crpix1, cdi00, cdi01, cdi10, cdi11,
-                      proj_code, alpha0, cea_eta_scale, origin, hpx_H, hpx_K
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("ra"), nb::arg("dec"), nb::arg("crpix0"), nb::arg("crpix1"),
-          nb::arg("cdi00"), nb::arg("cdi01"), nb::arg("cdi10"), nb::arg("cdi11"),
-          nb::arg("proj_code"), nb::arg("alpha0"), nb::arg("cea_eta_scale"), nb::arg("origin"), nb::arg("hpx_H"), nb::arg("hpx_K"));
-
-    m.def("wcs_ait_project",
-          [](nb::object xi_obj, nb::object eta_obj) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_ait_project(xi, eta);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"));
-
-    m.def("wcs_ait_deproject",
-          [](nb::object phi_obj, nb::object theta_obj) {
-              auto phi = as_f64_contig(phi_obj);
-              auto theta = as_f64_contig(theta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_ait_deproject(phi, theta);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"));
-
-    m.def("wcs_mol_project",
-          [](nb::object xi_obj, nb::object eta_obj) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_mol_project(xi, eta);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"));
-
-    m.def("wcs_mol_deproject",
-          [](nb::object phi_obj, nb::object theta_obj) {
-              auto phi = as_f64_contig(phi_obj);
-              auto theta = as_f64_contig(theta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_mol_deproject(phi, theta);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"));
-
-    m.def("wcs_hpx_project",
-          [](nb::object xi_obj, nb::object eta_obj, double H, double K) {
-              auto xi = as_f64_contig(xi_obj);
-              auto eta = as_f64_contig(eta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_hpx_project(xi, eta, H, K);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("H") = 4.0, nb::arg("K") = 3.0);
-
-    m.def("wcs_hpx_deproject",
-          [](nb::object phi_obj, nb::object theta_obj, double H, double K) {
-              auto phi = as_f64_contig(phi_obj);
-              auto theta = as_f64_contig(theta_obj);
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_hpx_deproject(phi, theta, H, K);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"), nb::arg("H") = 4.0, nb::arg("K") = 3.0);
-
-    m.def("wcs_inverse_spherical_rotation_pole",
-          [](nb::object ra_obj,
-             nb::object dec_obj,
-             double phi_p_rad,
-             double east_x,
-             double east_y,
-             double north_x,
-             double north_y,
-             double north_z,
-             double radial_x,
-             double radial_y,
-             double radial_z) {
-              auto ra = python_to_tensor(ra_obj);
-              auto dec = python_to_tensor(dec_obj);
-              if (!(ra.device().is_cpu() && dec.device().is_cpu())) {
-                  throw std::runtime_error("wcs_inverse_spherical_rotation_pole expects CPU tensors");
-              }
-              if (!(ra.scalar_type() == torch::kFloat64 && dec.scalar_type() == torch::kFloat64)) {
-                  throw std::runtime_error("wcs_inverse_spherical_rotation_pole expects float64 inputs");
-              }
-              if (!ra.is_contiguous()) ra = ra.contiguous();
-              if (!dec.is_contiguous()) dec = dec.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_inverse_spherical_rotation_pole(
-                      ra, dec, phi_p_rad,
-                      east_x, east_y,
-                      north_x, north_y, north_z,
-                      radial_x, radial_y, radial_z
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("ra"), nb::arg("dec"), nb::arg("phi_p_rad"),
-          nb::arg("east_x"), nb::arg("east_y"),
-          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
-          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
-
-    m.def("wcs_spherical_rotation_pole",
-          [](nb::object phi_obj,
-             nb::object theta_obj,
-             double phi_p_rad,
-             double east_x,
-             double east_y,
-             double north_x,
-             double north_y,
-             double north_z,
-             double radial_x,
-             double radial_y,
-             double radial_z) {
-              auto phi = python_to_tensor(phi_obj);
-              auto theta = python_to_tensor(theta_obj);
-              if (!(phi.device().is_cpu() && theta.device().is_cpu())) {
-                  throw std::runtime_error("wcs_spherical_rotation_pole expects CPU tensors");
-              }
-              if (!(phi.scalar_type() == torch::kFloat64 && theta.scalar_type() == torch::kFloat64)) {
-                  throw std::runtime_error("wcs_spherical_rotation_pole expects float64 inputs");
-              }
-              if (!phi.is_contiguous()) phi = phi.contiguous();
-              if (!theta.is_contiguous()) theta = theta.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_spherical_rotation_pole(
-                      phi, theta, phi_p_rad,
-                      east_x, east_y,
-                      north_x, north_y, north_z,
-                      radial_x, radial_y, radial_z
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("phi"), nb::arg("theta"), nb::arg("phi_p_rad"),
-          nb::arg("east_x"), nb::arg("east_y"),
-          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
-          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
-
-    m.def("wcs_tan_intermediate_from_radec",
-          [](nb::object ra_obj,
-             nb::object dec_obj,
-             double east_x,
-             double east_y,
-             double north_x,
-             double north_y,
-             double north_z,
-             double radial_x,
-             double radial_y,
-             double radial_z) {
-              auto ra = python_to_tensor(ra_obj);
-              auto dec = python_to_tensor(dec_obj);
-              if (!(ra.device().is_cpu() && dec.device().is_cpu())) {
-                  throw std::runtime_error("wcs_tan_intermediate_from_radec expects CPU tensors");
-              }
-              if (!(ra.scalar_type() == torch::kFloat64 && dec.scalar_type() == torch::kFloat64)) {
-                  throw std::runtime_error("wcs_tan_intermediate_from_radec expects float64 inputs");
-              }
-              if (!ra.is_contiguous()) ra = ra.contiguous();
-              if (!dec.is_contiguous()) dec = dec.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_tan_intermediate_from_radec(
-                      ra, dec,
-                      east_x, east_y,
-                      north_x, north_y, north_z,
-                      radial_x, radial_y, radial_z
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("ra"), nb::arg("dec"),
-          nb::arg("east_x"), nb::arg("east_y"),
-          nb::arg("north_x"), nb::arg("north_y"), nb::arg("north_z"),
-          nb::arg("radial_x"), nb::arg("radial_y"), nb::arg("radial_z"));
-
-    m.def("wcs_tpv_invert",
-          [](nb::object xi_obj,
-             nb::object eta_obj,
-             nb::object idx1_obj,
-             nb::object c1_obj,
-             nb::object idx2_obj,
-             nb::object c2_obj,
-             int64_t max_iter,
-             double tol) {
-              auto xi = python_to_tensor(xi_obj);
-              auto eta = python_to_tensor(eta_obj);
-              auto idx1 = python_to_tensor(idx1_obj);
-              auto c1 = python_to_tensor(c1_obj);
-              auto idx2 = python_to_tensor(idx2_obj);
-              auto c2 = python_to_tensor(c2_obj);
-              if (!(xi.device().is_cpu() && eta.device().is_cpu() &&
-                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
-                    c1.device().is_cpu() && c2.device().is_cpu())) {
-                  throw std::runtime_error("wcs_tpv_invert expects CPU tensors");
-              }
-              if (!(xi.scalar_type() == torch::kFloat64 && eta.scalar_type() == torch::kFloat64 &&
-                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
-                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
-                  throw std::runtime_error("wcs_tpv_invert expects float64 inputs and int64 indices");
-              }
-              if (!xi.is_contiguous()) xi = xi.contiguous();
-              if (!eta.is_contiguous()) eta = eta.contiguous();
-              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
-              if (!c1.is_contiguous()) c1 = c1.contiguous();
-              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
-              if (!c2.is_contiguous()) c2 = c2.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_tpv_invert(xi, eta, idx1, c1, idx2, c2, max_iter, tol);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"),
-          nb::arg("max_iter") = 10, nb::arg("tol") = 1e-11);
-
-    m.def("wcs_tpv_distort",
-          [](nb::object u_obj,
-             nb::object v_obj,
-             nb::object idx1_obj,
-             nb::object c1_obj,
-             nb::object idx2_obj,
-             nb::object c2_obj) {
-              auto u = python_to_tensor(u_obj);
-              auto v = python_to_tensor(v_obj);
-              auto idx1 = python_to_tensor(idx1_obj);
-              auto c1 = python_to_tensor(c1_obj);
-              auto idx2 = python_to_tensor(idx2_obj);
-              auto c2 = python_to_tensor(c2_obj);
-              if (!(u.device().is_cpu() && v.device().is_cpu() &&
-                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
-                    c1.device().is_cpu() && c2.device().is_cpu())) {
-                  throw std::runtime_error("wcs_tpv_distort expects CPU tensors");
-              }
-              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64 &&
-                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
-                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
-                  throw std::runtime_error("wcs_tpv_distort expects float64 inputs and int64 indices");
-              }
-              if (!u.is_contiguous()) u = u.contiguous();
-              if (!v.is_contiguous()) v = v.contiguous();
-              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
-              if (!c1.is_contiguous()) c1 = c1.contiguous();
-              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
-              if (!c2.is_contiguous()) c2 = c2.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_tpv_distort(u, v, idx1, c1, idx2, c2);
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("u"), nb::arg("v"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"));
-
-    m.def("wcs_sip_quadratic_distort",
-          [](nb::object u_obj,
-             nb::object v_obj,
-             double a20,
-             double a11,
-             double a02,
-             double b20,
-             double b11,
-             double b02) {
-              auto u = python_to_tensor(u_obj);
-              auto v = python_to_tensor(v_obj);
-              if (!(u.device().is_cpu() && v.device().is_cpu())) {
-                  throw std::runtime_error("wcs_sip_quadratic_distort expects CPU tensors");
-              }
-              if (!(u.scalar_type() == torch::kFloat64 && v.scalar_type() == torch::kFloat64)) {
-                  throw std::runtime_error("wcs_sip_quadratic_distort expects float64 inputs");
-              }
-              if (!u.is_contiguous()) u = u.contiguous();
-              if (!v.is_contiguous()) v = v.contiguous();
-              std::pair<torch::Tensor, torch::Tensor> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_sip_quadratic_distort(
-                      u, v, a20, a11, a02, b20, b11, b02
-                  );
-              }
-              return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-          },
-          nb::arg("u"), nb::arg("v"),
-          nb::arg("a20"), nb::arg("a11"), nb::arg("a02"),
-          nb::arg("b20"), nb::arg("b11"), nb::arg("b02"));
-
-    m.def("wcs_tpv_invert_trace",
-          [](nb::object xi_obj,
-             nb::object eta_obj,
-             nb::object idx1_obj,
-             nb::object c1_obj,
-             nb::object idx2_obj,
-             nb::object c2_obj,
-             int64_t max_iter,
-             double tol) {
-              auto xi = python_to_tensor(xi_obj);
-              auto eta = python_to_tensor(eta_obj);
-              auto idx1 = python_to_tensor(idx1_obj);
-              auto c1 = python_to_tensor(c1_obj);
-              auto idx2 = python_to_tensor(idx2_obj);
-              auto c2 = python_to_tensor(c2_obj);
-              if (!(xi.device().is_cpu() && eta.device().is_cpu() &&
-                    idx1.device().is_cpu() && idx2.device().is_cpu() &&
-                    c1.device().is_cpu() && c2.device().is_cpu())) {
-                  throw std::runtime_error("wcs_tpv_invert_trace expects CPU tensors");
-              }
-              if (!(xi.scalar_type() == torch::kFloat64 && eta.scalar_type() == torch::kFloat64 &&
-                    c1.scalar_type() == torch::kFloat64 && c2.scalar_type() == torch::kFloat64 &&
-                    idx1.scalar_type() == torch::kInt64 && idx2.scalar_type() == torch::kInt64)) {
-                  throw std::runtime_error("wcs_tpv_invert_trace expects float64 inputs and int64 indices");
-              }
-              if (!xi.is_contiguous()) xi = xi.contiguous();
-              if (!eta.is_contiguous()) eta = eta.contiguous();
-              if (!idx1.is_contiguous()) idx1 = idx1.contiguous();
-              if (!c1.is_contiguous()) c1 = c1.contiguous();
-              if (!idx2.is_contiguous()) idx2 = idx2.contiguous();
-              if (!c2.is_contiguous()) c2 = c2.contiguous();
-              std::tuple<torch::Tensor, torch::Tensor, int64_t, std::vector<int64_t>, int64_t> out;
-              {
-                  nb::gil_scoped_release release;
-                  out = torchfits::wcs_tpv_invert_trace(xi, eta, idx1, c1, idx2, c2, max_iter, tol);
-              }
-              return nb::make_tuple(
-                  tensor_to_python(std::get<0>(out)),
-                  tensor_to_python(std::get<1>(out)),
-                  std::get<2>(out),
-                  std::get<3>(out),
-                  std::get<4>(out)
-              );
-          },
-          nb::arg("xi"), nb::arg("eta"), nb::arg("idx1"), nb::arg("c1"), nb::arg("idx2"), nb::arg("c2"),
-          nb::arg("max_iter") = 10, nb::arg("tol") = 1e-11);
-
-    m.def(
-        "_healpix_scalar_alm2map_direct_cpu",
-        [](nb::object alm_obj,
-           nb::object cos_theta_obj,
-           nb::object phi_obj,
-           int64_t lmax,
-           int64_t mmax) {
-            torch::Tensor alm = python_to_tensor(alm_obj).contiguous();
-            torch::Tensor cos_theta = python_to_tensor(cos_theta_obj).contiguous();
-            torch::Tensor phi = python_to_tensor(phi_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_scalar_alm2map_direct_cpu(alm, cos_theta, phi, lmax, mmax);
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("alm"),
-        nb::arg("cos_theta"),
-        nb::arg("phi"),
-        nb::arg("lmax"),
-        nb::arg("mmax"));
-
-    m.def(
-        "_healpix_ring_fourier_modes_cpu",
-        [](nb::object rows_obj,
-           nb::object starts_obj,
-           nb::object lengths_obj,
-           int64_t mmax) {
-            torch::Tensor rows = python_to_tensor(rows_obj).contiguous();
-            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
-            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_ring_fourier_modes_cpu(rows, starts, lengths, mmax);
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("rows"),
-        nb::arg("starts"),
-        nb::arg("lengths"),
-        nb::arg("mmax"));
-
-    m.def(
-        "_healpix_ring_fourier_modes_spin_conj_cpu",
-        [](nb::object row_obj,
-           nb::object starts_obj,
-           nb::object lengths_obj,
-           int64_t mmax) {
-            torch::Tensor row = python_to_tensor(row_obj).contiguous();
-            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
-            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_ring_fourier_modes_spin_conj_cpu(row, starts, lengths, mmax);
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("row"),
-        nb::arg("starts"),
-        nb::arg("lengths"),
-        nb::arg("mmax"));
-
-    m.def(
-        "_healpix_ring_fourier_synthesis_cpu",
-        [](nb::object s_modes_obj,
-           nb::object starts_obj,
-           nb::object lengths_obj) {
-            torch::Tensor s_modes = python_to_tensor(s_modes_obj).contiguous();
-            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
-            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_ring_fourier_synthesis_cpu(s_modes, starts, lengths);
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("s_modes"),
-        nb::arg("starts"),
-        nb::arg("lengths"));
-
-    m.def(
-        "_healpix_spin_ring_finalize_cpu",
-        [](nb::object s_plus_obj,
-           nb::object s_minus_obj,
-           nb::object starts_obj,
-           nb::object lengths_obj) {
-            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
-            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
-            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
-            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_ring_finalize_cpu(s_plus, s_minus, starts, lengths);
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("s_plus"),
-        nb::arg("s_minus"),
-        nb::arg("starts"),
-        nb::arg("lengths"));
-
-    m.def(
-        "_healpix_spin_map2alm_ring_concat_cpu",
-        [](nb::object p_plus_obj,
-           nb::object starts_obj,
-           nb::object lengths_obj,
-           nb::object phase0_neg_obj,
-           nb::object y_plus_obj,
-           nb::object y_minus_obj,
-           int64_t lmax,
-           int64_t mmax,
-           double pix_w) {
-            torch::Tensor p_plus = python_to_tensor(p_plus_obj).contiguous();
-            torch::Tensor starts = python_to_tensor(starts_obj).contiguous();
-            torch::Tensor lengths = python_to_tensor(lengths_obj).contiguous();
-            torch::Tensor phase0_neg = python_to_tensor(phase0_neg_obj).contiguous();
-            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
-            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
-            std::pair<torch::Tensor, torch::Tensor> out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_map2alm_ring_concat_cpu(
-                    p_plus, starts, lengths, phase0_neg, y_plus, y_minus, lmax, mmax, pix_w
-                );
-            }
-            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-        },
-        nb::arg("p_plus"),
-        nb::arg("starts"),
-        nb::arg("lengths"),
-        nb::arg("phase0_neg"),
-        nb::arg("y_plus"),
-        nb::arg("y_minus"),
-        nb::arg("lmax"),
-        nb::arg("mmax"),
-        nb::arg("pix_w"));
-
-    // Experimental spin-2 helper: not part of public stable API.
-    // Kept for local profiling only while the interface/runtime safety is audited.
-    m.def(
-        "_healpix_spin_map2alm_from_basis_cpu",
-        [](nb::object q_obj,
-           nb::object u_obj,
-           nb::object ycp_t_obj,
-           nb::object ycm_t_obj,
-           double pix_w) {
-            torch::Tensor q = python_to_tensor(q_obj).contiguous();
-            torch::Tensor u = python_to_tensor(u_obj).contiguous();
-            torch::Tensor ycp_t = python_to_tensor(ycp_t_obj).contiguous();
-            torch::Tensor ycm_t = python_to_tensor(ycm_t_obj).contiguous();
-            std::pair<torch::Tensor, torch::Tensor> out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_map2alm_from_basis_cpu(q, u, ycp_t, ycm_t, pix_w);
-            }
-            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-        },
-        nb::arg("q"),
-        nb::arg("u"),
-        nb::arg("ycp_t"),
-        nb::arg("ycm_t"),
-        nb::arg("pix_w"));
-
-    m.def(
-        "_healpix_spin_alm2map_from_basis_cpu",
-        [](nb::object coeff_plus_obj,
-           nb::object coeff_minus_obj,
-           nb::object y_plus_obj,
-           nb::object y_minus_obj,
-           nb::object y_plus_m0_obj,
-           nb::object y_minus_m0_obj) {
-            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
-            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
-            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
-            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
-            torch::Tensor y_plus_m0 = python_to_tensor(y_plus_m0_obj).contiguous();
-            torch::Tensor y_minus_m0 = python_to_tensor(y_minus_m0_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_alm2map_from_basis_cpu(
-                    coeff_plus,
-                    coeff_minus,
-                    y_plus,
-                    y_minus,
-                    y_plus_m0,
-                    y_minus_m0
-                );
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("coeff_plus"),
-        nb::arg("coeff_minus"),
-        nb::arg("y_plus"),
-        nb::arg("y_minus"),
-        nb::arg("y_plus_m0"),
-        nb::arg("y_minus_m0"));
-
-    m.def(
-        "_healpix_spin_interpolate_concat_cpu",
-        [](nb::object coeff_plus_obj,
-           nb::object coeff_minus_obj,
-           nb::object y_plus_obj,
-           nb::object y_minus_obj,
-           int64_t lmax,
-           int64_t mmax) {
-            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
-            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
-            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
-            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
-            std::pair<torch::Tensor, torch::Tensor> out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_interpolate_concat_cpu(
-                    coeff_plus, coeff_minus, y_plus, y_minus, lmax, mmax
-                );
-            }
-            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-        },
-        nb::arg("coeff_plus"),
-        nb::arg("coeff_minus"),
-        nb::arg("y_plus"),
-        nb::arg("y_minus"),
-        nb::arg("lmax"),
-        nb::arg("mmax"));
-
-    m.def(
-        "_healpix_spin_integrate_concat_cpu",
-        [](nb::object s_plus_obj,
-           nb::object s_minus_obj,
-           nb::object y_plus_obj,
-           nb::object y_minus_obj,
-           int64_t lmax,
-           int64_t mmax,
-           double pix_w) {
-            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
-            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
-            torch::Tensor y_plus = python_to_tensor(y_plus_obj).contiguous();
-            torch::Tensor y_minus = python_to_tensor(y_minus_obj).contiguous();
-            std::pair<torch::Tensor, torch::Tensor> out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_integrate_concat_cpu(
-                    s_plus, s_minus, y_plus, y_minus, lmax, mmax, pix_w
-                );
-            }
-            return nb::make_tuple(tensor_to_python(out.first), tensor_to_python(out.second));
-        },
-        nb::arg("s_plus"),
-        nb::arg("s_minus"),
-        nb::arg("y_plus"),
-        nb::arg("y_minus"),
-        nb::arg("lmax"),
-        nb::arg("mmax"),
-        nb::arg("pix_w"));
-
-    m.def(
-        "_healpix_spin2_block_accumulate_cpu_experimental",
-        [](nb::object coeff_plus_obj,
-           nb::object coeff_minus_obj,
-           nb::list y_plus_blocks_obj,
-           nb::list y_minus_blocks_obj,
-           double neg_sign) {
-            torch::Tensor coeff_plus = python_to_tensor(coeff_plus_obj).contiguous();
-            torch::Tensor coeff_minus = python_to_tensor(coeff_minus_obj).contiguous();
-            if (!coeff_plus.device().is_cpu() || !coeff_minus.device().is_cpu()) {
-                throw std::runtime_error("_healpix_spin2_block_accumulate_cpu_experimental expects CPU tensors");
-            }
-            if (coeff_plus.scalar_type() != torch::kComplexDouble || coeff_minus.scalar_type() != torch::kComplexDouble) {
-                throw std::runtime_error("_healpix_spin2_block_accumulate_cpu_experimental expects complex128 coeff tensors");
-            }
-            if (coeff_plus.dim() != 1 || coeff_minus.dim() != 1 || coeff_plus.numel() != coeff_minus.numel()) {
-                throw std::runtime_error("coeff tensors must be 1D and same length");
-            }
-            if (y_plus_blocks_obj.size() != y_minus_blocks_obj.size()) {
-                throw std::runtime_error("y_plus_blocks and y_minus_blocks must have same length");
-            }
-            if (y_plus_blocks_obj.size() == 0) {
-                throw std::runtime_error("basis blocks must be non-empty");
-            }
-
-            std::vector<torch::Tensor> y_plus_blocks;
-            std::vector<torch::Tensor> y_minus_blocks;
-            y_plus_blocks.reserve(y_plus_blocks_obj.size());
-            y_minus_blocks.reserve(y_minus_blocks_obj.size());
-            for (size_t i = 0; i < y_plus_blocks_obj.size(); ++i) {
-                nb::object yp_obj = nb::borrow<nb::object>(y_plus_blocks_obj[i]);
-                nb::object ym_obj = nb::borrow<nb::object>(y_minus_blocks_obj[i]);
-                auto yp = python_to_tensor(yp_obj).contiguous();
-                auto ym = python_to_tensor(ym_obj).contiguous();
-                if (!yp.device().is_cpu() || !ym.device().is_cpu()) {
-                    throw std::runtime_error("basis blocks must be CPU tensors");
-                }
-                if (yp.scalar_type() != torch::kComplexDouble || ym.scalar_type() != torch::kComplexDouble) {
-                    throw std::runtime_error("basis blocks must be complex128 tensors");
-                }
-                if (yp.dim() != 2 || ym.dim() != 2) {
-                    throw std::runtime_error("basis blocks must be rank-2 tensors");
-                }
-                if (yp.sizes() != ym.sizes()) {
-                    throw std::runtime_error("paired y_plus/y_minus blocks must have matching shapes");
-                }
-                y_plus_blocks.push_back(yp);
-                y_minus_blocks.push_back(ym);
-            }
-
-            const int64_t npix = y_plus_blocks[0].size(1);
-            for (const auto& blk : y_plus_blocks) {
-                if (blk.size(1) != npix) {
-                    throw std::runtime_error("all basis blocks must have the same npix dimension");
-                }
-            }
-
-            auto options = torch::TensorOptions().dtype(torch::kComplexDouble).device(torch::kCPU);
-            torch::Tensor p_plus = torch::zeros({npix}, options);
-            torch::Tensor p_minus = torch::zeros({npix}, options);
-
-            int64_t offset = 0;
-            for (size_t m = 0; m < y_plus_blocks.size(); ++m) {
-                const auto& yp = y_plus_blocks[m];
-                const auto& ym = y_minus_blocks[m];
-                const int64_t l_count = yp.size(0);
-                if (offset + l_count > coeff_plus.numel()) {
-                    throw std::runtime_error("basis block sizes exceed coefficient length");
-                }
-
-                auto cp = coeff_plus.narrow(0, offset, l_count);
-                auto cm = coeff_minus.narrow(0, offset, l_count);
-                auto p_plus_m = torch::matmul(cp, yp);
-                auto p_minus_m = torch::matmul(cm, ym);
-
-                p_plus = p_plus + p_plus_m;
-                p_minus = p_minus + p_minus_m;
-                if (m > 0) {
-                    p_plus = p_plus + neg_sign * torch::conj(p_minus_m);
-                    p_minus = p_minus + neg_sign * torch::conj(p_plus_m);
-                }
-                offset += l_count;
-            }
-
-            if (offset != coeff_plus.numel()) {
-                throw std::runtime_error("basis block sizes do not match coefficient length");
-            }
-            return nb::make_tuple(tensor_to_python(p_plus), tensor_to_python(p_minus));
-        },
-        nb::arg("coeff_plus"),
-        nb::arg("coeff_minus"),
-        nb::arg("y_plus_blocks"),
-        nb::arg("y_minus_blocks"),
-        nb::arg("neg_sign"));
-
-
-    // Experimental recurrence kernels
-    m.def(
-        "_healpix_spin_integrate_recurrence_cpu",
-        [](nb::object s_plus_obj,
-           nb::object s_minus_obj,
-           nb::object theta_obj,
-           nb::object weight_obj,
-           int64_t lmax,
-           int64_t mmax,
-           int64_t spin) {
-            torch::Tensor s_plus = python_to_tensor(s_plus_obj).contiguous();
-            torch::Tensor s_minus = python_to_tensor(s_minus_obj).contiguous();
-            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
-            torch::Tensor weight = python_to_tensor(weight_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_integrate_recurrence_cpu(
-                    s_plus, s_minus, theta, weight, lmax, mmax, spin
-                );
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("s_plus"),
-        nb::arg("s_minus"),
-        nb::arg("theta"),
-        nb::arg("weight"),
-        nb::arg("lmax"),
-        nb::arg("mmax"),
-        nb::arg("spin"));
-
-    m.def(
-        "_healpix_spin_interpolate_recurrence_cpu",
-        [](nb::object alms_obj,
-           nb::object theta_obj,
-           int64_t lmax,
-           int64_t mmax,
-           int64_t spin) {
-            torch::Tensor alms = python_to_tensor(alms_obj).contiguous();
-            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_spin_interpolate_recurrence_cpu(
-                    alms, theta, lmax, mmax, spin
-                );
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("alms"),
-        nb::arg("theta"),
-        nb::arg("lmax"),
-        nb::arg("mmax"),
-        nb::arg("spin"));
-
-    // Dedicated scalar (spin=0) recurrence kernels
-    m.def(
-        "_healpix_scalar_integrate_recurrence_cpu",
-        [](nb::object s_modes_obj,
-           nb::object theta_obj,
-           nb::object weight_obj,
-           int64_t lmax,
-           int64_t mmax) {
-            torch::Tensor s_modes = python_to_tensor(s_modes_obj).contiguous();
-            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
-            torch::Tensor weight = python_to_tensor(weight_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_scalar_integrate_recurrence_cpu(
-                    s_modes, theta, weight, lmax, mmax
-                );
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("s_modes"),
-        nb::arg("theta"),
-        nb::arg("weight"),
-        nb::arg("lmax"),
-        nb::arg("mmax"));
-
-    m.def(
-        "_healpix_scalar_interpolate_recurrence_cpu",
-        [](nb::object alm_obj,
-           nb::object theta_obj,
-           int64_t lmax,
-           int64_t mmax) {
-            torch::Tensor alm = python_to_tensor(alm_obj).contiguous();
-            torch::Tensor theta = python_to_tensor(theta_obj).contiguous();
-            torch::Tensor out;
-            {
-                nb::gil_scoped_release release;
-                out = torchfits::healpix_scalar_interpolate_recurrence_cpu(
-                    alm, theta, lmax, mmax
-                );
-            }
-            return tensor_to_python(out);
-        },
-        nb::arg("alm"),
-        nb::arg("theta"),
-        nb::arg("lmax"),
-        nb::arg("mmax"));
-
     m.def("echo_tensor", [](nb::object obj) {
         return obj;
     });
+
+}
+
+void bind_other(nb::module_& m) {
+    nb::class_<torchfits::SubsetReader>(m, "SubsetReader")
+        .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 0)
+        .def("read", [](torchfits::SubsetReader& self, long x1, long y1, long x2, long y2) {
+            torch::Tensor tensor;
+            {
+                nb::gil_scoped_release release;
+                tensor = self.read(x1, y1, x2, y2);
+            }
+            return tensor_to_python(tensor);
+        }, nb::arg("x1"), nb::arg("y1"), nb::arg("x2"), nb::arg("y2"))
+        .def("close", &torchfits::SubsetReader::close)
+        .def_prop_ro("width", &torchfits::SubsetReader::width)
+        .def_prop_ro("height", &torchfits::SubsetReader::height)
+        .def_prop_ro("hdu", &torchfits::SubsetReader::hdu);
+
+    nb::class_<torchfits::HDUInfo>(m, "HDUInfo")
+        .def_prop_rw("index", [](torchfits::HDUInfo& t) { return t.index; }, [](torchfits::HDUInfo& t, int v) { t.index = v; })
+        .def_prop_rw("type", [](torchfits::HDUInfo& t) { return t.type; }, [](torchfits::HDUInfo& t, std::string v) { t.type = v; })
+        .def_prop_ro("header", [](torchfits::HDUInfo& t) {
+            nb::dict d;
+            for (const auto& kv : t.header) {
+                d[std::get<0>(kv).c_str()] = std::get<1>(kv);
+            }
+            return d;
+        });
+}
+
+NB_MODULE(cpp, m) {
+    bind_wcs(m);
+    bind_healpix(m);
+    bind_fits(m);
+    bind_other(m);
 }
