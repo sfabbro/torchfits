@@ -1,7 +1,5 @@
 """Multi-Order Coverage (MOC) support for HEALPix."""
 
-from __future__ import annotations
-
 import math
 from typing import Literal
 import importlib
@@ -200,16 +198,16 @@ class MOC:
         """Total area covered by the MOC in square degrees."""
         return self.area * (180.0 / math.pi) ** 2
 
-    def contains_moc(self, other: MOC) -> bool:
+    def contains_moc(self, other: "MOC") -> bool:
         """Return True if this MOC contains all of other MOC (subset check)."""
         # self contains other if intersection(self, other) == other
         inter = self.intersection(other)
         return torch.equal(inter.uniq, other.uniq)
 
-    def union(self, other: MOC) -> MOC:
+    def union(self, other: "MOC") -> "MOC":
         return MOC(torch.cat([self.uniq, other.uniq]))
 
-    def intersection(self, other: MOC) -> MOC:
+    def intersection(self, other: "MOC") -> "MOC":
         # Hierarchical intersection:
         # A pixel is in intersection if:
         # 1. It is in both.
@@ -243,7 +241,7 @@ class MOC:
                 j += 1
         return MOC._from_ranges(new_ranges, max_o)
 
-    def difference(self, other: MOC) -> MOC:
+    def difference(self, other: "MOC") -> "MOC":
         """Subtract other MOC from this MOC."""
         max_o = max(self.max_order, other.max_order)
         r1 = self._to_ranges(max_o)
@@ -301,7 +299,7 @@ class MOC:
         return ranges
 
     @classmethod
-    def _from_ranges(cls, ranges: list[tuple[int, int]], max_order: int) -> MOC:
+    def _from_ranges(cls, ranges: list[tuple[int, int]], max_order: int) -> "MOC":
         """Convert ranges back to UNIQ pixels using greedy filling."""
         uniqs = []
         for start, end in ranges:
@@ -348,7 +346,7 @@ class MOC:
         return mask
 
     @classmethod
-    def from_sparse_map(cls, smap: HealSparseMap) -> MOC:
+    def from_sparse_map(cls, smap: HealSparseMap) -> "MOC":
         """Create MOC from the coverage of a sparse map."""
         # Get all sparse pixels
         pix = smap.get_covered_pixels()
@@ -375,7 +373,7 @@ class MOC:
     @classmethod
     def from_circle(
         cls, lon_deg: float, lat_deg: float, radius_deg: float, max_order: int = 10
-    ) -> MOC:
+    ) -> "MOC":
         """Create a MOC from a circular cap."""
         nside = 1 << max_order
         pix = _healpix.query_circle(
@@ -390,7 +388,7 @@ class MOC:
         lon_deg: Tensor | list[float],
         lat_deg: Tensor | list[float],
         max_order: int = 10,
-    ) -> MOC:
+    ) -> "MOC":
         """Create a MOC from a spherical polygon."""
         nside = 1 << max_order
         # query_polygon works on lonlat if requested
@@ -407,7 +405,7 @@ class MOC:
         smap: HealSparseMap,
         threshold: float,
         op: Literal[">", ">=", "<", "<="] = ">",
-    ) -> MOC:
+    ) -> "MOC":
         """Create a MOC from pixels in a sparse map that satisfy a threshold."""
         if op == ">":
             mask = smap.values > threshold
@@ -473,7 +471,7 @@ class MOC:
             fits.write(data, header=header, extname="MOC")
 
     @classmethod
-    def read_fits(cls, filename: str) -> MOC:
+    def read_fits(cls, filename: str) -> "MOC":
         """Read a MOC from an IVOA FITS file."""
         fitsio = importlib.import_module("fitsio")
 
@@ -535,7 +533,7 @@ class MOC:
         return " ".join(parts)
 
     @classmethod
-    def from_ascii(cls, ascii_str: str) -> MOC:
+    def from_ascii(cls, ascii_str: str) -> "MOC":
         """Create a MOC from an IVOA ASCII string."""
         if not ascii_str.strip():
             return cls(torch.empty((0,), dtype=torch.int64))
