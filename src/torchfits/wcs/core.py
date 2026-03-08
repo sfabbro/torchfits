@@ -9,7 +9,7 @@ try:
 except Exception:  # pragma: no cover - optional fast path
     _cpp = None
 
-from .tpv import TPV, PV1_KEYS, PV2_KEYS
+from .tpv import TPV, PV1_KEYS, PV2_KEYS, PV1_KEYS_SET, PV2_KEYS_SET
 from .sip import SIP
 from .zenithal import project_zenithal, deproject_zenithal
 from .cylindrical import project_cylindrical, deproject_cylindrical
@@ -99,6 +99,18 @@ class WCS:
         if header is not None:
             self.naxis = int(header.get("NAXIS", 2))
             self._parse_header(header)
+            has_pv = any(k in self.wcs_params for k in PV1_KEYS_SET) or any(
+                k in self.wcs_params for k in PV2_KEYS_SET
+            )
+            is_tpv_ctype = (
+                self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
+            )
+
+            if is_tpv_ctype or (
+                self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TAN")
+                and has_pv
+            ):
+                self.tpv = TPV(self.wcs_params)
 
         # Override with kwargs
         for k, v in kwargs.items():
@@ -157,6 +169,8 @@ class WCS:
 
     def _parse_pv(self, header: Dict[str, Any]) -> None:
         """Parse PV distortion keywords."""
+        # Capture PV keywords (PVi_j)
+        # SCAMP/PV distortions can have many terms (0..39 typically)
         for key in PV1_KEYS:
             if key in header:
                 self.wcs_params[key] = float(header[key])
@@ -181,16 +195,13 @@ class WCS:
 
     def _parse_tpv(self) -> None:
         """Determine if TPV distortion is present."""
-        has_pv = any(k in self.wcs_params for k in PV1_KEYS) or any(
-            k in self.wcs_params for k in PV2_KEYS
+        has_pv = any(k in self.wcs_params for k in PV1_KEYS_SET) or any(
+            k in self.wcs_params for k in PV2_KEYS_SET
         )
-        is_tpv_ctype = (
-            self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
-        )
+        is_tpv_ctype = self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TPV")
 
         if is_tpv_ctype or (
-            self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TAN")
-            and has_pv
+            self.wcs_params.get("CTYPE1", "").strip().upper().endswith("TAN") and has_pv
         ):
             self.tpv = TPV(self.wcs_params)
 

@@ -1,12 +1,7 @@
-import sys
-from unittest.mock import MagicMock
-
 # Mock out torchfits.cpp since we only care about header_parser.py testing right now
-if "torchfits.cpp" not in sys.modules:
-    sys.modules["torchfits.cpp"] = MagicMock()
 
-import pytest
 from torchfits.header_parser import benchmark_header_parsing
+
 
 def test_benchmark_header_parsing():
     """Test the benchmark_header_parsing function."""
@@ -16,7 +11,7 @@ def test_benchmark_header_parsing():
         "BITPIX  =                    8 / number of bits per data pixel                  ",
         "NAXIS   =                    0 / number of data axes                            ",
         "EXTEND  =                    T / FITS dataset may contain extensions            ",
-        "END                                                                             "
+        "END                                                                             ",
     ]
     # Pad to exactly 80 characters per card
     header_cards = [card.ljust(80) for card in header_cards]
@@ -34,7 +29,7 @@ def test_benchmark_header_parsing():
         "throughput_headers_per_sec",
         "total_time_s",
         "header_size_bytes",
-        "num_iterations"
+        "num_iterations",
     ]
 
     for key in expected_keys:

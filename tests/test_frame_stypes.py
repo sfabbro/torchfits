@@ -1,8 +1,7 @@
 import pytest
 import torch
 import unittest.mock
-import sys
-sys.modules['torchfits.cpp'] = unittest.mock.MagicMock()
+
 
 try:
     from torch_frame import stype
@@ -11,7 +10,7 @@ try:
 except Exception:
     stype = None
 
-from torchfits.frame import write_tensor_frame
+from torchfits.frame import write_tensor_frame  # noqa: E402
 
 
 def test_write_tensor_frame_stypes():
@@ -51,7 +50,7 @@ def test_write_tensor_frame_stypes():
             num_rows=3,
             num_cols=1,
             values=torch.tensor([1, 2, 3, 4, 5, 6]),
-            offset=torch.tensor([0, 1, 3, 6])
+            offset=torch.tensor([0, 1, 3, 6]),
         )
         col_names_dict[stype.multicategorical] = ["multicat"]
 
@@ -60,13 +59,13 @@ def test_write_tensor_frame_stypes():
             num_rows=3,
             num_cols=1,
             values=torch.tensor([1.1, 2.2, 3.3, 4.4, 5.5, 6.6]),
-            offset=torch.tensor([0, 2, 4, 6])
+            offset=torch.tensor([0, 2, 4, 6]),
         )
         col_names_dict[stype.sequence_numerical] = ["seq"]
 
     tf = TensorFrame(feat_dict=feat_dict, col_names_dict=col_names_dict)
 
-    with unittest.mock.patch('torchfits.write') as mock_write:
+    with unittest.mock.patch("torchfits.write") as mock_write:
         write_tensor_frame("dummy.fits", tf, overwrite=True)
 
         # Verify the data dict passed to torchfits.write
