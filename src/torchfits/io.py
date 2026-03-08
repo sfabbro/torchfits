@@ -4,7 +4,10 @@ from typing import Union
 
 import torch
 
-import torchfits.cpp as cpp
+try:
+    import torchfits.cpp as cpp
+except ImportError:
+    cpp = None
 
 
 def read(
