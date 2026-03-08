@@ -140,7 +140,7 @@ def solve_newton_raphson(
     # Final check
     curr_ra, curr_dec = func(x, y, **kwargs)
     r_ra, r_dec = get_residuals(curr_ra, curr_dec)
-    dist = torch.sqrt(r_ra**2 + r_dec**2)
+    dist = torch.hypot(r_ra, r_dec)
     converged = dist < tol
 
     return x, y, dist, converged

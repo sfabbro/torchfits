@@ -171,7 +171,7 @@ class TPV:
         Returns [2].
         """
         u, v = uv[0], uv[1]
-        r = torch.sqrt(u * u + v * v)
+        r = torch.hypot(u, v)
 
         # Polynomial powers [0..7]
         up = torch.pow(u, torch.arange(8, device=uv.device, dtype=uv.dtype))
@@ -222,7 +222,7 @@ class TPV:
         return self._distort_impl(u, v)
 
     def _distort_impl(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
-        r = torch.sqrt(u * u + v * v)
+        r = torch.hypot(u, v)
         xp = [torch.ones_like(u), u]
         yp = [torch.ones_like(v), v]
         rp = [torch.ones_like(r), r]
@@ -242,7 +242,7 @@ class TPV:
     def _distort_and_jacobian_impl(
         self, u: Tensor, v: Tensor
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
-        r = torch.sqrt(u * u + v * v)
+        r = torch.hypot(u, v)
         xp, yp, rp = (
             [torch.ones_like(u), u],
             [torch.ones_like(v), v],
