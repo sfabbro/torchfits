@@ -16,6 +16,8 @@ except Exception:  # pragma: no cover - optional fast path
 
 PV1_KEYS = tuple(f"PV1_{i}" for i in range(40))
 PV2_KEYS = tuple(f"PV2_{i}" for i in range(40))
+PV1_KEYS_SET = frozenset(PV1_KEYS)
+PV2_KEYS_SET = frozenset(PV2_KEYS)
 
 
 class TPV:
@@ -86,8 +88,13 @@ class TPV:
         indices = []
         coeffs = []
         keys = PV1_KEYS if axis == 1 else PV2_KEYS
+        keys_set = PV1_KEYS_SET if axis == 1 else PV2_KEYS_SET
+
+        # Intersect keys to avoid looking up 40 keys individually in large headers
+        present_keys = keys_set.intersection(header.keys())
+
         for j, key in enumerate(keys):
-            if key in header:
+            if key in present_keys:
                 val = float(header[key])
                 if val != 0 and j in self.power_map:
                     indices.append(self.power_map[j])
