@@ -1,5 +1,5 @@
 from torch import Tensor
-from typing import Dict, Any, Union
+from typing import Any
 import datetime
 
 
@@ -17,7 +17,7 @@ class TemporalWCS:
     - TREFPOS: 'TOPOCENTER', 'GEOCENTER', 'BARYCENTER'
     """
 
-    def __init__(self, header: Dict[str, Any]):
+    def __init__(self, header: dict[str, Any]):
         self.mjd_ref = float(header.get("MJDREF", 0.0))
         # Handle MJDREFI and MJDREFF if present
         if "MJDREFI" in header and "MJDREFF" in header:
@@ -45,12 +45,12 @@ class TemporalWCS:
         return (mjd - self.mjd_ref) / self.to_days
 
     @staticmethod
-    def mjd_to_jd(mjd: Union[float, Tensor]) -> Union[float, Tensor]:
+    def mjd_to_jd(mjd: float | Tensor) -> float | Tensor:
         """MJD to JD: JD = MJD + 2400000.5"""
         return mjd + 2400000.5
 
     @staticmethod
-    def jd_to_mjd(jd: Union[float, Tensor]) -> Union[float, Tensor]:
+    def jd_to_mjd(jd: float | Tensor) -> float | Tensor:
         """JD to MJD: MJD = JD - 2400000.5"""
         return jd - 2400000.5
 
