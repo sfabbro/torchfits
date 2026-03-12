@@ -90,13 +90,9 @@ inline void _xor_sign_bit_u8(uint8_t* p, size_t nbytes) {
     });
 }
 
-constexpr bool _host_is_little_endian() {
-#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
-    return __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__;
-#else
-    // Conservative default; most modern targets are little-endian.
-    return true;
-#endif
+inline bool host_is_little_endian() {
+    const uint16_t x = 1;
+    return *reinterpret_cast<const uint8_t*>(&x) == 1;
 }
 
 struct ScaleDetectionResult {
@@ -406,11 +402,6 @@ void clear_shared_read_meta_cache() {
 }
 
 namespace {
-inline bool host_is_little_endian() {
-    const uint16_t x = 1;
-    return *reinterpret_cast<const uint8_t*>(&x) == 1;
-}
-
 inline uint16_t bswap_16(uint16_t v) { return __builtin_bswap16(v); }
 inline uint32_t bswap_32(uint32_t v) { return __builtin_bswap32(v); }
 inline uint64_t bswap_64(uint64_t v) { return __builtin_bswap64(v); }
@@ -2619,7 +2610,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
                     const int fd = get_shared_raw_fd(meta, path);
                     if (fd != -1 &&
                         read_region_via_fd(fd, static_cast<off_t>(data_offset), tensor.data_ptr(), nbytes)) {
-                        if (_host_is_little_endian()) {
+                        if (host_is_little_endian()) {
                             if (elem_size == sizeof(uint16_t)) {
                                 auto* p = static_cast<uint16_t*>(tensor.data_ptr());
                                 at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
@@ -3259,7 +3250,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                         const int fd = get_shared_raw_fd(shared_meta, path);
                         if (fd != -1 &&
                             read_region_via_fd(fd, static_cast<off_t>(data_offset), tensor.data_ptr(), nbytes)) {
-                            if (_host_is_little_endian()) {
+                            if (host_is_little_endian()) {
                                 if (elem_size == sizeof(uint16_t)) {
                                     auto* p = static_cast<uint16_t*>(tensor.data_ptr());
                                     at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
