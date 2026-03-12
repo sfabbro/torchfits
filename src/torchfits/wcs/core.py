@@ -2633,14 +2633,6 @@ class WCS:
         # xi = 2 * cos(theta) * sin(phi/2) / c * (180/pi)
         # eta = sin(theta) / c * (180/pi)
 
-        # Inverse AIT from xi, eta:
-        # Given x, y in AIT coordinates:
-        # z2 = (1 - (x/4)^2 - (y/2)^2)
-        # if z2 < 0: invalid
-        # c = sqrt(z2)
-        # theta = asin(y * c)
-        # phi = 2 * atan2(x * c / 2, 2*z2 - 1)
-
         # For inverse from (phi, theta) to (xi, eta):
         phi_rad = phi * self._d2r
         theta_rad = theta * self._d2r
