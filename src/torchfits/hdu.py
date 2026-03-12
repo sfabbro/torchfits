@@ -377,12 +377,20 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             if isinstance(node.op, ast.And):
                 res = _eval(node.values[0])
                 for val in node.values[1:]:
-                    res = res & _eval(val) if hasattr(res, "__and__") else res and _eval(val)
+                    res = (
+                        res & _eval(val)
+                        if hasattr(res, "__and__")
+                        else res and _eval(val)
+                    )
                 return res
             elif isinstance(node.op, ast.Or):
                 res = _eval(node.values[0])
                 for val in node.values[1:]:
-                    res = res | _eval(val) if hasattr(res, "__or__") else res or _eval(val)
+                    res = (
+                        res | _eval(val)
+                        if hasattr(res, "__or__")
+                        else res or _eval(val)
+                    )
                 return res
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)

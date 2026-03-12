@@ -31,6 +31,7 @@ def test_set_log_level():
 
 def test_log_errors_decorator(caplog):
     """Test that log_errors decorator logs exceptions and re-raises them."""
+
     @log_errors
     def failing_function():
         raise ValueError("Test error")
@@ -101,7 +102,10 @@ def test_log_fits_error(caplog):
     log_fits_error("write_file", 105, "Could not open file")
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.ERROR
-    assert "CFITSIO error in write_file: status=105, details=Could not open file" in caplog.records[0].message
+    assert (
+        "CFITSIO error in write_file: status=105, details=Could not open file"
+        in caplog.records[0].message
+    )
 
 
 def test_log_memory_usage(caplog):
@@ -128,11 +132,17 @@ def test_log_performance_warning(caplog):
     log_performance_warning("slow_op", 1500.0, threshold_ms=1000.0)
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.WARNING
-    assert "Slow operation detected: slow_op took 1500.00ms (threshold: 1000.0ms)" in caplog.records[0].message
+    assert (
+        "Slow operation detected: slow_op took 1500.00ms (threshold: 1000.0ms)"
+        in caplog.records[0].message
+    )
 
     # Test default threshold (1000ms)
     caplog.clear()
     log_performance_warning("default_slow_op", 1200.0)
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.WARNING
-    assert "Slow operation detected: default_slow_op took 1200.00ms (threshold: 1000ms)" in caplog.records[0].message
+    assert (
+        "Slow operation detected: default_slow_op took 1200.00ms (threshold: 1000ms)"
+        in caplog.records[0].message
+    )

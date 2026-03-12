@@ -74,7 +74,11 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
-            if card == "                                                                                " or not card.strip():
+            if (
+                card
+                == "                                                                                "
+                or not card.strip()
+            ):
                 continue
 
             keyword, value, comment = cls._parse_card(card)
@@ -140,11 +144,11 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
-        idx = value_comment.find('/')
+        idx = value_comment.find("/")
         while idx != -1:
             if value_comment[:idx].count("'") % 2 == 0:
                 return idx
-            idx = value_comment.find('/', idx + 1)
+            idx = value_comment.find("/", idx + 1)
         return -1
 
     @classmethod

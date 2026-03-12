@@ -9,7 +9,7 @@ feat_dict[stype.sequence_numerical] = MultiNestedTensor(
     num_rows=10,
     num_cols=1,
     values=torch.tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-    offset=torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    offset=torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
 )
 col_names_dict[stype.sequence_numerical] = ["seq"]
 
