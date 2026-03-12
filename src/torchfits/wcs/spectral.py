@@ -1,9 +1,9 @@
-from torch import Tensor
+import torch
 
 
 def transform_spectral(
-    freq: Tensor, rest_freq: float, convention: str = "RADIO"
-) -> Tensor:
+    freq: torch.Tensor, rest_freq: float, convention: str = "RADIO"
+) -> torch.Tensor:
     """
     Spectral transformations (Paper III).
     Currently supports Frequency to Velocity.
