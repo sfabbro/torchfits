@@ -74,7 +74,7 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
-            if not card.strip():
+            if card == "                                                                                " or not card.strip():
                 continue
 
             keyword, value, comment = cls._parse_card(card)
@@ -140,25 +140,11 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
-        in_quotes = False
-        i = 0
-        while i < len(value_comment):
-            char = value_comment[i]
-            if char == "'":
-                if (
-                    in_quotes
-                    and i + 1 < len(value_comment)
-                    and value_comment[i + 1] == "'"
-                ):
-                    # Escaped quote inside string
-                    i += 2
-                    continue
-                else:
-                    # Toggle quote state
-                    in_quotes = not in_quotes
-            elif char == "/" and not in_quotes:
-                return i
-            i += 1
+        idx = value_comment.find('/')
+        while idx != -1:
+            if value_comment[:idx].count("'") % 2 == 0:
+                return idx
+            idx = value_comment.find('/', idx + 1)
         return -1
 
     @classmethod
@@ -230,25 +216,13 @@ class FastHeaderParser:
             return quoted_str
 
         # Find the closing quote, handling escaped quotes
-        content_parts = []
-        i = 1  # Skip opening quote
-        while i < len(quoted_str):
-            char = quoted_str[i]
-            if char == "'":
-                if i + 1 < len(quoted_str) and quoted_str[i + 1] == "'":
-                    # Escaped quote
-                    content_parts.append("'")
-                    i += 2
-                else:
-                    # End of string
-                    break
-            else:
-                content_parts.append(char)
-                i += 1
+        idx = quoted_str.find("'", 1)
+        while idx != -1:
+            if idx + 1 == len(quoted_str) or quoted_str[idx + 1] != "'":
+                return quoted_str[1:idx].replace("''", "'")
+            idx = quoted_str.find("'", idx + 2)
 
-        content = "".join(content_parts)
-
-        return content
+        return quoted_str[1:].replace("''", "'")
 
     @classmethod
     def parse_with_performance_tracking(cls, header_string: str) -> tuple:
