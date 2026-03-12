@@ -5,11 +5,6 @@ import torch
 from torch import Tensor
 
 try:
-    from torch.func import vmap
-except ImportError:
-    vmap = None
-
-try:
     import torchfits.cpp as _cpp
 except Exception:  # pragma: no cover - optional fast-path
     _cpp = None

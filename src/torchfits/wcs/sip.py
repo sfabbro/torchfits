@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from typing import Dict, Any, Tuple
+from typing import Any
 
 try:
     import torchfits.cpp as _cpp
@@ -28,7 +28,7 @@ class SIP:
 
     _SMALL_VEC_MAX_POINTS = 0
 
-    def __init__(self, header: Dict[str, Any]):
+    def __init__(self, header: dict[str, Any]):
         self.a_order = int(header.get("A_ORDER", 0))
         self.b_order = int(header.get("B_ORDER", 0))
         self.ap_order = int(header.get("AP_ORDER", 0))
@@ -118,8 +118,8 @@ class SIP:
         return self
 
     def _parse_coeffs(
-        self, header: Dict[str, Any], prefix: str, order: int
-    ) -> Dict[str, float]:
+        self, header: dict[str, Any], prefix: str, order: int
+    ) -> dict[str, float]:
         """
         Parse coefficients for a given prefix and order.
         Example: A_2_0, A_0_2, etc.
@@ -161,7 +161,7 @@ class SIP:
 
     @staticmethod
     def _coeff_terms(
-        coeffs: Dict[tuple[int, int], float],
+        coeffs: dict[tuple[int, int], float],
     ) -> "list[tuple[int, int, float]]":
         return [(int(p), int(q), float(c)) for (p, q), c in coeffs.items()]
 
@@ -179,7 +179,7 @@ class SIP:
         return du_terms, dv_terms
 
     @staticmethod
-    def _build_term_pack(terms: "list[tuple[int, int, float]]") -> Dict[str, Tensor]:
+    def _build_term_pack(terms: "list[tuple[int, int, float]]") -> dict[str, Tensor]:
         if not terms:
             return {
                 "p": torch.empty((0,), dtype=torch.long),
@@ -193,7 +193,7 @@ class SIP:
 
     @staticmethod
     def _sum_terms_from_pack(
-        pack: Dict[str, Tensor], u_stack: Tensor, v_stack: Tensor, out_like: Tensor
+        pack: dict[str, Tensor], u_stack: Tensor, v_stack: Tensor, out_like: Tensor
     ) -> Tensor:
         c = pack["c"]
         if c.device != out_like.device or c.dtype != out_like.dtype:
@@ -235,7 +235,7 @@ class SIP:
 
         return uv + torch.stack([f_uv, g_uv])
 
-    def distort_vmap(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+    def distort_vmap(self, u: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
         """Apply distortion using torch.func.vmap (JAX-style)."""
         uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1)  # [N, 2]
         out = vmap(self._distort_scalar)(uv)  # [N, 2]
