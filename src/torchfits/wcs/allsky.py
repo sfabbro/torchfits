@@ -1,7 +1,6 @@
 import torch
 from torch import Tensor
 from typing import Tuple, Optional
-import math
 
 D2R = 0.017453292519943295
 R2D = 57.29577951308232
@@ -67,19 +66,19 @@ def project_allsky(
         gamma = torch.asin(sin_gamma)
         cos_gamma = torch.cos(gamma)
         # sin(2x) = 2 sin(x) cos(x)
-        t_val = (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / math.pi
+        t_val = (2.0 * gamma + 2.0 * sin_gamma * cos_gamma) / torch.pi
         theta_rad = torch.asin(torch.clamp(t_val, -1.0, 1.0))
         theta = theta_rad * R2D
         if bool(valid.all()):
             denom = torch.clamp(2.0 * SQRT2 * cos_gamma, min=1e-8)
-            phi = (math.pi * X / denom) * R2D
+            phi = (torch.pi * X / denom) * R2D
         else:
             denom = 2.0 * SQRT2 * cos_gamma
             mask_pole = torch.abs(denom) < 1e-8
             phi_rad = torch.where(
                 mask_pole,
                 torch.zeros_like(X),
-                math.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom),
+                torch.pi * X / torch.where(mask_pole, torch.ones_like(denom), denom),
             )
             phi = phi_rad * R2D
             if bool((~valid).any()):
@@ -158,7 +157,7 @@ def deproject_allsky(
         phi_rad = phi_wrapped * D2R
         theta_rad = theta * D2R
         sin_theta = torch.sin(theta_rad)
-        target = math.pi * sin_theta
+        target = torch.pi * sin_theta
         gamma = theta_rad.clone()  # Better initial guess than zero
         for _ in range(5):
             sin_2g = torch.sin(2.0 * gamma)
@@ -170,7 +169,7 @@ def deproject_allsky(
                 break
 
             gamma = gamma - res / (2.0 + 2.0 * cos_2g + 1e-12)
-        xi = 2.0 * SQRT2 * phi_rad * torch.cos(gamma) / math.pi * R2D
+        xi = 2.0 * SQRT2 * phi_rad * torch.cos(gamma) / torch.pi * R2D
         eta = SQRT2 * torch.sin(gamma) * R2D
         return xi, eta
 
