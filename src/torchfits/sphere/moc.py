@@ -521,7 +521,9 @@ class MOC:
             pix = pix_nested[mask]
 
             # (N, 4*step, 3)
-            c = _healpix.boundaries(int(ns.item()), pix, step=step, nest=True).transpose(-1, -2)
+            c = _healpix.boundaries(
+                int(ns.item()), pix, step=step, nest=True
+            ).transpose(-1, -2)
 
             starts = c
             ends = torch.roll(c, shifts=-1, dims=1)
