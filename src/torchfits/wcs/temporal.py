@@ -1,5 +1,7 @@
-from torch import Tensor
-from typing import Any
+from typing import TYPE_CHECKING, Any, Union
+
+if TYPE_CHECKING:
+    from torch import Tensor
 import datetime
 
 
@@ -36,25 +38,25 @@ class TemporalWCS:
         elif self.timeunit == "cy":  # Century
             self.to_days = 36525.0
 
-    def to_mjd(self, time_val: Tensor) -> Tensor:
+    def to_mjd(self, time_val: "Tensor") -> "Tensor":
         """Convert relative time to absolute MJD."""
         return self.mjd_ref + time_val * self.to_days
 
-    def from_mjd(self, mjd: Tensor) -> Tensor:
+    def from_mjd(self, mjd: "Tensor") -> "Tensor":
         """Convert absolute MJD to relative time."""
         return (mjd - self.mjd_ref) / self.to_days
 
     @staticmethod
-    def mjd_to_jd(mjd: float | Tensor) -> float | Tensor:
+    def mjd_to_jd(mjd: Union[float, "Tensor"]) -> Union[float, "Tensor"]:
         """MJD to JD: JD = MJD + 2400000.5"""
         return mjd + 2400000.5
 
     @staticmethod
-    def jd_to_mjd(jd: float | Tensor) -> float | Tensor:
+    def jd_to_mjd(jd: Union[float, "Tensor"]) -> Union[float, "Tensor"]:
         """JD to MJD: MJD = JD - 2400000.5"""
         return jd - 2400000.5
 
-    def to_iso8601(self, mjd: Tensor) -> list[str]:
+    def to_iso8601(self, mjd: "Tensor") -> list[str]:
         """
         Convert MJD to ISO-8601 strings (UTC).
         Note: This is not vectorized as strings are involved, but useful for parity.
@@ -68,7 +70,7 @@ class TemporalWCS:
             isos.append(dt.isoformat())
         return isos
 
-    def apply_corrections(self, mjd: Tensor, ra: Tensor, dec: Tensor) -> Tensor:
+    def apply_corrections(self, mjd: "Tensor", ra: "Tensor", dec: "Tensor") -> "Tensor":
         """
         Placeholder for light travel time corrections (RSET, BSET).
         Requires orbital ephemeris for Barycentric corrections.
