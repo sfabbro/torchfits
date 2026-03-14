@@ -336,6 +336,17 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         ast.RShift: operator.rshift,
     }
 
+    ALLOWED_NP_ATTRS = {
+        "abs", "absolute", "arccos", "arccosh", "arcsin", "arcsinh", "arctan", "arctan2",
+        "arctanh", "bitwise_and", "bitwise_or", "bitwise_xor", "cbrt", "ceil", "cos",
+        "cosh", "deg2rad", "degrees", "e", "euler_gamma", "exp", "exp2", "expm1", "fabs",
+        "fix", "floor", "fmax", "fmin", "fmod", "heaviside", "inf", "invert", "isfinite",
+        "isinf", "isnan", "isnat", "left_shift", "log", "log10", "log1p", "log2",
+        "logical_and", "logical_not", "logical_or", "logical_xor", "maximum", "minimum",
+        "mod", "nan", "pi", "rad2deg", "radians", "reciprocal", "remainder", "right_shift",
+        "rint", "round", "sign", "signbit", "sin", "sinh", "sqrt", "square", "tan", "tanh", "trunc"
+    }
+
     def _eval(node):
         if isinstance(node, ast.Constant):
             return node.value
@@ -395,18 +406,20 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
+                if node.attr not in ALLOWED_NP_ATTRS:
+                    raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed")
                 return getattr(np_module, node.attr)
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
             # Only allow calls on numpy functions
             is_np_func = False
-            for attr_name in dir(np_module):
-                if getattr(np_module, attr_name) is func:
+            for attr_name in ALLOWED_NP_ATTRS:
+                if getattr(np_module, attr_name, None) is func:
                     is_np_func = True
                     break
             if not is_np_func:
-                raise ValueError("Only numpy functions can be called")
+                raise ValueError("Only safe numpy functions can be called")
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
             return func(*args, **kwargs)
