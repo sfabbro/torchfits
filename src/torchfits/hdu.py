@@ -395,18 +395,120 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
-                return getattr(np_module, node.attr)
+                allowed_attrs = {
+                    "pi",
+                    "e",
+                    "inf",
+                    "nan",
+                    "NINF",
+                    "PZRO",
+                    "NZRO",
+                    "bool_",
+                    "int8",
+                    "int16",
+                    "int32",
+                    "int64",
+                    "uint8",
+                    "uint16",
+                    "uint32",
+                    "uint64",
+                    "float16",
+                    "float32",
+                    "float64",
+                    "complex64",
+                    "complex128",
+                }
+                if node.attr in allowed_attrs:
+                    return getattr(np_module, node.attr)
+                raise AttributeError(
+                    f"Attribute '{node.attr}' on 'np' is not allowed for security reasons"
+                )
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
-            func = _eval(node.func)
-            # Only allow calls on numpy functions
-            is_np_func = False
-            for attr_name in dir(np_module):
-                if getattr(np_module, attr_name) is func:
-                    is_np_func = True
-                    break
-            if not is_np_func:
-                raise ValueError("Only numpy functions can be called")
+            # Only allow a specific whitelist of safe math numpy functions
+            # similar to what numexpr supports.
+            allowed_funcs = {
+                "abs",
+                "absolute",
+                "arccos",
+                "arccosh",
+                "arcsin",
+                "arcsinh",
+                "arctan",
+                "arctan2",
+                "arctanh",
+                "array",
+                "asarray",
+                "cbrt",
+                "ceil",
+                "conj",
+                "conjugate",
+                "cos",
+                "cosh",
+                "deg2rad",
+                "degrees",
+                "exp",
+                "exp2",
+                "expm1",
+                "fabs",
+                "floor",
+                "fmod",
+                "hypot",
+                "invert",
+                "isfinite",
+                "isinf",
+                "isnan",
+                "log",
+                "log10",
+                "log1p",
+                "log2",
+                "logical_and",
+                "logical_not",
+                "logical_or",
+                "logical_xor",
+                "maximum",
+                "minimum",
+                "mod",
+                "power",
+                "rad2deg",
+                "radians",
+                "rint",
+                "sign",
+                "sin",
+                "sinh",
+                "sqrt",
+                "square",
+                "tan",
+                "tanh",
+                "trunc",
+                "where",
+            }
+            if isinstance(node.func, ast.Attribute):
+                value = _eval(node.func.value)
+                if value is np_module and node.func.attr in allowed_funcs:
+                    func = getattr(np_module, node.func.attr)
+                else:
+                    raise ValueError(
+                        f"Function '{node.func.attr}' is not an allowed safe numpy function"
+                    )
+            elif isinstance(node.func, ast.Name):
+                func = _eval(node.func)
+                # Check if it maps to an allowed function inside np
+                is_safe = False
+                for allowed_name in allowed_funcs:
+                    if (
+                        hasattr(np_module, allowed_name)
+                        and getattr(np_module, allowed_name) is func
+                    ):
+                        is_safe = True
+                        break
+                if not is_safe:
+                    raise ValueError(
+                        f"Function '{node.func.id}' is not an allowed safe numpy function"
+                    )
+            else:
+                raise ValueError("Only a subset of safe numpy functions can be called")
+
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
             return func(*args, **kwargs)
