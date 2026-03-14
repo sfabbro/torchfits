@@ -295,134 +295,6 @@ class TensorHDU:
         return f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()})"
 
 
-def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> Any:
-    """
-    Evaluate a simple python-like expression safely using AST.
-    Supported:
-    - Basic math operators (+, -, *, /, **, //, %)
-    - Comparison operators (==, !=, <, <=, >, >=)
-    - Logical operators (and, or, not)
-    - Bitwise operators (&, |, ^, ~, <<, >>)
-    - Constants (numbers, strings, True, False, None)
-    - Names (from eval_locals)
-    - Attribute access on 'np'
-    - Function calls on 'np'
-    """
-    # Mapping AST nodes to operators
-    operators = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-        ast.FloorDiv: operator.floordiv,
-        ast.Pow: operator.pow,
-        ast.Mod: operator.mod,
-        ast.UAdd: operator.pos,
-        ast.USub: operator.neg,
-        ast.Eq: operator.eq,
-        ast.NotEq: operator.ne,
-        ast.Lt: operator.lt,
-        ast.LtE: operator.le,
-        ast.Gt: operator.gt,
-        ast.GtE: operator.ge,
-        ast.And: None,  # Handled separately for short-circuiting
-        ast.Or: None,  # Handled separately for short-circuiting
-        ast.Not: operator.not_,
-        ast.BitAnd: operator.and_,
-        ast.BitOr: operator.or_,
-        ast.BitXor: operator.xor,
-        ast.Invert: operator.invert,
-        ast.LShift: operator.lshift,
-        ast.RShift: operator.rshift,
-    }
-
-    def _eval(node):
-        if isinstance(node, ast.Constant):
-            return node.value
-        elif isinstance(node, ast.Name):
-            if node.id in eval_locals:
-                return eval_locals[node.id]
-            if node.id == "np":
-                return np_module
-            raise NameError(f"Name '{node.id}' is not defined or not allowed")
-        elif isinstance(node, ast.BinOp):
-            left = _eval(node.left)
-            right = _eval(node.right)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise TypeError(f"Operator {type(node.op)} is not supported")
-            return op(left, right)
-        elif isinstance(node, ast.UnaryOp):
-            operand = _eval(node.operand)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise TypeError(f"Operator {type(node.op)} is not supported")
-            return op(operand)
-        elif isinstance(node, ast.Compare):
-            left = _eval(node.left)
-            result = True
-            for op_node, right_node in zip(node.ops, node.comparators):
-                right = _eval(right_node)
-                op = operators.get(type(op_node))
-                if op is None:
-                    raise TypeError(f"Operator {type(op_node)} is not supported")
-                result = op(left, right)
-                if isinstance(result, (bool, np_module.bool_)):
-                    if not result:
-                        return False
-                # For numpy arrays, the result might be an array
-                left = right
-            return result
-        elif isinstance(node, ast.BoolOp):
-            if isinstance(node.op, ast.And):
-                res = _eval(node.values[0])
-                for val in node.values[1:]:
-                    res = (
-                        res & _eval(val)
-                        if hasattr(res, "__and__")
-                        else res and _eval(val)
-                    )
-                return res
-            elif isinstance(node.op, ast.Or):
-                res = _eval(node.values[0])
-                for val in node.values[1:]:
-                    res = (
-                        res | _eval(val)
-                        if hasattr(res, "__or__")
-                        else res or _eval(val)
-                    )
-                return res
-        elif isinstance(node, ast.Attribute):
-            value = _eval(node.value)
-            if value is np_module:
-                return getattr(np_module, node.attr)
-            raise AttributeError("Attribute access only allowed on 'np'")
-        elif isinstance(node, ast.Call):
-            func = _eval(node.func)
-            # Only allow calls on numpy functions
-            is_np_func = False
-            for attr_name in dir(np_module):
-                if getattr(np_module, attr_name) is func:
-                    is_np_func = True
-                    break
-            if not is_np_func:
-                raise ValueError("Only numpy functions can be called")
-            args = [_eval(arg) for arg in node.args]
-            kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
-            return func(*args, **kwargs)
-        elif isinstance(node, ast.List):
-            return [_eval(el) for el in node.elts]
-        elif isinstance(node, ast.Tuple):
-            return tuple(_eval(el) for el in node.elts)
-        elif isinstance(node, ast.Expression):
-            return _eval(node.body)
-        else:
-            raise TypeError(f"AST node {type(node)} is not supported")
-
-    tree = ast.parse(condition, mode="eval")
-    return _eval(tree.body)
-
-
 class TableDataAccessor:
     """Dictionary-like accessor for table data."""
 
@@ -847,13 +719,8 @@ class TableHDU(TensorFrame):
         if not eval_locals:
             raise ValueError("No row-aligned columns available for filtering")
 
-        mask_result = None
-        try:
-            import numexpr as ne
-
-            mask_result = ne.evaluate(condition, local_dict=eval_locals)
-        except Exception:
-            mask_result = _safe_eval(condition, eval_locals, np)
+        import numexpr as ne
+        mask_result = ne.evaluate(condition, local_dict=eval_locals)
 
         mask_arr = np.asarray(mask_result)
         if mask_arr.ndim == 0:
