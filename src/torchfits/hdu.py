@@ -397,24 +397,80 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             if value is np_module:
                 # Restrict attribute access to safe constants and functions
                 allowed_attrs = {
-                    "pi", "e", "inf", "nan",
-                    "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2",
-                    "sinh", "cosh", "tanh", "arcsinh", "arccosh", "arctanh",
-                    "exp", "expm1", "log", "log10", "log2", "log1p",
-                    "sqrt", "cbrt", "square", "power",
-                    "abs", "absolute", "fabs", "sign",
-                    "ceil", "floor", "trunc", "round",
-                    "maximum", "minimum", "fmax", "fmin",
-                    "where", "isnan", "isinf", "isfinite",
-                    "logical_and", "logical_or", "logical_not", "logical_xor",
-                    "bitwise_and", "bitwise_or", "bitwise_not", "bitwise_xor",
-                    "left_shift", "right_shift",
-                    "greater", "greater_equal", "less", "less_equal", "equal", "not_equal",
-                    "bool_", "float32", "float64", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+                    "pi",
+                    "e",
+                    "inf",
+                    "nan",
+                    "sin",
+                    "cos",
+                    "tan",
+                    "arcsin",
+                    "arccos",
+                    "arctan",
+                    "arctan2",
+                    "sinh",
+                    "cosh",
+                    "tanh",
+                    "arcsinh",
+                    "arccosh",
+                    "arctanh",
+                    "exp",
+                    "expm1",
+                    "log",
+                    "log10",
+                    "log2",
+                    "log1p",
+                    "sqrt",
+                    "cbrt",
+                    "square",
+                    "power",
+                    "abs",
+                    "absolute",
+                    "fabs",
+                    "sign",
+                    "ceil",
+                    "floor",
+                    "trunc",
+                    "round",
+                    "maximum",
+                    "minimum",
+                    "fmax",
+                    "fmin",
+                    "where",
+                    "isnan",
+                    "isinf",
+                    "isfinite",
+                    "logical_and",
+                    "logical_or",
+                    "logical_not",
+                    "logical_xor",
+                    "bitwise_and",
+                    "bitwise_or",
+                    "bitwise_not",
+                    "bitwise_xor",
+                    "left_shift",
+                    "right_shift",
+                    "greater",
+                    "greater_equal",
+                    "less",
+                    "less_equal",
+                    "equal",
+                    "not_equal",
+                    "bool_",
+                    "float32",
+                    "float64",
+                    "int32",
+                    "int64",
+                    "uint8",
+                    "uint16",
+                    "uint32",
+                    "uint64",
                 }
                 if node.attr in allowed_attrs:
                     return getattr(np_module, node.attr)
-                raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed for security reasons")
+                raise AttributeError(
+                    f"Attribute '{node.attr}' on 'np' is not allowed for security reasons"
+                )
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
@@ -429,6 +485,11 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             # But just to be extra safe, let's verify func is actually a callable we retrieved
             if not callable(func):
                 raise ValueError("Only callable functions can be called")
+
+            if not is_allowed_func:
+                raise ValueError(
+                    f"Function call '{getattr(func, '__name__', str(func))}' is not allowed for security reasons"
+                )
 
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
