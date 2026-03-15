@@ -69,8 +69,7 @@ class TemporalWCS:
         for m in mjds:
             # JD = MJD + 2400000.5
             # Simplified MJD to datetime
-            dt = datetime.datetime(1858, 11, 17) + \
-                datetime.timedelta(days=float(m))
+            dt = datetime.datetime(1858, 11, 17) + datetime.timedelta(days=float(m))
             isos.append(dt.isoformat())
         return isos
 
