@@ -1,4 +1,3 @@
-from __future__ import annotations
 import torch
 from torch import Tensor
 from typing import Any
@@ -161,7 +160,7 @@ class TPV:
         )
         return b1, b2, a22 / det, -a12 / det, -a21 / det, a11 / det, True, is_id
 
-    def to(self, device: torch.device) -> TPV:
+    def to(self, device: torch.device) -> "TPV":
         self.idx1, self.idx2 = self.idx1.to(device), self.idx2.to(device)
         self.c1, self.c2 = self.c1.to(device), self.c2.to(device)
         return self
