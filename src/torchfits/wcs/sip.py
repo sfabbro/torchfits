@@ -206,7 +206,12 @@ class SIP:
             p = p.to(out_like.device)
             q = q.to(out_like.device)
         vals = u_stack.index_select(0, p) * v_stack.index_select(0, q)
-        return (vals * c[:, None]).sum(dim=0)
+
+        # Performance note (Bolt ⚡): Offloading the element-wise multiply and sum
+        # over the polynomial terms to PyTorch's optimized BLAS `matmul` avoids
+        # materializing a large broadcasted tensor (num_terms x N) and yields
+        # a measurable speedup for SIP distortions.
+        return torch.matmul(c, vals)
 
     def _distort_scalar(self, uv: Tensor) -> Tensor:
         """
