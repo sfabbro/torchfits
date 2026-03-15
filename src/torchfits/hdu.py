@@ -395,40 +395,111 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
-                # Restrict attribute access to safe constants and functions
-                allowed_attrs = {
-                    "pi", "e", "inf", "nan",
-                    "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2",
-                    "sinh", "cosh", "tanh", "arcsinh", "arccosh", "arctanh",
-                    "exp", "expm1", "log", "log10", "log2", "log1p",
-                    "sqrt", "cbrt", "square", "power",
-                    "abs", "absolute", "fabs", "sign",
-                    "ceil", "floor", "trunc", "round",
-                    "maximum", "minimum", "fmax", "fmin",
-                    "where", "isnan", "isinf", "isfinite",
-                    "logical_and", "logical_or", "logical_not", "logical_xor",
-                    "bitwise_and", "bitwise_or", "bitwise_not", "bitwise_xor",
-                    "left_shift", "right_shift",
-                    "greater", "greater_equal", "less", "less_equal", "equal", "not_equal",
-                    "bool_", "float32", "float64", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+                # Security: Restrict attribute access to a safe subset of numpy features
+                safe_attrs = {
+                    "e",
+                    "pi",
+                    "inf",
+                    "nan",
+                    "logical_and",
+                    "logical_or",
+                    "logical_not",
+                    "logical_xor",
+                    "bitwise_and",
+                    "bitwise_or",
+                    "bitwise_not",
+                    "bitwise_xor",
+                    "invert",
+                    "isnan",
+                    "isinf",
+                    "isfinite",
+                    "sin",
+                    "cos",
+                    "tan",
+                    "arcsin",
+                    "arccos",
+                    "arctan",
+                    "arctan2",
+                    "hypot",
+                    "sinh",
+                    "cosh",
+                    "tanh",
+                    "arcsinh",
+                    "arccosh",
+                    "arctanh",
+                    "exp",
+                    "expm1",
+                    "exp2",
+                    "log",
+                    "log10",
+                    "log2",
+                    "log1p",
+                    "sqrt",
+                    "square",
+                    "cbrt",
+                    "reciprocal",
+                    "abs",
+                    "absolute",
+                    "fabs",
+                    "sign",
+                    "maximum",
+                    "minimum",
+                    "fmax",
+                    "fmin",
+                    "around",
+                    "round",
+                    "round_",
+                    "floor",
+                    "ceil",
+                    "trunc",
+                    "add",
+                    "subtract",
+                    "multiply",
+                    "divide",
+                    "power",
+                    "mod",
+                    "fmod",
+                    "where",
+                    "clip",
+                    "greater",
+                    "greater_equal",
+                    "less",
+                    "less_equal",
+                    "equal",
+                    "not_equal",
+                    "bool_",
+                    "float32",
+                    "float64",
+                    "int32",
+                    "int64",
+                    "uint8",
+                    "uint16",
+                    "uint32",
+                    "uint64",
                 }
-                if node.attr in allowed_attrs:
+                if node.attr in safe_attrs:
                     return getattr(np_module, node.attr)
-                raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed for security reasons")
+                raise AttributeError(
+                    f"Attribute access to 'np.{node.attr}' is not allowed for security reasons"
+                )
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
-            # Only allow calls to safe numpy functions (which are already filtered in ast.Attribute)
-            is_allowed_func = False
-            if hasattr(func, "__module__") and func.__module__ == "numpy":
-                is_allowed_func = True
-            elif type(func).__module__ == "numpy":
-                is_allowed_func = True
-
-            # Since we already enforce allowlist in ast.Attribute, we can just check if it's from numpy
-            # But just to be extra safe, let's verify func is actually a callable we retrieved
+            # Security: Ensure func is a numpy ufunc or a known safe function, not an arbitrary callable
+            # Since we restricted attribute access on 'np' to a safe list above, any function retrieved
+            # from 'np.' will be safe. We just need to verify it's callable.
             if not callable(func):
-                raise ValueError("Only callable functions can be called")
+                raise ValueError("Only callable attributes can be called")
+
+            # Double check that the function actually belongs to numpy and is safe
+            # (In case the user managed to get a callable from eval_locals)
+            is_np_func = False
+            for attr_name in dir(np_module):
+                if getattr(np_module, attr_name) is func:
+                    is_np_func = True
+                    break
+            if not is_np_func:
+                raise ValueError("Only numpy functions can be called")
 
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
