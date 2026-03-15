@@ -1,6 +1,10 @@
-from torch import Tensor
-from typing import Any
+from __future__ import annotations
+
 import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
 class TemporalWCS:
@@ -57,18 +61,22 @@ class TemporalWCS:
     def to_iso8601(self, mjd: Tensor) -> list[str]:
         """
         Convert MJD to ISO-8601 strings (UTC).
-        Note: This is not vectorized as strings are involved, but useful for parity.
+        Note: This is not vectorized as strings are involved,
+        but useful for parity.
         """
         mjds = mjd.cpu().numpy()
         isos = []
         for m in mjds:
             # JD = MJD + 2400000.5
             # Simplified MJD to datetime
-            dt = datetime.datetime(1858, 11, 17) + datetime.timedelta(days=float(m))
+            dt = datetime.datetime(1858, 11, 17) + \
+                datetime.timedelta(days=float(m))
             isos.append(dt.isoformat())
         return isos
 
-    def apply_corrections(self, mjd: Tensor, ra: Tensor, dec: Tensor) -> Tensor:
+    def apply_corrections(
+        self, mjd: Tensor, ra: Tensor, dec: Tensor
+    ) -> Tensor:
         """
         Placeholder for light travel time corrections (RSET, BSET).
         Requires orbital ephemeris for Barycentric corrections.
