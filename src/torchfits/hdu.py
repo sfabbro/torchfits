@@ -336,6 +336,111 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         ast.RShift: operator.rshift,
     }
 
+    ALLOWED_NP_ATTRS = {
+        "NINF",
+        "NZRO",
+        "PZRO",
+        "abs",
+        "absolute",
+        "add",
+        "arccos",
+        "arccosh",
+        "arcsin",
+        "arcsinh",
+        "arctan",
+        "arctan2",
+        "arctanh",
+        "around",
+        "array",
+        "asarray",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "bool_",
+        "cbrt",
+        "ceil",
+        "clip",
+        "complex128",
+        "complex64",
+        "conj",
+        "conjugate",
+        "cos",
+        "cosh",
+        "deg2rad",
+        "degrees",
+        "divide",
+        "e",
+        "equal",
+        "euler_gamma",
+        "exp",
+        "exp2",
+        "expm1",
+        "fabs",
+        "float16",
+        "float32",
+        "float64",
+        "fmax",
+        "fmin",
+        "fmod",
+        "floor",
+        "greater",
+        "greater_equal",
+        "heaviside",
+        "hypot",
+        "inf",
+        "int16",
+        "int32",
+        "int64",
+        "int8",
+        "invert",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "isnat",
+        "left_shift",
+        "less",
+        "less_equal",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logical_and",
+        "logical_not",
+        "logical_or",
+        "logical_xor",
+        "maximum",
+        "minimum",
+        "mod",
+        "multiply",
+        "nan",
+        "not_equal",
+        "pi",
+        "power",
+        "rad2deg",
+        "radians",
+        "reciprocal",
+        "remainder",
+        "right_shift",
+        "rint",
+        "round",
+        "round_",
+        "sign",
+        "signbit",
+        "sin",
+        "sinh",
+        "sqrt",
+        "square",
+        "subtract",
+        "tan",
+        "tanh",
+        "trunc",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uint8",
+        "where",
+    }
+
     def _eval(node):
         if isinstance(node, ast.Constant):
             return node.value
@@ -395,41 +500,29 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
-                # Restrict attribute access to safe constants and functions
-                allowed_attrs = {
-                    "pi", "e", "inf", "nan",
-                    "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2",
-                    "sinh", "cosh", "tanh", "arcsinh", "arccosh", "arctanh",
-                    "exp", "expm1", "log", "log10", "log2", "log1p",
-                    "sqrt", "cbrt", "square", "power",
-                    "abs", "absolute", "fabs", "sign",
-                    "ceil", "floor", "trunc", "round",
-                    "maximum", "minimum", "fmax", "fmin",
-                    "where", "isnan", "isinf", "isfinite",
-                    "logical_and", "logical_or", "logical_not", "logical_xor",
-                    "bitwise_and", "bitwise_or", "bitwise_not", "bitwise_xor",
-                    "left_shift", "right_shift",
-                    "greater", "greater_equal", "less", "less_equal", "equal", "not_equal",
-                    "bool_", "float32", "float64", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
-                }
-                if node.attr in allowed_attrs:
-                    return getattr(np_module, node.attr)
-                raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed for security reasons")
+                if node.attr not in ALLOWED_NP_ATTRS:
+                    raise AttributeError(
+                        f"Attribute '{node.attr}' on 'np' is not allowed"
+                    )
+                return getattr(np_module, node.attr)
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
-            # Only allow calls to safe numpy functions (which are already filtered in ast.Attribute)
-            is_allowed_func = False
-            if hasattr(func, "__module__") and func.__module__ == "numpy":
-                is_allowed_func = True
-            elif type(func).__module__ == "numpy":
-                is_allowed_func = True
-
-            # Since we already enforce allowlist in ast.Attribute, we can just check if it's from numpy
-            # But just to be extra safe, let's verify func is actually a callable we retrieved
+            # Security: Ensure func is a numpy ufunc or a known safe function, not an arbitrary callable
+            # Since we restricted attribute access on 'np' to a safe list above, any function retrieved
+            # from 'np.' will be safe. We just need to verify it's callable.
             if not callable(func):
-                raise ValueError("Only callable functions can be called")
+                raise ValueError("Only callable attributes can be called")
 
+            # Double check that the function actually belongs to numpy and is safe
+            # (In case the user managed to get a callable from eval_locals)
+            is_np_func = False
+            for attr_name in ALLOWED_NP_ATTRS:
+                if getattr(np_module, attr_name, None) is func:
+                    is_np_func = True
+                    break
+            if not is_np_func:
+                raise ValueError("Only safe numpy functions can be called")
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
             return func(*args, **kwargs)
@@ -870,13 +963,9 @@ class TableHDU(TensorFrame):
         if not eval_locals:
             raise ValueError("No row-aligned columns available for filtering")
 
-        mask_result = None
-        try:
-            import numexpr as ne
+        import numexpr as ne
 
-            mask_result = ne.evaluate(condition, local_dict=eval_locals)
-        except Exception:
-            mask_result = _safe_eval(condition, eval_locals, np)
+        mask_result = ne.evaluate(condition, local_dict=eval_locals)
 
         mask_arr = np.asarray(mask_result)
         if mask_arr.ndim == 0:
