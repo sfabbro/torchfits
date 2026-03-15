@@ -337,6 +337,9 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
     }
 
     ALLOWED_NP_ATTRS = {
+        "NINF",
+        "NZRO",
+        "PZRO",
         "abs",
         "absolute",
         "add",
@@ -348,6 +351,8 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         "arctan2",
         "arctanh",
         "around",
+        "array",
+        "asarray",
         "bitwise_and",
         "bitwise_or",
         "bitwise_xor",
@@ -355,6 +360,10 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         "cbrt",
         "ceil",
         "clip",
+        "complex128",
+        "complex64",
+        "conj",
+        "conjugate",
         "cos",
         "cosh",
         "deg2rad",
@@ -367,6 +376,7 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         "exp2",
         "expm1",
         "fabs",
+        "float16",
         "float32",
         "float64",
         "fmax",
@@ -378,8 +388,10 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         "heaviside",
         "hypot",
         "inf",
+        "int16",
         "int32",
         "int64",
+        "int8",
         "invert",
         "isfinite",
         "isinf",
@@ -490,7 +502,7 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             if value is np_module:
                 if node.attr not in ALLOWED_NP_ATTRS:
                     raise AttributeError(
-                        f"Attribute access to 'np.{node.attr}' is not allowed for security reasons"
+                        f"Attribute '{node.attr}' on 'np' is not allowed"
                     )
                 return getattr(np_module, node.attr)
             raise AttributeError("Attribute access only allowed on 'np'")
