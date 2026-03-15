@@ -337,14 +337,96 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
     }
 
     ALLOWED_NP_ATTRS = {
-        "abs", "absolute", "arccos", "arccosh", "arcsin", "arcsinh", "arctan", "arctan2",
-        "arctanh", "bitwise_and", "bitwise_or", "bitwise_xor", "cbrt", "ceil", "cos",
-        "cosh", "deg2rad", "degrees", "e", "euler_gamma", "exp", "exp2", "expm1", "fabs",
-        "fix", "floor", "fmax", "fmin", "fmod", "heaviside", "inf", "invert", "isfinite",
-        "isinf", "isnan", "isnat", "left_shift", "log", "log10", "log1p", "log2",
-        "logical_and", "logical_not", "logical_or", "logical_xor", "maximum", "minimum",
-        "mod", "nan", "pi", "rad2deg", "radians", "reciprocal", "remainder", "right_shift",
-        "rint", "round", "sign", "signbit", "sin", "sinh", "sqrt", "square", "tan", "tanh", "trunc"
+        "abs",
+        "absolute",
+        "add",
+        "arccos",
+        "arccosh",
+        "arcsin",
+        "arcsinh",
+        "arctan",
+        "arctan2",
+        "arctanh",
+        "around",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "bool_",
+        "cbrt",
+        "ceil",
+        "clip",
+        "cos",
+        "cosh",
+        "deg2rad",
+        "degrees",
+        "divide",
+        "e",
+        "equal",
+        "euler_gamma",
+        "exp",
+        "exp2",
+        "expm1",
+        "fabs",
+        "float32",
+        "float64",
+        "fmax",
+        "fmin",
+        "fmod",
+        "floor",
+        "greater",
+        "greater_equal",
+        "heaviside",
+        "hypot",
+        "inf",
+        "int32",
+        "int64",
+        "invert",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "isnat",
+        "left_shift",
+        "less",
+        "less_equal",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logical_and",
+        "logical_not",
+        "logical_or",
+        "logical_xor",
+        "maximum",
+        "minimum",
+        "mod",
+        "multiply",
+        "nan",
+        "not_equal",
+        "pi",
+        "power",
+        "rad2deg",
+        "radians",
+        "reciprocal",
+        "remainder",
+        "right_shift",
+        "rint",
+        "round",
+        "round_",
+        "sign",
+        "signbit",
+        "sin",
+        "sinh",
+        "sqrt",
+        "square",
+        "subtract",
+        "tan",
+        "tanh",
+        "trunc",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uint8",
+        "where",
     }
 
     def _eval(node):
@@ -407,12 +489,21 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             value = _eval(node.value)
             if value is np_module:
                 if node.attr not in ALLOWED_NP_ATTRS:
-                    raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed")
+                    raise AttributeError(
+                        f"Attribute access to 'np.{node.attr}' is not allowed for security reasons"
+                    )
                 return getattr(np_module, node.attr)
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
-            # Only allow calls on numpy functions
+            # Security: Ensure func is a numpy ufunc or a known safe function, not an arbitrary callable
+            # Since we restricted attribute access on 'np' to a safe list above, any function retrieved
+            # from 'np.' will be safe. We just need to verify it's callable.
+            if not callable(func):
+                raise ValueError("Only callable attributes can be called")
+
+            # Double check that the function actually belongs to numpy and is safe
+            # (In case the user managed to get a callable from eval_locals)
             is_np_func = False
             for attr_name in ALLOWED_NP_ATTRS:
                 if getattr(np_module, attr_name, None) is func:
