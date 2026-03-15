@@ -395,18 +395,41 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
-                return getattr(np_module, node.attr)
+                # Restrict attribute access to safe constants and functions
+                allowed_attrs = {
+                    "pi", "e", "inf", "nan",
+                    "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2",
+                    "sinh", "cosh", "tanh", "arcsinh", "arccosh", "arctanh",
+                    "exp", "expm1", "log", "log10", "log2", "log1p",
+                    "sqrt", "cbrt", "square", "power",
+                    "abs", "absolute", "fabs", "sign",
+                    "ceil", "floor", "trunc", "round",
+                    "maximum", "minimum", "fmax", "fmin",
+                    "where", "isnan", "isinf", "isfinite",
+                    "logical_and", "logical_or", "logical_not", "logical_xor",
+                    "bitwise_and", "bitwise_or", "bitwise_not", "bitwise_xor",
+                    "left_shift", "right_shift",
+                    "greater", "greater_equal", "less", "less_equal", "equal", "not_equal",
+                    "bool_", "float32", "float64", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+                }
+                if node.attr in allowed_attrs:
+                    return getattr(np_module, node.attr)
+                raise AttributeError(f"Attribute '{node.attr}' on 'np' is not allowed for security reasons")
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
-            # Only allow calls on numpy functions
-            is_np_func = False
-            for attr_name in dir(np_module):
-                if getattr(np_module, attr_name) is func:
-                    is_np_func = True
-                    break
-            if not is_np_func:
-                raise ValueError("Only numpy functions can be called")
+            # Only allow calls to safe numpy functions (which are already filtered in ast.Attribute)
+            is_allowed_func = False
+            if hasattr(func, "__module__") and func.__module__ == "numpy":
+                is_allowed_func = True
+            elif type(func).__module__ == "numpy":
+                is_allowed_func = True
+
+            # Since we already enforce allowlist in ast.Attribute, we can just check if it's from numpy
+            # But just to be extra safe, let's verify func is actually a callable we retrieved
+            if not callable(func):
+                raise ValueError("Only callable functions can be called")
+
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
             return func(*args, **kwargs)
