@@ -336,6 +336,99 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         ast.RShift: operator.rshift,
     }
 
+    ALLOWED_NP_ATTRS = {
+        "abs",
+        "absolute",
+        "add",
+        "arccos",
+        "arccosh",
+        "arcsin",
+        "arcsinh",
+        "arctan",
+        "arctan2",
+        "arctanh",
+        "around",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "bool_",
+        "cbrt",
+        "ceil",
+        "clip",
+        "cos",
+        "cosh",
+        "deg2rad",
+        "degrees",
+        "divide",
+        "e",
+        "equal",
+        "euler_gamma",
+        "exp",
+        "exp2",
+        "expm1",
+        "fabs",
+        "float32",
+        "float64",
+        "fmax",
+        "fmin",
+        "fmod",
+        "floor",
+        "greater",
+        "greater_equal",
+        "heaviside",
+        "hypot",
+        "inf",
+        "int32",
+        "int64",
+        "invert",
+        "isfinite",
+        "isinf",
+        "isnan",
+        "isnat",
+        "left_shift",
+        "less",
+        "less_equal",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logical_and",
+        "logical_not",
+        "logical_or",
+        "logical_xor",
+        "maximum",
+        "minimum",
+        "mod",
+        "multiply",
+        "nan",
+        "not_equal",
+        "pi",
+        "power",
+        "rad2deg",
+        "radians",
+        "reciprocal",
+        "remainder",
+        "right_shift",
+        "rint",
+        "round",
+        "round_",
+        "sign",
+        "signbit",
+        "sin",
+        "sinh",
+        "sqrt",
+        "square",
+        "subtract",
+        "tan",
+        "tanh",
+        "trunc",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uint8",
+        "where",
+    }
+
     def _eval(node):
         if isinstance(node, ast.Constant):
             return node.value
@@ -395,93 +488,11 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
         elif isinstance(node, ast.Attribute):
             value = _eval(node.value)
             if value is np_module:
-                # Security: Restrict attribute access to a safe subset of numpy features
-                safe_attrs = {
-                    "e",
-                    "pi",
-                    "inf",
-                    "nan",
-                    "logical_and",
-                    "logical_or",
-                    "logical_not",
-                    "logical_xor",
-                    "bitwise_and",
-                    "bitwise_or",
-                    "bitwise_not",
-                    "bitwise_xor",
-                    "invert",
-                    "isnan",
-                    "isinf",
-                    "isfinite",
-                    "sin",
-                    "cos",
-                    "tan",
-                    "arcsin",
-                    "arccos",
-                    "arctan",
-                    "arctan2",
-                    "hypot",
-                    "sinh",
-                    "cosh",
-                    "tanh",
-                    "arcsinh",
-                    "arccosh",
-                    "arctanh",
-                    "exp",
-                    "expm1",
-                    "exp2",
-                    "log",
-                    "log10",
-                    "log2",
-                    "log1p",
-                    "sqrt",
-                    "square",
-                    "cbrt",
-                    "reciprocal",
-                    "abs",
-                    "absolute",
-                    "fabs",
-                    "sign",
-                    "maximum",
-                    "minimum",
-                    "fmax",
-                    "fmin",
-                    "around",
-                    "round",
-                    "round_",
-                    "floor",
-                    "ceil",
-                    "trunc",
-                    "add",
-                    "subtract",
-                    "multiply",
-                    "divide",
-                    "power",
-                    "mod",
-                    "fmod",
-                    "where",
-                    "clip",
-                    "greater",
-                    "greater_equal",
-                    "less",
-                    "less_equal",
-                    "equal",
-                    "not_equal",
-                    "bool_",
-                    "float32",
-                    "float64",
-                    "int32",
-                    "int64",
-                    "uint8",
-                    "uint16",
-                    "uint32",
-                    "uint64",
-                }
-                if node.attr in safe_attrs:
-                    return getattr(np_module, node.attr)
-                raise AttributeError(
-                    f"Attribute access to 'np.{node.attr}' is not allowed for security reasons"
-                )
+                if node.attr not in ALLOWED_NP_ATTRS:
+                    raise AttributeError(
+                        f"Attribute access to 'np.{node.attr}' is not allowed for security reasons"
+                    )
+                return getattr(np_module, node.attr)
             raise AttributeError("Attribute access only allowed on 'np'")
         elif isinstance(node, ast.Call):
             func = _eval(node.func)
@@ -494,13 +505,12 @@ def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> A
             # Double check that the function actually belongs to numpy and is safe
             # (In case the user managed to get a callable from eval_locals)
             is_np_func = False
-            for attr_name in dir(np_module):
-                if getattr(np_module, attr_name) is func:
+            for attr_name in ALLOWED_NP_ATTRS:
+                if getattr(np_module, attr_name, None) is func:
                     is_np_func = True
                     break
             if not is_np_func:
-                raise ValueError("Only numpy functions can be called")
-
+                raise ValueError("Only safe numpy functions can be called")
             args = [_eval(arg) for arg in node.args]
             kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
             return func(*args, **kwargs)
