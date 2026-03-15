@@ -965,7 +965,33 @@ class TableHDU(TensorFrame):
 
         import numexpr as ne
 
-        mask_result = ne.evaluate(condition, local_dict=eval_locals)
+        # numexpr does not support 'np.' prefix, so we strip it for common functions
+        # if it doesn't conflict with column names.
+        clean_condition = condition
+        if "np." in condition:
+            # Simple replacement of common np. constructs that numexpr supports
+            # without the prefix.
+            for func in [
+                "abs",
+                "sin",
+                "cos",
+                "tan",
+                "exp",
+                "log",
+                "sqrt",
+                "ceil",
+                "floor",
+                "where",
+            ]:
+                clean_condition = clean_condition.replace(f"np.{func}(", f"{func}(")
+            clean_condition = clean_condition.replace("np.pi", "3.141592653589793")
+            clean_condition = clean_condition.replace("np.e", "2.718281828459045")
+
+        try:
+            mask_result = ne.evaluate(clean_condition, local_dict=eval_locals)
+        except Exception:
+            # Fallback to slower but more compatible _safe_eval
+            mask_result = _safe_eval(condition, eval_locals, np)
 
         mask_arr = np.asarray(mask_result)
         if mask_arr.ndim == 0:
