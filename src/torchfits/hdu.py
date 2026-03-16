@@ -717,16 +717,35 @@ class TableHDU(TensorFrame):
         if not eval_locals:
             raise ValueError("No row-aligned columns available for filtering")
 
-        mask_result = None
-        try:
-            import numexpr as ne
+        import numexpr as ne
 
-            mask_result = ne.evaluate(condition, local_dict=eval_locals)
-        except Exception:
-            mask_result = eval(
-                condition,
-                {"__builtins__": {}, "np": np},
-                eval_locals,
+        # numexpr does not support 'np.' prefix, so we strip it for common functions
+        # if it doesn't conflict with column names.
+        clean_condition = condition
+        if "np." in condition:
+            # Simple replacement of common np. constructs that numexpr supports
+            # without the prefix.
+            for func in [
+                "abs",
+                "sin",
+                "cos",
+                "tan",
+                "exp",
+                "log",
+                "sqrt",
+                "ceil",
+                "floor",
+                "where",
+            ]:
+                clean_condition = clean_condition.replace(f"np.{func}(", f"{func}(")
+            clean_condition = clean_condition.replace("np.pi", "3.141592653589793")
+            clean_condition = clean_condition.replace("np.e", "2.718281828459045")
+
+        try:
+            mask_result = ne.evaluate(clean_condition, local_dict=eval_locals)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to evaluate filter condition '{condition}' with numexpr: {e}"
             )
 
         mask_arr = np.asarray(mask_result)
