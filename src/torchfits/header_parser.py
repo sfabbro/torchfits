@@ -140,14 +140,19 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
+        # Fast path: no strings in the value, so no need to parse quotes
+        if "'" not in value_comment:
+            return value_comment.find("/")
+
         in_quotes = False
         i = 0
-        while i < len(value_comment):
+        n = len(value_comment)
+        while i < n:
             char = value_comment[i]
             if char == "'":
                 if (
                     in_quotes
-                    and i + 1 < len(value_comment)
+                    and i + 1 < n
                     and value_comment[i + 1] == "'"
                 ):
                     # Escaped quote inside string
@@ -229,26 +234,16 @@ class FastHeaderParser:
         if not quoted_str.startswith("'"):
             return quoted_str
 
-        # Find the closing quote, handling escaped quotes
-        content_parts = []
-        i = 1  # Skip opening quote
-        while i < len(quoted_str):
-            char = quoted_str[i]
-            if char == "'":
-                if i + 1 < len(quoted_str) and quoted_str[i + 1] == "'":
-                    # Escaped quote
-                    content_parts.append("'")
-                    i += 2
-                else:
-                    # End of string
-                    break
+        end_idx = 1
+        while True:
+            end_idx = quoted_str.find("'", end_idx)
+            if end_idx == -1:
+                return quoted_str[1:].replace("''", "'")
+
+            if end_idx + 1 < len(quoted_str) and quoted_str[end_idx + 1] == "'":
+                end_idx += 2
             else:
-                content_parts.append(char)
-                i += 1
-
-        content = "".join(content_parts)
-
-        return content
+                return quoted_str[1:end_idx].replace("''", "'")
 
     @classmethod
     def parse_with_performance_tracking(cls, header_string: str) -> tuple:
