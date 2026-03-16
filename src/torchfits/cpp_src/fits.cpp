@@ -18,6 +18,9 @@
 #include <sys/mman.h>
 #include <cstdint>
 #include <ATen/Parallel.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <dlfcn.h>
+#endif
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -29,6 +32,7 @@
 #include "hardware.h"
 
 namespace {
+using fits_is_compressed_with_nulls_fn = int (*)(fitsfile*);
 
 static inline uint16_t _bswap16(uint16_t x) { return __builtin_bswap16(x); }
 static inline uint32_t _bswap32(uint32_t x) { return __builtin_bswap32(x); }
@@ -379,6 +383,18 @@ void clear_shared_meta_cache() {
 }
 
 bool has_compressed_nulls(fitsfile* fptr) {
+#if defined(__APPLE__) || defined(__linux__)
+    static fits_is_compressed_with_nulls_fn fn = []() -> fits_is_compressed_with_nulls_fn {
+        void* sym = dlsym(RTLD_DEFAULT, "fits_is_compressed_with_nulls");
+        if (!sym) {
+            return nullptr;
+        }
+        return reinterpret_cast<fits_is_compressed_with_nulls_fn>(sym);
+    }();
+    if (fn) {
+        return fn(fptr) != 0;
+    }
+#endif
     return false;
 }
 }  // namespace

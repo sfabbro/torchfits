@@ -50,12 +50,12 @@ def test_zpx_wat_distortion_changes_solution() -> None:
     base = WCS(_zpx_header_linear())
 
     distorted_header = _zpx_header_linear()
-    distorted_header["WAT1_001"] = (
-        'wtype=zpx projp1=1.0 lngcor = "3 1 1 0 -10.0 10.0 -10.0 10.0 0.4"'
-    )
-    distorted_header["WAT2_001"] = (
-        'wtype=zpx latcor = "3 1 1 0 -10.0 10.0 -10.0 10.0 -0.3"'
-    )
+    distorted_header[
+        "WAT1_001"
+    ] = 'wtype=zpx projp1=1.0 lngcor = "3 1 1 0 -10.0 10.0 -10.0 10.0 0.4"'
+    distorted_header[
+        "WAT2_001"
+    ] = 'wtype=zpx latcor = "3 1 1 0 -10.0 10.0 -10.0 10.0 -0.3"'
     distorted = WCS(distorted_header)
 
     x = torch.tensor([59.0], dtype=torch.float64)

@@ -807,6 +807,11 @@ public:
         // Calculate start offset based on start_row (0-based offset)
         size_t row_start_offset = (start_row - 1) * row_width_bytes_;
 
+#if defined(POSIX_MADV_SEQUENTIAL)
+        size_t byte_len = static_cast<size_t>(num_rows) * row_width_bytes_;
+        posix_madvise(const_cast<uint8_t*>(base_ptr + row_start_offset), byte_len, POSIX_MADV_SEQUENTIAL);
+#endif
+
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
 

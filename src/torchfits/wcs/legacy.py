@@ -1,11 +1,10 @@
-from __future__ import annotations
 import torch
 from torch import Tensor
-from typing import Any
+from typing import Tuple, Optional, Dict, Any, List
 import re
 
 
-def parse_wat_keywords(header: dict[str, Any], axis: int) -> str:
+def parse_wat_keywords(header: Dict[str, Any], axis: int) -> str:
     """
     Reconstruct the full WAT string for a given axis.
     IRAF splits long strings into WATi_nnn keywords.
@@ -142,7 +141,7 @@ class LegacyPolynomial:
 
         return result
 
-    def _compute_basis(self, u: Tensor, order: int, ftype: int) -> list[Tensor]:
+    def _compute_basis(self, u: Tensor, order: int, ftype: int) -> List[Tensor]:
         """Generate basis polynomials [P_0(u), ..., P_n(u)]."""
         basis = []
         if order < 1:
@@ -173,7 +172,7 @@ class LegacyPolynomial:
         return basis
 
 
-def extract_tnx_coeffs(wat_str: str, key: str) -> str | None:
+def extract_tnx_coeffs(wat_str: str, key: str) -> Optional[str]:
     """
     Extract value for 'lngcor' or 'latcor' from WAT string.
     Format: key = " value " or key = value
@@ -194,9 +193,9 @@ def extract_tnx_coeffs(wat_str: str, key: str) -> str | None:
 def project_tnx(
     xi: Tensor,
     eta: Tensor,
-    params: dict[str, float] | None = None,
-    wat_data: dict[int, str] | None = None,
-) -> tuple[Tensor, Tensor]:
+    params: Optional[Dict[str, float]] = None,
+    wat_data: Optional[Dict[int, str]] = None,
+) -> Tuple[Tensor, Tensor]:
     """
     TNX Projection.
     xi, eta: Intermediate coordinates (degrees) from TAN projection.
@@ -235,7 +234,7 @@ def project_tnx(
 _ZPX_PATTERN = re.compile(r"projp(\d+)\s*=\s*(\S+)", re.IGNORECASE)
 
 
-def extract_zpx_params(wat_data: dict[int, str]) -> dict[str, float]:
+def extract_zpx_params(wat_data: Dict[int, str]) -> Dict[str, float]:
     """
     Extract ZPN coefficients (projp_i) from WAT strings and return as PV2_i.
     """
@@ -262,9 +261,9 @@ def extract_zpx_params(wat_data: dict[int, str]) -> dict[str, float]:
 def project_zpx(
     xi: Tensor,
     eta: Tensor,
-    params: dict[str, float] | None = None,
-    wat_data: dict[int, str] | None = None,
-) -> tuple[Tensor, Tensor]:
+    params: Optional[Dict[str, float]] = None,
+    wat_data: Optional[Dict[int, str]] = None,
+) -> Tuple[Tensor, Tensor]:
     """
     ZPX: Zenithal Poly + WAT corrections.
 

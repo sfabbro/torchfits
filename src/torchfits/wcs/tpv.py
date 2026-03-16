@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from typing import Any
+from typing import Dict, Any, Tuple
 
 try:
     from torch.func import vmap, jacrev
@@ -28,7 +28,7 @@ class TPV:
     # Experimental CPU ATen TPV inverse path.
     _CPP_INVERT_MAX_POINTS = 65536
 
-    def __init__(self, header: dict[str, Any]):
+    def __init__(self, header: Dict[str, Any]):
         self.power_map = self._build_power_map()
         self.idx1, self.c1 = self._parse_pv(header, 1)
         self.idx2, self.c2 = self._parse_pv(header, 2)
@@ -63,7 +63,7 @@ class TPV:
     def set_invert_trace(self, enabled: bool):
         self._invert_trace_enabled = enabled
 
-    def get_last_invert_trace(self) -> dict[str, Any] | None:
+    def get_last_invert_trace(self) -> Dict[str, Any] | None:
         return self._last_invert_trace
 
     def set_cpp_invert_max_points(self, n: int):
@@ -84,7 +84,7 @@ class TPV:
                 idx += 1
         return mapping
 
-    def _parse_pv(self, header: dict[str, Any], axis: int):
+    def _parse_pv(self, header: Dict[str, Any], axis: int):
         indices = []
         coeffs = []
         keys = PV1_KEYS if axis == 1 else PV2_KEYS
@@ -109,7 +109,7 @@ class TPV:
 
     def _build_terms(
         self, idx: Tensor, coeffs: Tensor
-    ) -> list[tuple[int, int, int, float]]:
+    ) -> "list[tuple[int, int, int, float]]":
         return [
             (int(idx[k, 0]), int(idx[k, 1]), int(idx[k, 2]), float(coeffs[k]))
             for k in range(coeffs.numel())
@@ -201,13 +201,13 @@ class TPV:
         eta = eval_axis2(self.idx2, self.c2)
         return torch.stack([xi, eta])
 
-    def distort_vmap(self, u: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
+    def distort_vmap(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         """Apply distortion using torch.func.vmap."""
         uv = torch.stack([u.reshape(-1), v.reshape(-1)], dim=1)
         out = vmap(self._distort_scalar)(uv)
         return out[:, 0].reshape(u.shape), out[:, 1].reshape(v.shape)
 
-    def distort(self, u: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
+    def distort(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         if u.numel() == 0:
             return u, v
         if self._can_use_cpp_distort(u, v):
@@ -221,7 +221,7 @@ class TPV:
             )
         return self._distort_impl(u, v)
 
-    def _distort_impl(self, u: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
+    def _distort_impl(self, u: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         r = torch.hypot(u, v)
         xp = [torch.ones_like(u), u]
         yp = [torch.ones_like(v), v]
@@ -241,7 +241,7 @@ class TPV:
 
     def _distort_and_jacobian_impl(
         self, u: Tensor, v: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         r = torch.hypot(u, v)
         xp, yp, rp = (
             [torch.ones_like(u), u],
@@ -299,7 +299,7 @@ class TPV:
 
     def invert(
         self, xi_t: Tensor, eta_t: Tensor, max_iter: int = 20, tol: float = 1e-11
-    ) -> tuple[Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor]:
         if xi_t.numel() == 0:
             return xi_t, eta_t
 
