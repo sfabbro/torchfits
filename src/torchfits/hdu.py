@@ -12,8 +12,6 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
-import ast
-import operator
 
 try:
     from torch_frame import TensorFrame
@@ -746,7 +744,9 @@ class TableHDU(TensorFrame):
         try:
             mask_result = ne.evaluate(clean_condition, local_dict=eval_locals)
         except Exception as e:
-            raise ValueError(f"Failed to evaluate filter condition '{condition}' with numexpr: {e}")
+            raise ValueError(
+                f"Failed to evaluate filter condition '{condition}' with numexpr: {e}"
+            )
 
         mask_arr = np.asarray(mask_result)
         if mask_arr.ndim == 0:
