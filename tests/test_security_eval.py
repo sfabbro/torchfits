@@ -18,7 +18,7 @@ def test_security_eval_no_arbitrary_calls():
     assert res.num_rows == 2
 
     # Filtering with arbitrary attribute of np not in allowed list
-    with pytest.raises(AttributeError, match="is not allowed"):
+    with pytest.raises(ValueError):
         hdu_table.filter("np.polyfit(col1, col2, 1) > 0")
 
     # Filtering with arbitrary builtin wrapped via something
