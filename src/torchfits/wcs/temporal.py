@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -49,12 +49,12 @@ class TemporalWCS:
         return (mjd - self.mjd_ref) / self.to_days
 
     @staticmethod
-    def mjd_to_jd(mjd: Union[float, Tensor]) -> Union[float, Tensor]:
+    def mjd_to_jd(mjd: float | Tensor) -> float | Tensor:
         """MJD to JD: JD = MJD + 2400000.5"""
         return mjd + 2400000.5
 
     @staticmethod
-    def jd_to_mjd(jd: Union[float, Tensor]) -> Union[float, Tensor]:
+    def jd_to_mjd(jd: float | Tensor) -> float | Tensor:
         """JD to MJD: MJD = JD - 2400000.5"""
         return jd - 2400000.5
 
