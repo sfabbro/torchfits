@@ -1,10 +1,6 @@
-from __future__ import annotations
-
+from torch import Tensor
+from typing import Dict, Any, Union
 import datetime
-from typing import TYPE_CHECKING, Any, Union
-
-if TYPE_CHECKING:
-    from torch import Tensor
 
 
 class TemporalWCS:
@@ -21,7 +17,7 @@ class TemporalWCS:
     - TREFPOS: 'TOPOCENTER', 'GEOCENTER', 'BARYCENTER'
     """
 
-    def __init__(self, header: dict[str, Any]):
+    def __init__(self, header: Dict[str, Any]):
         self.mjd_ref = float(header.get("MJDREF", 0.0))
         # Handle MJDREFI and MJDREFF if present
         if "MJDREFI" in header and "MJDREFF" in header:
@@ -61,8 +57,7 @@ class TemporalWCS:
     def to_iso8601(self, mjd: Tensor) -> list[str]:
         """
         Convert MJD to ISO-8601 strings (UTC).
-        Note: This is not vectorized as strings are involved,
-        but useful for parity.
+        Note: This is not vectorized as strings are involved, but useful for parity.
         """
         mjds = mjd.cpu().numpy()
         isos = []

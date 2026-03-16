@@ -1,8 +1,13 @@
 import math
-from typing import Sequence
+from typing import Sequence, Tuple
 
 import torch
 from torch import Tensor
+
+try:
+    from torch.func import vmap
+except ImportError:
+    vmap = None
 
 try:
     import torchfits.cpp as _cpp
@@ -68,7 +73,7 @@ def _as_int64(x: Tensor | int | list[int]) -> Tensor:
     return torch.as_tensor(x, dtype=torch.int64)
 
 
-def _face_consts(device: torch.device) -> tuple[Tensor, Tensor]:
+def _face_consts(device: torch.device) -> Tuple[Tensor, Tensor]:
     idx = -1 if device.index is None else int(device.index)
     key = (device.type, idx)
     cached = _FACE_CONST_CACHE.get(key)
@@ -134,7 +139,7 @@ def _xyf2nest(nside: int, ix: Tensor, iy: Tensor, face_num: Tensor) -> Tensor:
     return face_num * npface + spread_bits(ix) + (spread_bits(iy) << 1)
 
 
-def _nest2xyf(nside: int, pix: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+def _nest2xyf(nside: int, pix: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
     npface = nside * nside
     face_num = pix // npface
     ipf = pix % npface
@@ -173,7 +178,7 @@ def _xyf2ring(nside: int, ix: Tensor, iy: Tensor, face_num: Tensor) -> Tensor:
     return n_before + jp - 1
 
 
-def _ring2xyf(nside: int, pix: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+def _ring2xyf(nside: int, pix: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
     ncap = 2 * nside * (nside - 1)
     npix = 12 * nside * nside
     nl2 = 2 * nside
@@ -379,7 +384,7 @@ def _pix2thetaphi_ring(nside: int, pix: Tensor) -> tuple[Tensor, Tensor]:
     return theta, phi
 
 
-def pix2ang_ring(nside: int, pix: Tensor) -> tuple[Tensor, Tensor]:
+def pix2ang_ring(nside: int, pix: Tensor) -> Tuple[Tensor, Tensor]:
     """Convert HEALPix RING indices to RA/Dec (degrees)."""
     _validate_nside(nside)
     pix_t = _as_int64(pix)
@@ -476,7 +481,7 @@ def ang2pix_nested(nside: int, ra: Tensor, dec: Tensor) -> Tensor:
     return _xyf2nest(nside, ix, iy, face_num)
 
 
-def pix2ang_nested(nside: int, pix: Tensor) -> tuple[Tensor, Tensor]:
+def pix2ang_nested(nside: int, pix: Tensor) -> Tuple[Tensor, Tensor]:
     """Convert HEALPix NESTED indices to RA/Dec (degrees)."""
     _validate_nside(nside)
     pix_t = _as_int64(pix)
@@ -697,7 +702,7 @@ def ang2vec(theta: Tensor | float, phi: Tensor | float, lonlat: bool = False) ->
 
 def pix2ang(
     nside: int, ipix: Tensor, nest: bool = False, lonlat: bool = False
-) -> tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """
     Convert pixel indices to angles.
 
@@ -717,7 +722,7 @@ def pix2ang(
 
 def vec2ang(
     vectors: Tensor | Sequence[Sequence[float]], lonlat: bool = False
-) -> tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """
     Convert vectors to angles.
 
@@ -753,7 +758,7 @@ def vec2pix(nside: int, x: Tensor, y: Tensor, z: Tensor, nest: bool = False) -> 
 
 def pix2vec(
     nside: int, ipix: Tensor, nest: bool = False
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Convert pixel indices to Cartesian vectors."""
     lon, lat = pix2ang(nside, ipix, nest=nest, lonlat=True)
     return lonlat_to_xyz(lon, lat)
@@ -1977,7 +1982,7 @@ def ud_grade(
     return stacked[0] if single else stacked
 
 
-def lonlat_to_xyz(ra: Tensor, dec: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+def lonlat_to_xyz(ra: Tensor, dec: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
     """Convert spherical lon/lat in degrees to unit Cartesian coordinates."""
     ra_t = _as_float64(ra)
     dec_t = _as_float64(dec)
@@ -1998,7 +2003,7 @@ def lonlat_to_xyz(ra: Tensor, dec: Tensor) -> tuple[Tensor, Tensor, Tensor]:
 
 def xyz_to_lonlat(
     x: Tensor, y: Tensor, z: Tensor, eps: float = 1.0e-15
-) -> tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """Convert Cartesian coordinates to lon/lat in degrees."""
     x_t = _as_float64(x)
     y_t = _as_float64(y)
@@ -2032,9 +2037,7 @@ def angular_distance_deg(
 
     dr = r1 - r2
     dd = d1 - d2
-    a = torch.square(torch.sin(dd * 0.5)) + torch.cos(d1) * torch.cos(
-        d2
-    ) * torch.square(torch.sin(dr * 0.5))
+    a = torch.square(torch.sin(dd * 0.5)) + torch.cos(d1) * torch.cos(d2) * torch.square(torch.sin(dr * 0.5))
     return torch.rad2deg(2.0 * torch.asin(torch.sqrt(torch.clamp(a, 0.0, 1.0))))
 
 

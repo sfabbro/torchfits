@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "torchfits_torch.h"
+// #include <torch/csrc/autograd/python_variable.h> // Removed to avoid pybind11 conflict
 #include <ATen/DLConvertor.h>
 #undef READONLY
 

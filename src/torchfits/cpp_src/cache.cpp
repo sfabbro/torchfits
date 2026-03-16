@@ -7,6 +7,12 @@
 #include <chrono>
 #include <fitsio.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/statfs.h>
+#endif
+#ifdef __APPLE__
+#include <sys/mount.h>
+#endif
 
 namespace torchfits {
 

@@ -12,8 +12,6 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
-import ast
-import operator
 
 try:
     from torch_frame import TensorFrame
@@ -293,250 +291,6 @@ class TensorHDU:
     def __repr__(self):
         name = self.header.get("EXTNAME", "PRIMARY")
         return f"TensorHDU(name='{name}', shape={self._get_shape_str()}, dtype={self._get_dtype_str()})"
-
-
-def _safe_eval(condition: str, eval_locals: Dict[str, Any], np_module: Any) -> Any:
-    """
-    Evaluate a simple python-like expression safely using AST.
-    Supported:
-    - Basic math operators (+, -, *, /, **, //, %)
-    - Comparison operators (==, !=, <, <=, >, >=)
-    - Logical operators (and, or, not)
-    - Bitwise operators (&, |, ^, ~, <<, >>)
-    - Constants (numbers, strings, True, False, None)
-    - Names (from eval_locals)
-    - Attribute access on 'np'
-    - Function calls on 'np'
-    """
-    # Mapping AST nodes to operators
-    operators = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-        ast.FloorDiv: operator.floordiv,
-        ast.Pow: operator.pow,
-        ast.Mod: operator.mod,
-        ast.UAdd: operator.pos,
-        ast.USub: operator.neg,
-        ast.Eq: operator.eq,
-        ast.NotEq: operator.ne,
-        ast.Lt: operator.lt,
-        ast.LtE: operator.le,
-        ast.Gt: operator.gt,
-        ast.GtE: operator.ge,
-        ast.And: None,  # Handled separately for short-circuiting
-        ast.Or: None,  # Handled separately for short-circuiting
-        ast.Not: operator.not_,
-        ast.BitAnd: operator.and_,
-        ast.BitOr: operator.or_,
-        ast.BitXor: operator.xor,
-        ast.Invert: operator.invert,
-        ast.LShift: operator.lshift,
-        ast.RShift: operator.rshift,
-    }
-
-    ALLOWED_NP_ATTRS = {
-        "NINF",
-        "NZRO",
-        "PZRO",
-        "abs",
-        "absolute",
-        "add",
-        "arccos",
-        "arccosh",
-        "arcsin",
-        "arcsinh",
-        "arctan",
-        "arctan2",
-        "arctanh",
-        "around",
-        "array",
-        "asarray",
-        "bitwise_and",
-        "bitwise_or",
-        "bitwise_xor",
-        "bool_",
-        "cbrt",
-        "ceil",
-        "clip",
-        "complex128",
-        "complex64",
-        "conj",
-        "conjugate",
-        "cos",
-        "cosh",
-        "deg2rad",
-        "degrees",
-        "divide",
-        "e",
-        "equal",
-        "euler_gamma",
-        "exp",
-        "exp2",
-        "expm1",
-        "fabs",
-        "float16",
-        "float32",
-        "float64",
-        "fmax",
-        "fmin",
-        "fmod",
-        "floor",
-        "greater",
-        "greater_equal",
-        "heaviside",
-        "hypot",
-        "inf",
-        "int16",
-        "int32",
-        "int64",
-        "int8",
-        "invert",
-        "isfinite",
-        "isinf",
-        "isnan",
-        "isnat",
-        "left_shift",
-        "less",
-        "less_equal",
-        "log",
-        "log10",
-        "log1p",
-        "log2",
-        "logical_and",
-        "logical_not",
-        "logical_or",
-        "logical_xor",
-        "maximum",
-        "minimum",
-        "mod",
-        "multiply",
-        "nan",
-        "not_equal",
-        "pi",
-        "power",
-        "rad2deg",
-        "radians",
-        "reciprocal",
-        "remainder",
-        "right_shift",
-        "rint",
-        "round",
-        "round_",
-        "sign",
-        "signbit",
-        "sin",
-        "sinh",
-        "sqrt",
-        "square",
-        "subtract",
-        "tan",
-        "tanh",
-        "trunc",
-        "uint16",
-        "uint32",
-        "uint64",
-        "uint8",
-        "where",
-    }
-
-    def _eval(node):
-        if isinstance(node, ast.Constant):
-            return node.value
-        elif isinstance(node, ast.Name):
-            if node.id in eval_locals:
-                return eval_locals[node.id]
-            if node.id == "np":
-                return np_module
-            raise NameError(f"Name '{node.id}' is not defined or not allowed")
-        elif isinstance(node, ast.BinOp):
-            left = _eval(node.left)
-            right = _eval(node.right)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise TypeError(f"Operator {type(node.op)} is not supported")
-            return op(left, right)
-        elif isinstance(node, ast.UnaryOp):
-            operand = _eval(node.operand)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise TypeError(f"Operator {type(node.op)} is not supported")
-            return op(operand)
-        elif isinstance(node, ast.Compare):
-            left = _eval(node.left)
-            result = True
-            for op_node, right_node in zip(node.ops, node.comparators):
-                right = _eval(right_node)
-                op = operators.get(type(op_node))
-                if op is None:
-                    raise TypeError(f"Operator {type(op_node)} is not supported")
-                result = op(left, right)
-                if isinstance(result, (bool, np_module.bool_)):
-                    if not result:
-                        return False
-                # For numpy arrays, the result might be an array
-                left = right
-            return result
-        elif isinstance(node, ast.BoolOp):
-            if isinstance(node.op, ast.And):
-                res = _eval(node.values[0])
-                for val in node.values[1:]:
-                    res = (
-                        res & _eval(val)
-                        if hasattr(res, "__and__")
-                        else res and _eval(val)
-                    )
-                return res
-            elif isinstance(node.op, ast.Or):
-                res = _eval(node.values[0])
-                for val in node.values[1:]:
-                    res = (
-                        res | _eval(val)
-                        if hasattr(res, "__or__")
-                        else res or _eval(val)
-                    )
-                return res
-        elif isinstance(node, ast.Attribute):
-            value = _eval(node.value)
-            if value is np_module:
-                if node.attr not in ALLOWED_NP_ATTRS:
-                    raise AttributeError(
-                        f"Attribute '{node.attr}' on 'np' is not allowed"
-                    )
-                return getattr(np_module, node.attr)
-            raise AttributeError("Attribute access only allowed on 'np'")
-        elif isinstance(node, ast.Call):
-            func = _eval(node.func)
-            # Security: Ensure func is a numpy ufunc or a known safe function, not an arbitrary callable
-            # Since we restricted attribute access on 'np' to a safe list above, any function retrieved
-            # from 'np.' will be safe. We just need to verify it's callable.
-            if not callable(func):
-                raise ValueError("Only callable attributes can be called")
-
-            # Double check that the function actually belongs to numpy and is safe
-            # (In case the user managed to get a callable from eval_locals)
-            is_np_func = False
-            for attr_name in ALLOWED_NP_ATTRS:
-                if getattr(np_module, attr_name, None) is func:
-                    is_np_func = True
-                    break
-            if not is_np_func:
-                raise ValueError("Only safe numpy functions can be called")
-            args = [_eval(arg) for arg in node.args]
-            kwargs = {kw.arg: _eval(kw.value) for kw in node.keywords}
-            return func(*args, **kwargs)
-        elif isinstance(node, ast.List):
-            return [_eval(el) for el in node.elts]
-        elif isinstance(node, ast.Tuple):
-            return tuple(_eval(el) for el in node.elts)
-        elif isinstance(node, ast.Expression):
-            return _eval(node.body)
-        else:
-            raise TypeError(f"AST node {type(node)} is not supported")
-
-    tree = ast.parse(condition, mode="eval")
-    return _eval(tree.body)
 
 
 class TableDataAccessor:
@@ -963,35 +717,17 @@ class TableHDU(TensorFrame):
         if not eval_locals:
             raise ValueError("No row-aligned columns available for filtering")
 
-        import numexpr as ne
-
-        # numexpr does not support 'np.' prefix, so we strip it for common functions
-        # if it doesn't conflict with column names.
-        clean_condition = condition
-        if "np." in condition:
-            # Simple replacement of common np. constructs that numexpr supports
-            # without the prefix.
-            for func in [
-                "abs",
-                "sin",
-                "cos",
-                "tan",
-                "exp",
-                "log",
-                "sqrt",
-                "ceil",
-                "floor",
-                "where",
-            ]:
-                clean_condition = clean_condition.replace(f"np.{func}(", f"{func}(")
-            clean_condition = clean_condition.replace("np.pi", "3.141592653589793")
-            clean_condition = clean_condition.replace("np.e", "2.718281828459045")
-
+        mask_result = None
         try:
-            mask_result = ne.evaluate(clean_condition, local_dict=eval_locals)
+            import numexpr as ne
+
+            mask_result = ne.evaluate(condition, local_dict=eval_locals)
         except Exception:
-            # Fallback to slower but more compatible _safe_eval
-            mask_result = _safe_eval(condition, eval_locals, np)
+            mask_result = eval(
+                condition,
+                {"__builtins__": {}, "np": np},
+                eval_locals,
+            )
 
         mask_arr = np.asarray(mask_result)
         if mask_arr.ndim == 0:
