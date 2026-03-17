@@ -3,10 +3,15 @@
 #include <fstream>
 #include <string>
 #include <algorithm>
-#include <algorithm>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
+
+#ifdef __APPLE__
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
+
 namespace torchfits {
 
 // Global hardware info cache
@@ -40,23 +45,17 @@ HardwareInfo detect_hardware() {
 
     // Detect L3 cache size (Linux/macOS)
     #ifdef __APPLE__
-    FILE* fp = popen("sysctl -n hw.l3cachesize", "r");
-    if (fp) {
-        size_t cache_size;
-        if (fscanf(fp, "%zu", &cache_size) == 1) {
-            info.l3_cache_size = cache_size;
-        }
-        pclose(fp);
+    uint64_t cache_size = 0;
+    size_t size = sizeof(cache_size);
+    if (sysctlbyname("hw.l3cachesize", &cache_size, &size, NULL, 0) == 0) {
+        info.l3_cache_size = static_cast<size_t>(cache_size);
     }
 
     // Detect memory size
-    fp = popen("sysctl -n hw.memsize", "r");
-    if (fp) {
-        size_t mem_size;
-        if (fscanf(fp, "%zu", &mem_size) == 1) {
-            info.available_memory = mem_size;
-        }
-        pclose(fp);
+    uint64_t mem_size = 0;
+    size = sizeof(mem_size);
+    if (sysctlbyname("hw.memsize", &mem_size, &size, NULL, 0) == 0) {
+        info.available_memory = static_cast<size_t>(mem_size);
     }
     #endif
 
