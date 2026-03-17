@@ -208,6 +208,28 @@ class SIP:
         vals = u_stack.index_select(0, p) * v_stack.index_select(0, q)
         return (vals * c[:, None]).sum(dim=0)
 
+    @staticmethod
+    def _make_pow_cache(base: Tensor, order: int) -> "list[Tensor]":
+        pows = [torch.ones_like(base)]
+        if order >= 1:
+            pows.append(base)
+        curr = base
+        for _ in range(2, order + 1):
+            curr = curr * base
+            pows.append(curr)
+        return pows
+
+    @staticmethod
+    def _make_pow_stack(base: Tensor, order: int) -> Tensor:
+        pows = [torch.ones_like(base)]
+        if order >= 1:
+            pows.append(base)
+        curr = base
+        for _ in range(2, order + 1):
+            curr = curr * base
+            pows.append(curr)
+        return torch.stack(pows, dim=0)
+
     def _distort_scalar(self, uv: Tensor) -> Tensor:
         """
         Distort a single (u, v) point. uv shape [2].
@@ -311,18 +333,8 @@ class SIP:
     def _distort_smallvec(self, u: Tensor, v: Tensor) -> "tuple[Tensor, Tensor]":
         max_order = max(self.a_order, self.b_order, 1)
 
-        def make_pow_stack(base, order):
-            pows = [torch.ones_like(base)]
-            if order >= 1:
-                pows.append(base)
-            curr = base
-            for _ in range(2, order + 1):
-                curr = curr * base
-                pows.append(curr)
-            return torch.stack(pows, dim=0)
-
-        u_s = make_pow_stack(u, max_order)
-        v_s = make_pow_stack(v, max_order)
+        u_s = self._make_pow_stack(u, max_order)
+        v_s = self._make_pow_stack(v, max_order)
         f_uv = self._sum_terms_from_pack(self._a_pack, u_s, v_s, u)
         g_uv = self._sum_terms_from_pack(self._b_pack, u_s, v_s, v)
         return u + f_uv, v + g_uv
@@ -353,18 +365,8 @@ class SIP:
 
         max_order = max(self.a_order, self.b_order, 1)
 
-        def make_pow_cache(base, order):
-            pows = [torch.ones_like(base)]
-            if order >= 1:
-                pows.append(base)
-            curr = base
-            for _ in range(2, order + 1):
-                curr = curr * base
-                pows.append(curr)
-            return pows
-
-        u_p = make_pow_cache(u, max_order)
-        v_p = make_pow_cache(v, max_order)
+        u_p = self._make_pow_cache(u, max_order)
+        v_p = self._make_pow_cache(v, max_order)
 
         xd = u.clone()
         yd = v.clone()
@@ -395,18 +397,8 @@ class SIP:
     ) -> "tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]":
         max_order = max(self.a_order, self.b_order, 1)
 
-        def make_pow_stack(base, order):
-            pows = [torch.ones_like(base)]
-            if order >= 1:
-                pows.append(base)
-            curr = base
-            for _ in range(2, order + 1):
-                curr = curr * base
-                pows.append(curr)
-            return torch.stack(pows, dim=0)
-
-        u_s = make_pow_stack(u, max_order)
-        v_s = make_pow_stack(v, max_order)
+        u_s = self._make_pow_stack(u, max_order)
+        v_s = self._make_pow_stack(v, max_order)
 
         xd = u + self._sum_terms_from_pack(self._a_pack, u_s, v_s, u)
         yd = v + self._sum_terms_from_pack(self._b_pack, u_s, v_s, v)
