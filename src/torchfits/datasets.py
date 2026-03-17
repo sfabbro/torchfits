@@ -181,14 +181,15 @@ class IterableFITSDataset(IterableDataset):
 
     def _process_shard(self, shard_id: int) -> Iterator[Any]:
         """Process a single shard and yield samples."""
+        # Load data (import locally to avoid circular imports)
+        from . import read
+        from .logging import logger
+
         # Simplified implementation - would load shard manifest
         shard_files = [f"file_{shard_id}_{i}.fits" for i in range(self.shard_size)]
 
         for file_path in shard_files:
             try:
-                # Load data (import locally to avoid circular imports)
-                from . import read
-
                 data = read(file_path, hdu=self.hdu, device=self.device)
 
                 # Apply transform if provided
@@ -198,13 +199,9 @@ class IterableFITSDataset(IterableDataset):
                 yield data
             except (IOError, RuntimeError, ValueError) as e:
                 # Log error and continue with next file
-                from .logging import logger
-
                 logger.error(f"Failed to process file {file_path}: {str(e)}")
                 continue
             except Exception as e:
-                from .logging import logger
-
                 logger.critical(f"Unexpected error processing {file_path}: {str(e)}")
                 raise
 
