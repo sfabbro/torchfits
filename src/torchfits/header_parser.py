@@ -150,11 +150,7 @@ class FastHeaderParser:
         while i < n:
             char = value_comment[i]
             if char == "'":
-                if (
-                    in_quotes
-                    and i + 1 < n
-                    and value_comment[i + 1] == "'"
-                ):
+                if in_quotes and i + 1 < n and value_comment[i + 1] == "'":
                     # Escaped quote inside string
                     i += 2
                     continue

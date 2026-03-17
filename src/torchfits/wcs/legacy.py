@@ -2,6 +2,7 @@ import torch
 from torch import Tensor
 from typing import Tuple, Optional, Dict, Any, List
 import re
+import functools
 
 
 def parse_wat_keywords(header: Dict[str, Any], axis: int) -> str:
@@ -172,6 +173,12 @@ class LegacyPolynomial:
         return basis
 
 
+@functools.lru_cache(maxsize=16)
+def _get_tnx_pattern(key: str) -> re.Pattern:
+    """Cache regex patterns for TNX coefficients."""
+    return re.compile(rf'{key}\s*=\s*(?:"([^"]*)"|([^"\s]+))')
+
+
 def extract_tnx_coeffs(wat_str: str, key: str) -> Optional[str]:
     """
     Extract value for 'lngcor' or 'latcor' from WAT string.
@@ -181,7 +188,7 @@ def extract_tnx_coeffs(wat_str: str, key: str) -> Optional[str]:
     # key e.g. 'lngcor'
     # Look for: lngcor\s*=\s*(?:"([^"]*)"|([^"\s]+))
 
-    pattern = re.compile(rf'{key}\s*=\s*(?:"([^"]*)"|([^"\s]+))')
+    pattern = _get_tnx_pattern(key)
     match = pattern.search(wat_str)
     if match:
         val_quoted = match.group(1)

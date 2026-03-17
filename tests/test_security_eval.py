@@ -1,7 +1,7 @@
 import pytest
-import numpy as np
 import torch
 from torchfits.hdu import TableHDU
+
 
 def test_tablehdu_filter_no_eval_vulnerability():
     # Create a simple table

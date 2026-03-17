@@ -33,5 +33,3 @@ def test_valid_filenames_allowed():
         pass  # Expected
     except Exception:
         pass  # Other errors are fine, as long as not Security Error
-
-
