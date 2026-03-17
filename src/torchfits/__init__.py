@@ -2252,11 +2252,11 @@ def get_batch_info(file_paths: List[str]) -> Dict[str, Any]:
     Returns:
         Dictionary with batch statistics
     """
+    import os
+
     valid_files = 0
     for path in file_paths:
         try:
-            import os
-
             if os.path.exists(path):
                 valid_files += 1
         except Exception:
