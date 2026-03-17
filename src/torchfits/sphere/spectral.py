@@ -156,7 +156,7 @@ def alm_size(lmax: int, mmax: int | None = None) -> int:
     mm = lmax if mmax is None else int(mmax)
     if mm < 0 or mm > lmax:
         raise ValueError("mmax must satisfy 0 <= mmax <= lmax")
-    return int(sum(lmax - m + 1 for m in range(mm + 1)))
+    return (mm + 1) * (2 * lmax - mm + 2) // 2
 
 
 def alm_index(ell: int, m: int, lmax: int, mmax: int | None = None) -> int:
