@@ -74,7 +74,7 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
-            if not card.strip():
+            if card.isspace() or not card:
                 continue
 
             keyword, value, comment = cls._parse_card(card)
@@ -99,7 +99,7 @@ class FastHeaderParser:
             card = card.ljust(80)
 
         # Skip END cards and empty cards
-        if card.startswith("END     ") or card.strip() == "":
+        if card.startswith("END     ") or card.isspace() or not card:
             return None, None, None
 
         # Handle comment-only cards (COMMENT, HISTORY, etc.)
@@ -140,9 +140,11 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
-        # Fast path: no strings in the value, so no need to parse quotes
-        if "'" not in value_comment:
-            return value_comment.find("/")
+        # Fast path: find first slash and if there are no quotes before it,
+        # we found our separator.
+        idx = value_comment.find("/")
+        if idx == -1 or "'" not in value_comment[:idx]:
+            return idx
 
         in_quotes = False
         i = 0
@@ -182,27 +184,24 @@ class FastHeaderParser:
             return None
 
         value_str = value_str.strip()
+        if not value_str:
+            return None
+
+        first_char = value_str[0]
+
+        # 1. String values (quoted)
+        if first_char == "'":
+            return cls._parse_string_value(value_str)
 
         # Force string parsing for certain keywords
         if keyword in cls._STRING_KEYWORDS:
-            if value_str.startswith("'") and value_str.endswith("'"):
-                return cls._parse_string_value(value_str)
-            else:
-                return value_str
-
-        # Try different value types in order of specificity
-
-        # 1. String values (quoted)
-        if value_str.startswith("'"):
-            return cls._parse_string_value(value_str)
+            return value_str
 
         # 2. Logical values
         if value_str == "T":
             return True
         if value_str == "F":
             return False
-
-        first_char = value_str[0] if value_str else ""
 
         # 3. Fast path for numbers without regex
         if first_char in "+-0123456789.":
