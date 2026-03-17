@@ -2037,7 +2037,9 @@ def angular_distance_deg(
 
     dr = r1 - r2
     dd = d1 - d2
-    a = torch.square(torch.sin(dd * 0.5)) + torch.cos(d1) * torch.cos(d2) * torch.square(torch.sin(dr * 0.5))
+    a = torch.square(torch.sin(dd * 0.5)) + torch.cos(d1) * torch.cos(
+        d2
+    ) * torch.square(torch.sin(dr * 0.5))
     return torch.rad2deg(2.0 * torch.asin(torch.sqrt(torch.clamp(a, 0.0, 1.0))))
 
 

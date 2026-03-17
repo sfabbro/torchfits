@@ -167,18 +167,30 @@ def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
         names = tf.col_names_dict[stype_enum]
 
         # 1D/2D continuous types
-        if stype_enum in [stype.numerical, stype.categorical, getattr(stype, "timestamp", None)]:
+        if stype_enum in [
+            stype.numerical,
+            stype.categorical,
+            getattr(stype, "timestamp", None),
+        ]:
             for i, name in enumerate(names):
                 data[name] = tensor[:, i]
 
         # 3D continuous types (e.g. embeddings)
-        elif stype_enum in [getattr(stype, "embedding", None), getattr(stype, "text_embedded", None), getattr(stype, "image_embedded", None)]:
+        elif stype_enum in [
+            getattr(stype, "embedding", None),
+            getattr(stype, "text_embedded", None),
+            getattr(stype, "image_embedded", None),
+        ]:
             for i, name in enumerate(names):
                 data[name] = tensor[:, i, :]
 
         # Variable-length nested types
-        elif stype_enum in [getattr(stype, "sequence_numerical", None), getattr(stype, "multicategorical", None)]:
+        elif stype_enum in [
+            getattr(stype, "sequence_numerical", None),
+            getattr(stype, "multicategorical", None),
+        ]:
             from torch_frame.data import MultiNestedTensor
+
             if isinstance(tensor, MultiNestedTensor):
                 num_rows = tensor.num_rows
                 num_cols = tensor.num_cols
@@ -193,7 +205,9 @@ def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
                         col_data.append(values[start:end])
                     data[name] = col_data
             else:
-                warnings.warn(f"Expected MultiNestedTensor for stype {stype_enum.name}, got {type(tensor)}")
+                warnings.warn(
+                    f"Expected MultiNestedTensor for stype {stype_enum.name}, got {type(tensor)}"
+                )
         else:
             warnings.warn(f"Skipping unsupported stype: {stype_enum.name}")
 
