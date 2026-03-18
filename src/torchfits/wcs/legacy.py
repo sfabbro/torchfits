@@ -96,8 +96,12 @@ class LegacyPolynomial:
             self.coeffs = [float(x) for x in tokens[8:]]
 
         except (ValueError, IndexError) as e:
-            # Malformed string
-            print(f"Warning: Failed to parse Legacy Polynomial string: {e}")
+            import warnings
+
+            warnings.warn(
+                f"Failed to parse Legacy Polynomial string: {e}",
+                stacklevel=2,
+            )
 
     def evaluate(self, x: Tensor, y: Tensor) -> Tensor:
         """

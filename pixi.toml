@@ -5,7 +5,7 @@ platforms = ["osx-arm64"]
 
 [package]
 name = "torchfits"
-version = "0.3.1"
+version = "0.3.2"
 description = "High-performance FITS I/O for PyTorch"
 authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 
@@ -57,8 +57,12 @@ ninja = ">=1.10"
 nanobind = ">=2.10.2"
 pytorch = ">=2.0"
 numpy = ">=1.20"
-numexpr = ">=2.14.1,<3"
 pre-commit = ">=3.5.0"
+healpy = ">=1.19.0,<2"
+hpgeom = ">=1.0"
+healsparse = ">=1.10"
+astropy-healpix = ">=1.0"
+spherical-geometry = ">=1.2"
 
 cfitsio = ">=4.4"
 tabulate = ">=0.9.0"
@@ -160,6 +164,11 @@ python = ">=3.13"
 [feature.test.dependencies]
 astropy = ">=5.0"
 fitsio = ">=1.2"
+healpy = ">=1.19.0,<2"
+hpgeom = ">=1.0"
+healsparse = ">=1.10"
+astropy-healpix = ">=1.0"
+spherical-geometry = ">=1.2"
 
 # Benchmark feature with additional dependencies
 [feature.bench.dependencies]

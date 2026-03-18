@@ -1,58 +1,72 @@
-# Release Runbook
+# Release Checklist
 
-This is the maintainer checklist for cutting a release.
+Maintainer runbook for cutting a release.
 
-## 1. Final Sanity Checks
+## 1. Version sync
 
-Confirm version triplet matches:
+Confirm the version triplet matches in:
 
-- `pyproject.toml`
+- `pyproject.toml` (`version = "X.Y.Z"`)
 - `pixi.toml`
-- `src/torchfits/__init__.py`
+- `src/torchfits/__init__.py` (`__version__`)
 
-Confirm changelog entry is finalized in `docs/changelog.md`.
+## 2. Changelog
 
-## 2. Benchmark Evidence
+Finalize the entry in `docs/changelog.md`. Follow [Keep a Changelog](https://keepachangelog.com/) format.
 
-Run exhaustive benchmark:
+## 3. Tests
 
 ```bash
-pixi run python benchmarks/bench_all.py \
-  --profile user \
-  --include-tables \
-  --output-dir benchmarks_results/release_<version>_$(date +%Y%m%d_%H%M%S)
+pixi run test
 ```
 
-Run ML loader benchmark:
+All tests must pass.
+
+## 4. Correctness gates
+
+Run all upstream parity gates:
+
+```bash
+pixi run wcs-upstream-gate
+pixi run fits-upstream-gate
+pixi run healsparse-upstream-gate
+pixi run sphere-upstream-gate
+pixi run sphere-upstream-spin-gate
+pixi run sphere-upstream-interp-edge-gate
+pixi run sphere-upstream-polygon-gate
+pixi run real-data-gate
+```
+
+All gates must pass.
+
+## 5. Benchmark evidence
+
+Run the exhaustive benchmark suite:
+
+```bash
+pixi run bench-all
+```
+
+Run the ML loader benchmark:
 
 ```bash
 pixi run python benchmarks/bench_ml_loader.py \
-  --device cpu \
-  --shape 2048,2048 \
-  --n-files 50 \
-  --batch-size 4 \
-  --num-workers 4 \
-  --epochs 3 \
-  --repeats 5 \
-  --warm-cache
+  --device cpu --shape 2048,2048 --n-files 50 \
+  --batch-size 4 --num-workers 4 --epochs 3 --repeats 5 --warm-cache
 ```
 
-Update `docs/benchmarks.md` with:
-- run id/date
-- key speedup medians and win/loss counts
-- known weak spots
+Update `docs/benchmarks.md` with the run ID, date, and snapshot tables.
 
-## 3. Optional Local Artifact Check
+## 6. Local artifact check (optional)
 
 ```bash
-pixi run python -m pip wheel . --no-deps --no-build-isolation -w dist
-pixi run twine check dist/*
+pip wheel . --no-deps --no-build-isolation -w dist
+twine check dist/*
 ```
 
-Smoke-test wheel install in a fresh environment before publish.
-The release workflow builds both wheels and sdist during publish.
+Smoke-test the wheel in a fresh virtualenv.
 
-## 4. Git + Tag Push
+## 7. Tag and push
 
 ```bash
 git add -A
@@ -61,16 +75,19 @@ git tag vX.Y.Z
 git push origin main --tags
 ```
 
-## 5. Publish from GitHub Release
+## 8. Publish
 
-Create a GitHub release for `vX.Y.Z` (publish the release in the UI).
+Create a GitHub release for `vX.Y.Z`.
 
-Publishing a release triggers `.github/workflows/build_wheels.yml`, which:
-- runs tests first
-- builds wheels on Linux and macOS plus sdist
-- uploads to PyPI via trusted publishing
+Publishing triggers `.github/workflows/build_wheels.yml`, which:
 
-After workflow success, verify:
-- PyPI version availability
-- install from PyPI in fresh env
-- changelog and release notes links resolve
+1. Runs tests.
+2. Builds wheels on Linux and macOS plus sdist.
+3. Uploads to [PyPI](https://pypi.org/project/torchfits/) via trusted publishing.
+
+## 9. Post-release verification
+
+- [ ] `pip install torchfits==X.Y.Z` works in a fresh environment.
+- [ ] `import torchfits; print(torchfits.__version__)` shows correct version.
+- [ ] `torchfits.read(...)` runs without import errors.
+- [ ] Changelog and release notes links resolve.

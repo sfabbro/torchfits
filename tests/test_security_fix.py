@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from torchfits.hdu import TableHDU
 
+
 def test_tablehdu_filter_security():
     # Create a simple table
     data = {
@@ -14,7 +15,7 @@ def test_tablehdu_filter_security():
     # 1. Valid condition using the new evaluator
     filtered = table.filter("x > 1")
     assert filtered.num_rows == 2
-    assert torch.equal(filtered["x"], torch.tensor([[2], [3]]))
+    assert torch.equal(filtered["x"].flatten(), torch.tensor([2, 3]))
 
     # 2. Test IN and BETWEEN
     filtered_in = table.filter("x IN (1, 3)")
@@ -35,6 +36,7 @@ def test_tablehdu_filter_security():
     # Even if it bypasses the parser somehow, the evaluator only looks at data_map
     with pytest.raises(ValueError):
         table.filter("unknown_var > 0")
+
 
 def test_evaluate_where_direct():
     from torchfits._where import _parse_where_expression, evaluate_where

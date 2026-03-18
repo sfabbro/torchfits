@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "0.3.1"
+version = "0.3.2"
 description = "High-performance FITS I/O for PyTorch"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
@@ -39,7 +39,6 @@ requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
     "numpy>=1.20.0",  # Core numerical operations
-    "numexpr",        # For table filtering expressions
 ]
 
 [project.urls]

@@ -3,6 +3,7 @@ from typing import Any, Optional, List, Tuple
 
 _WHERE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+
 def _parse_where_literal(raw: str) -> Any:
     token = raw.strip()
     if not token:
@@ -106,9 +107,19 @@ def _tokenize_where_expression(where: str) -> List[Tuple[str, str]]:
     return tokens
 
 
+def _normalize_where_syntax(where: str) -> str:
+    """Translate C-style logical operators to SQL-style before parsing."""
+    result = where.replace("&&", " AND ").replace("||", " OR ")
+    result = re.sub(r"(?<!\w)~(?!\w)", " NOT ", result)
+    result = re.sub(r"(?<![!=<>])&(?!&)", " AND ", result)
+    result = re.sub(r"(?<!\|)\|(?!\|)", " OR ", result)
+    return result
+
+
 def _parse_where_expression(where: str):
     if not isinstance(where, str) or not where.strip():
         raise ValueError("where must be a non-empty string expression")
+    where = _normalize_where_syntax(where)
 
     tokens = _tokenize_where_expression(where)
     if not tokens:

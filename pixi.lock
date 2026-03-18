@@ -17,6 +17,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/appnope-0.1.4-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-7.2.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-base-7.2.0-py314hdcf55e8_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-iers-data-0.2026.2.23.0.48.33-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/asttokens-3.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/async-timeout-5.0.1-pyhcf101f3_2.conda
@@ -92,7 +93,10 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/h2-4.3.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/h5py-3.15.1-nompi_py314h1c8d760_101.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hdf5-1.14.6-nompi_had3affe_106.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/html5lib-1.1-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hyperframe-6.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.2-hef89b57_0.conda
@@ -275,6 +279,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/snappy-1.2.2-hada39a4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sortedcontainers-2.4.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/soupsieve-2.8.3-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.5-py314h2329ae0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/statsmodels-0.14.6-py314hdcf55e8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sympy-1.14.0-pyh2585a3b_106.conda
@@ -402,6 +407,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/h5py-3.15.1-nompi_py314h1c8d760_101.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hdf5-1.14.6-nompi_had3affe_106.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/html5lib-1.1-pyhd8ed1ab_2.conda
@@ -630,6 +636,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-6.1.7-py310hc12b6d3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-base-6.1.7-he5c6ecd_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py310h1d5274f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-iers-data-0.2026.2.23.0.48.33-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/backports-1.0-pyhd8ed1ab_5.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/backports.tarfile-1.2.0-pyhcf101f3_2.conda
@@ -665,7 +673,10 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/gmp-6.3.0-h7bae524_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/gmpy2-2.2.1-py310h1b1a8f9_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/h2-4.3.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py310h676a8bd_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py310h1d5274f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hyperframe-6.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.2-hef89b57_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/id-1.6.1-pyhcf101f3_0.conda
@@ -788,6 +799,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/setuptools-82.0.0-pyh332efcf_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/six-1.17.0-pyhe01879c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/sleef-3.9.0-hb028509_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.2-py310h25f4b65_5.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/starlink-ast-9.3.1-hc919400_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/statsmodels-0.14.6-py310hfdc7867_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sympy-1.14.0-pyh2585a3b_106.conda
@@ -827,6 +839,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/appnope-0.1.4-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-7.2.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-base-7.2.0-py314hdcf55e8_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-iers-data-0.2026.2.23.0.48.33-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/asttokens-3.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/async-timeout-5.0.1-pyhcf101f3_2.conda
@@ -902,7 +915,10 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/h2-4.3.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/h5py-3.15.1-nompi_py314h1c8d760_101.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hdf5-1.14.6-nompi_had3affe_106.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/html5lib-1.1-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hyperframe-6.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.2-hef89b57_0.conda
@@ -1083,6 +1099,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/snappy-1.2.2-hada39a4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sortedcontainers-2.4.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/soupsieve-2.8.3-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.5-py314h2329ae0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/statsmodels-0.14.6-py314hdcf55e8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sympy-1.14.0-pyh2585a3b_106.conda
@@ -1210,6 +1227,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/h5py-3.15.1-nompi_py314h1c8d760_101.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hdf5-1.14.6-nompi_had3affe_106.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/html5lib-1.1-pyhd8ed1ab_2.conda
@@ -1445,6 +1463,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/appnope-0.1.4-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-7.2.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-base-7.2.0-py314hdcf55e8_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/astropy-iers-data-0.2026.2.23.0.48.33-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/asttokens-3.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/async-timeout-5.0.1-pyhcf101f3_2.conda
@@ -1520,7 +1539,10 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/h2-4.3.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/h5py-3.15.1-nompi_py314h1c8d760_101.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hdf5-1.14.6-nompi_had3affe_106.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/html5lib-1.1-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/hyperframe-6.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.2-hef89b57_0.conda
@@ -1701,6 +1723,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/snappy-1.2.2-hada39a4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sortedcontainers-2.4.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/soupsieve-2.8.3-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.5-py314h2329ae0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/statsmodels-0.14.6-py314hdcf55e8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sympy-1.14.0-pyh2585a3b_106.conda
@@ -1883,6 +1906,15 @@ packages:
   license_family: BSD
   size: 7784954
   timestamp: 1732730615393
+- conda: https://conda.anaconda.org/conda-forge/noarch/astropy-base-6.1.7-he5c6ecd_0.conda
+  sha256: c4b11c13a967587f12a19d1a6e37cac05f523a23a3496959fc1229c1868b7f0c
+  md5: d6b2ca3fe446339084bf322c70a21964
+  depends:
+  - astropy 6.1.7
+  license: BSD-3-Clause
+  license_family: BSD
+  size: 7196
+  timestamp: 1746713741098
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-base-7.2.0-py314hdcf55e8_0.conda
   sha256: bbc0210239ef80bd80e5981b192f03c5a237a9a066945025585234648db19d11
   md5: 59d305b4aac5f4b79d5c8a5c9383f6fe
@@ -1903,6 +1935,20 @@ packages:
   license_family: BSD
   size: 9696751
   timestamp: 1764121149314
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py310h1d5274f_0.conda
+  sha256: 43e8e242476765ee2d841907b44430d554407f6b36c4325f07f480b5720a626c
+  md5: e23ac7783f7eb5aa4aad29de99126fb7
+  depends:
+  - __osx >=11.0
+  - astropy-base >=3
+  - numpy >=1.21,<3
+  - python >=3.10,<3.11.0a0
+  - python >=3.10,<3.11.0a0 *_cpython
+  - python_abi 3.10.* *_cp310
+  license: BSD-3-Clause
+  license_family: BSD
+  size: 97080
+  timestamp: 1768880646158
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/astropy-healpix-1.1.3-py314h2115a04_0.conda
   sha256: af631ae1e655a2e37ce24058296db2afd049819e65b290a0e2b6dcce1c9e6c80
   md5: dbf45bac8d3a0be5b8d551e5f2f882b1
@@ -2936,6 +2982,27 @@ packages:
   license_family: BSD
   size: 3299759
   timestamp: 1770390513189
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py310h676a8bd_0.conda
+  sha256: 5af18f5a934ee0454aae12c51e9a17b5d14d77991b50fad203c20249a6d37c58
+  md5: 2283d99605200fd166ce2a8e86cdf503
+  depends:
+  - __osx >=11.0
+  - astropy-base
+  - cfitsio >=4.6.3,<4.6.4.0a0
+  - libcxx >=19
+  - libgfortran
+  - libgfortran5 >=14.3.0
+  - libzlib >=1.3.1,<2.0a0
+  - matplotlib-base
+  - numpy >=1.21,<3
+  - python >=3.10,<3.11.0a0
+  - python >=3.10,<3.11.0a0 *_cpython
+  - python_abi 3.10.* *_cp310
+  - scipy
+  license: GPL-2.0-only
+  license_family: GPL
+  size: 1973044
+  timestamp: 1764694781720
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/healpy-1.19.0-py314hd336af2_0.conda
   sha256: 1ea20a3e37099a021f592b70522002573c99342163d6f017ee3041efd327328a
   md5: 6c70bd9092f072e0292064a6ba40cb3e
@@ -2957,6 +3024,18 @@ packages:
   license_family: GPL
   size: 2026660
   timestamp: 1764694427550
+- conda: https://conda.anaconda.org/conda-forge/noarch/healsparse-1.12.2-pyhd8ed1ab_0.conda
+  sha256: fe86f3e031dd8f0837b9a92d7d73ca831823afd30086c6bb94046dac4af8506d
+  md5: 7674e584059f03cf3e2ed5f5d9883423
+  depends:
+  - astropy-base
+  - hpgeom >=1.2.0
+  - numpy
+  - python >=3.10
+  license: BSD-3-Clause
+  license_family: BSD
+  size: 58528
+  timestamp: 1773779565781
 - conda: https://conda.anaconda.org/conda-forge/noarch/hpack-4.1.0-pyhd8ed1ab_0.conda
   sha256: 6ad78a180576c706aabeb5b4c8ceb97c0cb25f1e112d76495bff23e3779948ba
   md5: 0a802cb9888dd14eeefc611f05c40b6e
@@ -2966,6 +3045,20 @@ packages:
   license_family: MIT
   size: 30731
   timestamp: 1737618390337
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py310h1d5274f_0.conda
+  sha256: aef6b866749c50f5ba37e18cd8468f6a87dae36f00c61d84596693345a3b8313
+  md5: 5bd0001883ce5e23bdc1743f08fe9454
+  depends:
+  - __osx >=11.0
+  - importlib-metadata
+  - numpy >=1.21,<3
+  - python >=3.10,<3.11.0a0
+  - python >=3.10,<3.11.0a0 *_cpython
+  - python_abi 3.10.* *_cp310
+  license: GPL-3.0-only
+  license_family: GPL
+  size: 70882
+  timestamp: 1771971478262
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/hpgeom-1.5.4-py314h2115a04_0.conda
   sha256: 9466f60d072133f7cf89fe7e7076667ac9da819bf9641a142c808224d24ad19a
   md5: b5b25723db2dae14e7b2337cf599cd3a
@@ -5635,6 +5728,23 @@ packages:
   license_family: MIT
   size: 38187
   timestamp: 1769034509657
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.2-py310h25f4b65_5.conda
+  sha256: ffc30a47ed0a8af3ccb3eff3f555674d37294803e1db4ddf280e40db93f2727c
+  md5: 1fd9388eb1b10a69aaea7ea963d42925
+  depends:
+  - __osx >=11.0
+  - astropy-base
+  - libcxx >=19
+  - numpy >=1.21,<3
+  - numpy >=1.23
+  - python >=3.10,<3.11.0a0
+  - python >=3.10,<3.11.0a0 *_cpython
+  - python_abi 3.10.* *_cp310
+  - setuptools
+  license: BSD-3-Clause
+  license_family: BSD
+  size: 7737787
+  timestamp: 1757177298126
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/spherical-geometry-1.3.5-py314h2329ae0_0.conda
   sha256: 134e35c6be01a534e266a1ad159cfad2c2999e2f46e435b952f4815eed7fcfc8
   md5: cf031649d287f34c12391e1f378d6b91

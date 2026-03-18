@@ -10,7 +10,6 @@ This module implements the main data structures for FITS HDUs:
 
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
-import numpy as np
 import torch
 from torch import Tensor
 

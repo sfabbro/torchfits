@@ -7,7 +7,7 @@ import itertools
 import os
 import re
 import threading
-from typing import Any, Optional, TYPE_CHECKING, List, Tuple
+from typing import Any, Optional, TYPE_CHECKING
 
 import torch
 
@@ -15,9 +15,6 @@ if TYPE_CHECKING:
     import numpy as np
 
 from ._where import (
-    _WHERE_IDENT_RE,
-    _parse_where_literal,
-    _tokenize_where_expression,
     _parse_where_expression,
     _where_columns_from_ast,
 )
@@ -541,8 +538,6 @@ def _normalize_row_slice(
     if stop < start:
         return start_row, 0
     return start_row, stop - start
-
-
 
 
 def _compile_where_to_simple_predicates(

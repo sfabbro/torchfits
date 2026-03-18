@@ -137,7 +137,7 @@ try:
 except Exception:
     pass
 
-__version__ = "0.3.0"
+__version__ = "0.3.2"
 __all__ = [
     # Core I/O functions
     "read",
@@ -220,8 +220,7 @@ __all__ = [
     "to_pandas",
     "to_arrow",
     "table",
-    # Split-ready namespaces
-    "fits",
+    # Subpackage namespaces
     "sphere",
 ]
 
