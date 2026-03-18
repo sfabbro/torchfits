@@ -48,10 +48,11 @@ def test_docs_reference_existing_local_files() -> None:
         "benchmarks/bench_table.py",
         "benchmarks/bench_wcs.py",
         "benchmarks/bench_wcs_suite.py",
-        "benchmarks/replays/replay_upstream_astropy_wcs.py",
-        "benchmarks/replays/replay_upstream_fits_workflows.py",
-        "benchmarks/replays/replay_upstream_healsparse.py",
-        "benchmarks/replays/replay_real_data_validation.py",
+        "benchmarks/replays/replay_upstream_astropy_healpy.py",
+        "benchmarks/replays/replay_upstream_healpy_interp_edges.py",
+        "benchmarks/replays/replay_upstream_healpy_spin.py",
+        "benchmarks/replays/replay_upstream_spherical_geometry_polygons.py",
+        "benchmarks/replays/replay_upstream_test_functions.py",
     ]
 
     missing = [path for path in expected_paths if not (ROOT / path).exists()]

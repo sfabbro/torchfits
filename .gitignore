@@ -45,6 +45,7 @@ benchmark_results_*/
 benchmarks/benchmark_results/
 benchmarks/bench_results/
 benchmarks/replays/
+!benchmarks/replays/upstream_sources.json
 benchmarks/kapteyn_src/
 *.log
 *.log*
