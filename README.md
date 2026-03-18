@@ -1,7 +1,7 @@
 # torchfits
 
 [![PyPI](https://img.shields.io/pypi/v/torchfits)](https://pypi.org/project/torchfits/)
-[![Wheels](https://github.com/sfabbro/torchfits/actions/workflows/build_wheels.yml/badge.svg)](https://github.com/sfabbro/torchfits/actions/workflows/build_wheels.yml)
+
 [![CI](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0-green)](LICENSE)
