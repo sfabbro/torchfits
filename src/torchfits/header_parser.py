@@ -74,7 +74,9 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
-            if card.isspace() or not card:
+
+            # Fast-path early returns before full parsing overhead
+            if not card or card.isspace() or card.startswith("END     "):
                 continue
 
             keyword, value, comment = cls._parse_card(card)
@@ -95,12 +97,9 @@ class FastHeaderParser:
         Returns:
             (keyword, value, comment) tuple
         """
+        # Note: END and empty cards are now checked in the main loop to save function call overhead
         if len(card) != 80:
             card = card.ljust(80)
-
-        # Skip END cards and empty cards
-        if card.startswith("END     ") or card.isspace() or not card:
-            return None, None, None
 
         # Handle comment-only cards (COMMENT, HISTORY, etc.)
         if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
