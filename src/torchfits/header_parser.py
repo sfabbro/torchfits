@@ -74,6 +74,13 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
+
+            # Bolt optimization: Stop parsing immediately at the END card.
+            # FITS headers are padded with 2880-byte blocks of spaces. Breaking
+            # early avoids thousands of redundant regex/string checks on empty padding.
+            if card.startswith("END     "):
+                break
+
             if card.isspace() or not card:
                 continue
 
@@ -98,8 +105,8 @@ class FastHeaderParser:
         if len(card) != 80:
             card = card.ljust(80)
 
-        # Skip END cards and empty cards
-        if card.startswith("END     ") or card.isspace() or not card:
+        # Skip empty cards
+        if card.isspace() or not card:
             return None, None, None
 
         # Handle comment-only cards (COMMENT, HISTORY, etc.)
