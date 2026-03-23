@@ -1,0 +1,3 @@
+## 2024-03-24 - Fast Path Parsing FITS Headers
+**Learning:** `FastHeaderParser.parse_header_string` in `src/torchfits/header_parser.py` was a performance bottleneck because FITS headers are parsed card-by-card, resulting in thousands of function calls to `_parse_card` per file. Additionally, `_parse_where_expression` was repeatedly parsing identical queries (e.g. `MAG_G < 20.0`) during chunked reads.
+**Action:** Inlined the `_parse_card` logic directly into the 80-character chunk loop and avoided `str.strip()` overhead by using `rstrip()` where appropriate. Added a fast-path for `/` comment separator detection. Added an `@lru_cache` to `_parse_where_expression` to avoid redundant AST parsing during streaming/chunked table reads.

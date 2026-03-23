@@ -68,70 +68,64 @@ class FastHeaderParser:
         if not header_string:
             return {}
 
-        header = {}
+        header: Dict[str, Any] = {}
+        _parse_value = cls._parse_value
+        _find_comment_separator = cls._find_comment_separator
+
+        # Pre-calculate string lengths and slices outside the loop
+        str_len = len(header_string)
 
         # Iterate directly over the string by 80-character chunks
         # instead of building an intermediate list of cards
-        for i in range(0, len(header_string), 80):
+        for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
-            if card.isspace() or not card:
+
+            # Fast path for empty/space/END cards.
+            if not card or card.isspace() or card.startswith("END     "):
                 continue
 
-            keyword, value, comment = cls._parse_card(card)
-            if keyword:
-                header[keyword] = value
+            if len(card) < 80:
+                card = card.ljust(80)
 
-                # Store comment separately if present
-                if comment and comment.strip():
-                    header[f"{keyword}_COMMENT"] = comment.strip()
+            # Most FITS cards have an '=' at index 8.
+            if card[8] == "=":
+                keyword = card[:8].rstrip()
+                value_comment = card[9:].strip()
+
+                # Find comment separator fast check
+                idx = value_comment.find("/")
+                if idx == -1:
+                    value_str = value_comment
+                    comment = None
+                elif "'" not in value_comment[:idx]:
+                    value_str = value_comment[:idx].strip()
+                    comment = value_comment[idx + 1 :].strip()
+                else:
+                    # Fallback to precise check
+                    comment_start = _find_comment_separator(value_comment)
+                    if comment_start != -1:
+                        value_str = value_comment[:comment_start].strip()
+                        comment = value_comment[comment_start + 1 :].strip()
+                    else:
+                        value_str = value_comment
+                        comment = None
+
+                value = _parse_value(value_str, keyword)
+                if keyword:
+                    header[keyword] = value
+                    if comment:
+                        header[f"{keyword}_COMMENT"] = comment
+            elif card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+                keyword = card[:8].rstrip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
+            else:
+                # No equals sign - might be a comment-only keyword
+                keyword = card[:8].rstrip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
 
         return header
-
-    @classmethod
-    def _parse_card(cls, card: str) -> tuple:
-        """
-        Parse a single 80-character FITS card.
-
-        Returns:
-            (keyword, value, comment) tuple
-        """
-        if len(card) != 80:
-            card = card.ljust(80)
-
-        # Skip END cards and empty cards
-        if card.startswith("END     ") or card.isspace() or not card:
-            return None, None, None
-
-        # Handle comment-only cards (COMMENT, HISTORY, etc.)
-        if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
-            keyword = card[:8].strip()
-            value = card[8:].strip()
-            return keyword, value, None
-
-        # Look for equals sign at position 8
-        if len(card) > 8 and card[8] == "=":
-            keyword = card[:8].strip()
-            value_comment = card[9:].strip()
-
-            # Find comment separator
-            comment_start = cls._find_comment_separator(value_comment)
-            if comment_start != -1:
-                value_str = value_comment[:comment_start].strip()
-                comment = value_comment[comment_start + 1 :].strip()
-            else:
-                value_str = value_comment
-                comment = None
-
-            # Parse the value
-            value = cls._parse_value(value_str, keyword)
-            return keyword, value, comment
-        else:
-            # No equals sign - might be a comment-only keyword
-            keyword = card[:8].strip()
-            if keyword:
-                return keyword, card[8:].strip(), None
-
-        return None, None, None
 
     @classmethod
     def _find_comment_separator(cls, value_comment: str) -> int:
