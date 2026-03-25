@@ -1644,6 +1644,7 @@ class HDUList:
     ):
         self._hdus = hdus or []
         self._file_handle = None
+        self._extname_idx = None  # Cache for fast EXTNAME lookups
 
     @classmethod
     def fromfile(cls, path: str, mode: str = "r") -> "HDUList":
@@ -1732,9 +1733,19 @@ class HDUList:
     def __getitem__(self, key: Union[int, str]) -> Union[TensorHDU, TableHDU]:
         if isinstance(key, int):
             return self._hdus[key]
-        for hdu in self._hdus:
-            if hdu.header.get("EXTNAME") == key:
-                return hdu
+
+        # O(1) cached lookup for string keys
+        if self._extname_idx is None:
+            self._extname_idx = {}
+            for i, hdu in enumerate(self._hdus):
+                name = hdu.header.get("EXTNAME")
+                if name is not None and name not in self._extname_idx:
+                    self._extname_idx[name] = i
+
+        idx = self._extname_idx.get(key)
+        if idx is not None:
+            return self._hdus[idx]
+
         raise KeyError(f"HDU '{key}' not found")
 
     def __enter__(self):
@@ -1806,6 +1817,7 @@ class HDUList:
 
     def append(self, hdu: Union[TensorHDU, TableHDU]):
         self._hdus.append(hdu)
+        self._extname_idx = None  # Invalidate cache
 
     def validate(self) -> bool:
         """Validate the FITS file structure and contents.
