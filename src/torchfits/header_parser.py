@@ -193,13 +193,7 @@ class FastHeaderParser:
         if keyword in cls._STRING_KEYWORDS:
             return value_str
 
-        # 2. Logical values
-        if value_str == "T":
-            return True
-        if value_str == "F":
-            return False
-
-        # 3. Fast path for numbers without regex
+        # 2. Fast path for numbers without regex
         if first_char in "+-0123456789.":
             try:
                 if "." in value_str or "e" in value_str or "E" in value_str:
@@ -207,6 +201,12 @@ class FastHeaderParser:
                 return int(value_str)
             except ValueError:
                 pass
+
+        # 3. Logical values
+        if value_str == "T":
+            return True
+        if value_str == "F":
+            return False
 
         # 4. Complex numbers
         if first_char == "(":
@@ -228,6 +228,13 @@ class FastHeaderParser:
         """
         if not quoted_str.startswith("'"):
             return quoted_str
+
+        # Fast path: no escaped quotes
+        if "''" not in quoted_str:
+            first_quote = quoted_str.find("'", 1)
+            if first_quote == -1:
+                return quoted_str[1:]
+            return quoted_str[1:first_quote]
 
         end_idx = 1
         while True:
