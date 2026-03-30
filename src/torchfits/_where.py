@@ -1,5 +1,6 @@
 import re
 from typing import Any, Optional, List, Tuple
+from functools import lru_cache
 
 _WHERE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -116,6 +117,7 @@ def _normalize_where_syntax(where: str) -> str:
     return result
 
 
+@lru_cache(maxsize=1024)
 def _parse_where_expression(where: str):
     if not isinstance(where, str) or not where.strip():
         raise ValueError("where must be a non-empty string expression")

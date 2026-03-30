@@ -68,40 +68,36 @@ class FastHeaderParser:
         if not header_string:
             return {}
 
-        header = {}
-        string_keywords = cls._STRING_KEYWORDS
-        complex_pattern = cls._COMPLEX_PATTERN
+        header: Dict[str, Any] = {}
+        _parse_value = cls._parse_value
+        _find_comment_separator = cls._find_comment_separator
 
-        # Bolt optimization: stop parsing immediately at first END card.
-        # FITS headers are padded with 2880-byte blocks of spaces. Breaking
-        # early avoids thousands of redundant regex/string checks on empty padding.
-        for i in range(0, len(header_string), 80):
+        # Pre-calculate string lengths and slices outside the loop
+        str_len = len(header_string)
+
+        # Iterate directly over the string by 80-character chunks
+        # instead of building an intermediate list of cards
+        for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
-            if len(card) != 80:
-                card = card.ljust(80)
 
+            # Bolt optimization: stop parsing immediately at first END card.
+            # FITS headers are padded with 2880-byte blocks of spaces. Breaking
+            # early avoids thousands of redundant regex/string checks on empty padding.
             if card.startswith("END     "):
                 break
 
-            if card.isspace() or not card:
+            if not card or card.isspace():
                 continue
 
-            # Handle comment-only cards (COMMENT, HISTORY, etc.)
-            if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
-                keyword = card[:8].strip()
-                if keyword:
-                    header[keyword] = card[8:].strip()
-                continue
+            if len(card) < 80:
+                card = card.ljust(80)
 
-            # Look for equals sign at position 8
-            if len(card) > 8 and card[8] == "=":
-                keyword = card[:8].strip()
-                if not keyword:
-                    continue
-
+            # Most FITS cards have an '=' at index 8.
+            if card[8] == "=":
+                keyword = card[:8].rstrip()
                 value_comment = card[9:].strip()
 
-                # Find comment separator
+                # Find comment separator fast check
                 idx = value_comment.find("/")
                 if idx == -1:
                     value_str = value_comment
@@ -110,7 +106,8 @@ class FastHeaderParser:
                     value_str = value_comment[:idx].strip()
                     comment = value_comment[idx + 1 :].strip()
                 else:
-                    comment_start = cls._find_comment_separator(value_comment)
+                    # Fallback to precise check
+                    comment_start = _find_comment_separator(value_comment)
                     if comment_start != -1:
                         value_str = value_comment[:comment_start].strip()
                         comment = value_comment[comment_start + 1 :].strip()
@@ -118,64 +115,23 @@ class FastHeaderParser:
                         value_str = value_comment
                         comment = None
 
-                if not value_str:
-                    header[keyword] = None
+                value = _parse_value(value_str, keyword)
+                if keyword:
+                    header[keyword] = value
                     if comment:
                         header[f"{keyword}_COMMENT"] = comment
-                    continue
-
-                first_char = value_str[0]
-
-                # Parse string values (quoted)
-                if first_char == "'":
-                    value = cls._parse_string_value(value_str)
-                # Force string parsing for certain keywords
-                elif keyword in string_keywords:
-                    value = value_str
-                # Logical values
-                elif value_str == "T":
-                    value = True
-                elif value_str == "F":
-                    value = False
-                # Fast path for numbers
-                elif first_char in "+-0123456789.":
-                    try:
-                        if "." in value_str or "e" in value_str or "E" in value_str:
-                            value = float(value_str)
-                        else:
-                            value = int(value_str)
-                    except ValueError:
-                        value = value_str
-                # Complex numbers
-                elif first_char == "(":
-                    complex_match = complex_pattern.match(value_str)
-                    if complex_match:
-                        value = complex(
-                            float(complex_match.group(1)),
-                            float(complex_match.group(2)),
-                        )
-                    else:
-                        value = value_str
-                # Default to string
-                else:
-                    value = value_str
-
-                header[keyword] = value
-
-                # Store comment separately if present
-                if comment:
-                    header[f"{keyword}_COMMENT"] = comment
+            elif card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+                keyword = card[:8].rstrip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
             else:
                 # No equals sign - might be a comment-only keyword
-                keyword = card[:8].strip()
                 if keyword:
                     header[keyword] = card[8:].strip()
 
         return header
 
     @classmethod
-<<<<<<< HEAD
-=======
     def _parse_card(cls, card: str) -> tuple:
         """
         Parse a single 80-character FITS card.
@@ -222,7 +178,6 @@ class FastHeaderParser:
         return None, None, None
 
     @classmethod
->>>>>>> main
     def _find_comment_separator(cls, value_comment: str) -> int:
         """
         Find the position of the comment separator ('/').
