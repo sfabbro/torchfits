@@ -62,7 +62,7 @@ class LegacyPolynomial:
         self.cross_terms = 0
         self.x_bounds = (0.0, 0.0)
         self.y_bounds = (0.0, 0.0)
-        self.coeffs = []
+        self.coeffs: list[float] = []
 
         self._parse(param_str)
 
@@ -148,7 +148,7 @@ class LegacyPolynomial:
 
     def _compute_basis(self, u: Tensor, order: int, ftype: int) -> List[Tensor]:
         """Generate basis polynomials [P_0(u), ..., P_n(u)]."""
-        basis = []
+        basis: list[Tensor] = []
         if order < 1:
             return basis
 
@@ -269,6 +269,39 @@ def extract_zpx_params(wat_data: Dict[int, str]) -> Dict[str, float]:
     return params
 
 
+def _dict_to_pv_tensor(
+    params: Optional[Dict[str, float]], axis: int = 2
+) -> Optional[Tensor]:
+    """Convert a dictionary of PV keywords to a dense Tensor."""
+    if not params:
+        return None
+    # Find max index
+    prefix = f"PV{axis}_"
+    max_idx = -1
+    for k in params:
+        if k.startswith(prefix):
+            try:
+                suffix = k[len(prefix) :]
+                if suffix.isdigit():
+                    idx = int(suffix)
+                    max_idx = max(max_idx, idx)
+            except ValueError:
+                continue
+    if max_idx < 0:
+        return None
+
+    # ZPN needs up to index 30 for standard use (higher orders possible)
+    t = torch.zeros(max(max_idx + 1, 31), dtype=torch.float64)
+    for k, v in params.items():
+        if k.startswith(prefix):
+            try:
+                idx = int(k[len(prefix) :])
+                t[idx] = float(v)
+            except (ValueError, IndexError):
+                continue
+    return t
+
+
 def project_zpx(
     xi: Tensor,
     eta: Tensor,
@@ -283,8 +316,9 @@ def project_zpx(
     """
     from .zenithal import project_zenithal
 
+    pv2 = _dict_to_pv_tensor(params, axis=2)
     if wat_data is None:
-        return project_zenithal(xi, eta, "ZPN", params)
+        return project_zenithal(xi, eta, "ZPN", pv2=pv2)
 
     # 1. Distortions (Poly to xi, eta)
     # Identical structure to TNX?
@@ -321,6 +355,7 @@ def project_zpx(
     zpn_params.update(extra_params)
 
     # Call ZPN
-    phi, theta = project_zenithal(xi_out, eta_out, "ZPN", zpn_params)
+    pv2_eff = _dict_to_pv_tensor(zpn_params, axis=2)
+    phi, theta = project_zenithal(xi_out, eta_out, "ZPN", pv2=pv2_eff)
 
     return phi, theta

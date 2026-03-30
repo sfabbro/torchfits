@@ -171,8 +171,8 @@ def _arrow_column_to_python(pa, column, name: str) -> Any:
         size = column.type.list_size
         return values.reshape((len(column), size))
     if pa.types.is_list(column.type) or pa.types.is_large_list(column.type):
-        values = column.to_pylist()
-        out = []
+        values: list[Any] = column.to_pylist()
+        out: list[np.ndarray] = []
         for item in values:
             if item is None:
                 out.append([])
@@ -276,7 +276,7 @@ def _default_table_column_values(
 
     if tnull is not None and code not in {"A", "C", "M"}:
         try:
-            fill = np.asarray(tnull, dtype=dtype).item()
+            fill: Any = np.asarray(tnull, dtype=dtype).item()
             return np.full(shape, fill, dtype=dtype)
         except Exception:
             pass
@@ -991,10 +991,10 @@ def _chunk_to_record_batch(
                 pydict[name] = value
         return pa.RecordBatch.from_pydict(pydict)
 
-    arrays = []
-    fields = []
+    arrays: list[Any] = []
+    fields: list[Any] = []
 
-    ordered_names: list[str] = []
+    ordered_names = []
     if preferred_order:
         for name in preferred_order:
             if name in chunk:

@@ -1,8 +1,8 @@
-import pytest
 import torch
 import math
 
 from torchfits.sphere.moc import nest2uniq, uniq2nest, MOC
+
 
 def test_nest2uniq_uniq2nest():
     nside = torch.tensor([1, 2, 4, 8])
@@ -14,6 +14,7 @@ def test_nest2uniq_uniq2nest():
 
     assert torch.equal(nside, nside_back)
     assert torch.equal(pix, pix_back)
+
 
 def test_moc_normalization():
     # 4 children of order 1 (nside=2) -> 1 parent of order 0 (nside=1)
@@ -28,6 +29,7 @@ def test_moc_normalization():
     expected_uniq = torch.tensor([4, 20])
     assert torch.equal(torch.sort(moc.uniq)[0], expected_uniq)
 
+
 def test_moc_union():
     m1 = MOC(torch.tensor([16, 17]))
     m2 = MOC(torch.tensor([18, 19]))
@@ -36,31 +38,38 @@ def test_moc_union():
     # Should merge 16, 17, 18, 19 into 4
     assert torch.equal(m_union.uniq, torch.tensor([4]))
 
+
 def test_moc_intersection():
-    m1 = MOC(torch.tensor([4, 20])) # contains nside=1, pix=0 (which is 16,17,18,19 at nside=2) and nside=2, pix=4
-    m2 = MOC(torch.tensor([16, 17, 20, 21])) # contains nside=2, pix=0,1,4,5
+    m1 = MOC(
+        torch.tensor([4, 20])
+    )  # contains nside=1, pix=0 (which is 16,17,18,19 at nside=2) and nside=2, pix=4
+    m2 = MOC(torch.tensor([16, 17, 20, 21]))  # contains nside=2, pix=0,1,4,5
 
     m_int = m1.intersection(m2)
     # intersection should be nside=2, pix=0,1,4 -> 16, 17, 20
     assert torch.equal(torch.sort(m_int.uniq)[0], torch.tensor([16, 17, 20]))
 
-def test_moc_difference():
-    m1 = MOC(torch.tensor([4, 20])) # 16, 17, 18, 19, 20 at nside=2
-    m2 = MOC(torch.tensor([16, 17, 20, 21])) # 16, 17, 20, 21 at nside=2
 
-    m_diff = m1.difference(m2) # m1 \ m2
+def test_moc_difference():
+    m1 = MOC(torch.tensor([4, 20]))  # 16, 17, 18, 19, 20 at nside=2
+    m2 = MOC(torch.tensor([16, 17, 20, 21]))  # 16, 17, 20, 21 at nside=2
+
+    m_diff = m1.difference(m2)  # m1 \ m2
     # Should leave 18, 19 at nside=2 -> 18, 19
     assert torch.equal(torch.sort(m_diff.uniq)[0], torch.tensor([18, 19]))
 
+
 def test_moc_max_order():
-    m = MOC(torch.tensor([4, 20])) # max is 20 -> nside=2 -> order=1
+    m = MOC(torch.tensor([4, 20]))  # max is 20 -> nside=2 -> order=1
     assert m.max_order == 1
+
 
 def test_moc_area():
     # order 0, 1 pixel = 1/12 of sphere
     # area = 4pi / 12 = pi / 3
     m = MOC(torch.tensor([4]))
     assert math.isclose(m.area, math.pi / 3, rel_tol=1e-5)
+
 
 def test_moc_ascii_roundtrip():
     ascii_str = "0/0 1/4"
@@ -92,30 +101,35 @@ def test_moc_contains():
         assert mask[0].item() is True
         assert mask[1].item() is False
     except ImportError:
-        pass # Optional dependency? If ang2pix is in _healpix
+        pass  # Optional dependency? If ang2pix is in _healpix
+
 
 def test_moc_contains_moc():
-    m1 = MOC(torch.tensor([4, 20])) # contains 4 and 20
-    m2 = MOC(torch.tensor([4]))     # just 4
+    m1 = MOC(torch.tensor([4, 20]))  # contains 4 and 20
+    m2 = MOC(torch.tensor([4]))  # just 4
 
     assert m1.contains_moc(m2) is True
     assert m2.contains_moc(m1) is False
 
+
 def test_moc_from_ascii_empty():
     m = MOC.from_ascii("  ")
     assert m.uniq.numel() == 0
+
 
 def test_moc_to_json():
     m = MOC(torch.tensor([4, 20]))
     # 4 -> order 0, pix 0
     # 20 -> order 1, pix 4
     import json
+
     j_str = m.to_json()
     j = json.loads(j_str)
     assert "0" in j
     assert j["0"] == [0]
     assert "1" in j
     assert j["1"] == [4]
+
 
 def test_moc_from_ranges():
     # range [16, 20) at order 1 (nside=2)

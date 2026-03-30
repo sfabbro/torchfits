@@ -2,7 +2,7 @@
 
 from contextlib import contextmanager
 import math
-from typing import Literal
+from typing import Literal, Any
 
 import torch
 from torch import Tensor
@@ -201,14 +201,15 @@ def query_ellipse(
 
     strict_eff = _resolve_strict(strict)
     use_hpgeom = False
-    hpg = None
+    hpg: Any = None
     if strict_eff or backend == "hpgeom":
         hpg = _require_hpgeom_for_strict("query_ellipse")
         use_hpgeom = True
     elif backend == "auto":
         try:
-            import hpgeom as hpg
+            import hpgeom as _hpg
 
+            hpg = _hpg
             use_hpgeom = True
         except Exception:
             use_hpgeom = False

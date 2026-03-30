@@ -84,21 +84,22 @@ def project_zenithal(
         # So R_dim = R_deg / (180/pi).
 
         r_dim = r * D2R
-        # Clamp to [-1, 1] to avoid NaN
-        r_dim = torch.clamp(r_dim, -1.0, 1.0)
-        theta = torch.acos(r_dim) * R2D
-
-        # Wait, standard SIN WCS usually has specific limits.
-        # If R > 90 deg, it clips or wraps?
-        # SIN is valid for < 90 deg range?
+        # SIN is defined only for r <= 1 radian (90 degrees equivalent in dimensionless units)
+        # R = cos(theta) = sin(90-theta)
+        mask_out = r_dim > 1.0
+        theta = torch.acos(torch.clamp(r_dim, -1.0, 1.0)) * R2D
+        theta = theta.masked_fill(mask_out, float("nan"))
 
     elif projection_code == "ZEA":
         # Zenithal Equal Area
         # R = 2 * (180/pi) * sin(theta_co / 2)
         # 90 - theta = 2 * asin( R / (2 * 180/pi) )
         r_rad = r * D2R
+        # ZEA is defined for r_rad <= 2.0 (theta_co <= 180 deg)
+        mask_out = (r_rad / 2.0) > 1.0
         val = torch.clamp(r_rad / 2.0, -1.0, 1.0)
         theta = 90.0 - 2.0 * torch.asin(val) * R2D
+        theta = theta.masked_fill(mask_out, float("nan"))
 
     elif projection_code == "STG":
         # Stereographic

@@ -54,7 +54,9 @@ def read(
         raise ValueError("HDU index must be a non-negative integer")
     if isinstance(hdu, int) and hdu < 0:
         raise ValueError("HDU index must be a non-negative integer")
-    if isinstance(hdu, (list, tuple)) and any(not isinstance(h, int) or h < 0 for h in hdu):
+    if isinstance(hdu, (list, tuple)) and any(
+        not isinstance(h, int) or h < 0 for h in hdu
+    ):
         raise ValueError("HDU index must be a non-negative integer")
     if not is_cpu and device not in ["cuda", "mps"] and not device.startswith("cuda:"):
         raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")

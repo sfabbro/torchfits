@@ -9,6 +9,7 @@ from torchfits._where import (
     evaluate_where,
 )
 
+
 def test_parse_where_literal():
     # Booleans
     assert _parse_where_literal("true") is True
@@ -85,7 +86,9 @@ def test_tokenize_where_expression():
     ]
 
     # Unterminated quotes
-    with pytest.raises(ValueError, match="Unterminated quoted literal in where expression"):
+    with pytest.raises(
+        ValueError, match="Unterminated quoted literal in where expression"
+    ):
         _tokenize_where_expression("COL == 'missing quote")
 
     # Parentheses grouping
@@ -117,7 +120,10 @@ def test_normalize_where_syntax():
     assert _normalize_where_syntax("A | B") == "A  OR  B"
 
     # Compound cases
-    assert _normalize_where_syntax("~ A && (B || ~ (C)) | D & E") == " NOT  A  AND  (B  OR   NOT  (C))  OR  D  AND  E"
+    assert (
+        _normalize_where_syntax("~ A && (B || ~ (C)) | D & E")
+        == " NOT  A  AND  (B  OR   NOT  (C))  OR  D  AND  E"
+    )
 
     # Don't touch == or != or >= or <=
     assert _normalize_where_syntax("A == B && C != D") == "A == B  AND  C != D"
@@ -141,19 +147,44 @@ def test_parse_where_expression():
 
     # Precedence AND over OR
     ast = _parse_where_expression("A > 1 OR B > 2 AND C > 3")
-    assert ast == ("or", ("cmp", "A", ">", 1), ("and", ("cmp", "B", ">", 2), ("cmp", "C", ">", 3)))
+    assert ast == (
+        "or",
+        ("cmp", "A", ">", 1),
+        ("and", ("cmp", "B", ">", 2), ("cmp", "C", ">", 3)),
+    )
 
     # Parentheses override precedence
     ast = _parse_where_expression("(A > 1 OR B > 2) AND C > 3")
-    assert ast == ("and", ("or", ("cmp", "A", ">", 1), ("cmp", "B", ">", 2)), ("cmp", "C", ">", 3))
+    assert ast == (
+        "and",
+        ("or", ("cmp", "A", ">", 1), ("cmp", "B", ">", 2)),
+        ("cmp", "C", ">", 3),
+    )
 
     # IN / NOT IN
     assert _parse_where_expression("X IN (1, 2, 3)") == ("in", "X", [1, 2, 3], False)
-    assert _parse_where_expression("Y NOT IN ('a', 'b')") == ("in", "Y", ["a", "b"], True)
+    assert _parse_where_expression("Y NOT IN ('a', 'b')") == (
+        "in",
+        "Y",
+        ["a", "b"],
+        True,
+    )
 
     # BETWEEN / NOT BETWEEN
-    assert _parse_where_expression("Z BETWEEN 1 AND 10") == ("between", "Z", 1, 10, False)
-    assert _parse_where_expression("W NOT BETWEEN 0.5 AND 1.5") == ("between", "W", 0.5, 1.5, True)
+    assert _parse_where_expression("Z BETWEEN 1 AND 10") == (
+        "between",
+        "Z",
+        1,
+        10,
+        False,
+    )
+    assert _parse_where_expression("W NOT BETWEEN 0.5 AND 1.5") == (
+        "between",
+        "W",
+        0.5,
+        1.5,
+        True,
+    )
 
     # IS NULL / IS NOT NULL
     assert _parse_where_expression("COL IS NULL") == ("isnull", "COL", False)
@@ -164,10 +195,14 @@ def test_parse_where_expression():
     with pytest.raises(ValueError, match="where must be a non-empty string"):
         _parse_where_expression("")
     with pytest.raises(ValueError, match="where expects a column identifier"):
-        _parse_where_expression("5 > A") # Left side must be a column name
-    with pytest.raises(ValueError, match="(Unbalanced parentheses|Unexpected end of where expression)"):
+        _parse_where_expression("5 > A")  # Left side must be a column name
+    with pytest.raises(
+        ValueError, match="(Unbalanced parentheses|Unexpected end of where expression)"
+    ):
         _parse_where_expression("(A > 5")
-    with pytest.raises(ValueError, match="(Unbalanced parentheses|Unexpected trailing tokens)"):
+    with pytest.raises(
+        ValueError, match="(Unbalanced parentheses|Unexpected trailing tokens)"
+    ):
         _parse_where_expression("(A > 5))")
     with pytest.raises(ValueError, match="Unexpected trailing tokens"):
         _parse_where_expression("A > 5 B < 10")

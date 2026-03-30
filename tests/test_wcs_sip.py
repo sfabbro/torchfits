@@ -6,6 +6,7 @@ from astropy.wcs import WCS as AstropyWCS
 from torchfits.wcs.core import WCS as TorchWCS
 from torchfits.wcs.sip import SIP
 
+
 def _sip_header() -> fits.Header:
     header = fits.Header()
     header["NAXIS"] = 2
@@ -89,6 +90,7 @@ def test_sip_inverse_roundtrip_parity_with_astropy() -> None:
     np.testing.assert_allclose(x_t.cpu().numpy(), x, atol=2e-5)
     np.testing.assert_allclose(y_t.cpu().numpy(), y, atol=2e-5)
 
+
 def test_sip_polynomial_evaluation():
     # A dummy SIP header to test polynomial evaluation independently of WCS
     header = {
@@ -137,6 +139,7 @@ def test_sip_polynomial_evaluation():
     assert torch.allclose(xu, torch.tensor([1.1, 2.2], dtype=torch.float64))
     assert torch.allclose(yu, torch.tensor([1.2, 3.6], dtype=torch.float64))
 
+
 def test_sip_edge_cases():
     # Test empty dictionaries / missing orders
     sip_empty = SIP({})
@@ -156,10 +159,14 @@ def test_sip_edge_cases():
     u_empty = torch.tensor([], dtype=torch.float64)
     v_empty = torch.tensor([], dtype=torch.float64)
 
-    sip_full = SIP({
-        "A_ORDER": 2, "B_ORDER": 2,
-        "A_2_0": 0.5, "B_2_0": 0.5,
-    })
+    sip_full = SIP(
+        {
+            "A_ORDER": 2,
+            "B_ORDER": 2,
+            "A_2_0": 0.5,
+            "B_2_0": 0.5,
+        }
+    )
     xd, yd = sip_full.distort(u_empty, v_empty)
     assert xd.numel() == 0
     assert yd.numel() == 0
@@ -168,12 +175,18 @@ def test_sip_edge_cases():
     assert xu.numel() == 0
     assert yu.numel() == 0
 
+
 def test_sip_invert_distortion():
     # Test invert distortion using newton solver
     header = {
-        "A_ORDER": 2, "B_ORDER": 2,
-        "A_2_0": 1e-4, "A_1_1": -1e-4, "A_0_2": 2e-4,
-        "B_2_0": -2e-4, "B_1_1": 1e-4, "B_0_2": 1e-4,
+        "A_ORDER": 2,
+        "B_ORDER": 2,
+        "A_2_0": 1e-4,
+        "A_1_1": -1e-4,
+        "A_0_2": 2e-4,
+        "B_2_0": -2e-4,
+        "B_1_1": 1e-4,
+        "B_0_2": 1e-4,
     }
     sip = SIP(header)
 
@@ -189,28 +202,31 @@ def test_sip_invert_distortion():
     assert torch.allclose(u_inv, u, atol=1e-6)
     assert torch.allclose(v_inv, v, atol=1e-6)
 
+
 def test_sip_device_transfer():
     header = {
-        "A_ORDER": 2, "B_ORDER": 2,
-        "A_2_0": 0.5, "B_2_0": 0.5,
+        "A_ORDER": 2,
+        "B_ORDER": 2,
+        "A_2_0": 0.5,
+        "B_2_0": 0.5,
     }
     sip = SIP(header)
 
     # Check current device
-    assert sip._a_c.device == torch.device('cpu')
+    assert sip._a_c.device == torch.device("cpu")
 
     # Move to cpu again
-    sip = sip.to(torch.device('cpu'))
-    assert sip._a_c.device == torch.device('cpu')
+    sip = sip.to(torch.device("cpu"))
+    assert sip._a_c.device == torch.device("cpu")
 
     # If cuda is available, test moving to cuda
     if torch.cuda.is_available():
-        sip = sip.to(torch.device('cuda'))
-        assert sip._a_c.device.type == 'cuda'
+        sip = sip.to(torch.device("cuda"))
+        assert sip._a_c.device.type == "cuda"
 
         # Test distort on cuda
-        u = torch.tensor([1.0], device='cuda', dtype=torch.float64)
-        v = torch.tensor([2.0], device='cuda', dtype=torch.float64)
+        u = torch.tensor([1.0], device="cuda", dtype=torch.float64)
+        v = torch.tensor([2.0], device="cuda", dtype=torch.float64)
         xd, yd = sip.distort(u, v)
-        assert xd.device.type == 'cuda'
-        assert yd.device.type == 'cuda'
+        assert xd.device.type == "cuda"
+        assert yd.device.type == "cuda"

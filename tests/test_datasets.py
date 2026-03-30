@@ -1,6 +1,6 @@
 import pytest
 import torch
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch
 
 from torchfits.datasets import FITSDataset, IterableFITSDataset, TableChunkDataset
 
@@ -147,7 +147,7 @@ class TestIterableFITSDataset:
         mock_read.side_effect = [
             torch.tensor([1]),
             IOError("Mock IO Error"),
-            ValueError("Mock Value Error")
+            ValueError("Mock Value Error"),
         ]
 
         samples = list(dataset._process_shard(shard_id=0))
@@ -171,9 +171,7 @@ class TestIterableFITSDataset:
     @patch("torchfits.read")
     def test_process_shard_with_transform(self, mock_read):
         dataset = IterableFITSDataset(
-            "http://example.com",
-            shard_size=1,
-            transform=lambda x: x + 1
+            "http://example.com", shard_size=1, transform=lambda x: x + 1
         )
         mock_read.return_value = torch.tensor([1])
 
@@ -183,7 +181,9 @@ class TestIterableFITSDataset:
     @patch("torch.utils.data.get_worker_info")
     @patch.object(IterableFITSDataset, "_get_assigned_shards")
     @patch.object(IterableFITSDataset, "_process_shard")
-    def test_iter_single_process(self, mock_process_shard, mock_get_shards, mock_worker_info):
+    def test_iter_single_process(
+        self, mock_process_shard, mock_get_shards, mock_worker_info
+    ):
         mock_worker_info.return_value = None
         mock_get_shards.return_value = [0]
         mock_process_shard.return_value = iter([torch.tensor([1]), torch.tensor([2])])
@@ -197,7 +197,9 @@ class TestIterableFITSDataset:
     @patch("torch.utils.data.get_worker_info")
     @patch.object(IterableFITSDataset, "_get_assigned_shards")
     @patch.object(IterableFITSDataset, "_process_shard")
-    def test_iter_multi_process(self, mock_process_shard, mock_get_shards, mock_worker_info):
+    def test_iter_multi_process(
+        self, mock_process_shard, mock_get_shards, mock_worker_info
+    ):
         worker_info = Mock()
         worker_info.id = 1
         worker_info.num_workers = 4
@@ -206,7 +208,7 @@ class TestIterableFITSDataset:
         mock_get_shards.return_value = [2, 3]
         mock_process_shard.side_effect = [
             iter([torch.tensor([1])]),
-            iter([torch.tensor([2])])
+            iter([torch.tensor([2])]),
         ]
 
         dataset = IterableFITSDataset("http://example.com")
@@ -248,7 +250,9 @@ class TestTableChunkDataset:
     @patch("torchfits.get_header", create=True)
     def test_iter_without_header(self, mock_get_header, mock_scan_torch):
         file_paths = ["file1.fits"]
-        dataset = TableChunkDataset(file_paths, hdu=1, include_header=False, columns=["a"])
+        dataset = TableChunkDataset(
+            file_paths, hdu=1, include_header=False, columns=["a"]
+        )
 
         chunk1 = {"a": torch.tensor([1])}
         chunk2 = {"a": torch.tensor([2])}
@@ -294,7 +298,9 @@ class TestTableChunkDataset:
 
     @patch("torchfits.table.scan_torch", create=True)
     def test_iter_with_transform(self, mock_scan_torch):
-        dataset = TableChunkDataset(["file1.fits"], transform=lambda x: {"b": x["a"] + 1})
+        dataset = TableChunkDataset(
+            ["file1.fits"], transform=lambda x: {"b": x["a"] + 1}
+        )
 
         mock_scan_torch.return_value = iter([{"a": torch.tensor([1])}])
 

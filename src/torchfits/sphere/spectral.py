@@ -2821,7 +2821,7 @@ def alm2map(
             raise RuntimeError(
                 "healpy backend requested but healpy is not available"
             ) from exc
-        out = []
+        map_list = []
         for i in range(rows.shape[0]):
             m_np = hp.alm2map(
                 rows[i].detach().cpu().numpy(),
@@ -2833,9 +2833,9 @@ def alm2map(
             )
             if nest:
                 m_np = hp.reorder(m_np, r2n=True)
-            out.append(torch.from_numpy(m_np))
-        m = torch.stack(out, dim=0).to(dtype=torch.float64)
-        return m[0] if single else m
+            map_list.append(torch.from_numpy(m_np))
+        res_map = torch.stack(map_list, dim=0).to(dtype=torch.float64)
+        return res_map[0] if single else res_map
 
     rows_eff = rows
     if pixwin:

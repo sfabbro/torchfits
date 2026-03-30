@@ -239,7 +239,7 @@ class BufferManager:
     def get_memory_usage(self) -> Dict[str, Any]:
         """Get comprehensive memory usage statistics."""
         with self._lock:
-            stats = {
+            stats: dict[str, Any] = {
                 "num_buffers": len(self._buffers),
                 "num_streaming_buffers": len(self._streaming_buffers),
                 "buffer_size_mb": self.buffer_size_mb,

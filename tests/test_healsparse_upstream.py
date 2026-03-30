@@ -145,9 +145,6 @@ def test_healsparse_degrade_matches_upstream_mean_semantics() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="ud_grade index_copy_ dtype mismatch for bool maps", strict=True
-)
 def test_healsparse_bool_degrade_matches_upstream_dense_behavior() -> None:
     nside_coverage = 32
     nside_map = 256
@@ -208,10 +205,6 @@ def test_healsparse_sum_union_and_intersection_match_upstream() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="coverage_mask uses nside resolution, not nside_coverage like healsparse",
-    strict=True,
-)
 def test_healsparse_coverage_mask_matches_upstream() -> None:
     _hs_map, tf_map, _pixels, _values = _make_sparse_pair()
 
