@@ -75,7 +75,14 @@ class FastHeaderParser:
         # Inlined parsing logic for performance
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
-            if card.startswith("END     ") or card.isspace() or not card:
+
+            # Bolt optimization: Stop parsing immediately at the END card.
+            # FITS headers are padded with 2880-byte blocks of spaces. Breaking
+            # early avoids thousands of redundant regex/string checks on empty padding.
+            if card.startswith("END     "):
+                break
+
+            if card.isspace() or not card:
                 continue
 
             # Handle comment-only cards (COMMENT, HISTORY, etc.)
@@ -165,6 +172,138 @@ class FastHeaderParser:
                     header[keyword] = card[8:].strip()
 
         return header
+
+    @classmethod
+    def _parse_card(cls, card: str) -> tuple:
+        """
+        Parse a single 80-character FITS card.
+
+        Returns:
+            (keyword, value, comment) tuple
+        """
+        if len(card) != 80:
+            card = card.ljust(80)
+
+        # Skip empty cards
+        if card.isspace() or not card:
+            return None, None, None
+
+        # Handle comment-only cards (COMMENT, HISTORY, etc.)
+        if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+            keyword = card[:8].strip()
+            value = card[8:].strip()
+            return keyword, value, None
+
+        # Look for equals sign at position 8
+        if len(card) > 8 and card[8] == "=":
+            keyword = card[:8].strip()
+            value_comment = card[9:].strip()
+
+            # Find comment separator
+            comment_start = cls._find_comment_separator(value_comment)
+            if comment_start != -1:
+                value_str = value_comment[:comment_start].strip()
+                comment = value_comment[comment_start + 1 :].strip()
+            else:
+                value_str = value_comment
+                comment = None
+
+            # Parse the value
+            value = cls._parse_value(value_str, keyword)
+            return keyword, value, comment
+        else:
+            # No equals sign - might be a comment-only keyword
+            keyword = card[:8].strip()
+            if keyword:
+                return keyword, card[8:].strip(), None
+
+        return None, None, None
+
+    @classmethod
+    def _find_comment_separator(cls, value_comment: str) -> int:
+        """
+        Find the position of the comment separator ('/').
+
+        Handles quoted strings properly to avoid false positives.
+        """
+        # Fast path: find first slash and if there are no quotes before it,
+        # we found our separator.
+        idx = value_comment.find("/")
+        if idx == -1 or "'" not in value_comment[:idx]:
+            return idx
+
+        in_quotes = False
+        i = 0
+        n = len(value_comment)
+        while i < n:
+            char = value_comment[i]
+            if char == "'":
+                if in_quotes and i + 1 < n and value_comment[i + 1] == "'":
+                    # Escaped quote inside string
+                    i += 2
+                    continue
+                else:
+                    # Toggle quote state
+                    in_quotes = not in_quotes
+            elif char == "/" and not in_quotes:
+                return i
+            i += 1
+        return -1
+
+    @classmethod
+    def _parse_value(cls, value_str: str, keyword: str) -> Any:
+        """
+        Parse a FITS value string into appropriate Python type.
+
+        Args:
+            value_str: Value portion of FITS card
+            keyword: Keyword name (for context-sensitive parsing)
+
+        Returns:
+            Parsed value in appropriate Python type
+        """
+        if not value_str:
+            return None
+
+        value_str = value_str.strip()
+        if not value_str:
+            return None
+
+        first_char = value_str[0]
+
+        # 1. String values (quoted)
+        if first_char == "'":
+            return cls._parse_string_value(value_str)
+
+        # Force string parsing for certain keywords
+        if keyword in cls._STRING_KEYWORDS:
+            return value_str
+
+        # 2. Logical values
+        if value_str == "T":
+            return True
+        if value_str == "F":
+            return False
+
+        # 3. Fast path for numbers without regex
+        if first_char in "+-0123456789.":
+            try:
+                if "." in value_str or "e" in value_str or "E" in value_str:
+                    return float(value_str)
+                return int(value_str)
+            except ValueError:
+                pass
+
+        # 4. Complex numbers
+        if first_char == "(":
+            complex_match = cls._COMPLEX_PATTERN.match(value_str)
+            if complex_match:
+                real_part = float(complex_match.group(1))
+                imag_part = float(complex_match.group(2))
+                return complex(real_part, imag_part)
+
+        # 5. Default to string
+        return value_str
 
     @classmethod
     def _parse_string_value(cls, quoted_str: str) -> str:
