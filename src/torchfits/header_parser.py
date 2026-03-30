@@ -68,22 +68,66 @@ class FastHeaderParser:
         if not header_string:
             return {}
 
-        header = {}
+        header: Dict[str, Any] = {}
+        _parse_value = cls._parse_value
+        _find_comment_separator = cls._find_comment_separator
+
+        # Pre-calculate string lengths and slices outside the loop
+        str_len = len(header_string)
 
         # Iterate directly over the string by 80-character chunks
         # instead of building an intermediate list of cards
-        for i in range(0, len(header_string), 80):
+        for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
-            if card.isspace() or not card:
+
+            # Bolt optimization: stop parsing immediately at first END card.
+            # FITS headers are padded with 2880-byte blocks of spaces. Breaking
+            # early avoids thousands of redundant regex/string checks on empty padding.
+            if card.startswith("END     "):
+                break
+
+            if not card or card.isspace():
                 continue
 
-            keyword, value, comment = cls._parse_card(card)
-            if keyword:
-                header[keyword] = value
+            if len(card) < 80:
+                card = card.ljust(80)
 
-                # Store comment separately if present
-                if comment and comment.strip():
-                    header[f"{keyword}_COMMENT"] = comment.strip()
+            # Most FITS cards have an '=' at index 8.
+            if card[8] == "=":
+                keyword = card[:8].rstrip()
+                value_comment = card[9:].strip()
+
+                # Find comment separator fast check
+                idx = value_comment.find("/")
+                if idx == -1:
+                    value_str = value_comment
+                    comment = None
+                elif "'" not in value_comment[:idx]:
+                    value_str = value_comment[:idx].strip()
+                    comment = value_comment[idx + 1 :].strip()
+                else:
+                    # Fallback to precise check
+                    comment_start = _find_comment_separator(value_comment)
+                    if comment_start != -1:
+                        value_str = value_comment[:comment_start].strip()
+                        comment = value_comment[comment_start + 1 :].strip()
+                    else:
+                        value_str = value_comment
+                        comment = None
+
+                value = _parse_value(value_str, keyword)
+                if keyword:
+                    header[keyword] = value
+                    if comment:
+                        header[f"{keyword}_COMMENT"] = comment
+            elif card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+                keyword = card[:8].rstrip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
+            else:
+                # No equals sign - might be a comment-only keyword
+                if keyword:
+                    header[keyword] = card[8:].strip()
 
         return header
 
@@ -98,8 +142,8 @@ class FastHeaderParser:
         if len(card) != 80:
             card = card.ljust(80)
 
-        # Skip END cards and empty cards
-        if card.startswith("END     ") or card.isspace() or not card:
+        # Skip empty cards
+        if card.isspace() or not card:
             return None, None, None
 
         # Handle comment-only cards (COMMENT, HISTORY, etc.)
@@ -200,13 +244,7 @@ class FastHeaderParser:
         if keyword in cls._STRING_KEYWORDS:
             return value_str
 
-        # 2. Logical values
-        if value_str == "T":
-            return True
-        if value_str == "F":
-            return False
-
-        # 3. Fast path for numbers without regex
+        # 2. Fast path for numbers without regex
         if first_char in "+-0123456789.":
             try:
                 if "." in value_str or "e" in value_str or "E" in value_str:
@@ -214,6 +252,12 @@ class FastHeaderParser:
                 return int(value_str)
             except ValueError:
                 pass
+
+        # 3. Logical values
+        if value_str == "T":
+            return True
+        if value_str == "F":
+            return False
 
         # 4. Complex numbers
         if first_char == "(":
