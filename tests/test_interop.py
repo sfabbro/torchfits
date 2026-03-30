@@ -1,11 +1,12 @@
 import os
 import tempfile
+from unittest import mock
 
 import numpy as np
 import pytest
+import torch
 from astropy.table import Table
 
-import torch
 import torchfits
 
 
@@ -68,3 +69,9 @@ def test_to_arrow_vla_invalid_policy():
     }
     with pytest.raises(ValueError, match="vla_policy must be 'list' or 'drop'"):
         torchfits.to_arrow(data, vla_policy="invalid_policy")
+
+
+def test_to_pandas_missing_pandas():
+    with mock.patch.dict("sys.modules", {"pandas": None}):
+        with pytest.raises(ImportError, match="Pandas is required for to_pandas conversion."):
+            torchfits.to_pandas({"a": torch.tensor([1, 2, 3])})
