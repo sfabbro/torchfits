@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 from astropy.table import Table
 
+from unittest import mock
 import torchfits
+import torch
 
 
 def test_to_pandas_decode_bytes():
@@ -56,3 +58,8 @@ def test_to_arrow_vla_list():
         assert "VLA" in arrow.column_names
     finally:
         os.unlink(path)
+
+def test_to_pandas_missing_pandas():
+    with mock.patch.dict("sys.modules", {"pandas": None}):
+        with pytest.raises(ImportError, match="Pandas is required for to_pandas conversion."):
+            torchfits.to_pandas({"a": torch.tensor([1, 2, 3])})
