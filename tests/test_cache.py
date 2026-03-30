@@ -51,6 +51,49 @@ class TestCaching:
             os.unlink(filepath)
             torchfits.clear_file_cache()
 
+    def test_get_cache_stats(self):
+        """Test get_cache_stats returns expected dictionary structure."""
+        from torchfits.cache import get_cache_stats, clear_cache
+
+        # Clear cache to start with a known state
+        clear_cache()
+
+        stats = get_cache_stats()
+
+        # Verify it's a dictionary
+        assert isinstance(stats, dict)
+
+        # Check for expected keys
+        expected_keys = {
+            "hits",
+            "misses",
+            "evictions",
+            "memory_usage_mb",
+            "disk_usage_gb",
+            "cpp_cache_size",
+            "config",
+            "hit_rate",
+        }
+        assert expected_keys.issubset(stats.keys())
+
+        # Verify types of specific fields
+        assert isinstance(stats["hits"], int)
+        assert isinstance(stats["misses"], int)
+        assert isinstance(stats["hit_rate"], float)
+        assert isinstance(stats["config"], dict)
+
+        # Check config keys
+        expected_config_keys = {
+            "max_files",
+            "max_memory_mb",
+            "disk_cache_gb",
+            "prefetch_enabled",
+        }
+        assert expected_config_keys.issubset(stats["config"].keys())
+
+        # Basic hit_rate calculation check (should be 0.0 when hits=0, misses=0)
+        assert stats["hit_rate"] == 0.0
+
     def test_cache_clearing(self):
         """Test cache clearing functionality."""
         filepath, _ = self.create_test_fits()
@@ -388,6 +431,19 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
+class TestCacheManager:
+    """Test CacheManager functionality."""
+
+    def test_get_cache_manager_singleton(self):
+        from torchfits.cache import get_cache_manager
+
+        manager1 = get_cache_manager()
+        manager2 = get_cache_manager()
+
+        assert manager1 is manager2
+
+        # Test that configure_cpp_cache was called (optional, maybe check if cpp cache is configured correctly, but simple singleton check is required)
+
 class TestCacheConfig:
     """Test CacheConfig functionality."""
 
@@ -501,6 +557,106 @@ class TestCacheConfig:
     @patch("torch.cuda.device_count", return_value=0)
     def test_is_gpu_environment_false_no_devices(self, mock_count, mock_available):
         assert CacheConfig._is_gpu_environment() is False
+
+
+class TestCacheOptimization:
+    """Test CacheOptimization functionality."""
+
+    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
+    def test_optimize_for_dataset_small(self, mock_configure_cpp_cache):
+        # Create a test configuration
+        config = CacheConfig(disk_cache_gb=10)
+        manager = torchfits.cache.CacheManager(config)
+
+        # Mock get_cache_manager to return our specific manager
+        with patch("torchfits.cache.get_cache_manager", return_value=manager):
+            # Test a small dataset that fits easily in cache
+            # 100 files, 10 MB each = ~1 GB total (< 10 GB limit)
+            file_paths = ["file_{}.fits".format(i) for i in range(100)]
+            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
+
+            # Verification
+            # Should enable aggressive caching for the entire dataset
+            assert manager.config.max_files == 100
+            assert manager.config.prefetch_enabled is True
+            mock_configure_cpp_cache.assert_called_once()
+
+    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
+    def test_optimize_for_dataset_large(self, mock_configure_cpp_cache):
+        # Create a test configuration
+        config = CacheConfig(disk_cache_gb=10)
+        manager = torchfits.cache.CacheManager(config)
+
+        # Mock get_cache_manager to return our specific manager
+        with patch("torchfits.cache.get_cache_manager", return_value=manager):
+            # Test a large dataset that exceeds cache limit
+            # 200 files, 100 MB each = ~19.5 GB total (> 10 GB limit)
+            file_paths = ["file_{}.fits".format(i) for i in range(200)]
+            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=100.0)
+
+            # Verification
+            # Should restrict max files to optimal_files
+            # optimal_files = int(10 * 1024 / 100) = 102
+            # min(102, 1000) = 102
+            assert manager.config.max_files == 102
+            # prefetch_enabled should not be forced to True in this branch
+            # (assuming default was False, or at least it doesn't change it)
+            mock_configure_cpp_cache.assert_called_once()
+
+    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
+    def test_optimize_for_dataset_huge_many_files(self, mock_configure_cpp_cache):
+        # Create a test configuration
+        config = CacheConfig(disk_cache_gb=100)
+        manager = torchfits.cache.CacheManager(config)
+
+        # Mock get_cache_manager to return our specific manager
+        with patch("torchfits.cache.get_cache_manager", return_value=manager):
+            # Test a very large number of files that exceeds cache limit
+            # optimal_files = int(100 * 1024 / 10) = 10240
+            # max_files is capped at 1000
+            file_paths = ["file_{}.fits".format(i) for i in range(20000)]
+            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
+
+            # Verification
+            assert manager.config.max_files == 1000
+            mock_configure_cpp_cache.assert_called_once()
+
+
+def test_configure_for_environment():
+    """Test configure_for_environment configures the cpp cache via the manager."""
+    with patch("torchfits.cache.get_cache_manager") as mock_get_cache_manager:
+        mock_manager = MagicMock()
+        mock_get_cache_manager.return_value = mock_manager
+
+        torchfits.cache.configure_for_environment()
+
+        mock_get_cache_manager.assert_called_once()
+        mock_manager.configure_cpp_cache.assert_called_once()
+
+
+class TestCacheManagerFunctions:
+    """Test cache manager module-level functions."""
+
+    def test_clear_cache(self):
+        from torchfits.cache import get_cache_manager, clear_cache, get_cache_stats
+
+        # Set some state
+        manager = get_cache_manager()
+        manager._stats["hits"] = 10
+        manager._stats["misses"] = 5
+
+        # Verify state is set
+        stats_before = get_cache_stats()
+        assert stats_before["hits"] == 10
+        assert stats_before["misses"] == 5
+
+        # Clear cache
+        clear_cache()
+
+        # Verify state is reset
+        stats_after = get_cache_stats()
+        assert stats_after["hits"] == 0
+        assert stats_after["misses"] == 0
 
 
 if __name__ == "__main__":
