@@ -875,3 +875,64 @@ def test_duckdb_query_on_fits_table():
         assert table.column("n").to_pylist() == [2]
     finally:
         os.unlink(path)
+
+
+def test_to_duckdb():
+    pa = pytest.importorskip("pyarrow")
+    duckdb = pytest.importorskip("duckdb")
+
+    data = pa.table({
+        "ID": [1, 2, 3],
+        "RA": [10.1, 10.2, 10.3]
+    })
+
+    rel = torchfits.table.to_duckdb(data)
+    res = rel.filter("ID >= 2").aggregate("COUNT(*) AS n")
+
+    if hasattr(res, "arrow"):
+        table = res.arrow()
+    elif hasattr(res, "to_arrow_table"):
+        table = res.to_arrow_table()
+    else:
+        table = res.execute().fetch_arrow_table()
+
+    if hasattr(table, "read_all"):
+        table = table.read_all()
+
+    assert table.column("n").to_pylist() == [2]
+
+
+def test_to_duckdb_custom_table_name():
+    pa = pytest.importorskip("pyarrow")
+    duckdb = pytest.importorskip("duckdb")
+
+    data = pa.table({
+        "ID": [1, 2, 3],
+        "RA": [10.1, 10.2, 10.3]
+    })
+
+    con = duckdb.connect()
+    rel = torchfits.table.to_duckdb(
+        data, "my_custom_table", con
+    )
+    res = con.sql("SELECT COUNT(*) AS n FROM my_custom_table WHERE ID >= 2")
+
+    if hasattr(res, "arrow"):
+        table = res.arrow()
+    elif hasattr(res, "to_arrow_table"):
+        table = res.to_arrow_table()
+    else:
+        table = res.execute().fetch_arrow_table()
+
+    if hasattr(table, "read_all"):
+        table = table.read_all()
+
+    assert table.column("n").to_pylist() == [2]
+
+
+def test_to_duckdb_missing_dependency(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "duckdb", None)
+
+    with pytest.raises(ImportError, match="duckdb is required for to_duckdb conversion"):
+        torchfits.table.to_duckdb({"ID": [1, 2, 3]})
