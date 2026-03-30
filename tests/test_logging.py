@@ -1,5 +1,6 @@
 import logging
 import pytest
+import re
 from torchfits.logging import (
     logger,
     set_log_level,
@@ -73,7 +74,10 @@ def test_log_performance_decorator(caplog):
     assert quick_function() == "done"
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.DEBUG
-    assert "quick_function completed in" in caplog.records[0].message
+
+    success_msg = caplog.records[0].message
+    match_success = re.search(r"quick_function completed in \d+\.\d{2}ms", success_msg)
+    assert match_success is not None, f"Success message format incorrect: {success_msg}"
 
     # Test failing function
     caplog.clear()
@@ -82,8 +86,11 @@ def test_log_performance_decorator(caplog):
 
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.ERROR
-    assert "failing_function failed after" in caplog.records[0].message
-    assert "Fail!" in caplog.records[0].message
+
+    error_msg = caplog.records[0].message
+    # Expect format: "failing_function failed after X.XXms: Fail!"
+    match = re.search(r"failing_function failed after \d+\.\d{2}ms: Fail!", error_msg)
+    assert match is not None, f"Error message format incorrect: {error_msg}"
 
 
 def test_log_fits_error(caplog):
