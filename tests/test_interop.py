@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from astropy.table import Table
 
+import torch
 import torchfits
 
 
@@ -56,3 +57,14 @@ def test_to_arrow_vla_list():
         assert "VLA" in arrow.column_names
     finally:
         os.unlink(path)
+
+
+def test_to_arrow_vla_invalid_policy():
+    pytest.importorskip("pyarrow")
+
+    data = {
+        "RA": torch.tensor([10.1, 10.2], dtype=torch.float64),
+        "VLA": [torch.tensor([1, 2]), torch.tensor([3])],
+    }
+    with pytest.raises(ValueError, match="vla_policy must be 'list' or 'drop'"):
+        torchfits.to_arrow(data, vla_policy="invalid_policy")
