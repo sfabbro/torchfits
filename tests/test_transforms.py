@@ -18,6 +18,7 @@ from torchfits.transforms import (
     RandomFlip,
     ToDevice,
     ZScale,
+    create_display_transform,
     create_inference_transform,
     create_training_transform,
     create_validation_transform,
@@ -172,6 +173,37 @@ class TestCompose:
 
 class TestConvenienceFunctions:
     """Test convenience transform creation functions."""
+
+    def test_create_display_transform(self):
+        """Test display transform creation."""
+        # Test default stretch
+        transform = create_display_transform()
+        assert isinstance(transform, Compose)
+        assert len(transform.transforms) == 1
+        assert isinstance(transform.transforms[0], AsinhStretch)
+
+        # Test valid stretch types
+        stretch_types = {
+            "asinh": AsinhStretch,
+            "log": LogStretch,
+            "power": PowerStretch,
+            "zscale": ZScale,
+        }
+        for stretch, cls in stretch_types.items():
+            transform = create_display_transform(stretch=stretch)
+            assert isinstance(transform, Compose)
+            assert len(transform.transforms) == 1
+            assert isinstance(transform.transforms[0], cls)
+
+        # Test passing kwargs
+        transform = create_display_transform(stretch="asinh", a=0.5, Q=10.0)
+        assert isinstance(transform.transforms[0], AsinhStretch)
+        assert transform.transforms[0].a == 0.5
+        assert transform.transforms[0].Q == 10.0
+
+        # Test invalid stretch type
+        with pytest.raises(ValueError, match="Unknown stretch type: invalid"):
+            create_display_transform(stretch="invalid")
 
     def test_create_training_transform(self):
         """Test training transform creation."""

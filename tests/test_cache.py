@@ -51,6 +51,49 @@ class TestCaching:
             os.unlink(filepath)
             torchfits.clear_file_cache()
 
+    def test_get_cache_stats(self):
+        """Test get_cache_stats returns expected dictionary structure."""
+        from torchfits.cache import get_cache_stats, clear_cache
+
+        # Clear cache to start with a known state
+        clear_cache()
+
+        stats = get_cache_stats()
+
+        # Verify it's a dictionary
+        assert isinstance(stats, dict)
+
+        # Check for expected keys
+        expected_keys = {
+            "hits",
+            "misses",
+            "evictions",
+            "memory_usage_mb",
+            "disk_usage_gb",
+            "cpp_cache_size",
+            "config",
+            "hit_rate",
+        }
+        assert expected_keys.issubset(stats.keys())
+
+        # Verify types of specific fields
+        assert isinstance(stats["hits"], int)
+        assert isinstance(stats["misses"], int)
+        assert isinstance(stats["hit_rate"], float)
+        assert isinstance(stats["config"], dict)
+
+        # Check config keys
+        expected_config_keys = {
+            "max_files",
+            "max_memory_mb",
+            "disk_cache_gb",
+            "prefetch_enabled",
+        }
+        assert expected_config_keys.issubset(stats["config"].keys())
+
+        # Basic hit_rate calculation check (should be 0.0 when hits=0, misses=0)
+        assert stats["hit_rate"] == 0.0
+
     def test_cache_clearing(self):
         """Test cache clearing functionality."""
         filepath, _ = self.create_test_fits()
@@ -388,6 +431,19 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
+class TestCacheManager:
+    """Test CacheManager functionality."""
+
+    def test_get_cache_manager_singleton(self):
+        from torchfits.cache import get_cache_manager
+
+        manager1 = get_cache_manager()
+        manager2 = get_cache_manager()
+
+        assert manager1 is manager2
+
+        # Test that configure_cpp_cache was called (optional, maybe check if cpp cache is configured correctly, but simple singleton check is required)
+
 class TestCacheConfig:
     """Test CacheConfig functionality."""
 
@@ -513,6 +569,31 @@ def test_configure_for_environment():
 
         mock_get_cache_manager.assert_called_once()
         mock_manager.configure_cpp_cache.assert_called_once()
+
+
+class TestCacheManagerFunctions:
+    """Test cache manager module-level functions."""
+
+    def test_clear_cache(self):
+        from torchfits.cache import get_cache_manager, clear_cache, get_cache_stats
+
+        # Set some state
+        manager = get_cache_manager()
+        manager._stats["hits"] = 10
+        manager._stats["misses"] = 5
+
+        # Verify state is set
+        stats_before = get_cache_stats()
+        assert stats_before["hits"] == 10
+        assert stats_before["misses"] == 5
+
+        # Clear cache
+        clear_cache()
+
+        # Verify state is reset
+        stats_after = get_cache_stats()
+        assert stats_after["hits"] == 0
+        assert stats_after["misses"] == 0
 
 
 if __name__ == "__main__":
