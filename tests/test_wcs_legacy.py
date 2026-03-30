@@ -85,3 +85,52 @@ def test_tnx_constant_polynomial_applies_expected_shift_near_center() -> None:
     # At the projection center, TNX constant terms should appear as near-linear sky shifts.
     np.testing.assert_allclose((ra_tnx - ra_tan).cpu().numpy(), 0.3, atol=2e-2)
     np.testing.assert_allclose((dec_tnx - dec_tan).cpu().numpy(), -0.2, atol=2e-2)
+
+def test_parse_wat_keywords_empty():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    assert parse_wat_keywords({}, prefix="WAT1") == ""
+
+def test_parse_wat_keywords_no_match():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {"WAT2_001": "something"}
+    assert parse_wat_keywords(header, prefix="WAT1") == ""
+
+def test_parse_wat_keywords_normal():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT1_001": "wtype=tnx ",
+        "WAT1_002": "lngcor = \"3 ",
+        "WAT1_003": "1 1\"",
+    }
+    assert parse_wat_keywords(header, prefix="WAT1") == "wtype=tnx lngcor = \"3 1 1\""
+
+def test_parse_wat_keywords_gap():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT1_001": "part1",
+        "WAT1_003": "part3",
+    }
+    # It stops at the first missing index (002)
+    assert parse_wat_keywords(header, prefix="WAT1") == "part1"
+
+def test_parse_wat_keywords_non_string():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT1_001": 123,
+        "WAT1_002": 45.6,
+    }
+    assert parse_wat_keywords(header, prefix="WAT1") == "12345.6"
+
+def test_parse_wat_keywords_max_limit():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {f"WAT1_{n:03d}": "a" for n in range(1, 105)}
+    # It stops at 99 because range is (1, 100)
+    assert len(parse_wat_keywords(header, prefix="WAT1")) == 99
+
+def test_parse_wat_keywords_default_prefix():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT_001": "default1",
+        "WAT_002": "default2",
+    }
+    assert parse_wat_keywords(header) == "default1default2"
