@@ -503,5 +503,30 @@ class TestCacheConfig:
         assert CacheConfig._is_gpu_environment() is False
 
 
+class TestCacheManagerFunctions:
+    """Test cache manager module-level functions."""
+
+    def test_clear_cache(self):
+        from torchfits.cache import get_cache_manager, clear_cache, get_cache_stats
+
+        # Set some state
+        manager = get_cache_manager()
+        manager._stats["hits"] = 10
+        manager._stats["misses"] = 5
+
+        # Verify state is set
+        stats_before = get_cache_stats()
+        assert stats_before["hits"] == 10
+        assert stats_before["misses"] == 5
+
+        # Clear cache
+        clear_cache()
+
+        # Verify state is reset
+        stats_after = get_cache_stats()
+        assert stats_after["hits"] == 0
+        assert stats_after["misses"] == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
