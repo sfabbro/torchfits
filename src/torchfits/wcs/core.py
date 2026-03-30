@@ -29,19 +29,8 @@ def _sincos(x: Tensor) -> Tuple[Tensor, Tensor]:
 
 def _wrap_lon360(angle: Tensor) -> Tensor:
     """Wrap longitudes to [0, 360)."""
-    if angle.requires_grad:
-        return torch.remainder(angle, 360.0)
-    mn = torch.amin(angle)
-    mx = torch.amax(angle)
-    if bool((mn >= 0.0) and (mx < 360.0)):
-        return angle
-    if bool((mn >= -360.0) and (mx < 720.0)):
-        out = angle
-        if bool(mn < 0.0):
-            out = torch.where(out < 0.0, out + 360.0, out)
-        if bool(mx >= 360.0):
-            out = torch.where(out >= 360.0, out - 360.0, out)
-        return out
+    # Removed bounds checking (torch.amin/amax) to avoid expensive GPU-CPU
+    # synchronizations and reductions. Direct remainder is fully vectorized.
     return torch.remainder(angle, 360.0)
 
 
@@ -52,19 +41,8 @@ def _wrap_lon360_checked(angle: Tensor) -> Tensor:
 
 def _wrap_lon180(angle: Tensor) -> Tensor:
     """Wrap longitudes to [-180, 180)."""
-    if angle.requires_grad:
-        return torch.remainder(angle + 180.0, 360.0) - 180.0
-    mn = torch.amin(angle)
-    mx = torch.amax(angle)
-    if bool((mn >= -180.0) and (mx < 180.0)):
-        return angle
-    if bool((mn >= -540.0) and (mx < 540.0)):
-        out = angle
-        if bool(mn < -180.0):
-            out = torch.where(out < -180.0, out + 360.0, out)
-        if bool(mx >= 180.0):
-            out = torch.where(out >= 180.0, out - 360.0, out)
-        return out
+    # Removed bounds checking (torch.amin/amax) to avoid expensive GPU-CPU
+    # synchronizations and reductions. Direct remainder is fully vectorized.
     return torch.remainder(angle + 180.0, 360.0) - 180.0
 
 
