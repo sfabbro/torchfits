@@ -431,6 +431,19 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
+class TestCacheManager:
+    """Test CacheManager functionality."""
+
+    def test_get_cache_manager_singleton(self):
+        from torchfits.cache import get_cache_manager
+
+        manager1 = get_cache_manager()
+        manager2 = get_cache_manager()
+
+        assert manager1 is manager2
+
+        # Test that configure_cpp_cache was called (optional, maybe check if cpp cache is configured correctly, but simple singleton check is required)
+
 class TestCacheConfig:
     """Test CacheConfig functionality."""
 
