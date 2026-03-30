@@ -12,11 +12,6 @@ from torch import Tensor
 if TYPE_CHECKING:
     import numpy as np
 
-try:
-    from torch.func import vmap
-except ImportError:
-    vmap = None
-
 from ..wcs import healpix as _healpix
 from .core import (
     great_circle_distance,

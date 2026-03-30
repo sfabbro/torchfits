@@ -482,8 +482,8 @@ class SparseHealpixMap:
 
     def write_fits(self, filename: str, overwrite: bool = False) -> None:
         import numpy as np
+        import fitsio
 
-        fitsio = __import__("fitsio")
         header = {
             "NSIDE": self.nside,
             "ORDERING": "NEST" if self.nest else "RING",
@@ -500,8 +500,8 @@ class SparseHealpixMap:
     @classmethod
     def read_fits(cls, filename: str) -> "SparseHealpixMap":
         import numpy as np
+        import fitsio
 
-        fitsio = __import__("fitsio")
         with fitsio.FITS(filename) as fits:
             header = fits["SPARSE"].read_header()
             data = fits["SPARSE"].read()
