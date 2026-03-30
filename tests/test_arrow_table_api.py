@@ -879,7 +879,7 @@ def test_duckdb_query_on_fits_table():
 
 def test_to_duckdb():
     pa = pytest.importorskip("pyarrow")
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     data = pa.table({
         "ID": [1, 2, 3],
@@ -912,7 +912,7 @@ def test_to_duckdb_custom_table_name():
     })
 
     con = duckdb.connect()
-    rel = torchfits.table.to_duckdb(
+    torchfits.table.to_duckdb(
         data, "my_custom_table", con
     )
     res = con.sql("SELECT COUNT(*) AS n FROM my_custom_table WHERE ID >= 2")
