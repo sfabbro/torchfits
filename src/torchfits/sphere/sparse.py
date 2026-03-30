@@ -279,7 +279,12 @@ class SparseHealpixMap:
         # Find unique indices, keeping last one (since stable sort kept them in input order)
         # We want the LAST occurrence for each pixel.
         # But unique_consecutive might be easier if we just want one.
-        mask = torch.cat([combined_pix[1:] != combined_pix[:-1], torch.tensor([True], device=combined_pix.device)])
+        mask = torch.cat(
+            [
+                combined_pix[1:] != combined_pix[:-1],
+                torch.tensor([True], device=combined_pix.device),
+            ]
+        )
         self.pixels = combined_pix[mask]
         self.values = combined_val[..., mask]
         self._build_coverage_map()
@@ -311,9 +316,7 @@ class SparseHealpixMap:
         if out_dtype == torch.bool and fv != 0 and fv != 1:
             out_dtype = torch.float64
 
-        out = torch.full(
-            out_shape, fv, dtype=out_dtype, device=self.pixels.device
-        )
+        out = torch.full(out_shape, fv, dtype=out_dtype, device=self.pixels.device)
         if self.pixels.numel() > 0:
             out.index_copy_(-1, self.pixels, self.values.to(out_dtype))
         return out
@@ -326,9 +329,7 @@ class SparseHealpixMap:
         """
         if self.nside_coverage is not None:
             npix_cov = _healpix.nside2npix(self.nside_coverage)
-            mask = torch.zeros(
-                (npix_cov,), dtype=torch.bool, device=self.pixels.device
-            )
+            mask = torch.zeros((npix_cov,), dtype=torch.bool, device=self.pixels.device)
             if self.pixels.numel() > 0:
                 ratio2 = (self.nside // self.nside_coverage) ** 2
                 cov_pixels = torch.div(self.pixels, ratio2, rounding_mode="floor")
@@ -509,7 +510,9 @@ class SparseHealpixMap:
                 )
                 sum_vals = torch.zeros(
                     (*val_sorted.shape[:-1], uniq.numel()),
-                    dtype=torch.float64 if val_sorted.dtype == torch.bool else val_sorted.dtype,
+                    dtype=torch.float64
+                    if val_sorted.dtype == torch.bool
+                    else val_sorted.dtype,
                     device=val_sorted.device,
                 )
                 if val_sorted.is_floating_point() or val_sorted.is_complex():
@@ -522,14 +525,21 @@ class SparseHealpixMap:
                     )
                 else:
                     goods = torch.ones_like(val_sorted, dtype=torch.bool)
-                    if not val_sorted.is_floating_point() and not val_sorted.is_complex():
+                    if (
+                        not val_sorted.is_floating_point()
+                        and not val_sorted.is_complex()
+                    ):
                         # For discrete types, we still want to skip sentinel if possible
                         # but often sentinel is not clearly defined for bool.
                         # HealSparse bool maps use False as background.
                         pass
 
                 sum_vals.index_add_(
-                    -1, group_ids, (val_sorted * goods.to(dtype=val_sorted.dtype)) if val_sorted.dtype != torch.bool else goods.to(dtype=torch.float64)
+                    -1,
+                    group_ids,
+                    (val_sorted * goods.to(dtype=val_sorted.dtype))
+                    if val_sorted.dtype != torch.bool
+                    else goods.to(dtype=torch.float64),
                 )
                 nhit = torch.zeros(
                     (*val_sorted.shape[:-1], uniq.numel()),
@@ -657,8 +667,15 @@ class SparseHealpixMap:
                 # Test 98 says: partial = HealSparseMap.read(..., pixels=coverage_pixels[:2].tolist())
                 # So we need to filter by coverage map.
                 data = ext.read()
-                f_pix_np = data["PIXEL"].byteswap().view(data["PIXEL"].dtype.newbyteorder()).astype(np.int64)
-                f_val_np = data["VALUE"].byteswap().view(data["VALUE"].dtype.newbyteorder())
+                f_pix_np = (
+                    data["PIXEL"]
+                    .byteswap()
+                    .view(data["PIXEL"].dtype.newbyteorder())
+                    .astype(np.int64)
+                )
+                f_val_np = (
+                    data["VALUE"].byteswap().view(data["VALUE"].dtype.newbyteorder())
+                )
                 full_pix = torch.from_numpy(f_pix_np)
                 full_val = torch.from_numpy(f_val_np)
 
@@ -667,7 +684,9 @@ class SparseHealpixMap:
                 if ns_cov is not None:
                     ratio2 = (nside // ns_cov) ** 2
                     cov_pix = full_pix // ratio2
-                    mask = torch.isin(cov_pix, torch.tensor(pixels, device=full_pix.device))
+                    mask = torch.isin(
+                        cov_pix, torch.tensor(pixels, device=full_pix.device)
+                    )
                     read_pix = full_pix[mask]
                     read_val = full_val[..., mask]
                 else:
@@ -675,8 +694,15 @@ class SparseHealpixMap:
                     read_val = full_val
             else:
                 data = ext.read()
-                r_pix_np = data["PIXEL"].byteswap().view(data["PIXEL"].dtype.newbyteorder()).astype(np.int64)
-                r_val_np = data["VALUE"].byteswap().view(data["VALUE"].dtype.newbyteorder())
+                r_pix_np = (
+                    data["PIXEL"]
+                    .byteswap()
+                    .view(data["PIXEL"].dtype.newbyteorder())
+                    .astype(np.int64)
+                )
+                r_val_np = (
+                    data["VALUE"].byteswap().view(data["VALUE"].dtype.newbyteorder())
+                )
                 read_pix = torch.from_numpy(r_pix_np)
                 read_val = torch.from_numpy(r_val_np)
 

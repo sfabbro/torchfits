@@ -20,7 +20,7 @@ try:
 except ImportError:
     HAS_TORCH_FRAME = False
 
-    class TensorFrame:
+    class TensorFrame:  # type: ignore[no-redef]
         """Minimal fallback when torch_frame is unavailable."""
 
         def __init__(self, feat_dict=None, col_names_dict=None):
