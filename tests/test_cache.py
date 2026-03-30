@@ -559,6 +559,18 @@ class TestCacheConfig:
         assert CacheConfig._is_gpu_environment() is False
 
 
+def test_configure_for_environment():
+    """Test configure_for_environment configures the cpp cache via the manager."""
+    with patch("torchfits.cache.get_cache_manager") as mock_get_cache_manager:
+        mock_manager = MagicMock()
+        mock_get_cache_manager.return_value = mock_manager
+
+        torchfits.cache.configure_for_environment()
+
+        mock_get_cache_manager.assert_called_once()
+        mock_manager.configure_cpp_cache.assert_called_once()
+
+
 class TestCacheManagerFunctions:
     """Test cache manager module-level functions."""
 
