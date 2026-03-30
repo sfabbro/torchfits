@@ -1,13 +1,13 @@
 import os
 import tempfile
+from unittest import mock
 
 import numpy as np
 import pytest
+import torch
 from astropy.table import Table
 
-from unittest import mock
 import torchfits
-import torch
 
 
 def test_to_pandas_decode_bytes():
@@ -58,6 +58,18 @@ def test_to_arrow_vla_list():
         assert "VLA" in arrow.column_names
     finally:
         os.unlink(path)
+
+
+def test_to_arrow_vla_invalid_policy():
+    pytest.importorskip("pyarrow")
+
+    data = {
+        "RA": torch.tensor([10.1, 10.2], dtype=torch.float64),
+        "VLA": [torch.tensor([1, 2]), torch.tensor([3])],
+    }
+    with pytest.raises(ValueError, match="vla_policy must be 'list' or 'drop'"):
+        torchfits.to_arrow(data, vla_policy="invalid_policy")
+
 
 def test_to_pandas_missing_pandas():
     with mock.patch.dict("sys.modules", {"pandas": None}):
