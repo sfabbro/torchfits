@@ -5,18 +5,18 @@ import re
 import functools
 
 
-def parse_wat_keywords(header: Dict[str, Any], axis: int) -> str:
+def parse_wat_keywords(header: Dict[str, Any], prefix: str = "WAT") -> str:
     """
-    Reconstruct the full WAT string for a given axis.
+    Reconstruct the full WAT string for a given prefix.
     IRAF splits long strings into WATi_nnn keywords.
     """
-    # Collect all WATi_nnn values
+    # Collect all prefix_nnn values
     # nnn usually starts at 001
     full_str = ""
-    # Check for WATi_001, WATi_002, ...
+    # Check for prefix_001, prefix_002, ...
     # Limit to reasonable number to avoid infinite loops
     for n in range(1, 100):
-        key = f"WAT{axis}_{n:03d}"
+        key = f"{prefix}_{n:03d}"
         if key in header:
             # WAT values often are strings like 'wtype=tnx a_order=...'
             # They are concatenated directly.

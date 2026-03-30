@@ -240,9 +240,9 @@ class TableChunkDataset(IterableDataset):
     def __iter__(self) -> Iterator[Any]:
         from . import get_header, table as table_api
 
+        emitted = 0
         for path in self.file_paths:
             header = get_header(path, self.hdu) if self.include_header else None
-            emitted = 0
             for chunk in table_api.scan_torch(
                 path,
                 hdu=self.hdu,
@@ -260,3 +260,5 @@ class TableChunkDataset(IterableDataset):
                 emitted += 1
                 if self.max_chunks is not None and emitted >= self.max_chunks:
                     break
+            if self.max_chunks is not None and emitted >= self.max_chunks:
+                break
