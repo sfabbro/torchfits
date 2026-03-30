@@ -37,6 +37,8 @@ def read(
     target_dtype = torch.float16 if fp16 else (torch.bfloat16 if bf16 else None)
 
     if isinstance(path, (list, tuple)):
+        if not all(isinstance(p, str) for p in path):
+            raise ValueError("Path must be a string or list of strings")
         if not isinstance(hdu, int):
             raise ValueError("Batch read requires a single integer HDU")
         data_list = cpp.read_images_batch(list(path), hdu)
@@ -48,7 +50,11 @@ def read(
 
     if not isinstance(path, str):
         raise ValueError("Path must be a string or list of strings")
-    if not isinstance(hdu, int) or hdu < 0:
+    if not isinstance(hdu, (int, list, tuple)):
+        raise ValueError("HDU index must be a non-negative integer")
+    if isinstance(hdu, int) and hdu < 0:
+        raise ValueError("HDU index must be a non-negative integer")
+    if isinstance(hdu, (list, tuple)) and any(not isinstance(h, int) or h < 0 for h in hdu):
         raise ValueError("HDU index must be a non-negative integer")
     if not is_cpu and device not in ["cuda", "mps"] and not device.startswith("cuda:"):
         raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
