@@ -86,24 +86,55 @@ def test_tnx_constant_polynomial_applies_expected_shift_near_center() -> None:
     np.testing.assert_allclose((ra_tnx - ra_tan).cpu().numpy(), 0.3, atol=2e-2)
     np.testing.assert_allclose((dec_tnx - dec_tan).cpu().numpy(), -0.2, atol=2e-2)
 
-def test_parse_wat_keywords() -> None:
+def test_parse_wat_keywords_empty():
     from torchfits.wcs.legacy import parse_wat_keywords
+    assert parse_wat_keywords({}, prefix="WAT1") == ""
 
-    # Test typical case
+def test_parse_wat_keywords_no_match():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {"WAT2_001": "something"}
+    assert parse_wat_keywords(header, prefix="WAT1") == ""
+
+def test_parse_wat_keywords_normal():
+    from torchfits.wcs.legacy import parse_wat_keywords
     header = {
         "WAT1_001": "wtype=tnx ",
-        "WAT1_002": 'lngcor="3 1 1 0 -5.0 5.0 -5.0 5.0 0.3"',
-        "WAT2_001": "wtype=tnx ",
+        "WAT1_002": "lngcor = \"3 ",
+        "WAT1_003": "1 1\"",
     }
-    wat1 = parse_wat_keywords(header, 1)
-    assert wat1 == 'wtype=tnx lngcor="3 1 1 0 -5.0 5.0 -5.0 5.0 0.3"'
+    assert parse_wat_keywords(header, prefix="WAT1") == "wtype=tnx lngcor = \"3 1 1\""
 
-    wat2 = parse_wat_keywords(header, 2)
-    assert wat2 == "wtype=tnx "
+def test_parse_wat_keywords_gap():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT1_001": "part1",
+        "WAT1_003": "part3",
+    }
+    # It stops at the first missing index (002)
+    assert parse_wat_keywords(header, prefix="WAT1") == "part1"
 
-    # Test empty or missing
-    wat3 = parse_wat_keywords(header, 3)
-    assert wat3 == ""
+def test_parse_wat_keywords_non_string():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT1_001": 123,
+        "WAT1_002": 45.6,
+    }
+    assert parse_wat_keywords(header, prefix="WAT1") == "12345.6"
+
+def test_parse_wat_keywords_max_limit():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {f"WAT1_{n:03d}": "a" for n in range(1, 105)}
+    # It stops at 99 because range is (1, 100)
+    assert len(parse_wat_keywords(header, prefix="WAT1")) == 99
+
+def test_parse_wat_keywords_default_prefix():
+    from torchfits.wcs.legacy import parse_wat_keywords
+    header = {
+        "WAT_001": "default1",
+        "WAT_002": "default2",
+    }
+    assert parse_wat_keywords(header) == "default1default2"
+
 
 def test_legacy_polynomial_chebyshev_legendre() -> None:
     from torchfits.wcs.legacy import LegacyPolynomial
@@ -151,6 +182,7 @@ def test_legacy_polynomial_chebyshev_legendre() -> None:
     poly_empty = LegacyPolynomial("")
     assert len(poly_empty.coeffs) == 0
 
+
 def test_extract_tnx_coeffs() -> None:
     from torchfits.wcs.legacy import extract_tnx_coeffs
 
@@ -158,6 +190,7 @@ def test_extract_tnx_coeffs() -> None:
     assert extract_tnx_coeffs(wat, "lngcor") == "1 2 3"
     assert extract_tnx_coeffs(wat, "latcor") == "4"
     assert extract_tnx_coeffs(wat, "missing") is None
+
 
 def test_extract_zpx_params() -> None:
     from torchfits.wcs.legacy import extract_zpx_params
@@ -169,6 +202,7 @@ def test_extract_zpx_params() -> None:
 
     params = extract_zpx_params(wat_data)
     assert params == {"PV2_1": 0.5, "PV2_3": 1.5, "PV2_2": 2.0}
+
 
 def test_project_tnx() -> None:
     from torchfits.wcs.legacy import project_tnx
@@ -191,6 +225,7 @@ def test_project_tnx() -> None:
     xi_out, eta_out = project_tnx(xi, eta, None, wat_data)
     torch.testing.assert_close(xi_out, xi + 0.5)
     torch.testing.assert_close(eta_out, eta - 0.5)
+
 
 def test_project_zpx() -> None:
     from torchfits.wcs.legacy import project_zpx
