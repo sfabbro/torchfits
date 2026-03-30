@@ -13,3 +13,7 @@
 ## 2025-03-29 - [Inline FITS Header Parsing]
 **Learning:** FITS header parsing using intermediate string allocations and function calls per card (`_parse_card`, `_find_comment_separator`, `_parse_value`) in a Python loop for 80-character chunks is a significant bottleneck.
 **Action:** Inlined the parsing logic directly within the chunk iteration loop. This avoids thousands of function call overheads per FITS header, reducing parsing time by ~25-30% while maintaining accuracy.
+
+## 2025-03-30 - Fast String Parsing for FITS Headers
+**Learning:** Python string methods like `find`, `rfind`, and `in` operators are significantly faster than iterating character-by-character or taking string slices, since string slicing allocates a new string in memory. FITS headers often contain simple string values without escaped quotes (`''`) or slashes inside strings, meaning we can use fast string methods to parse them.
+**Action:** When parsing well-formatted text data like FITS headers in Python, prioritize fast paths using built-in string methods (`find`, `rfind`, `in`) before falling back to manual character iteration. This is especially true for strings, where slicing creates new objects in memory.

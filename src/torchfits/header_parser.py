@@ -184,10 +184,17 @@ class FastHeaderParser:
 
         Handles quoted strings properly to avoid false positives.
         """
-        # Fast path: find first slash and if there are no quotes before it,
-        # we found our separator.
         idx = value_comment.find("/")
-        if idx == -1 or "'" not in value_comment[:idx]:
+        if idx == -1:
+            return -1
+
+        quote_idx = value_comment.find("'")
+        if quote_idx == -1 or quote_idx > idx:
+            return idx
+
+        # Fast path: check if the first slash comes after the LAST quote in the string
+        r_quote_idx = value_comment.rfind("'")
+        if idx > r_quote_idx:
             return idx
 
         in_quotes = False
@@ -273,12 +280,15 @@ class FastHeaderParser:
         if not quoted_str.startswith("'"):
             return quoted_str
 
-        # Fast path: no escaped quotes
+        # Check if there are internal quotes. If not, simple slice is fastest.
+        # The string ends with the first unmatched quote.
+        # For a string without escaped quotes (''), it's just stripping first/last quote.
+        end_idx = quoted_str.find("'", 1)
+        if end_idx == -1:
+            return quoted_str[1:]
+
         if "''" not in quoted_str:
-            first_quote = quoted_str.find("'", 1)
-            if first_quote == -1:
-                return quoted_str[1:]
-            return quoted_str[1:first_quote]
+            return quoted_str[1:end_idx]
 
         end_idx = 1
         while True:
