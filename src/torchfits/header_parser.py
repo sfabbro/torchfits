@@ -80,8 +80,13 @@ class FastHeaderParser:
         for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
 
-            # Fast path for empty/space/END cards.
-            if not card or card.isspace() or card.startswith("END     "):
+            # Bolt optimization: stop parsing immediately at first END card.
+            # FITS headers are padded with 2880-byte blocks of spaces. Breaking
+            # early avoids thousands of redundant regex/string checks on empty padding.
+            if card.startswith("END     "):
+                break
+
+            if not card or card.isspace():
                 continue
 
             if len(card) < 80:
@@ -121,11 +126,56 @@ class FastHeaderParser:
                     header[keyword] = card[8:].strip()
             else:
                 # No equals sign - might be a comment-only keyword
-                keyword = card[:8].rstrip()
                 if keyword:
                     header[keyword] = card[8:].strip()
 
         return header
+
+    @classmethod
+    def _parse_card(cls, card: str) -> tuple:
+        """
+        Parse a single 80-character FITS card.
+
+        Returns:
+            (keyword, value, comment) tuple
+        """
+        if len(card) != 80:
+            card = card.ljust(80)
+
+        # Skip empty cards
+        if card.isspace() or not card:
+            return None, None, None
+
+        # Handle comment-only cards (COMMENT, HISTORY, etc.)
+        if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+            keyword = card[:8].strip()
+            value = card[8:].strip()
+            return keyword, value, None
+
+        # Look for equals sign at position 8
+        if len(card) > 8 and card[8] == "=":
+            keyword = card[:8].strip()
+            value_comment = card[9:].strip()
+
+            # Find comment separator
+            comment_start = cls._find_comment_separator(value_comment)
+            if comment_start != -1:
+                value_str = value_comment[:comment_start].strip()
+                comment = value_comment[comment_start + 1 :].strip()
+            else:
+                value_str = value_comment
+                comment = None
+
+            # Parse the value
+            value = cls._parse_value(value_str, keyword)
+            return keyword, value, comment
+        else:
+            # No equals sign - might be a comment-only keyword
+            keyword = card[:8].strip()
+            if keyword:
+                return keyword, card[8:].strip(), None
+
+        return None, None, None
 
     @classmethod
     def _find_comment_separator(cls, value_comment: str) -> int:
@@ -187,13 +237,7 @@ class FastHeaderParser:
         if keyword in cls._STRING_KEYWORDS:
             return value_str
 
-        # 2. Logical values
-        if value_str == "T":
-            return True
-        if value_str == "F":
-            return False
-
-        # 3. Fast path for numbers without regex
+        # 2. Fast path for numbers without regex
         if first_char in "+-0123456789.":
             try:
                 if "." in value_str or "e" in value_str or "E" in value_str:
@@ -201,6 +245,12 @@ class FastHeaderParser:
                 return int(value_str)
             except ValueError:
                 pass
+
+        # 3. Logical values
+        if value_str == "T":
+            return True
+        if value_str == "F":
+            return False
 
         # 4. Complex numbers
         if first_char == "(":
@@ -222,6 +272,13 @@ class FastHeaderParser:
         """
         if not quoted_str.startswith("'"):
             return quoted_str
+
+        # Fast path: no escaped quotes
+        if "''" not in quoted_str:
+            first_quote = quoted_str.find("'", 1)
+            if first_quote == -1:
+                return quoted_str[1:]
+            return quoted_str[1:first_quote]
 
         end_idx = 1
         while True:

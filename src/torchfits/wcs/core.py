@@ -185,8 +185,8 @@ class WCS:
         if has_wat:
             from .legacy import parse_wat_keywords
 
-            self.wat_data[1] = parse_wat_keywords(header, 1)
-            self.wat_data[2] = parse_wat_keywords(header, 2)
+            self.wat_data[1] = parse_wat_keywords(header, prefix="WAT1")
+            self.wat_data[2] = parse_wat_keywords(header, prefix="WAT2")
 
     def _parse_sip(self, header: Dict[str, Any]) -> None:
         """Parse SIP distortion keywords."""
