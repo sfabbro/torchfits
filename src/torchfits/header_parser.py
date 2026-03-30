@@ -72,6 +72,7 @@ class FastHeaderParser:
 
         # Iterate directly over the string by 80-character chunks
         # instead of building an intermediate list of cards
+        # Inlined parsing logic for performance
         for i in range(0, len(header_string), 80):
             card = header_string[i : i + 80]
 
@@ -84,13 +85,91 @@ class FastHeaderParser:
             if card.isspace() or not card:
                 continue
 
-            keyword, value, comment = cls._parse_card(card)
-            if keyword:
-                header[keyword] = value
+            # Handle comment-only cards (COMMENT, HISTORY, etc.)
+            if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+                keyword = card[:8].strip()
+                header[keyword] = card[8:].strip()
+                continue
 
-                # Store comment separately if present
-                if comment and comment.strip():
-                    header[f"{keyword}_COMMENT"] = comment.strip()
+            # Look for equals sign at position 8
+            if len(card) > 8 and card[8] == "=":
+                keyword = card[:8].rstrip()
+                val_comm = card[9:].strip()
+                if not val_comm:
+                    header[keyword] = None
+                    continue
+
+                # Find comment separator
+                idx = val_comm.find("/")
+                if idx == -1 or "'" not in val_comm[:idx]:
+                    if idx != -1:
+                        val_str = val_comm[:idx].strip()
+                        comm = val_comm[idx + 1 :].strip()
+                        if comm:
+                            header[f"{keyword}_COMMENT"] = comm
+                    else:
+                        val_str = val_comm
+                else:
+                    in_quotes = False
+                    j = 0
+                    n = len(val_comm)
+                    while j < n:
+                        if val_comm[j] == "'":
+                            in_quotes = not in_quotes
+                        elif val_comm[j] == "/" and not in_quotes:
+                            break
+                        j += 1
+
+                    if j < n:
+                        val_str = val_comm[:j].strip()
+                        comm = val_comm[j + 1 :].strip()
+                        if comm:
+                            header[f"{keyword}_COMMENT"] = comm
+                    else:
+                        val_str = val_comm
+
+                # Parse the value inline
+                if not val_str:
+                    header[keyword] = None
+                    continue
+
+                first_char = val_str[0]
+                if first_char == "'":
+                    end_idx = val_str.find("'", 1)
+                    if end_idx == len(val_str) - 1:
+                        header[keyword] = val_str[1:-1]
+                    else:
+                        header[keyword] = cls._parse_string_value(val_str)
+                elif first_char in "+-0123456789.":
+                    try:
+                        if "." in val_str or "e" in val_str or "E" in val_str:
+                            header[keyword] = float(val_str)
+                        else:
+                            header[keyword] = int(val_str)
+                    except ValueError:
+                        header[keyword] = val_str
+                elif val_str == "T":
+                    header[keyword] = True
+                elif val_str == "F":
+                    header[keyword] = False
+                elif keyword in cls._STRING_KEYWORDS:
+                    header[keyword] = val_str
+                elif first_char == "(":
+                    complex_match = cls._COMPLEX_PATTERN.match(val_str)
+                    if complex_match:
+                        header[keyword] = complex(
+                            float(complex_match.group(1)),
+                            float(complex_match.group(2)),
+                        )
+                    else:
+                        header[keyword] = val_str
+                else:
+                    header[keyword] = val_str
+            else:
+                # No equals sign - might be a comment-only keyword
+                keyword = card[:8].strip()
+                if keyword:
+                    header[keyword] = card[8:].strip()
 
         return header
 
