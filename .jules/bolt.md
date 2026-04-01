@@ -23,3 +23,7 @@
 ## 2025-03-30 - Fast String Parsing for FITS Headers
 **Learning:** Python string methods like `find`, `rfind`, and `in` operators are significantly faster than iterating character-by-character or taking string slices, since string slicing allocates a new string in memory. FITS headers often contain simple string values without escaped quotes (`''`) or slashes inside strings, meaning we can use fast string methods to parse them.
 **Action:** When parsing well-formatted text data like FITS headers in Python, prioritize fast paths using built-in string methods (`find`, `rfind`, `in`) before falling back to manual character iteration. This is especially true for strings, where slicing creates new objects in memory.
+
+## 2025-03-31 - Fast FITS Header Parsing
+**Learning:** Python function calls (`_parse_value`) and instance attribute lookups (`cls._STRING_KEYWORDS`, `str.startswith`) inside the tight loop for parsing 80-character FITS headers caused noticeable parsing overhead.
+**Action:** Inlining the `_parse_value` parsing logic directly within `parse_header_string` and locally aliasing `str.startswith` and `str.isspace` reduced loop overhead by an additional ~5%.

@@ -69,8 +69,14 @@ class FastHeaderParser:
             return {}
 
         header: Dict[str, Any] = {}
-        _parse_value = cls._parse_value
         _find_comment_separator = cls._find_comment_separator
+        _parse_string_value = cls._parse_string_value
+        string_keywords = cls._STRING_KEYWORDS
+        complex_pattern = cls._COMPLEX_PATTERN
+
+        # Bolt optimization: aliasing built-in methods saves lookup overhead per loop iteration
+        startswith = str.startswith
+        isspace = str.isspace
 
         # Pre-calculate string lengths and slices outside the loop
         str_len = len(header_string)
@@ -83,10 +89,10 @@ class FastHeaderParser:
             # Bolt optimization: stop parsing immediately at first END card.
             # FITS headers are padded with 2880-byte blocks of spaces. Breaking
             # early avoids thousands of redundant regex/string checks on empty padding.
-            if card.startswith("END     "):
+            if startswith(card, "END     "):
                 break
 
-            if not card or card.isspace():
+            if not card or isspace(card):
                 continue
 
             if len(card) < 80:
@@ -115,17 +121,51 @@ class FastHeaderParser:
                         value_str = value_comment
                         comment = None
 
-                value = _parse_value(value_str, keyword)
+                # Bolt optimization: Inlined _parse_value logic directly into the parsing loop
+                # to avoid function call overhead and instance attribute lookups.
+                value = None
+                if value_str:
+                    first_char = value_str[0]
+                    if first_char == "'":
+                        value = _parse_string_value(value_str)
+                    elif keyword in string_keywords:
+                        value = value_str
+                    elif first_char in "+-0123456789.":
+                        try:
+                            if "." in value_str or "e" in value_str or "E" in value_str:
+                                value = float(value_str)
+                            else:
+                                value = int(value_str)
+                        except ValueError:
+                            pass
+
+                    if value is None:
+                        if value_str == "T":
+                            value = True
+                        elif value_str == "F":
+                            value = False
+                        elif first_char == "(":
+                            complex_match = complex_pattern.match(value_str)
+                            if complex_match:
+                                real_part = float(complex_match.group(1))
+                                imag_part = float(complex_match.group(2))
+                                value = complex(real_part, imag_part)
+
+                        # Default to string
+                        if value is None:
+                            value = value_str
+
                 if keyword:
                     header[keyword] = value
                     if comment:
                         header[f"{keyword}_COMMENT"] = comment
-            elif card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+            elif startswith(card, ("COMMENT ", "HISTORY ", "CONTINUE")):
                 keyword = card[:8].rstrip()
                 if keyword:
                     header[keyword] = card[8:].strip()
             else:
                 # No equals sign - might be a comment-only keyword
+                keyword = card[:8].rstrip()
                 if keyword:
                     header[keyword] = card[8:].strip()
 
