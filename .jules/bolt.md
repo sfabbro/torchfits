@@ -23,3 +23,7 @@
 ## 2025-03-30 - Fast String Parsing for FITS Headers
 **Learning:** Python string methods like `find`, `rfind`, and `in` operators are significantly faster than iterating character-by-character or taking string slices, since string slicing allocates a new string in memory. FITS headers often contain simple string values without escaped quotes (`''`) or slashes inside strings, meaning we can use fast string methods to parse them.
 **Action:** When parsing well-formatted text data like FITS headers in Python, prioritize fast paths using built-in string methods (`find`, `rfind`, `in`) before falling back to manual character iteration. This is especially true for strings, where slicing creates new objects in memory.
+
+## 2026-04-02 - Batched Quantile Calculations
+**Learning:** Calculating multiple quantiles sequentially (e.g., calling `torch.quantile(tensor, 0.05)` and then `torch.quantile(tensor, 0.95)`) is a major performance bottleneck because PyTorch performs a full or partial sort of the tensor for each call. Batching these into a single call with a tensor of probabilities (e.g., `torch.quantile(tensor, torch.tensor([0.05, 0.95]))`) avoids redundant sorting and can reduce calculation time by ~50%.
+**Action:** Always batch quantile calculations when multiple quantiles are needed from the same tensor to prevent unnecessary repeated sorting overhead.
