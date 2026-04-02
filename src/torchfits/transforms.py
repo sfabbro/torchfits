@@ -58,8 +58,10 @@ class ZScale:
     def __call__(self, tensor: Tensor) -> Tensor:
         """Apply ZScale normalization."""
         # Simplified implementation - full version would use iterative algorithm
-        z1 = torch.quantile(tensor, 0.05)
-        z2 = torch.quantile(tensor, 0.95)
+
+        # Batch quantile calculation to avoid redundant sorting
+        qs = torch.quantile(tensor, torch.tensor([0.05, 0.95], dtype=tensor.dtype, device=tensor.device))
+        z1, z2 = qs[0], qs[1]
 
         # Prevent division by zero
         range_val = z2 - z1
@@ -609,8 +611,8 @@ class RobustScale:
             tensor = tensor - median
 
         if self.scale:
-            q75 = torch.quantile(tensor, 0.75)
-            q25 = torch.quantile(tensor, 0.25)
+            qs = torch.quantile(tensor, torch.tensor([0.25, 0.75], dtype=tensor.dtype, device=tensor.device))
+            q25, q75 = qs[0], qs[1]
             iqr = q75 - q25
             if iqr > 1e-8:
                 tensor = tensor / iqr
