@@ -1,5 +1,7 @@
 # torchfits
 
+> **Maintenance mode:** new features and optimizations belong in **[torchsky](https://github.com/sfabbro/torchsky)**. This package remains on **v0.3.x** for security and trivial fixes only; see [MAINTENANCE.md](MAINTENANCE.md).
+
 [![PyPI](https://img.shields.io/pypi/v/torchfits)](https://pypi.org/project/torchfits/)
 
 [![CI](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml)
