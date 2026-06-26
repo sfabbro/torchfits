@@ -16,8 +16,8 @@ Astropy, fitsio, or CFITSIO replacement.
 
 ## Near-term work
 
-- Keep the split clean: torchfits owns FITS I/O; torchsky owns sky-domain tensor
-  models and depends on torchfits at file boundaries.
+- Keep the package boundary clean: torchfits owns FITS I/O only; sky-domain
+  tensor models and simulation workflows stay outside this repository.
 - Expand parity smoke tests for `fitsio` and `astropy.io.fits` whenever a public
   claim is added to `docs/parity.md`.
 - Keep unsupported mmap behavior explicit for VLA, bit, scaled, string, and

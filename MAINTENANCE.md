@@ -1,15 +1,24 @@
 # torchfits maintenance policy
 
-**Active development has moved to [torchsky](https://github.com/sfabbro/torchsky)** — a torch-native astronomy stack that supersedes torchfits for new features and performance work.
+**Active development is on torchfits** — a focused FITS I/O library for PyTorch.
+
+## Scope
+
+- FITS image and table read/write
+- HDUs, headers, checksums, compression, caching
+- Table interop (Arrow, Pandas, Polars, DuckDB)
+
+WCS, HEALPix, sphere geometry, sky-domain simulation, and training pipelines are
+out of scope for this repository.
 
 ## Release lines
 
-- **v0.3.2** and the **0.3.x** branch are **frozen** except for:
-  - **Security** fixes (backports as needed)
-  - **Trivial** maintenance (packaging, metadata, obvious one-line fixes) when required for PyPI or CI
-- A possible **0.3.3** (or similar) may appear only for the above; do not expect API or feature expansion here.
+- **v0.3.2** and the **0.3.x** branch remain available for users who need the
+  older broader package surface.
+- New FITS I/O work lands on the current mainline.
 
 ## Where to contribute
 
-- New FITS I/O, WCS, transforms, sphere, and mapmaking work: **torchsky**
-- Historical context: see torchsky’s `THREAD_HISTORY_FROM_TORCHFITS.md`
+- FITS I/O features, parity tests, benchmarks, and docs: **torchfits**
+- See [docs/roadmap.md](docs/roadmap.md) and [docs/parity.md](docs/parity.md) for
+  the supported contract.

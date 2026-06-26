@@ -4,7 +4,7 @@
 checksums, compression, caching, and table interop.
 
 It does not own WCS, HEALPix, sphere, spectral-domain modelling, datasets, or
-training transforms. Use `torchsky` for sky-domain tensor models.
+training transforms. Those domains are out of scope for torchfits.
 
 ## Quick Paths
 

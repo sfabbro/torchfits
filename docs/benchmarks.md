@@ -1,7 +1,7 @@
 # Benchmarks
 
 `torchfits` benchmarks cover FITS image I/O and FITS table I/O. WCS, HEALPix,
-sphere, and sky-domain benchmarks belong in `torchsky`.
+sphere, and sky-domain benchmarks are out of scope for this repository.
 
 ## Comparison Targets
 
@@ -80,4 +80,4 @@ Latest local quick benchmark evidence:
 
 Keep this page current with the latest committed FITS and FITS-table benchmark
 run before making performance claims. Historical WCS/sphere benchmark results
-were moved with those domains to `torchsky`.
+are no longer maintained here.

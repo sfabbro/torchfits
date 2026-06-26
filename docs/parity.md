@@ -33,8 +33,8 @@ docs. Status values are:
 | Full Astropy API parity | Out of scope | Astropy package surface | torchfits targets common FITS I/O workflows only |
 | Full fitsio API parity | Out of scope | fitsio package surface | torchfits targets common FITS I/O workflows only |
 | Full CFITSIO API parity | Out of scope | CFITSIO C API | torchfits exposes selected PyTorch-native behavior only |
-| WCS solving/modeling | Out of scope | Astropy WCS / wcslib-style domains | belongs in torchsky or specialized WCS packages |
-| Sky coordinates, sphere geometry, HEALPix | Out of scope | sky-domain packages | belongs in torchsky |
+| WCS solving/modeling | Out of scope | Astropy WCS / wcslib-style domains | use specialized WCS packages |
+| Sky coordinates, sphere geometry, HEALPix | Out of scope | sky-domain packages | outside torchfits |
 | Sky-domain simulation and training pipelines | Out of scope | application/domain code | belongs outside torchfits |
 
 ## Known mmap limitations

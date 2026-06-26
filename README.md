@@ -14,8 +14,8 @@ without requiring users to build NumPy-to-torch glue code.
 It is not a full replacement for Astropy, fitsio, or CFITSIO. The supported
 surface is documented explicitly in [docs/parity.md](docs/parity.md), with
 source-backed tests for each claimed parity area. WCS, sky-coordinate models,
-HEALPix, sphere geometry, and sky-domain simulation workflows belong in
-[`torchsky`](https://github.com/sfabbro/torchsky).
+HEALPix, sphere geometry, and sky-domain simulation workflows are out of scope
+for torchfits.
 
 ## At a Glance
 
@@ -105,8 +105,7 @@ torchfits.table.write("catalog_out.fits", table_dict, header=header)
 
 torchfits benchmark evidence is limited to FITS image I/O and FITS table I/O.
 Comparators are `astropy.io.fits` and `fitsio`; selected CFITSIO behavior is
-validated through the torchfits native backend and smoke tests. Sky-domain
-benchmark suites live with torchsky.
+validated through the torchfits native backend and smoke tests.
 
 Methodology, reproducible commands, results, and known deficits: [`docs/benchmarks.md`](docs/benchmarks.md)
 

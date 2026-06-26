@@ -49,9 +49,9 @@ SPECIALIZED_METHODS = [
 class FITSBenchmarkSuite:
     """Small FITS-only benchmark fixture suite.
 
-    The old exhaustive suite also owned WCS/sphere/table fixtures and was
-    removed during the torchfits/torchsky split. This local suite intentionally
-    covers only FITS image I/O cases used by this benchmark module.
+    The old exhaustive suite also owned WCS/sphere fixtures and was removed when
+    those domains left the package. This local suite intentionally covers only
+    FITS image I/O cases used by this benchmark module.
     """
 
     def __init__(
