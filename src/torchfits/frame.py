@@ -13,15 +13,14 @@ except ImportError:
 
 
 def to_tensor_frame(
-    data: Dict[str, torch.Tensor],
-    col_to_stype: Optional[Dict[str, Any]] = None,
+    data: Dict[str, torch.Tensor], schema: Optional[Dict[str, Any]] = None
 ) -> TensorFrame:
     """
     Convert a dictionary of PyTorch tensors (from torchfits.read_columns) to a TorchFrame TensorFrame.
 
     Args:
         data: Dictionary mapping column names to tensors.
-        col_to_stype: Optional dictionary mapping column names to their stypes.
+        schema: Optional dictionary mapping column names to stype.
 
     Returns:
         A torch_frame.TensorFrame object.
@@ -38,6 +37,9 @@ def to_tensor_frame(
     if not data:
         raise ValueError("Input data is empty")
 
+    if schema is None:
+        schema = {}
+
     # Group columns by stype
     num_cols = []
     num_col_names = []
@@ -47,8 +49,6 @@ def to_tensor_frame(
 
     num_rows = -1
 
-    col_to_stype = col_to_stype or {}
-
     for name, tensor in data.items():
         if num_rows == -1:
             num_rows = tensor.shape[0]
@@ -57,11 +57,11 @@ def to_tensor_frame(
                 f"Column {name} has {tensor.shape[0]} rows, expected {num_rows}"
             )
 
-        # Determine stype based on dtype and user override
-        column_stype = col_to_stype.get(name)
+        target_stype = schema.get(name)
 
-        if column_stype == stype.numerical or (
-            column_stype is None
+        # Determine stype based on schema or dtype
+        if target_stype == stype.numerical or (
+            target_stype is None
             and tensor.dtype
             in [
                 torch.float32,
@@ -71,7 +71,6 @@ def to_tensor_frame(
                 torch.uint8,
             ]
         ):
-            # Treat integers as numerical for now, unless user specifies otherwise
             # Ensure 2D shape (rows, 1)
             if tensor.dim() == 1:
                 tensor = tensor.unsqueeze(1)
@@ -86,22 +85,22 @@ def to_tensor_frame(
             )  # torch-frame expects float for numerical
             num_col_names.append(name)
 
-        elif column_stype == stype.categorical or (
-            column_stype is None and tensor.dtype in [torch.int64, torch.bool]
+        elif target_stype == stype.categorical or (
+            target_stype is None and tensor.dtype in [torch.int64, torch.bool]
         ):
             # Treat int64 and bool as categorical
             # Note: torchfits currently returns int64 for strings (hashed)
             if tensor.dim() == 1:
                 tensor = tensor.unsqueeze(1)
 
-            if tensor.dtype == torch.bool:
+            if tensor.dtype != torch.int64:
                 tensor = tensor.to(torch.int64)
 
             cat_cols.append(tensor)
             cat_col_names.append(name)
         else:
             warnings.warn(
-                f"Skipping column {name} with unsupported dtype {tensor.dtype} or stype {column_stype}"
+                f"Skipping column {name} with unsupported dtype {tensor.dtype} or stype {target_stype}"
             )
 
     # Construct feat_dict
@@ -126,7 +125,7 @@ def read_tensor_frame(
     path: str,
     hdu: int = 1,
     columns: Optional[List[str]] = None,
-    col_to_stype: Optional[Dict[str, Any]] = None,
+    schema: Optional[Dict[str, Any]] = None,
 ) -> TensorFrame:
     """
     Read a FITS table directly into a TensorFrame.
@@ -135,15 +134,15 @@ def read_tensor_frame(
         path: Path to FITS file.
         hdu: HDU index (default: 1 for first table extension).
         columns: Optional list of column names to read.
-        col_to_stype: Optional dictionary mapping column names to their stypes.
+        schema: Optional dictionary mapping column names to stype.
 
     Returns:
         A torch_frame.TensorFrame object.
     """
-    import torchfits
+    from .io import read
 
-    data = torchfits.read(path, hdu=hdu, columns=columns, return_header=False)
-    return to_tensor_frame(data, col_to_stype=col_to_stype)
+    data = read(path, hdu=hdu, columns=columns, return_header=False)
+    return to_tensor_frame(data, schema=schema)
 
 
 def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
@@ -155,7 +154,7 @@ def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
         tf: TensorFrame object to write.
         overwrite: Whether to overwrite existing file.
     """
-    import torchfits
+    from .io import write
 
     if not HAS_TORCH_FRAME:
         raise ImportError("torch-frame is not installed.")
@@ -175,40 +174,56 @@ def write_tensor_frame(path: str, tf: TensorFrame, overwrite: bool = False):
             for i, name in enumerate(names):
                 data[name] = tensor[:, i]
 
-        # 3D continuous types (e.g. embeddings)
-        elif stype_enum in [
-            getattr(stype, "embedding", None),
-            getattr(stype, "text_embedded", None),
-            getattr(stype, "image_embedded", None),
-        ]:
+    # Handle other standard 2D tensor stypes safely
+    timestamp_stype = getattr(stype, "timestamp", None)
+    if timestamp_stype and timestamp_stype in tf.feat_dict:
+        tensor = tf.feat_dict[timestamp_stype]
+        names = tf.col_names_dict[timestamp_stype]
+        for i, name in enumerate(names):
+            data[name] = tensor[:, i]
+
+    # Handle MultiEmbeddingTensor stypes
+    emb_stypes = []
+    if hasattr(stype, "embedding"):
+        emb_stypes.append(stype.embedding)
+    if hasattr(stype, "text_embedded"):
+        emb_stypes.append(stype.text_embedded)
+    if hasattr(stype, "image_embedded"):
+        emb_stypes.append(stype.image_embedded)
+
+    for st in emb_stypes:
+        if st in tf.feat_dict:
+            tensor = tf.feat_dict[st]
+            names = tf.col_names_dict[st]
             for i, name in enumerate(names):
-                data[name] = tensor[:, i, :]
+                col = tensor[:, i]
+                # Avoid builtin Tensor.values() method; we want MultiEmbeddingTensor.values property.
+                if hasattr(col, "values") and not callable(col.values):
+                    data[name] = col.values
+                else:
+                    data[name] = col
 
-        # Variable-length nested types
-        elif stype_enum in [
-            getattr(stype, "sequence_numerical", None),
-            getattr(stype, "multicategorical", None),
-        ]:
-            from torch_frame.data import MultiNestedTensor
+    # Handle MultiNestedTensor stypes (VLA)
+    nested_stypes = []
+    if hasattr(stype, "multicategorical"):
+        nested_stypes.append(stype.multicategorical)
+    if hasattr(stype, "sequence_numerical"):
+        nested_stypes.append(stype.sequence_numerical)
+    if hasattr(stype, "text_tokenized"):
+        nested_stypes.append(stype.text_tokenized)
 
-            if isinstance(tensor, MultiNestedTensor):
-                num_rows = tensor.num_rows
-                num_cols = tensor.num_cols
-                values = tensor.values
-                offset = tensor.offset
+    for st in nested_stypes:
+        if st in tf.feat_dict:
+            tensor = tf.feat_dict[st]
+            names = tf.col_names_dict[st]
+            for i, name in enumerate(names):
+                col = tensor[:, i]
+                values = col.values
+                offset = col.offset
+                # Convert to list of tensors
+                list_of_tensors = [
+                    values[offset[j] : offset[j + 1]] for j in range(len(offset) - 1)
+                ]
+                data[name] = list_of_tensors
 
-                for j, name in enumerate(names):
-                    col_data = []
-                    for i in range(num_rows):
-                        start = offset[i * num_cols + j].item()
-                        end = offset[i * num_cols + j + 1].item()
-                        col_data.append(values[start:end])
-                    data[name] = col_data
-            else:
-                warnings.warn(
-                    f"Expected MultiNestedTensor for stype {stype_enum.name}, got {type(tensor)}"
-                )
-        else:
-            warnings.warn(f"Skipping unsupported stype: {stype_enum.name}")
-
-    torchfits.write(path, data, overwrite=overwrite)
+    write(path, data, overwrite=overwrite)

@@ -126,7 +126,7 @@ class CacheManager:
     def configure_cpp_cache(self):
         """Configure the C++ cache backend."""
         try:
-            import torchfits.cpp as cpp
+            import torchfits._C as cpp
 
             if hasattr(cpp, "configure_cache"):
                 cpp.configure_cache(self.config.max_files, self.config.max_memory_mb)
@@ -137,7 +137,7 @@ class CacheManager:
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive cache statistics."""
         try:
-            import torchfits.cpp as cpp
+            import torchfits._C as cpp
 
             cpp_size = cpp.get_cache_size() if hasattr(cpp, "get_cache_size") else 0
         except (ImportError, AttributeError):
@@ -159,7 +159,7 @@ class CacheManager:
     def clear(self):
         """Clear all caches."""
         try:
-            import torchfits.cpp as cpp
+            import torchfits._C as cpp
 
             if hasattr(cpp, "clear_file_cache"):
                 cpp.clear_file_cache()
@@ -210,8 +210,39 @@ def get_cache_stats() -> Dict[str, Any]:
 
 
 def clear_cache():
-    """Clear all cached files."""
+    """Clear Python, C++ I/O, and table-handle caches."""
     get_cache_manager().clear()
+    try:
+        from ._io_engine.caches import clear_file_cache
+
+        clear_file_cache()
+    except Exception:
+        pass
+    try:
+        from . import table as table_api
+
+        close_handles = getattr(table_api, "_close_all_cached_handles", None)
+        if close_handles is not None:
+            close_handles()
+    except Exception:
+        pass
+
+
+def clear() -> None:
+    """Clear all torchfits-managed caches."""
+    clear_cache()
+
+
+def stats() -> Dict[str, Any]:
+    """Return cache statistics for the public cache namespace."""
+    result = get_cache_stats()
+    try:
+        from ._io_engine.caches import get_cache_performance
+
+        result = {**result, "io": get_cache_performance()}
+    except Exception:
+        pass
+    return result
 
 
 def configure_cache(max_files: int, max_memory_mb: int, disk_cache_gb: int = 10):
@@ -249,3 +280,18 @@ def _detect_environment_type() -> str:
         return "gpu_workstation"
     else:
         return "local"
+
+
+__all__ = [
+    "CacheConfig",
+    "CacheManager",
+    "clear",
+    "clear_cache",
+    "configure_cache",
+    "configure_for_environment",
+    "get_cache_manager",
+    "get_cache_stats",
+    "get_optimal_cache_config",
+    "optimize_for_dataset",
+    "stats",
+]

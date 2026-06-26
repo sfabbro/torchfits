@@ -99,11 +99,11 @@ execute_process(
 )
 find_package(nanobind CONFIG REQUIRED)
 
-message(STATUS "DEBUG: Python_EXECUTABLE: ${Python_EXECUTABLE}")
-message(STATUS "DEBUG: Python_VERSION: ${Python_VERSION}")
-message(STATUS "DEBUG: NANOBIND_PYTHON_EXECUTABLE: ${NANOBIND_PYTHON_EXECUTABLE}")
-message(STATUS "DEBUG: nanobind_DIR: ${nanobind_DIR}")
-message(STATUS "DEBUG: nanobind_ROOT: ${nanobind_ROOT}")
+message(DEBUG "torchfits: Python_EXECUTABLE=${Python_EXECUTABLE}")
+message(DEBUG "torchfits: Python_VERSION=${Python_VERSION}")
+message(DEBUG "torchfits: NANOBIND_PYTHON_EXECUTABLE=${NANOBIND_PYTHON_EXECUTABLE}")
+message(DEBUG "torchfits: nanobind_DIR=${nanobind_DIR}")
+message(DEBUG "torchfits: nanobind_ROOT=${nanobind_ROOT}")
 
 # Find PyTorch
 execute_process(
@@ -112,6 +112,66 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 list(APPEND CMAKE_PREFIX_PATH ${TORCH_CMAKE_PREFIX_PATH})
+
+# CUDA-enabled PyTorch only: cuda.cmake expects CUDA::nvrtc before extension targets link. Conda
+# toolkits and CMake 4.x often omit that imported target; CPU-only PyTorch skips this path.
+set(TORCHFITS_PYTORCH_CUDA_VERSION "")
+execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import torch; print(torch.version.cuda or '')"
+    OUTPUT_VARIABLE TORCHFITS_PYTORCH_CUDA_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# PyTorch's cuda.cmake (pulled in by find_package(Torch)) calls get_target_property on CUDA::nvrtc
+# before extension code runs. INTERFACE_LINK_LIBRARIES is read by PyTorch for nvrtc shorthash.
+if(TORCHFITS_PYTORCH_CUDA_VERSION AND NOT TARGET CUDA::nvrtc)
+    find_package(CUDAToolkit QUIET COMPONENTS nvrtc cudart)
+endif()
+if(TORCHFITS_PYTORCH_CUDA_VERSION AND NOT TARGET CUDA::nvrtc)
+    set(_TORCHFITS_CUDA_LIB_HINTS "")
+    foreach(_root IN ITEMS "${CUDAToolkit_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}" "$ENV{CUDA_HOME}" "$ENV{CUDA_PATH}")
+        if(_root)
+            if(_root MATCHES "/include/?$")
+                get_filename_component(_root "${_root}" DIRECTORY)
+            endif()
+            list(APPEND _TORCHFITS_CUDA_LIB_HINTS "${_root}/lib" "${_root}/lib64")
+            list(APPEND _TORCHFITS_CUDA_LIB_HINTS "${_root}/targets/x86_64-linux/lib")
+            list(APPEND _TORCHFITS_CUDA_LIB_HINTS "${_root}/targets/sbsa/lib")
+        endif()
+    endforeach()
+    list(APPEND _TORCHFITS_CUDA_LIB_HINTS
+        "$ENV{CONDA_PREFIX}/targets/x86_64-linux/lib"
+        "$ENV{PREFIX}/targets/x86_64-linux/lib"
+        "$ENV{CONDA_PREFIX}/lib"
+        "$ENV{PREFIX}/lib"
+    )
+    list(REMOVE_DUPLICATES _TORCHFITS_CUDA_LIB_HINTS)
+    set(TORCHFITS_NVRTC_LIBRARY "")
+    foreach(_hint IN LISTS _TORCHFITS_CUDA_LIB_HINTS)
+        if(NOT EXISTS "${_hint}")
+            continue()
+        endif()
+        file(GLOB _TORCHFITS_NVRTC_GLOB "${_hint}/libnvrtc.so.*")
+        if(_TORCHFITS_NVRTC_GLOB)
+            list(GET _TORCHFITS_NVRTC_GLOB 0 TORCHFITS_NVRTC_LIBRARY)
+            break()
+        endif()
+    endforeach()
+    if(NOT TORCHFITS_NVRTC_LIBRARY)
+        find_library(TORCHFITS_NVRTC_LIBRARY NAMES nvrtc HINTS ${_TORCHFITS_CUDA_LIB_HINTS})
+    endif()
+    if(NOT TORCHFITS_NVRTC_LIBRARY)
+        message(STATUS "CUDA-enabled PyTorch needs libnvrtc (CUDA::nvrtc) but none was found. Creating dummy CUDA::nvrtc target.")
+        add_library(CUDA::nvrtc INTERFACE IMPORTED GLOBAL)
+    else()
+        add_library(CUDA::nvrtc SHARED IMPORTED GLOBAL)
+        set_target_properties(CUDA::nvrtc PROPERTIES
+            IMPORTED_LOCATION "${TORCHFITS_NVRTC_LIBRARY}"
+            INTERFACE_LINK_LIBRARIES "${TORCHFITS_NVRTC_LIBRARY}"
+        )
+    endif()
+endif()
+
 find_package(Torch REQUIRED)
 
 # Some distributions ship a Torch CMake target with include paths that may be missing.
@@ -315,13 +375,18 @@ endif()
 # Source files
 set(SOURCES
     bindings.cpp
+    fits.cpp
+    table.cpp
+    compression.cpp
+    cache.cpp
+    hardware.cpp
 )
 
 # Create python binding module
-nanobind_add_module(cpp ${SOURCES})
+nanobind_add_module(_C ${SOURCES})
 
 # Link libraries
-target_link_libraries(cpp PRIVATE ${TORCH_LIBRARIES})
+target_link_libraries(_C PRIVATE ${TORCH_LIBRARIES})
 
 # Link torch_python for THPVariable_Wrap (bypasses DLPack overhead)
 execute_process(
@@ -329,7 +394,7 @@ execute_process(
     OUTPUT_VARIABLE TORCH_ROOT
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-message(STATUS "DEBUG: TORCH_ROOT: ${TORCH_ROOT}")
+message(DEBUG "torchfits: TORCH_ROOT=${TORCH_ROOT}")
 
 # Avoid stale cached paths when switching environments/interpreters.
 unset(TORCH_PYTHON_LIBRARY CACHE)
@@ -337,35 +402,35 @@ unset(TORCH_PYTHON_LIBRARY_FALLBACK CACHE)
 
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_ROOT}/lib" NO_DEFAULT_PATH)
 if(TORCH_PYTHON_LIBRARY)
-    target_link_libraries(cpp PRIVATE ${TORCH_PYTHON_LIBRARY})
+    target_link_libraries(_C PRIVATE ${TORCH_PYTHON_LIBRARY})
     message(STATUS "Found libtorch_python: ${TORCH_PYTHON_LIBRARY}")
 else()
     message(WARNING "libtorch_python not found in ${TORCH_ROOT}/lib - tensor returns will use slower DLPack path")
 endif()
 
 if(TARGET cfitsio)
-    target_link_libraries(cpp PRIVATE cfitsio)
-    target_include_directories(cpp PRIVATE "${CFITSIO_INCLUDE_DIR}")
+    target_link_libraries(_C PRIVATE cfitsio)
+    target_include_directories(_C PRIVATE "${CFITSIO_INCLUDE_DIR}")
 else()
-    target_link_libraries(cpp PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
-    target_include_directories(cpp PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
+    target_link_libraries(_C PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
+    target_include_directories(_C PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
     if(CFITSIO_LIBRARY_DIRS)
-        target_link_directories(cpp PRIVATE ${CFITSIO_LIBRARY_DIRS})
+        target_link_directories(_C PRIVATE ${CFITSIO_LIBRARY_DIRS})
     endif()
 endif()
-target_link_libraries(cpp PRIVATE ZLIB::ZLIB)
+target_link_libraries(_C PRIVATE ZLIB::ZLIB)
 
 if(DLPACK_INCLUDE_DIR)
-    target_include_directories(cpp PRIVATE ${DLPACK_INCLUDE_DIR})
+    target_include_directories(_C PRIVATE ${DLPACK_INCLUDE_DIR})
 endif()
-target_compile_definitions(cpp PRIVATE HAS_CFITSIO)
+target_compile_definitions(_C PRIVATE HAS_CFITSIO)
 
 
 # Compiler flags
-target_compile_definitions(cpp PRIVATE VERSION_INFO="")
-target_compile_features(cpp PRIVATE cxx_std_17)
+target_compile_definitions(_C PRIVATE VERSION_INFO="")
+target_compile_features(_C PRIVATE cxx_std_17)
 
 
 # Install the compiled module
 # For scikit-build-core, install to the package directory
-install(TARGETS cpp DESTINATION torchfits)
+install(TARGETS _C DESTINATION torchfits)

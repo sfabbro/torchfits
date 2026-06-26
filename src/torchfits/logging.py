@@ -9,6 +9,14 @@ import sys
 from functools import wraps
 from typing import Optional
 
+# Re-export stdlib levels so `torchfits.logging.DEBUG` works if the submodule
+# shadows the standard `logging` module on the parent package.
+DEBUG = logging.DEBUG
+INFO = logging.INFO
+WARNING = logging.WARNING
+ERROR = logging.ERROR
+CRITICAL = logging.CRITICAL
+
 # Configure torchfits logger
 logger = logging.getLogger("torchfits")
 logger.setLevel(logging.INFO)
@@ -25,7 +33,6 @@ if not logger.handlers:
 
 def log_errors(func):
     """Decorator to log exceptions before re-raising."""
-
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -33,7 +40,6 @@ def log_errors(func):
         except Exception as e:
             logger.error(f"Error in {func.__name__}: {str(e)}")
             raise
-
     return wrapper
 
 

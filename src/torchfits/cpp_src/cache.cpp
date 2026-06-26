@@ -1,4 +1,7 @@
 #pragma once
+#include "cache.h"
+#include "security.h"
+#include "torch_compat.h"
 #include <unordered_map>
 #include <list>
 #include <mutex>
@@ -285,27 +288,27 @@ private:
 static UnifiedCache global_cache;
 
 // C-style helpers for bindings
-inline void configure_cache(size_t max_files, size_t max_memory_mb) {
+void configure_cache(size_t max_files, size_t max_memory_mb) {
     global_cache.configure(max_files, max_memory_mb);
 }
 
-inline void clear_file_cache() {
+void clear_file_cache() {
     global_cache.clear();
 }
 
-inline size_t get_cache_size() {
+size_t get_cache_size() {
     return global_cache.size();
 }
 
-inline fitsfile* get_or_open_cached(const std::string& filepath) {
+fitsfile* get_or_open_cached(const std::string& filepath) {
     return global_cache.get_or_open(filepath);
 }
 
-inline void release_cached(const std::string& filepath) {
+void release_cached(const std::string& filepath) {
     global_cache.release(filepath);
 }
 
-inline void invalidate_cached(const std::string& filepath) {
+void invalidate_cached(const std::string& filepath) {
     global_cache.invalidate(filepath);
 }
 

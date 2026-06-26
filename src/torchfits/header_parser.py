@@ -69,8 +69,12 @@ class FastHeaderParser:
             return {}
 
         header: Dict[str, Any] = {}
-        _parse_value = cls._parse_value
         _find_comment_separator = cls._find_comment_separator
+        _parse_string_value = cls._parse_string_value
+        string_keywords = cls._STRING_KEYWORDS
+        complex_pattern = cls._COMPLEX_PATTERN
+        startswith = str.startswith
+        isspace = str.isspace
 
         # Pre-calculate string lengths and slices outside the loop
         str_len = len(header_string)
@@ -79,14 +83,15 @@ class FastHeaderParser:
         # instead of building an intermediate list of cards
         for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
+            keyword = None
 
             # Bolt optimization: stop parsing immediately at first END card.
             # FITS headers are padded with 2880-byte blocks of spaces. Breaking
             # early avoids thousands of redundant regex/string checks on empty padding.
-            if card.startswith("END     "):
+            if startswith(card, "END     "):
                 break
 
-            if not card or card.isspace():
+            if not card or isspace(card):
                 continue
 
             if len(card) < 80:
@@ -115,17 +120,48 @@ class FastHeaderParser:
                         value_str = value_comment
                         comment = None
 
-                value = _parse_value(value_str, keyword)
+                value = None
+                if value_str:
+                    first_char = value_str[0]
+                    if first_char == "'":
+                        value = _parse_string_value(value_str)
+                    elif keyword in string_keywords:
+                        value = value_str
+                    elif first_char in "+-0123456789.":
+                        try:
+                            if "." in value_str or "e" in value_str or "E" in value_str:
+                                value = float(value_str)
+                            else:
+                                value = int(value_str)
+                        except ValueError:
+                            pass
+
+                    if value is None:
+                        if value_str == "T":
+                            value = True
+                        elif value_str == "F":
+                            value = False
+                        elif first_char == "(":
+                            complex_match = complex_pattern.match(value_str)
+                            if complex_match:
+                                real_part = float(complex_match.group(1))
+                                imag_part = float(complex_match.group(2))
+                                value = complex(real_part, imag_part)
+
+                        if value is None:
+                            value = value_str
+
                 if keyword:
                     header[keyword] = value
                     if comment:
                         header[f"{keyword}_COMMENT"] = comment
-            elif card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
+            elif startswith(card, ("COMMENT ", "HISTORY ", "CONTINUE")):
                 keyword = card[:8].rstrip()
                 if keyword:
                     header[keyword] = card[8:].strip()
             else:
                 # No equals sign - might be a comment-only keyword
+                keyword = card[:8].rstrip()
                 if keyword:
                     header[keyword] = card[8:].strip()
 
@@ -290,16 +326,13 @@ class FastHeaderParser:
         if "''" not in quoted_str:
             return quoted_str[1:end_idx]
 
-        end_idx = 1
-        while True:
-            end_idx = quoted_str.find("'", end_idx)
-            if end_idx == -1:
-                return quoted_str[1:].replace("''", "'")
-
-            if end_idx + 1 < len(quoted_str) and quoted_str[end_idx + 1] == "'":
-                end_idx += 2
-            else:
-                return quoted_str[1:end_idx].replace("''", "'")
+        # We search for the first unescaped quote AFTER the opening quote.
+        # We use [1:] to protect the opening quote at index 0 from being replaced.
+        end_idx = quoted_str[1:].replace("''", "  ").find("'")
+        if end_idx == -1:
+            return quoted_str[1:].replace("''", "'")
+        # Add 1 back to end_idx because we searched in quoted_str[1:]
+        return quoted_str[1 : end_idx + 1].replace("''", "'")
 
     @classmethod
     def parse_with_performance_tracking(cls, header_string: str) -> tuple:

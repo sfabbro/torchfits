@@ -20,25 +20,11 @@ Runnable scripts covering the main torchfits workflows. Each script is self-cont
 | [`example_polars.py`](../examples/example_polars.py) | Table workflows with [Polars](https://pola.rs/) and [Apache Arrow](https://arrow.apache.org/) |
 | [`example_table_recipes.py`](../examples/example_table_recipes.py) | Arrow scanner, [Polars](https://pola.rs/) lazy frames, and [DuckDB](https://duckdb.org/) SQL queries on FITS tables |
 
-## WCS
+## PyTorch dataset pattern
 
 | Script | What it demonstrates |
 |---|---|
-| [`example_wcs_transform.py`](../examples/example_wcs_transform.py) | Pixel-to-world and world-to-pixel transforms for 2D images and 1D spectra |
-
-## HEALPix & Spherical Harmonics
-
-| Script | What it demonstrates |
-|---|---|
-| [`example_healpix.py`](../examples/example_healpix.py) | `ang2pix`, `pix2ang`, disc queries, and map sampling with `torchfits.sphere` |
-| [`example_spectral_sht.py`](../examples/example_spectral_sht.py) | Spherical harmonic transforms: power spectra, `synfast`, `map2alm`, smoothing |
-
-## ML Integration
-
-| Script | What it demonstrates |
-|---|---|
-| [`example_image_dataset.py`](../examples/example_image_dataset.py) | PyTorch `Dataset` for FITS images with caching and `DataLoader` |
-| [`example_ml_pipeline.py`](../examples/example_ml_pipeline.py) | End-to-end pipeline: data loading, transforms, caching, distributed training |
+| [`example_image_dataset.py`](../examples/example_image_dataset.py) | Minimal PyTorch `Dataset` using `torchfits.read` and `torchfits.get_header` |
 
 ## Running
 

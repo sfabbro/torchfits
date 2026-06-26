@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_no_astropy_or_fitsio_imports_in_torchfits_python_package() -> None:
     pkg_root = Path(__file__).resolve().parents[1] / "src" / "torchfits"
-    forbidden = {"astropy", "fitsio", "numpy"}
+    forbidden = {"astropy", "fitsio", "numpy", "torchsky"}
     violations: list[str] = []
 
     for py_file in pkg_root.rglob("*.py"):

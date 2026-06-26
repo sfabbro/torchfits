@@ -86,7 +86,7 @@ def test_write_accepts_list_table_dict():
             os.remove(filename)
 
 
-def test_table_write_rich_types_pending_cfitsio_impl():
+def test_table_write_rich_types_roundtrip():
     filename = "test_write_rich_table.fits"
     table = {
         "ID": np.array([1, 2, 3], dtype=np.int32),
@@ -115,7 +115,7 @@ def test_table_write_rich_types_pending_cfitsio_impl():
             os.remove(filename)
 
 
-def test_table_write_complex_tensor_pending_cfitsio_impl():
+def test_table_write_complex_tensor_roundtrip():
     filename = "test_write_complex_tensor_table.fits"
     table = {
         "ID": torch.tensor([1, 2, 3], dtype=torch.int32),

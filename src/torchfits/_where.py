@@ -1,6 +1,6 @@
+from functools import lru_cache
 import re
 from typing import Any, Optional, List, Tuple
-from functools import lru_cache
 
 _WHERE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -118,7 +118,7 @@ def _normalize_where_syntax(where: str) -> str:
 
 
 @lru_cache(maxsize=1024)
-def _parse_where_expression(where: str):
+def parse_where_expression(where: str):
     if not isinstance(where, str) or not where.strip():
         raise ValueError("where must be a non-empty string expression")
     where = _normalize_where_syntax(where)
@@ -297,7 +297,7 @@ def _parse_where_expression(where: str):
     return ast
 
 
-def _where_columns_from_ast(ast) -> List[str]:
+def where_columns_from_ast(ast) -> List[str]:
     out: List[str] = []
     seen: set[str] = set()
 
@@ -320,38 +320,79 @@ def _where_columns_from_ast(ast) -> List[str]:
     return out
 
 
-def evaluate_where(ast: Tuple, data_map: dict) -> Any:
-    """Evaluate a where expression AST against a data map of NumPy arrays."""
+def _evaluate_cmp(ast: Tuple, data_map: dict) -> Any:
     import numpy as np
 
+    _, col, op, literal = ast
+    if col not in data_map:
+        raise ValueError(f"Unknown column: {col}")
+    val = data_map[col]
+
+    if literal is None:
+        if op == "==":
+            return np.array([v is None for v in val])
+        if op == "!=":
+            return np.array([v is not None for v in val])
+        raise ValueError("NULL comparisons only support == and !=")
+
+    if op == "==":
+        return val == literal
+    if op == "!=":
+        return val != literal
+    if op == ">":
+        return val > literal
+    if op == ">=":
+        return val >= literal
+    if op == "<":
+        return val < literal
+    if op == "<=":
+        return val <= literal
+    raise ValueError(f"Unsupported operator: {op}")
+
+
+def _evaluate_in(ast: Tuple, data_map: dict) -> Any:
+    import numpy as np
+
+    _, col, literals, negate = ast
+    if col not in data_map:
+        raise ValueError(f"Unknown column: {col}")
+    val = data_map[col]
+    # NumPy's isin handles lists of literals
+    mask = np.isin(val, literals)
+    return ~mask if negate else mask
+
+
+def _evaluate_between(ast: Tuple, data_map: dict) -> Any:
+    _, col, low, high, negate = ast
+    if col not in data_map:
+        raise ValueError(f"Unknown column: {col}")
+    val = data_map[col]
+    mask = (val >= low) & (val <= high)
+    return ~mask if negate else mask
+
+
+def _evaluate_isnull(ast: Tuple, data_map: dict) -> Any:
+    import numpy as np
+
+    _, col, negate = ast
+    if col not in data_map:
+        raise ValueError(f"Unknown column: {col}")
+    val = data_map[col]
+    # For numpy arrays, check for None or NaN depending on dtype
+    if np.issubdtype(val.dtype, np.floating):
+        mask = np.isnan(val)
+    else:
+        # For object arrays or other types, check for None
+        mask = np.array([v is None for v in val])
+    return ~mask if negate else mask
+
+
+def evaluate_where(ast: Tuple, data_map: dict) -> Any:
+    """Evaluate a where expression AST against a data map of NumPy arrays."""
     kind = ast[0]
 
     if kind == "cmp":
-        _, col, op, literal = ast
-        if col not in data_map:
-            raise ValueError(f"Unknown column: {col}")
-        val = data_map[col]
-
-        if literal is None:
-            if op == "==":
-                return np.array([v is None for v in val])
-            if op == "!=":
-                return np.array([v is not None for v in val])
-            raise ValueError("NULL comparisons only support == and !=")
-
-        if op == "==":
-            return val == literal
-        if op == "!=":
-            return val != literal
-        if op == ">":
-            return val > literal
-        if op == ">=":
-            return val >= literal
-        if op == "<":
-            return val < literal
-        if op == "<=":
-            return val <= literal
-        raise ValueError(f"Unsupported operator: {op}")
+        return _evaluate_cmp(ast, data_map)
 
     if kind == "and":
         return evaluate_where(ast[1], data_map) & evaluate_where(ast[2], data_map)
@@ -363,33 +404,17 @@ def evaluate_where(ast: Tuple, data_map: dict) -> Any:
         return ~evaluate_where(ast[1], data_map)
 
     if kind == "in":
-        _, col, literals, negate = ast
-        if col not in data_map:
-            raise ValueError(f"Unknown column: {col}")
-        val = data_map[col]
-        # NumPy's isin handles lists of literals
-        mask = np.isin(val, literals)
-        return ~mask if negate else mask
+        return _evaluate_in(ast, data_map)
 
     if kind == "between":
-        _, col, low, high, negate = ast
-        if col not in data_map:
-            raise ValueError(f"Unknown column: {col}")
-        val = data_map[col]
-        mask = (val >= low) & (val <= high)
-        return ~mask if negate else mask
+        return _evaluate_between(ast, data_map)
 
     if kind == "isnull":
-        _, col, negate = ast
-        if col not in data_map:
-            raise ValueError(f"Unknown column: {col}")
-        val = data_map[col]
-        # For numpy arrays, check for None or NaN depending on dtype
-        if np.issubdtype(val.dtype, np.floating):
-            mask = np.isnan(val)
-        else:
-            # For object arrays or other types, check for None
-            mask = np.array([v is None for v in val])
-        return ~mask if negate else mask
+        return _evaluate_isnull(ast, data_map)
 
     raise ValueError(f"Invalid AST node: {kind}")
+
+
+# Aliases for backward compatibility in tests
+_parse_where_expression = parse_where_expression
+_where_columns_from_ast = where_columns_from_ast

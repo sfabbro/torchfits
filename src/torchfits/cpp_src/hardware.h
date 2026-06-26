@@ -21,8 +21,12 @@ extern std::mutex hw_mutex;
 
 // Function declarations
 HardwareInfo detect_hardware();
-size_t calculate_optimal_chunk_size(size_t data_size, const HardwareInfo& hw, const std::string& filepath = "");
-size_t detect_storage_speed(const std::string& filepath);
+void validate_fits_filename(const std::string& filename);
+
+inline bool host_is_little_endian() {
+    const uint16_t x = 1;
+    return *reinterpret_cast<const uint8_t*>(&x) == 1;
+}
 
 // RAII wrapper for mmap
 class MMapHandle {

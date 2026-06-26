@@ -12,7 +12,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 examples = [
     "example_image.py",
     "example_table.py",
-    "example_wcs_transform.py",
     "example_table_interop.py",
 ]
 

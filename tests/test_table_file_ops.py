@@ -86,7 +86,7 @@ def test_table_append_update_rename_drop():
         os.unlink(path)
 
 
-def test_tablehdu_to_fits_rich_types_pending_cfitsio_impl():
+def test_tablehdu_to_fits_rich_types_roundtrip():
     dst = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
     dst.close()
     table_hdu = torchfits.TableHDU(
@@ -161,7 +161,7 @@ def test_table_vla_roundtrip_and_updates():
         os.unlink(path.name)
 
 
-def test_table_write_schema_pending_cfitsio_impl():
+def test_table_write_schema_roundtrip():
     path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
     path.close()
     try:
@@ -179,7 +179,7 @@ def test_table_write_schema_pending_cfitsio_impl():
         os.unlink(path.name)
 
 
-def test_table_write_ascii_pending_cfitsio_impl():
+def test_table_write_ascii_roundtrip():
     path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
     path.close()
     try:

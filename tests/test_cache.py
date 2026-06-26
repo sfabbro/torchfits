@@ -194,6 +194,7 @@ class TestCaching:
 
     def test_cold_nommap_heuristic_with_cache_enabled_int16(self):
         """Large int16 images should prefer non-mmap even when cache is enabled."""
+        import torchfits.io
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
             from astropy.io import fits
 
@@ -203,7 +204,7 @@ class TestCaching:
 
         try:
             torchfits.clear_file_cache()
-            assert torchfits._should_use_cold_nommap(
+            assert torchfits.io._should_use_cold_nommap(
                 path, 0, cache_capacity=10, mmap=True
             )
         finally:
@@ -213,6 +214,7 @@ class TestCaching:
 
     def test_cold_nommap_heuristic_float64_and_small_guard(self):
         """64-bit and sub-1MiB payloads should keep mmap enabled by default."""
+        import torchfits.io
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f_large:
             from astropy.io import fits
 
@@ -228,10 +230,10 @@ class TestCaching:
 
         try:
             torchfits.clear_file_cache()
-            assert not torchfits._should_use_cold_nommap(
+            assert not torchfits.io._should_use_cold_nommap(
                 large_path, 0, cache_capacity=10, mmap=True
             )
-            assert not torchfits._should_use_cold_nommap(
+            assert not torchfits.io._should_use_cold_nommap(
                 small_path, 0, cache_capacity=10, mmap=True
             )
         finally:
@@ -242,19 +244,21 @@ class TestCaching:
 
     def test_read_mmap_auto_defaults_to_false_for_compressed(self, monkeypatch):
         """In smart policy, `mmap='auto'` should disable mmap for compressed HDUs."""
-        cpp = pytest.importorskip("torchfits.cpp")
+        import torchfits.io
+        import torchfits._C as cpp
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
 
+        filepath, _ = self.create_test_fits()
         observed = []
 
         monkeypatch.setattr(
-            torchfits,
+            torchfits.io,
             "_get_image_meta",
             lambda path, hdu: (-32, 2, (64, 64), 1.0, 0.0, True),
         )
         monkeypatch.setattr(
-            torchfits,
+            torchfits.io,
             "_should_use_cold_nommap",
             lambda *args, **kwargs: (_ for _ in ()).throw(
                 AssertionError(
@@ -279,33 +283,40 @@ class TestCaching:
             )[1],
         )
 
-        out = torchfits.read(
-            "synthetic_compressed.fits",
-            hdu=1,
-            mmap="auto",
-            policy="smart",
-            cache_capacity=10,
-            handle_cache_capacity=16,
-        )
+        try:
+            out = torchfits.read(
+                filepath,
+                hdu=0,
+                mmap="auto",
+                policy="smart",
+                cache_capacity=10,
+                handle_cache_capacity=16,
+            )
 
-        assert isinstance(out, torch.Tensor)
-        assert observed == [False]
+            assert isinstance(out, torch.Tensor)
+            assert observed == [False]
+        finally:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+            torchfits.clear_file_cache()
 
     def test_read_mmap_true_is_explicit_override(self, monkeypatch):
         """In smart policy, `mmap=True` must stay enabled for compressed metadata."""
-        cpp = pytest.importorskip("torchfits.cpp")
+        import torchfits.io
+        import torchfits._C as cpp
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
 
+        filepath, _ = self.create_test_fits()
         observed = []
 
         monkeypatch.setattr(
-            torchfits,
+            torchfits.io,
             "_get_image_meta",
             lambda path, hdu: (-32, 2, (64, 64), 1.0, 0.0, True),
         )
         monkeypatch.setattr(
-            torchfits,
+            torchfits.io,
             "_should_use_cold_nommap",
             lambda *args, **kwargs: (_ for _ in ()).throw(
                 AssertionError(
@@ -330,22 +341,29 @@ class TestCaching:
             )[1],
         )
 
-        out = torchfits.read(
-            "synthetic_compressed.fits",
-            hdu=1,
-            mmap=True,
-            policy="smart",
-            cache_capacity=10,
-            handle_cache_capacity=16,
-        )
+        try:
+            out = torchfits.read(
+                filepath,
+                hdu=0,
+                mmap=True,
+                policy="smart",
+                cache_capacity=10,
+                handle_cache_capacity=16,
+            )
 
-        assert isinstance(out, torch.Tensor)
-        assert observed == [True]
+            assert isinstance(out, torch.Tensor)
+            assert observed == [True]
+        finally:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+            torchfits.clear_file_cache()
 
     def test_read_mmap_auto_default_policy_uses_direct_mmap(self, monkeypatch):
         """Default policy should skip smart auto-mmap heuristics."""
-        cpp = pytest.importorskip("torchfits.cpp")
+        import torchfits.io
+        import torchfits._C as cpp
 
+        filepath, _ = self.create_test_fits()
         observed = []
         monkeypatch.setattr(
             cpp,
@@ -365,17 +383,22 @@ class TestCaching:
                 )[1],
             )
 
-        out = torchfits.read(
-            "synthetic_direct.fits",
-            hdu=1,
-            mmap="auto",
-            policy="default",
-            cache_capacity=10,
-            handle_cache_capacity=16,
-        )
+        try:
+            out = torchfits.read(
+                filepath,
+                hdu=0,
+                mmap="auto",
+                policy="default",
+                cache_capacity=10,
+                handle_cache_capacity=16,
+            )
 
-        assert isinstance(out, torch.Tensor)
-        assert observed == [True]
+            assert isinstance(out, torch.Tensor)
+            assert observed == [True]
+        finally:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+            torchfits.clear_file_cache()
 
     def test_read_rejects_invalid_mmap_mode(self):
         """Only bool or 'auto' mmap mode should be accepted."""

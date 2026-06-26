@@ -1,3 +1,4 @@
+#include "security.h"
 
 #include "compression.h"
 #include <fitsio.h>
@@ -7,6 +8,7 @@
 #include <unistd.h>
 #include <vector>
 #include <thread>
+#include "hardware.h"
 #include <iostream>
 #include <algorithm>
 #include <stdexcept>
@@ -168,8 +170,10 @@ inline uint32_t bswap32(uint32_t x) { return __builtin_bswap32(x); }
 inline uint64_t bswap64(uint64_t x) { return __builtin_bswap64(x); }
 
 torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threads) {
+    torchfits::validate_fits_filename(path);
     int status = 0;
     fitsfile* fptr = nullptr;
+    torchfits::check_fits_filename_security(path);
     fits_open_file(&fptr, path.c_str(), READONLY, &status);
     check_status(status, "open_file");
 
@@ -287,7 +291,8 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
             // Call vendored logic
             int err = tf_rdecomp(cdata, (int)len, scratch.data(), (int)npix, 32);
             if (err) {
-                 memset(scratch.data(), 0, npix * sizeof(unsigned int));
+                throw std::runtime_error(
+                    "RICE decompression failed for tile row " + std::to_string(r));
             }
 
             if (output.scalar_type() == torch::kFloat32) {
@@ -322,4 +327,21 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     }
 
     return output;
+}
+
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include "torch_compat.h"
+
+namespace nb = nanobind;
+
+void bind_compression(nb::module_& m) {
+    m.def("read_rice_parallel", [](const std::string& filename, int hdu_num, int num_threads) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_rice_parallel(filename, hdu_num, num_threads);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("num_threads") = -1);
 }

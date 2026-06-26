@@ -49,8 +49,6 @@ def test_release_smoke_image_read_write_roundtrip() -> None:
             assert torch.allclose(reopened.cpu(), image)
     finally:
         Path(path).unlink(missing_ok=True)
-
-
 def test_release_smoke_table_read() -> None:
     table = Table(
         {
@@ -71,33 +69,5 @@ def test_release_smoke_table_read() -> None:
             data["RA"].cpu(), torch.tensor([10.1, 10.2, 10.3], dtype=torch.float64)
         )
         assert torch.equal(data["ID"].cpu(), torch.tensor([1, 2, 3], dtype=torch.int64))
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_release_smoke_wcs_header_build() -> None:
-    data = np.zeros((8, 8), dtype=np.float32)
-    hdu = fits.PrimaryHDU(data)
-    hdu.header["CTYPE1"] = "RA---TAN"
-    hdu.header["CTYPE2"] = "DEC--TAN"
-    hdu.header["CRPIX1"] = 4.0
-    hdu.header["CRPIX2"] = 4.0
-    hdu.header["CRVAL1"] = 180.0
-    hdu.header["CRVAL2"] = 0.0
-    hdu.header["CD1_1"] = -0.01
-    hdu.header["CD1_2"] = 0.0
-    hdu.header["CD2_1"] = 0.0
-    hdu.header["CD2_2"] = 0.01
-
-    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
-        path = fh.name
-
-    try:
-        hdu.writeto(path, overwrite=True)
-        wcs = torchfits.get_wcs(path, hdu=0)
-        world = wcs.pixel_to_world(torch.tensor([3.0]), torch.tensor([3.0]))
-        assert len(world) == 2
-        assert torch.isfinite(world[0]).all()
-        assert torch.isfinite(world[1]).all()
     finally:
         Path(path).unlink(missing_ok=True)

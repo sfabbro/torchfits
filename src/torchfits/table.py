@@ -1,10 +1,13 @@
 """Arrow-native table I/O helpers."""
 
-from collections.abc import Iterable, Iterator
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator, Mapping
 from collections import OrderedDict
 import atexit
 import itertools
 import os
+import logging
 import re
 import threading
 from typing import Any, Optional, TYPE_CHECKING
@@ -15,9 +18,12 @@ if TYPE_CHECKING:
     import numpy as np
 
 from ._where import (
-    _parse_where_expression,
-    _where_columns_from_ast,
+    parse_where_expression,
+    where_columns_from_ast,
 )
+from ._table_engine import validate_table_backend
+
+logger = logging.getLogger(__name__)
 
 _TABLE_IO_KEYS = {
     "hdu",
@@ -57,13 +63,16 @@ _reader_cache_lock = threading.Lock()
 _reader_cache: "OrderedDict[tuple[str, int], Any]" = OrderedDict()
 _VLA_DTYPE_MAP: dict[str, Any] = {}
 _COMPLEX_DTYPE_MAP: dict[str, Any] = {}
+# FITS binary-table TFORM codes for complex columns (membership checks use this so a
+# corrupted ``_COMPLEX_DTYPE_MAP`` cannot turn ``x in map`` into a brittle set-only path).
+_COMPLEX_TFORM_CODES: frozenset[str] = frozenset({"C", "M"})
 
 
 def _close_cpp_handle(handle: Any) -> None:
     try:
         handle.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to close C++ handle: %s", e)
 
 
 def _acquire_cpp_handle(path: str, cpp) -> Any:
@@ -200,24 +209,112 @@ def _parse_tform(tform: str) -> tuple[bool, str, int]:
     return False, "", 1
 
 
-def _column_tnull_map(header_map: dict[str, Any]) -> dict[str, Any]:
-    name_by_idx: dict[int, str] = {}
-    tnull_by_idx: dict[int, Any] = {}
-    for key, value in header_map.items():
-        key_u = str(key).upper()
-        if key_u.startswith("TTYPE"):
-            suffix = key_u[5:]
-            if suffix.isdigit():
-                name_by_idx[int(suffix)] = str(value)
-        elif key_u.startswith("TNULL"):
-            suffix = key_u[5:]
-            if suffix.isdigit():
-                tnull_by_idx[int(suffix)] = value
+def _fits_header_table_has_vla(header: Mapping[str, Any]) -> bool:
+    """True if any column uses FITS P/Q (variable-length array) heap storage."""
+    try:
+        tfields = int(header.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        return False
+    for i in range(1, tfields + 1):
+        raw = header.get(f"TFORM{i}")
+        if raw is None:
+            continue
+        raw_str = str(raw)
+        # Fast path rejection for VLA indicators before running regex
+        if (
+            "P" not in raw_str
+            and "Q" not in raw_str
+            and "p" not in raw_str
+            and "q" not in raw_str
+        ):
+            continue
+        is_vla, _, _ = _parse_tform(raw_str)
+        if is_vla:
+            return True
+    return False
 
+
+def _fits_header_column_is_vla(header: Mapping[str, Any], col_name: str) -> bool:
+    try:
+        tfields = int(header.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        return False
+    want = str(col_name)
+    for i in range(1, tfields + 1):
+        ttype = header.get(f"TTYPE{i}")
+        if ttype is None or str(ttype) != want:
+            continue
+        raw = header.get(f"TFORM{i}", "")
+        raw_str = str(raw)
+        if (
+            "P" not in raw_str
+            and "Q" not in raw_str
+            and "p" not in raw_str
+            and "q" not in raw_str
+        ):
+            return False
+        return _parse_tform(raw_str)[0]
+    return False
+
+
+def _fits_header_selected_includes_vla(
+    header: Mapping[str, Any], columns: Optional[list[str]]
+) -> bool:
+    """True when the read projection would include at least one VLA column."""
+    if columns is None:
+        return _fits_header_table_has_vla(header)
+
+    try:
+        tfields = int(header.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        return False
+
+    want = set(columns)
+    for i in range(1, tfields + 1):
+        ttype = header.get(f"TTYPE{i}")
+        if ttype is not None and str(ttype) in want:
+            raw = header.get(f"TFORM{i}")
+            if raw is not None:
+                raw_str = str(raw)
+                if "P" in raw_str or "Q" in raw_str or "p" in raw_str or "q" in raw_str:
+                    is_vla, _, _ = _parse_tform(raw_str)
+                    if is_vla:
+                        return True
+    return False
+
+
+def _column_tnull_map(header_map: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for idx, name in name_by_idx.items():
-        if idx in tnull_by_idx:
-            out[name] = tnull_by_idx[idx]
+
+    try:
+        tfields = int(header_map.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        tfields = 0
+
+    if tfields > 0:
+        for i in range(1, tfields + 1):
+            tnull = header_map.get(f"TNULL{i}")
+            if tnull is not None:
+                ttype = header_map.get(f"TTYPE{i}")
+                if ttype is not None:
+                    out[str(ttype)] = tnull
+    else:
+        name_by_idx: dict[int, str] = {}
+        tnull_by_idx: dict[int, Any] = {}
+        for key, value in header_map.items():
+            key_u = str(key).upper()
+            if key_u.startswith("TTYPE"):
+                suffix = key_u[5:]
+                if suffix.isdigit():
+                    name_by_idx[int(suffix)] = str(value)
+            elif key_u.startswith("TNULL"):
+                suffix = key_u[5:]
+                if suffix.isdigit():
+                    tnull_by_idx[int(suffix)] = value
+
+        for idx, name in name_by_idx.items():
+            if idx in tnull_by_idx:
+                out[name] = tnull_by_idx[idx]
     return out
 
 
@@ -256,7 +353,7 @@ def _default_table_column_values(
     if code == "A":
         return [""] * num_rows
 
-    if code in _COMPLEX_DTYPE_MAP:
+    if code in _COMPLEX_TFORM_CODES:
         dtype = _COMPLEX_DTYPE_MAP[code]
         shape = (num_rows,) if repeat == 1 else (num_rows, repeat)
         return np.zeros(shape, dtype=dtype)
@@ -310,7 +407,6 @@ def _normalize_mutation_rows(
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
     complex_codes: dict[str, str] = {}
-    _COMPLEX_DTYPE_MAP = {"C": "complex64", "M": "complex128"}
     for col_name in columns:
         tform = tform_map.get(col_name, "")
         if not tform:
@@ -318,7 +414,7 @@ def _normalize_mutation_rows(
         is_vla, code, repeat = _parse_tform(tform)
         if is_vla:
             vla_codes[col_name] = code
-        elif code in _COMPLEX_DTYPE_MAP:
+        elif code in _COMPLEX_TFORM_CODES:
             complex_codes[col_name] = code
         elif code == "A":
             string_widths[col_name] = repeat
@@ -550,7 +646,7 @@ def _compile_where_to_simple_predicates(
     of simple binary comparisons.
     """
     try:
-        ast = _parse_where_expression(where)
+        ast = parse_where_expression(where)
     except Exception:
         return None
 
@@ -586,7 +682,7 @@ def _where_mask_for_table(table, where: str, parsed_ast=None) -> "np.ndarray":
     pa = _require_pyarrow()
     import pyarrow.compute as pc
 
-    ast = parsed_ast if parsed_ast is not None else _parse_where_expression(where)
+    ast = parsed_ast if parsed_ast is not None else parse_where_expression(where)
 
     def _get_predicate_column(column_name: str):
         if column_name not in table.column_names:
@@ -713,8 +809,8 @@ def _resolve_rows_from_where_cpp(
     mmap: bool,
     apply_fits_nulls: bool,
 ) -> Optional[list[int]]:
-    where_ast = _parse_where_expression(where)
-    where_columns = _where_columns_from_ast(where_ast)
+    where_ast = parse_where_expression(where)
+    where_columns = where_columns_from_ast(where_ast)
     predicate_table = _read_cpp_numpy_table(
         path=path,
         hdu=hdu,
@@ -790,6 +886,8 @@ def _tensor_to_arrow_array(
     encoding: str,
     strip: bool,
     null_sentinel: Any = None,
+    *,
+    fits_tform: str | None = None,
 ):
     t = tensor.detach()
     if t.device.type != "cpu":
@@ -798,7 +896,13 @@ def _tensor_to_arrow_array(
         t = t.contiguous()
 
     return _numpy_to_arrow_array(
-        pa, t.numpy(), decode_bytes, encoding, strip, null_sentinel=null_sentinel
+        pa,
+        t.numpy(),
+        decode_bytes,
+        encoding,
+        strip,
+        null_sentinel=null_sentinel,
+        fits_tform=fits_tform,
     )
 
 
@@ -853,6 +957,8 @@ def _numpy_to_arrow_array(
     encoding: str,
     strip: bool,
     null_sentinel: Any = None,
+    *,
+    fits_tform: str | None = None,
 ):
     import numpy as np
 
@@ -867,7 +973,7 @@ def _numpy_to_arrow_array(
         return _pa_array(pa, arr)
     if arr.ndim == 2:
         if arr.dtype == np.uint8:
-            if decode_bytes:
+            if decode_bytes and not _fits_tform_is_bit(fits_tform):
                 return _decode_uint8_matrix_to_arrow(pa, arr, encoding, strip)
             return _uint8_matrix_to_fixed_binary(pa, arr)
         flat = arr.reshape(-1)
@@ -923,10 +1029,20 @@ def _chunk_to_record_batch(
     preferred_order: Optional[list[str]] = None,
     null_meta: Optional[dict[str, dict[str, str]]] = None,
     apply_fits_nulls: bool = False,
+    column_tforms: Optional[dict[str, str]] = None,
 ):
     import numpy as np
 
     pa = _require_pyarrow()
+
+    def _tform_for(name: str) -> str | None:
+        if column_tforms:
+            tf = column_tforms.get(name)
+            if tf:
+                return tf
+        if field_meta and name in field_meta:
+            return field_meta[name].get("fits_tform")
+        return None
 
     # Fast path when schema metadata is not requested.
     if not field_meta and not table_meta:
@@ -960,6 +1076,7 @@ def _chunk_to_record_batch(
                     encoding,
                     strip,
                     null_sentinel=null_sentinel,
+                    fits_tform=_tform_for(name),
                 )
             elif isinstance(value, np.ndarray):
                 pydict[name] = _numpy_to_arrow_array(
@@ -969,6 +1086,7 @@ def _chunk_to_record_batch(
                     encoding,
                     strip,
                     null_sentinel=null_sentinel,
+                    fits_tform=_tform_for(name),
                 )
             elif isinstance(value, list):
                 converted = []
@@ -1010,11 +1128,23 @@ def _chunk_to_record_batch(
         )
         if isinstance(value, torch.Tensor):
             arr = _tensor_to_arrow_array(
-                pa, value, decode_bytes, encoding, strip, null_sentinel=null_sentinel
+                pa,
+                value,
+                decode_bytes,
+                encoding,
+                strip,
+                null_sentinel=null_sentinel,
+                fits_tform=_tform_for(name),
             )
         elif isinstance(value, np.ndarray):
             arr = _numpy_to_arrow_array(
-                pa, value, decode_bytes, encoding, strip, null_sentinel=null_sentinel
+                pa,
+                value,
+                decode_bytes,
+                encoding,
+                strip,
+                null_sentinel=null_sentinel,
+                fits_tform=_tform_for(name),
             )
         elif isinstance(value, list):
             converted = []
@@ -1071,17 +1201,40 @@ def _build_fits_metadata(
         tf_count = 0
 
     for i in range(1, tf_count + 1):
-        name = header.get(f"TTYPE{i}")
+        si = str(i)
+        name = header.get("TTYPE" + si)
         if not isinstance(name, str) or not name:
             continue
         if selected_columns is not None and name not in selected_columns:
             continue
 
+        # Optimize by unrolling the loop and avoiding inner string operations
         entry: dict[str, str] = {}
-        for key_name in ("TFORM", "TUNIT", "TDIM", "TNULL", "TSCAL", "TZERO"):
-            value = header.get(f"{key_name}{i}")
-            if value is not None:
-                entry[f"fits_{key_name.lower()}"] = str(value)
+
+        v = header.get("TFORM" + si)
+        if v is not None:
+            entry["fits_tform"] = str(v)
+
+        v = header.get("TUNIT" + si)
+        if v is not None:
+            entry["fits_tunit"] = str(v)
+
+        v = header.get("TDIM" + si)
+        if v is not None:
+            entry["fits_tdim"] = str(v)
+
+        v = header.get("TNULL" + si)
+        if v is not None:
+            entry["fits_tnull"] = str(v)
+
+        v = header.get("TSCAL" + si)
+        if v is not None:
+            entry["fits_tscal"] = str(v)
+
+        v = header.get("TZERO" + si)
+        if v is not None:
+            entry["fits_tzero"] = str(v)
+
         if entry:
             field_meta[name] = entry
 
@@ -1097,6 +1250,29 @@ def _column_tform_code_and_repeat(tform: Any) -> tuple[str, int] | None:
     repeat_text, code = m.groups()
     repeat = int(repeat_text) if repeat_text else 1
     return code.upper(), repeat
+
+
+def _fits_tform_is_bit(tform: Any) -> bool:
+    parsed = _column_tform_code_and_repeat(tform)
+    return parsed is not None and parsed[0] == "X"
+
+
+def _column_tforms_for_decode(
+    path: str,
+    hdu: int,
+    selected_columns: Optional[set[str]],
+) -> dict[str, str]:
+    """Map column name -> FITS TFORM for uint8-matrix decode (BIT vs character)."""
+    out: dict[str, str] = {}
+    try:
+        fm, _ = _build_fits_metadata(path, hdu, selected_columns)
+        for col, meta in fm.items():
+            tf = meta.get("fits_tform")
+            if tf:
+                out[col] = tf
+    except Exception:
+        pass
+    return out
 
 
 def _can_use_mmap_row_path_for_full_read(
@@ -1202,7 +1378,7 @@ def _iter_chunks_cpp_numpy(
     mmap: bool,
 ):
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     if not hasattr(cpp, "read_fits_table_rows_numpy_from_handle"):
         return None
@@ -1266,7 +1442,7 @@ def scan(
     where: Optional[str] = None,
     batch_size: int = 65536,
     mmap: bool = True,
-    decode_bytes: bool = False,
+    decode_bytes: bool = True,
     encoding: str = "ascii",
     strip: bool = True,
     include_fits_metadata: bool = False,
@@ -1277,11 +1453,11 @@ def scan(
     Stream a FITS table as Arrow record batches.
 
     This is out-of-core friendly: each yielded batch is independently materialized.
+    FITS character columns are decoded to Python strings by default (`decode_bytes=True`).
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
-    if backend not in {"auto", "torch", "cpp_numpy"}:
-        raise ValueError("backend must be one of: auto, torch, cpp_numpy")
+    validate_table_backend(backend)
 
     if where is not None:
         table = read(
@@ -1308,6 +1484,9 @@ def scan(
     if num_rows == 0:
         return
     selected = set(columns) if columns else None
+    col_tforms = (
+        _column_tforms_for_decode(path, hdu, selected) if decode_bytes else None
+    )
     field_meta: dict[str, dict[str, str]] = {}
     table_meta: dict[str, str] = {}
     need_field_meta = include_fits_metadata or apply_fits_nulls
@@ -1350,6 +1529,7 @@ def scan(
             preferred_order=preferred_order,
             null_meta=field_meta,
             apply_fits_nulls=apply_fits_nulls,
+            column_tforms=col_tforms,
         )
 
 
@@ -1362,16 +1542,18 @@ def read(
     where: Optional[str] = None,
     batch_size: int = 65536,
     mmap: bool = True,
-    decode_bytes: bool = False,
+    decode_bytes: bool = True,
     encoding: str = "ascii",
     strip: bool = True,
     include_fits_metadata: bool = False,
     apply_fits_nulls: bool = True,
     backend: str = "auto",
 ):
-    """Read a FITS table into an Arrow Table."""
-    if backend not in {"auto", "torch", "cpp_numpy"}:
-        raise ValueError("backend must be one of: auto, torch, cpp_numpy")
+    """Read a FITS table into an Arrow Table.
+
+    FITS character columns are decoded to Python strings by default (`decode_bytes=True`).
+    """
+    validate_table_backend(backend)
     pa = _require_pyarrow()
 
     if backend in {"auto", "cpp_numpy"}:
@@ -1408,35 +1590,38 @@ def read(
         # into Arrow and then filtering is often faster than the pushdown scanner
         # (which has higher per-batch overhead and IPC costs).
 
-        # Check table size if possible
         import torchfits
 
-        is_vla_table = False
+        header_ok = False
+        hdr: Mapping[str, Any] = {}
+        n_rows = 0
         try:
             hdr = torchfits.get_header(path, hdu)
             n_rows = int(hdr.get("NAXIS2", 0))
-
-            # Detect if this is a VLA table (look for 'P' or 'Q' in TFORM keywords)
-            tfields = int(hdr.get("TFIELDS", 0))
-            for i in range(1, tfields + 1):
-                tform = str(hdr.get(f"TFORM{i}", "")).strip().upper()
-                if "P" in tform or "Q" in tform:
-                    is_vla_table = True
-                    break
+            header_ok = True
         except Exception:
-            n_rows = 1000001  # assume large if unsure
+            # Without NAXIS2 / TFIELDS we cannot safely choose mmap pushdown (see below).
+            n_rows = 0
 
-        # Hybrid strategy: for small-to-medium tables, reading the full projected table
-        # into Arrow and then filtering is often faster than the pushdown scanner
-        # (which has higher per-batch overhead and IPC costs).
-        # Default threshold is 100,000 rows, but much lower for VLA tables.
+        is_vla_table = _fits_header_table_has_vla(hdr) if header_ok else False
+        vla_in_projection = (
+            _fits_header_selected_includes_vla(hdr, columns) if header_ok else True
+        )
+        # read_fits_table_filtered mmap gather skips P/Q columns silently; never use it when
+        # the caller expects VLA data. Without header metadata, skip pushdown as well.
+        cpp_pushdown_safe = header_ok and not vla_in_projection
+
+        # Default threshold is 100,000 rows, but lower for VLA tables (heap I/O dominates).
         default_threshold = 1000 if is_vla_table else 100000
         threshold = int(
             os.environ.get("TORCHFITS_TABLE_SCANNER_THRESHOLD", str(default_threshold))
         )
 
-        # If it's a small table, or backend is forced to torch, avoid pushdown scanner
-        if n_rows <= threshold or backend == "torch":
+        use_arrow_where_first = (
+            n_rows <= threshold or backend == "torch" or not cpp_pushdown_safe
+        )
+
+        if use_arrow_where_first:
             base = read(
                 path,
                 hdu=hdu,
@@ -1458,7 +1643,7 @@ def read(
             return base.filter(mask)
 
         # For larger tables, try fast path: Predicate Pushdown (C++ scanner)
-        import torchfits.cpp as cpp
+        import torchfits._C as cpp
 
         if hasattr(cpp, "read_fits_table_filtered"):
             filters = _compile_where_to_simple_predicates(where)
@@ -1486,6 +1671,11 @@ def read(
                     )
 
                     # Convert to Arrow Table
+                    pushdown_tforms = (
+                        _column_tforms_for_decode(path, hdu, set(target_cols))
+                        if decode_bytes
+                        else None
+                    )
                     arrays = []
                     names_out = []
                     for name in target_cols:
@@ -1499,7 +1689,14 @@ def read(
                                 if not val.is_contiguous():
                                     val = val.contiguous()
                                 arr = _numpy_to_arrow_array(
-                                    pa, val.numpy(), decode_bytes, encoding, strip
+                                    pa,
+                                    val.numpy(),
+                                    decode_bytes,
+                                    encoding,
+                                    strip,
+                                    fits_tform=pushdown_tforms.get(name)
+                                    if pushdown_tforms
+                                    else None,
                                 )
                                 arrays.append(arr)
                                 names_out.append(name)
@@ -1560,7 +1757,7 @@ def schema(
     hdu: int = 1,
     columns: Optional[list[str]] = None,
     where: Optional[str] = None,
-    decode_bytes: bool = False,
+    decode_bytes: bool = True,
     encoding: str = "ascii",
     strip: bool = True,
     include_fits_metadata: bool = False,
@@ -1569,8 +1766,7 @@ def schema(
 ):
     """Fetch Arrow schema for a FITS table with minimal read."""
     pa = _require_pyarrow()
-    if backend not in {"auto", "torch", "cpp_numpy"}:
-        raise ValueError("backend must be one of: auto, torch, cpp_numpy")
+    validate_table_backend(backend)
     scan_backend = backend
     iterator = scan(
         path,
@@ -1606,7 +1802,7 @@ def _read_cpp_numpy_table(
     apply_fits_nulls: bool,
 ):
     import numpy as np
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     has_numpy_row_api = hasattr(
         cpp, "read_fits_table_rows_numpy_from_handle"
@@ -1644,6 +1840,9 @@ def _read_cpp_numpy_table(
         num_rows = -1
 
     selected = set(columns) if columns else None
+    col_tforms = (
+        _column_tforms_for_decode(path, hdu, selected) if decode_bytes else None
+    )
     field_meta: dict[str, dict[str, str]] = {}
     table_meta: dict[str, str] = {}
     need_field_meta = include_fits_metadata or apply_fits_nulls
@@ -1746,19 +1945,19 @@ def _read_cpp_numpy_table(
 
         order = np.argsort(rows_arr, kind="stable")
         sorted_rows = rows_arr[order]
-        ranges: list[tuple[int, int]] = []
-        start0 = int(sorted_rows[0])
-        length = 1
-        for i in range(1, len(sorted_rows)):
-            cur = int(sorted_rows[i])
-            prev = int(sorted_rows[i - 1])
-            if cur == prev + 1:
-                length += 1
-                continue
-            ranges.append((start0, length))
-            start0 = cur
-            length = 1
-        ranges.append((start0, length))
+
+        if len(sorted_rows) == 0:
+            ranges: list[tuple[int, int]] = []
+        else:
+            diffs = np.diff(sorted_rows)
+            breaks = np.nonzero(diffs != 1)[0]
+            start_indices = np.insert(breaks + 1, 0, 0)
+            end_indices = np.append(breaks, len(sorted_rows) - 1)
+
+            start0s = sorted_rows[start_indices]
+            lengths = end_indices - start_indices + 1
+
+            ranges = list(zip(start0s.tolist(), lengths.tolist()))
 
         try:
             reader = _acquire_cpp_reader(path, hdu, cpp)
@@ -1833,6 +2032,7 @@ def _read_cpp_numpy_table(
                     encoding,
                     strip,
                     null_sentinel=null_sentinel,
+                    fits_tform=col_tforms.get(name) if col_tforms else None,
                 )
             elif isinstance(value, torch.Tensor):
                 t = value.detach()
@@ -1847,6 +2047,7 @@ def _read_cpp_numpy_table(
                     encoding,
                     strip,
                     null_sentinel=null_sentinel,
+                    fits_tform=col_tforms.get(name) if col_tforms else None,
                 )
             elif isinstance(value, list):
                 converted = []
@@ -1881,6 +2082,7 @@ def _read_cpp_numpy_table(
         preferred_order=preferred_order,
         null_meta=field_meta,
         apply_fits_nulls=apply_fits_nulls,
+        column_tforms=col_tforms,
     )
     return pa.Table.from_batches([batch])
 
@@ -1960,7 +2162,7 @@ def reader(
     where: Optional[str] = None,
     batch_size: int = 65536,
     mmap: bool = True,
-    decode_bytes: bool = False,
+    decode_bytes: bool = True,
     encoding: str = "ascii",
     strip: bool = True,
     include_fits_metadata: bool = True,
@@ -1971,10 +2173,10 @@ def reader(
     Return a PyArrow RecordBatchReader for streaming interoperability.
 
     This plugs directly into Arrow ecosystem tools without materializing the table.
+    FITS character columns are decoded to Python strings by default (`decode_bytes=True`).
     """
     pa = _require_pyarrow()
-    if backend not in {"auto", "torch", "cpp_numpy"}:
-        raise ValueError("backend must be one of: auto, torch, cpp_numpy")
+    validate_table_backend(backend)
     scan_backend = backend
     batches = scan(
         path,
@@ -2276,6 +2478,17 @@ def duckdb_query(
         connection=con,
         **kwargs,
     )
+    # Prevent SQL injection by strictly enforcing exactly one SELECT or EXPLAIN statement
+    statements = duckdb.extract_statements(query)
+    if len(statements) != 1:
+        raise ValueError("query must contain exactly one SQL statement")
+
+    stmt_type = statements[0].type
+    if stmt_type not in {duckdb.StatementType.SELECT, duckdb.StatementType.EXPLAIN}:
+        raise ValueError(
+            f"query must be a SELECT or EXPLAIN statement, got {stmt_type}"
+        )
+
     result = con.sql(query)
     if return_arrow:
         return result.arrow()
@@ -2416,7 +2629,7 @@ def write(
     import torchfits
 
     if schema or table_kind == "ascii":
-        import torchfits.cpp as cpp
+        import torchfits._C as cpp
 
         # Overwriting/creating a table can otherwise leave stale cached handles/metadata.
         torchfits._invalidate_path_caches(path)
@@ -2429,6 +2642,8 @@ def write(
             schema if schema else None,
             table_kind,
         )
+        if hdr:
+            torchfits._write_header_cards_if_supported(path, 1, hdr)
         torchfits._invalidate_path_caches(path)
         return
 
@@ -2441,6 +2656,9 @@ def _header_cards_to_mapping(header_cards: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if isinstance(header_cards, (list, tuple)):
         for card in header_cards:
+            if hasattr(card, "key") and hasattr(card, "value"):
+                out[str(card.key)] = card.value
+                continue
             if not isinstance(card, (list, tuple)) or len(card) < 2:
                 continue
             out[str(card[0])] = card[1]
@@ -2448,20 +2666,17 @@ def _header_cards_to_mapping(header_cards: Any) -> dict[str, Any]:
 
 
 def _column_tform_map(header_map: dict[str, Any]) -> dict[str, str]:
-    name_by_idx: dict[int, str] = {}
+    out: dict[str, str] = {}
+
+    name_by_idx = _column_name_index_map(header_map)
     tform_by_idx: dict[int, str] = {}
     for key, value in header_map.items():
         key_u = str(key).upper()
-        if key_u.startswith("TTYPE"):
-            suffix = key_u[5:]
-            if suffix.isdigit():
-                name_by_idx[int(suffix)] = str(value)
-        elif key_u.startswith("TFORM"):
+        if key_u.startswith("TFORM"):
             suffix = key_u[5:]
             if suffix.isdigit():
                 tform_by_idx[int(suffix)] = str(value)
 
-    out: dict[str, str] = {}
     for idx, name in name_by_idx.items():
         out[name] = tform_by_idx.get(idx, "")
     return out
@@ -2469,6 +2684,19 @@ def _column_tform_map(header_map: dict[str, Any]) -> dict[str, str]:
 
 def _column_name_index_map(header_map: dict[str, Any]) -> dict[int, str]:
     out: dict[int, str] = {}
+
+    try:
+        tfields = int(header_map.get("TFIELDS", 0))
+    except (ValueError, TypeError):
+        tfields = 0
+
+    if tfields > 0:
+        for i in range(1, tfields + 1):
+            val = header_map.get(f"TTYPE{i}")
+            if val is not None:
+                out[i] = str(val)
+        return out
+
     for key, value in header_map.items():
         key_u = str(key).upper()
         if not key_u.startswith("TTYPE"):
@@ -2533,7 +2761,7 @@ def _sanitize_table_header_for_rewrite(header_map: dict[str, Any]) -> dict[str, 
         key_u = key_s.upper()
         if key_u in skip_exact:
             continue
-        if any(key_u.startswith(prefix) for prefix in skip_prefixes):
+        if key_u.startswith(skip_prefixes):
             continue
         out[key_s] = value
     return out
@@ -2631,7 +2859,7 @@ def _normalize_column_values_for_format(
     if code == "A":
         return _coerce_table_string_values(name, values, expected_rows=expected_rows)
 
-    if code in _COMPLEX_DTYPE_MAP:
+    if code in _COMPLEX_TFORM_CODES:
         arr = _coerce_table_complex_values(
             name, values, code, expected_rows=expected_rows, allow_2d=True
         )
@@ -2677,7 +2905,7 @@ def _rewrite_table_hdu_with_schema(
 ) -> None:
     import tempfile
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     can_overwrite_table_only = False
     handle = cpp.open_fits_file(path, "r")
@@ -2746,7 +2974,7 @@ def _rewrite_table_hdu_with_schema(
 def _resolve_table_hdu_index_and_columns(
     path: str, hdu: int | str
 ) -> tuple[int, dict[str, Any], list[str], dict[str, str]]:
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     handle = cpp.open_fits_file(path, "r")
     try:
@@ -2785,14 +3013,7 @@ def _resolve_table_hdu_index_and_columns(
             raise ValueError(f"HDU {target_idx} is not a table (type={hdu_type})")
 
         header_map = _header_cards_to_mapping(cpp.read_header(handle, target_idx))
-        col_map: dict[int, str] = {}
-        for key, value in header_map.items():
-            key_u = str(key).upper()
-            if not key_u.startswith("TTYPE"):
-                continue
-            suffix = key_u[5:]
-            if suffix.isdigit():
-                col_map[int(suffix)] = str(value)
+        col_map = _column_name_index_map(header_map)
         columns = [col_map[idx] for idx in sorted(col_map)]
         tform_map = _column_tform_map(header_map)
         return target_idx, header_map, columns, tform_map
@@ -2880,7 +3101,7 @@ def insert_column(
     rewritten_schema = _ordered_dict_for_columns(new_columns, schema_by_name)
 
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     _rewrite_table_hdu_with_schema(
         path,
         target_hdu,
@@ -2889,7 +3110,7 @@ def insert_column(
         table_header,
         table_type,
     )
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -2963,7 +3184,7 @@ def replace_column(
     rewritten_data = _ordered_dict_for_columns(columns, rewritten_data)
 
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     _rewrite_table_hdu_with_schema(
         path,
         target_hdu,
@@ -2972,7 +3193,7 @@ def replace_column(
         table_header,
         table_type,
     )
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3135,7 +3356,7 @@ def _coerce_table_complex_values(
             "M": np.complex128,
         }
     base = code.upper()
-    if base not in _COMPLEX_DTYPE_MAP:
+    if base not in _COMPLEX_TFORM_CODES:
         raise TypeError(f"Column '{name}' complex code '{base}' is not supported")
     dtype = _COMPLEX_DTYPE_MAP[base]
 
@@ -3180,7 +3401,7 @@ def append_rows(
     if not isinstance(rows, dict) or not rows:
         raise ValueError("rows must be a non-empty dictionary")
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     target_hdu, header_map, columns, tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
@@ -3198,9 +3419,9 @@ def append_rows(
 
     # Ensure no stale cached handles/metadata exist before mutating the file in-place.
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     cpp.append_fits_table_rows(path, target_hdu, normalized)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3224,7 +3445,7 @@ def insert_rows(
         raise ValueError("row must be a non-negative integer")
 
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     target_hdu, header_map, columns, tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
@@ -3251,7 +3472,7 @@ def insert_rows(
 
     start_row = row + 1  # FITS rows are 1-based.
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     if hasattr(cpp, "insert_fits_table_rows"):
         cpp.insert_fits_table_rows(path, target_hdu, normalized, start_row)
     else:
@@ -3262,7 +3483,7 @@ def insert_rows(
                 existing[name], normalized[name], row
             )
         torchfits.replace_hdu(path, target_hdu, rewritten)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3287,7 +3508,7 @@ def delete_rows(
         return
 
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     target_hdu, header_map, _columns, _tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
@@ -3308,7 +3529,7 @@ def delete_rows(
         return
 
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     if hasattr(cpp, "delete_fits_table_rows"):
         cpp.delete_fits_table_rows(path, target_hdu, start_row, num_rows)
     else:
@@ -3319,7 +3540,7 @@ def delete_rows(
         for name in columns:
             rewritten[name] = _delete_column_rows(existing[name], start0, num_rows)
         torchfits.replace_hdu(path, target_hdu, rewritten)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3343,22 +3564,28 @@ def update_rows(
     if row_slice is None:
         raise ValueError("row_slice is required for update_rows")
 
-    target_hdu, _header, _columns, tform_map = _resolve_table_hdu_index_and_columns(
+    target_hdu, _header, columns, tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
     )
+    unknown = sorted({str(name) for name in rows} - set(columns))
+    if unknown:
+        raise ValueError(f"Unknown columns for table mutation: extra={unknown}")
+
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
     complex_codes: dict[str, str] = {}
     global _COMPLEX_DTYPE_MAP
     if not _COMPLEX_DTYPE_MAP:
-        _COMPLEX_DTYPE_MAP = {"C", "M"}
+        import numpy as np
+
+        _COMPLEX_DTYPE_MAP = {"C": np.complex64, "M": np.complex128}
     for name, tform in tform_map.items():
         if not tform:
             continue
         is_vla, code, repeat = _parse_tform(tform)
         if is_vla:
             vla_codes[name] = code
-        elif code in _COMPLEX_DTYPE_MAP:
+        elif code in _COMPLEX_TFORM_CODES:
             complex_codes[name] = code
         elif code == "A":
             string_widths[name] = repeat
@@ -3414,30 +3641,41 @@ def update_rows(
         )
 
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     # Ensure no stale cached handles/metadata exist before mutating the file in-place.
     torchfits._invalidate_path_caches(path)
 
     use_mmap = mmap in (True, "auto", "mmap")
+    forced_mmap = mmap in (True, "mmap")
+    unsupported_mmap = sorted(
+        name
+        for name in normalized
+        if name in vla_codes or name in string_widths or name in complex_codes
+    )
+    if forced_mmap and unsupported_mmap:
+        raise ValueError(
+            "mmap table updates only support fixed-width numeric/logical columns; "
+            f"unsupported columns={unsupported_mmap}"
+        )
     if use_mmap:
         has_string = any(isinstance(v, (list, tuple)) for v in normalized.values())
         if not has_string:
             try:
-                torchfits.clear_cache()
+                torchfits.cache.clear()
                 cpp.update_fits_table_rows_mmap(
                     path, target_hdu, normalized, start_row, num_rows
                 )
-                torchfits.clear_cache()
+                torchfits.cache.clear()
                 torchfits._invalidate_path_caches(path)
                 return
             except Exception:
                 if mmap is True:
                     raise
 
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     cpp.update_fits_table_rows(path, target_hdu, normalized, start_row, num_rows)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3463,17 +3701,27 @@ def rename_columns(
     if len(set(normalized.values())) != len(normalized.values()):
         raise ValueError("rename_columns mapping has duplicate target names")
 
-    target_hdu, _header, _columns, _tform_map = _resolve_table_hdu_index_and_columns(
+    target_hdu, _header, columns, _tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
     )
+    existing = set(columns)
+    missing = sorted(set(normalized) - existing)
+    if missing:
+        raise KeyError(f"Column(s) not found for rename_columns: {missing}")
+    conflicts = sorted(set(normalized.values()) & (existing - set(normalized)))
+    if conflicts:
+        raise ValueError(
+            "rename_columns target names collide with existing columns not being renamed: "
+            f"{conflicts}"
+        )
 
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     cpp.rename_fits_table_columns(path, target_hdu, normalized)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)
 
 
@@ -3491,16 +3739,21 @@ def drop_columns(
     normalized = [str(name) for name in columns]
     if any(not name for name in normalized):
         raise ValueError("column names must be non-empty strings")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("drop_columns received duplicate column names")
 
-    target_hdu, _header, _columns, _tform_map = _resolve_table_hdu_index_and_columns(
-        path, hdu
+    target_hdu, _header, existing_columns, _tform_map = (
+        _resolve_table_hdu_index_and_columns(path, hdu)
     )
+    missing = sorted(set(normalized) - set(existing_columns))
+    if missing:
+        raise KeyError(f"Column(s) not found for drop_columns: {missing}")
 
     import torchfits
-    import torchfits.cpp as cpp
+    import torchfits._C as cpp
 
     torchfits._invalidate_path_caches(path)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     cpp.drop_fits_table_columns(path, target_hdu, normalized)
-    torchfits.clear_cache()
+    torchfits.cache.clear()
     torchfits._invalidate_path_caches(path)

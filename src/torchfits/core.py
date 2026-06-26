@@ -8,7 +8,7 @@ and checksum verification as specified in Phase 1.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import re
 import torch
@@ -78,9 +78,6 @@ class FITSDataTypeHandler:
     ) -> torch.Tensor:
         """Apply FITS BZERO/BSCALE scaling - fast path."""
         if bscale != 1.0 or bzero != 0.0:
-            # ⚡ Bolt: Use in-place operations (.mul_ and .add_) on a single copied tensor
-            # to avoid creating unnecessary intermediate tensors, reducing memory
-            # allocations and improving scaling performance by ~50%.
             data = data.to(dtype=torch.float32, copy=True)
             if bscale != 1.0:
                 data.mul_(bscale)
@@ -102,8 +99,8 @@ class CompressionHandler:
 
     @staticmethod
     def detect_compression(
-        header: Dict[str, Any],
-    ) -> Tuple[CompressionType, Dict[str, Any]]:
+        header: dict[str, Any],
+    ) -> tuple[CompressionType, dict[str, Any]]:
         """Detect compression type and parameters from header - optimized."""
         zcmptype = header.get("ZCMPTYPE", "").strip()
 
@@ -123,29 +120,64 @@ class CompressionHandler:
         return comp_type, params
 
     @staticmethod
-    def is_compressed(header: Dict[str, Any]) -> bool:
+    def is_compressed(header: dict[str, Any]) -> bool:
         """Check if HDU is compressed - fast path."""
         return "ZCMPTYPE" in header and bool(header.get("ZCMPTYPE", "").strip())
 
 
 class ChecksumVerifier:
-    """FITS checksum verification stubs.
+    """CFITSIO-backed FITS checksum helpers.
 
-    For exact CFITSIO-compatible verification, use the C++ bindings:
-    `torchfits.cpp.verify_hdu_checksums(path, hdu_num)`.
+    FITS checksums are defined over the HDU bytes, not just an already-materialized
+    ndarray. Use the file/HDU methods for exact validation.
     """
 
     @staticmethod
-    def verify_datasum(data: np.ndarray, expected_datasum: str) -> bool:
-        """Placeholder until CFITSIO-native DATASUM validation is wired in."""
-        return True
+    def _validate_hdu(hdu: int) -> int:
+        if isinstance(hdu, bool) or not isinstance(hdu, int):
+            raise TypeError("hdu must be a non-negative integer")
+        if hdu < 0:
+            raise ValueError("hdu must be a non-negative integer")
+        return int(hdu)
 
     @staticmethod
-    def verify_checksum(
-        header: Dict[str, Any], data: Optional[np.ndarray] = None
-    ) -> bool:
-        """Placeholder until CFITSIO-native CHECKSUM/DATASUM validation is wired in."""
-        return True
+    def write_hdu_checksums(path: str, hdu: int = 0) -> None:
+        """Compute and write DATASUM/CHECKSUM for one HDU."""
+        import torchfits._C as cpp
+
+        cpp.write_hdu_checksums(str(path), ChecksumVerifier._validate_hdu(hdu))
+
+    @staticmethod
+    def verify_hdu_checksums(path: str, hdu: int = 0) -> dict[str, int | bool]:
+        """Verify DATASUM/CHECKSUM for one HDU using CFITSIO semantics."""
+        import torchfits._C as cpp
+
+        datastatus, hdustatus = cpp.verify_hdu_checksums(
+            str(path), ChecksumVerifier._validate_hdu(hdu)
+        )
+        data_i = int(datastatus)
+        hdu_i = int(hdustatus)
+        return {
+            "datastatus": data_i,
+            "hdustatus": hdu_i,
+            "ok": data_i == 1 and hdu_i == 1,
+        }
+
+    @staticmethod
+    def verify_datasum(data: np.ndarray, expected_datasum: str) -> bool:
+        """Deprecated in-memory stub kept only to fail closed."""
+        raise NotImplementedError(
+            "FITS DATASUM verification requires the source HDU bytes; use "
+            "ChecksumVerifier.verify_hdu_checksums(path, hdu) instead."
+        )
+
+    @staticmethod
+    def verify_checksum(header: dict[str, Any], data: np.ndarray | None = None) -> bool:
+        """Deprecated in-memory stub kept only to fail closed."""
+        raise NotImplementedError(
+            "FITS CHECKSUM verification requires the source HDU bytes; use "
+            "ChecksumVerifier.verify_hdu_checksums(path, hdu) instead."
+        )
 
 
 class FITSCore:
@@ -191,7 +223,7 @@ class FITSCore:
         return file_path, hdu_index, tuple(slices)
 
     @staticmethod
-    def get_data_info(header: Dict[str, Any]) -> Dict[str, Any]:
+    def get_data_info(header: dict[str, Any]) -> dict[str, Any]:
         """Extract data information from FITS header."""
         naxis = header.get("NAXIS", 0)
         if naxis == 0:
@@ -229,7 +261,7 @@ class FITSCore:
 
     @staticmethod
     def process_data(
-        data: np.ndarray, header: Dict[str, Any], verify_checksum: bool = False
+        data: np.ndarray, header: dict[str, Any], verify_checksum: bool = False
     ) -> torch.Tensor:
         """Process raw FITS data into PyTorch tensor - optimized fast path."""
         # Handle byte order issues (fast path - check first)
@@ -243,10 +275,6 @@ class FITSCore:
         bzero = header.get("BZERO", 0.0)
         bscale = header.get("BSCALE", 1.0)
         if bscale != 1.0 or bzero != 0.0:
-            # Simplified scaling - always use float32 for speed unless data is float64
-            # ⚡ Bolt: Use in-place operations (.mul_ and .add_) on a single copied tensor
-            # to avoid creating unnecessary intermediate tensors, reducing memory
-            # allocations and improving scaling performance by ~50%.
             if tensor.dtype == torch.float64:
                 tensor = tensor.clone()
             else:

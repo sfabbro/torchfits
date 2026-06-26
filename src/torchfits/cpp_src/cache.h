@@ -8,14 +8,22 @@
 
 #include <string>
 #include <memory>
+#include <fitsio.h>
 
-// Cache initialization
+namespace torchfits {
+
+// Cache initialization/configuration
+void configure_cache(size_t max_files, size_t max_memory_mb);
+void clear_file_cache();
+size_t get_cache_size();
+fitsfile* get_or_open_cached(const std::string& filepath);
+void release_cached(const std::string& filepath);
+void invalidate_cached(const std::string& filepath);
+
+// Cache initialization (old API if any remains)
 void init_cache(size_t memory_limit_mb, const std::string& disk_cache_dir = "");
-
-// Cache operations
 void clear_cache();
 
-// Internal cache management (would be expanded in full implementation)
 class CacheManager {
 public:
     static CacheManager& instance();
@@ -26,6 +34,8 @@ public:
 
 private:
     CacheManager() = default;
-    size_t memory_limit_;
+    size_t memory_limit_ = 0;
     std::string disk_cache_dir_;
 };
+
+} // namespace torchfits

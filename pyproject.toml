@@ -16,7 +16,7 @@ description = "High-performance FITS I/O for PyTorch"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
 license = { text = "GPL-2.0-only" }
-keywords = ["fits", "astronomy", "pytorch", "tensor", "wcs", "cfitsio", "machine-learning"]
+keywords = ["fits", "astronomy", "pytorch", "tensor", "cfitsio"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -29,7 +29,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Astronomy",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.10"
 
@@ -73,9 +72,7 @@ test = [
     "pytest-benchmark>=3.0",
 ]
 examples = [
-    "torchvision>=0.15.0",  # For MNIST example
-    "requests>=2.28.0",     # For SDSS download example
-    "matplotlib>=3.0",      # For visualization in examples
+    "matplotlib>=3.0",
 ]
 
 # Configuration for the scikit-build-core build system.
@@ -96,7 +93,6 @@ cmake.args = [
 # This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.
 install.strip = false
 wheel.packages = ["src/torchfits"]
-sdist.include = ["src/torchfits/sphere/data/pixel_window_functions/*.fits"]
 
 # This setting enables CMake's incremental build feature. When you re-run the build,
 # CMake and Ninja will automatically detect which C++ files have changed and only

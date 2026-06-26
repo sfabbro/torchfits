@@ -1,14 +1,21 @@
 # torchfits
 
-> **Maintenance mode:** new features and optimizations belong in **[torchsky](https://github.com/sfabbro/torchsky)**. This package remains on **v0.3.x** for security and trivial fixes only; see [MAINTENANCE.md](MAINTENANCE.md).
-
 [![PyPI](https://img.shields.io/pypi/v/torchfits)](https://pypi.org/project/torchfits/)
 
 [![CI](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0-green)](LICENSE)
 
-**torchfits** reads and writes FITS files directly as PyTorch tensors on CPU, CUDA, or Apple Silicon MPS. It is built on a multi-threaded C++ engine with vendored CFITSIO and covers the same ground as `astropy.io.fits`, `fitsio`, `healpy`, `healsparse`, and `astropy.wcs`&mdash;but with native tensor output and no intermediate NumPy copies.
+**torchfits** is a focused FITS I/O library for PyTorch. It reads and writes
+FITS images, headers, HDUs, compressed images, and FITS tables through a
+multi-threaded C++ engine with vendored CFITSIO, returning tensor-native data
+without requiring users to build NumPy-to-torch glue code.
+
+It is not a full replacement for Astropy, fitsio, or CFITSIO. The supported
+surface is documented explicitly in [docs/parity.md](docs/parity.md), with
+source-backed tests for each claimed parity area. WCS, sky-coordinate models,
+HEALPix, sphere geometry, and sky-domain simulation workflows belong in
+[`torchsky`](https://github.com/sfabbro/torchsky).
 
 ## At a Glance
 
@@ -17,25 +24,21 @@
 | Read image to GPU | astropy/fitsio &rarr; numpy &rarr; torch &rarr; `.to(device)` | `torchfits.read("img.fits", device="cuda")` |
 | Write tensor to FITS | tensor &rarr; numpy &rarr; astropy HDU &rarr; writeto | `torchfits.write("out.fits", tensor)` |
 | Filter large table | load all rows &rarr; mask in Python | `where="MAG < 20"` pushdown in C++ |
-| WCS coordinate transform | astropy.wcs / PyAST / Kapteyn | `torchfits.get_wcs()` &mdash; pure PyTorch, batch, any device |
-| HEALPix pixelization | healpy / hpgeom / astropy-healpix | `torchfits.sphere.ang2pix()` &mdash; CPU + CUDA + MPS |
-| Spherical harmonics | healpy (CPU, NumPy) | `torchfits.sphere.map2alm()` / `alm2map()` |
-| Sparse HEALPix maps | healsparse (NumPy) | `torchfits.sphere.sparse` (tensor-native) |
-| Spherical polygons | spherical-geometry (NumPy) | `torchfits.sphere.geom` (non-convex, GPU) |
+| Read multi-extension files | manual HDU dispatch | `with torchfits.open("mef.fits") as hdul: ...` |
+| Verify FITS checksums | comparator-specific helpers | `torchfits.verify_checksums(path)` |
 
 ## Features
 
-**FITS I/O** &mdash; Multi-threaded C++ core with SIMD-optimized type conversion, memory-mapped reads, intelligent chunking, and adaptive buffering. Reads and writes images, binary tables, compressed tiles (Rice, HCOMPRESS, GZIP, PLIO), and multi-extension FITS files with full header round-trip fidelity.
+**FITS I/O** &mdash; Multi-threaded C++ core with SIMD-optimized type conversion,
+memory-mapped image reads, intelligent chunking, and adaptive buffering. Reads
+and writes images, binary/ASCII tables, compressed images, and multi-extension
+FITS files with header round-trip coverage.
 
 **Table Engine** &mdash; Arrow-native table API with predicate pushdown (`where=`), column projection, row slicing, streaming `scan()`, and in-place mutations (append, insert, update, delete rows and columns). Interop with Pandas, Polars, DuckDB, and PyArrow.
 
-**WCS** &mdash; Pure-PyTorch implementation of 13 projections (TAN, SIN, ARC, ZPN, ZEA, STG, CEA, CAR, MER, AIT, MOL, HPX, SFL) with SIP, TPV, TNX, and ZPX polynomial distortions. Batch `pixel_to_world` / `world_to_pixel` on any device. Validated against astropy.wcs, PyAST, and Kapteyn.
-
-**Sphere** &mdash; HEALPix primitives (`ang2pix`, `pix2ang`, `nest2ring`, `ring2nest`, `neighbors`, interpolation), spherical polygons (non-convex region queries, area, containment), Multi-Order Coverage (MOC) maps, HealSparse interop, and spherical harmonic transforms (`map2alm`, `alm2map`, scalar and spin). Benchmarked against healpy, hpgeom, astropy-healpix, mhealpy, healsparse, and spherical-geometry.
-
-**Compatibility** &mdash; `torchfits.sphere.compat` provides a healpy-compatible API surface (`ang2pix`, `pix2ang`, `query_circle`, `map2alm`, `alm2map`, `synalm`, `synfast`, `anafast`, `smoothing`, and more) so existing healpy code can switch with minimal changes. WCS objects follow the same `pixel_to_world` / `world_to_pixel` interface as astropy.wcs.
-
-**ML Integration** &mdash; `FITSDataset` and `IterableFITSDataset` work with `torch.utils.data.DataLoader` for multi-worker streaming. Built-in astronomical transforms (ZScale, Asinh, Log, Power stretches; crop, flip, rotation augmentations; redshift shift, error perturbation) with composable pipelines.
+**Compatibility Contract** &mdash; Parity is tracked by tier: truthful public docs,
+fitsio core workflow parity, Astropy common workflow parity, selected CFITSIO
+backend behavior, and explicit non-goals. See [docs/parity.md](docs/parity.md).
 
 ## Install
 
@@ -81,25 +84,6 @@ for batch in torchfits.table.scan("survey.fits", batch_size=50_000):
     process(batch)
 ```
 
-### WCS coordinate transforms
-
-```python
-wcs = torchfits.get_wcs("image.fits")
-
-# Batch pixel → sky on GPU
-ra, dec = wcs.pixel_to_world(x_pixels, y_pixels)  # torch.Tensor in, Tensor out
-```
-
-### HEALPix and spherical harmonics
-
-```python
-from torchfits.sphere import ang2pix, map2alm, alm2map
-
-ipix = ang2pix(nside=2048, theta=theta, phi=phi, nest=True)  # GPU-accelerated
-alm = map2alm(healpix_map, lmax=512)
-smoothed = alm2map(alm, nside=2048, lmax=512)
-```
-
 ### Multi-HDU access
 
 ```python
@@ -119,7 +103,10 @@ torchfits.table.write("catalog_out.fits", table_dict, header=header)
 
 ## Benchmarks
 
-torchfits is benchmarked against astropy, fitsio, healpy, hpgeom, astropy-healpix, mhealpy, healsparse, spherical-geometry, PyAST, and Kapteyn across four domains (FITS I/O, tables, WCS, sphere). Correctness is validated against each upstream library using their own test fixtures and public reference data.
+torchfits benchmark evidence is limited to FITS image I/O and FITS table I/O.
+Comparators are `astropy.io.fits` and `fitsio`; selected CFITSIO behavior is
+validated through the torchfits native backend and smoke tests. Sky-domain
+benchmark suites live with torchsky.
 
 Methodology, reproducible commands, results, and known deficits: [`docs/benchmarks.md`](docs/benchmarks.md)
 
@@ -128,6 +115,8 @@ Methodology, reproducible commands, results, and known deficits: [`docs/benchmar
 | | |
 |---|---|
 | [API Reference](docs/api.md) | Full public API with signatures and examples |
+| [Roadmap](docs/roadmap.md) | FITS I/O roadmap and parity tiers |
+| [Parity Matrix](docs/parity.md) | Supported, partial, unsupported, and out-of-scope features |
 | [Examples](docs/examples.md) | Runnable scripts for every major workflow |
 | [Installation](docs/install.md) | Build from source, GPU setup, troubleshooting |
 | [Benchmarks](docs/benchmarks.md) | Methodology, commands, and latest numbers |

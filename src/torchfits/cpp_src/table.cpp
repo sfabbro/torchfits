@@ -19,14 +19,16 @@
 #include <nanobind/stl/unordered_map.h>
 #include <ATen/Parallel.h>
 #include <functional>
+#include <new>
 #include <cstring>  // for memset
 #include <cstdlib>  // for getenv
 
-// #define DEBUG_TABLE 1
-
+#undef READONLY
 #include <fitsio.h>
 #include "hardware.h"
+#include "security.h"
 #include "torch_compat.h"
+#include "fits_helpers.h"
 
 #ifdef HAS_OPENMP
 #include <omp.h>
@@ -35,6 +37,8 @@
 namespace nb = nanobind;
 
 namespace torchfits {
+void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::object schema_obj, bool is_ascii);
+
 
 namespace {
 
@@ -144,8 +148,10 @@ struct ColumnInfo {
 
 class TableReader {
 public:
-    TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num) {
+    TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num), owns_fptr_(true) {
+        validate_fits_filename(filename);
         int status = 0;
+        torchfits::check_fits_filename_security(filename);
         fits_open_file(&fptr_, filename.c_str(), READONLY, &status);
         if (status != 0) {
             throw std::runtime_error("Failed to open FITS file");
@@ -159,7 +165,7 @@ public:
         analyze_table();
     }
 
-    TableReader(fitsfile* fptr, int hdu_num = 1) : fptr_(fptr), hdu_num_(hdu_num) {
+    TableReader(fitsfile* fptr, int hdu_num = 1) : fptr_(fptr), hdu_num_(hdu_num), owns_fptr_(false) {
         int status = 0;
         fits_movabs_hdu(fptr_, hdu_num + 1, nullptr, &status);
         if (status != 0) {
@@ -169,7 +175,7 @@ public:
     }
 
     ~TableReader() {
-        if (fptr_ && !filename_.empty()) {
+        if (fptr_ && owns_fptr_) {
             int status = 0;
             fits_close_file(fptr_, &status);
         }
@@ -541,10 +547,9 @@ public:
             result[col.name] = ColumnData(tensor);
         }
 
-        // Heuristic: Use buffered reading if we are reading a significant portion of the row
-        // or if we are reading many columns.
-        // Threshold: > 25% of row bytes OR > 50% of columns
-        // Note: Buffered reading currently does NOT support VLA.
+        // Row-buffered reads via fits_read_tblbytes when the selected fixed-width
+        // columns cover the full binary-table row payload (no unused bytes).
+        // Partial column projections use per-column fits_read_col to avoid I/O waste.
         long requested_bytes = 0;
         bool has_vla = false;
         bool has_bit = false;
@@ -565,12 +570,7 @@ public:
         bool use_buffered = false;
         if (table_buffered_read_enabled() &&
             !is_ascii_ && !has_vla && !has_bit && !has_complex && row_width_bytes_ > 0) {
-            double byte_fraction = (double)requested_bytes / row_width_bytes_;
-            double col_fraction = (double)col_indices.size() / ncols_;
-
-            if (byte_fraction > 0.25 || col_fraction > 0.5) {
-                use_buffered = true;
-            }
+            use_buffered = (requested_bytes == row_width_bytes_);
         }
 
         auto read_column_by_column = [&]() {
@@ -868,18 +868,20 @@ public:
                     if (repeat == 1) {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
-                                int32_t val = bswap_32(*in);
+                                int32_t raw_val;
+                                memcpy(&raw_val, col_ptr + i * row_width_bytes_, sizeof(int32_t));
+                                int32_t val = bswap_32(raw_val);
                                 memcpy(&out[i], &val, sizeof(float));
                             }
                         });
                     } else {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
                                 float* row_out = out + i * repeat;
                                 for (long j = 0; j < repeat; j++) {
-                                    int32_t val = bswap_32(in[j]);
+                                    int32_t raw_val;
+                                    memcpy(&raw_val, col_ptr + i * row_width_bytes_ + j * sizeof(int32_t), sizeof(int32_t));
+                                    int32_t val = bswap_32(raw_val);
                                     memcpy(&row_out[j], &val, sizeof(float));
                                 }
                             }
@@ -890,18 +892,20 @@ public:
                     if (repeat == 1) {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
-                                int64_t val = bswap_64(*in);
+                                int64_t raw_val;
+                                memcpy(&raw_val, col_ptr + i * row_width_bytes_, sizeof(int64_t));
+                                int64_t val = bswap_64(raw_val);
                                 memcpy(&out[i], &val, sizeof(double));
                             }
                         });
                     } else {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
                                 double* row_out = out + i * repeat;
                                 for (long j = 0; j < repeat; j++) {
-                                    int64_t val = bswap_64(in[j]);
+                                    int64_t raw_val;
+                                    memcpy(&raw_val, col_ptr + i * row_width_bytes_ + j * sizeof(int64_t), sizeof(int64_t));
+                                    int64_t val = bswap_64(raw_val);
                                     memcpy(&row_out[j], &val, sizeof(double));
                                 }
                             }
@@ -912,17 +916,19 @@ public:
                     if (repeat == 1) {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
-                                out[i] = bswap_32(*in);
+                                int32_t raw_val;
+                                memcpy(&raw_val, col_ptr + i * row_width_bytes_, sizeof(int32_t));
+                                out[i] = bswap_32(raw_val);
                             }
                         });
                     } else {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int32_t* in = (const int32_t*)(col_ptr + i * row_width_bytes_);
                                 int32_t* row_out = out + i * repeat;
                                 for (long j = 0; j < repeat; j++) {
-                                    row_out[j] = bswap_32(in[j]);
+                                    int32_t raw_val;
+                                    memcpy(&raw_val, col_ptr + i * row_width_bytes_ + j * sizeof(int32_t), sizeof(int32_t));
+                                    row_out[j] = bswap_32(raw_val);
                                 }
                             }
                         });
@@ -932,17 +938,19 @@ public:
                     if (repeat == 1) {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
-                                out[i] = bswap_16(*in);
+                                int16_t raw_val;
+                                memcpy(&raw_val, col_ptr + i * row_width_bytes_, sizeof(int16_t));
+                                out[i] = bswap_16(raw_val);
                             }
                         });
                     } else {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int16_t* in = (const int16_t*)(col_ptr + i * row_width_bytes_);
                                 int16_t* row_out = out + i * repeat;
                                 for (long j = 0; j < repeat; j++) {
-                                    row_out[j] = bswap_16(in[j]);
+                                    int16_t raw_val;
+                                    memcpy(&raw_val, col_ptr + i * row_width_bytes_ + j * sizeof(int16_t), sizeof(int16_t));
+                                    row_out[j] = bswap_16(raw_val);
                                 }
                             }
                         });
@@ -952,17 +960,19 @@ public:
                     if (repeat == 1) {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
-                                out[i] = bswap_64(*in);
+                                int64_t raw_val;
+                                memcpy(&raw_val, col_ptr + i * row_width_bytes_, sizeof(int64_t));
+                                out[i] = bswap_64(raw_val);
                             }
                         });
                     } else {
                         at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
                             for (long i = start; i < end; i++) {
-                                const int64_t* in = (const int64_t*)(col_ptr + i * row_width_bytes_);
                                 int64_t* row_out = out + i * repeat;
                                 for (long j = 0; j < repeat; j++) {
-                                    row_out[j] = bswap_64(in[j]);
+                                    int64_t raw_val;
+                                    memcpy(&raw_val, col_ptr + i * row_width_bytes_ + j * sizeof(int64_t), sizeof(int64_t));
+                                    row_out[j] = bswap_64(raw_val);
                                 }
                             }
                         });
@@ -1893,9 +1903,9 @@ public:
         size_t row_stride = row_width_bytes_;
         size_t col_offset = col.byte_offset;
 
-        // Optimized loops for common types
-        // Note: FITS is Big Endian, we need to swap if host is Little Endian
-        // Assuming Little Endian host (x86/ARM)
+        // Optimized loops for common types.
+        // FITS binary tables are big-endian; swap on little-endian hosts only.
+        const bool swap_endian = host_is_little_endian();
 
         if (col.type == FITSColumnType::LOGICAL) {
              // Convert 'T'/'F' (or '1'/'0') to bool
@@ -1913,46 +1923,33 @@ public:
                  std::memcpy(dest + i * total_width, buffer + i * row_stride + col_offset, total_width);
              }
         } else if (col_width == 2) {
-            // Int16
-            uint16_t* d = (uint16_t*)dest;
-            for (long i = 0; i < num_rows * col.repeat; i++) {
-                // Need to handle repeat stride if repeat > 1
-                // Actually, buffer layout is: [Row1][Row2]...
-                // Row1: ... [ColData] ...
-                // ColData: [Elem1][Elem2]...
-                // So we can just copy the block if we handle stride correctly.
-                // But wait, we need to iterate rows.
-            }
-
             for (long i = 0; i < num_rows; i++) {
                 const uint8_t* src_cell = buffer + i * row_stride + col_offset;
                 uint16_t* dest_cell = (uint16_t*)(dest + i * total_width);
                 for (int j = 0; j < col.repeat; j++) {
                     uint16_t val;
                     std::memcpy(&val, src_cell + j * 2, 2);
-                    dest_cell[j] = __builtin_bswap16(val);
+                    dest_cell[j] = swap_endian ? __builtin_bswap16(val) : val;
                 }
             }
         } else if (col_width == 4) {
-            // Int32, Float32
             for (long i = 0; i < num_rows; i++) {
                 const uint8_t* src_cell = buffer + i * row_stride + col_offset;
                 uint32_t* dest_cell = (uint32_t*)(dest + i * total_width);
                 for (int j = 0; j < col.repeat; j++) {
                     uint32_t val;
                     std::memcpy(&val, src_cell + j * 4, 4);
-                    dest_cell[j] = __builtin_bswap32(val);
+                    dest_cell[j] = swap_endian ? __builtin_bswap32(val) : val;
                 }
             }
         } else if (col_width == 8) {
-            // Int64, Double
             for (long i = 0; i < num_rows; i++) {
                 const uint8_t* src_cell = buffer + i * row_stride + col_offset;
                 uint64_t* dest_cell = (uint64_t*)(dest + i * total_width);
                 for (int j = 0; j < col.repeat; j++) {
                     uint64_t val;
                     std::memcpy(&val, src_cell + j * 8, 8);
-                    dest_cell[j] = __builtin_bswap64(val);
+                    dest_cell[j] = swap_endian ? __builtin_bswap64(val) : val;
                 }
             }
         } else {
@@ -1970,6 +1967,7 @@ private:
     fitsfile* fptr_ = nullptr;
     std::string filename_;
     int hdu_num_;
+    bool owns_fptr_ = true;
     long nrows_;
     int ncols_;
     long row_width_bytes_ = 0;
@@ -2048,6 +2046,7 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
 
 
 void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite, nb::object schema_obj, const std::string& table_type) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
@@ -2113,11 +2112,13 @@ long infer_num_rows_from_payload(nb::dict tensor_dict) {
 void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows);
 
 void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     // Use explicit cfitsio mode value to avoid macro collisions with Python headers.
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2327,15 +2328,18 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
 }
 
 void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     long num_rows = infer_num_rows_from_payload(tensor_dict);
     if (num_rows <= 0) {
         return;
     }
 
+    check_fits_filename(std::string(filename));
     fitsfile* fptr = nullptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2374,14 +2378,17 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 }
 
 void delete_rows(const char* filename, int hdu_num, long start_row, long num_rows) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     if (num_rows <= 0) {
         return;
     }
 
+    check_fits_filename(std::string(filename));
     fitsfile* fptr = nullptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2420,14 +2427,17 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
 }
 
 void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     if (num_rows <= 0) {
         return;
     }
 
+    check_fits_filename(std::string(filename));
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2629,15 +2639,18 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 }
 
 void update_rows_mmap(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     torchfits::TableReader reader(filename, hdu_num);
     reader.update_rows_mmap(tensor_dict, start_row, num_rows);
 }
 
 void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2692,10 +2705,12 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
 }
 
 void drop_columns(const char* filename, int hdu_num, nb::list columns) {
+    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename);
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2742,4 +2757,328 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
     }
 }
 
+}
+
+
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/map.h>
+#include "torch_compat.h"
+
+namespace nb = nanobind;
+
+namespace {
+nb::dict table_result_to_python(
+    const std::unordered_map<std::string, torchfits::TableReader::ColumnData>& result_map,
+    bool as_numpy
+) {
+    nb::dict result_dict;
+    for (auto& [key, col_data] : result_map) {
+        if (col_data.is_vla) {
+            if (as_numpy && col_data.vla_offsets.defined()) {
+                result_dict[key.c_str()] = nb::make_tuple(
+                    tensor_to_numpy_object(col_data.fixed_data),
+                    tensor_to_numpy_object(col_data.vla_offsets)
+                );
+                continue;
+            }
+            nb::list vla_list;
+            for (const auto& tensor : col_data.vla_data) {
+                vla_list.append(as_numpy ? tensor_to_numpy_object(tensor) : tensor_to_python(tensor));
+            }
+            result_dict[key.c_str()] = vla_list;
+        } else {
+            result_dict[key.c_str()] = as_numpy ? tensor_to_numpy_object(col_data.fixed_data)
+                                                : tensor_to_python(col_data.fixed_data);
+        }
+    }
+    return result_dict;
+}
+}
+
+// Forward declare invalidation functions (they are defined in fits.cpp/cache.cpp)
+namespace torchfits {
+void invalidate_cached(const std::string& filepath);
+void invalidate_shared_meta(const std::string& filepath);
+}
+
+void bind_table(nb::module_& m) {
+    nb::class_<torchfits::TableReader>(m, "TableReader")
+        .def("__init__", [](torchfits::TableReader* self, const std::string& filename, int hdu_num) {
+            new (self) torchfits::TableReader(filename, hdu_num);
+        }, nb::arg("filename"), nb::arg("hdu_num") = 1)
+        .def("__init__", [](torchfits::TableReader* self, nb::object file_obj, int hdu_num) {
+            fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+            new (self) torchfits::TableReader(fptr, hdu_num);
+        }, nb::arg("file_obj"), nb::arg("hdu_num") = 1)
+        .def_prop_ro("num_rows", &torchfits::TableReader::get_num_rows)
+        .def("read_rows", [](torchfits::TableReader& self,
+                             const std::vector<std::string>& column_names,
+                             long start_row, long num_rows) -> nb::object {
+            nb::gil_scoped_release release;
+            auto result_map = self.read_columns(column_names, start_row, num_rows);
+            nb::gil_scoped_acquire acquire;
+            return table_result_to_python(result_map, false);
+        }, nb::arg("column_names") = std::vector<std::string>(),
+           nb::arg("start_row") = 1, nb::arg("num_rows") = -1)
+        .def("read_rows_numpy", [](torchfits::TableReader& self,
+                                  const std::vector<std::string>& column_names,
+                                  long start_row, long num_rows) -> nb::object {
+            nb::gil_scoped_release release;
+            auto result_map = self.read_columns(column_names, start_row, num_rows, true);
+            nb::gil_scoped_acquire acquire;
+            return table_result_to_python(result_map, true);
+        }, nb::arg("column_names") = std::vector<std::string>(),
+           nb::arg("start_row") = 1, nb::arg("num_rows") = -1)
+        .def_prop_ro("num_rows", &torchfits::TableReader::get_num_rows)
+        .def_prop_ro("num_cols", &torchfits::TableReader::get_num_cols);
+
+    m.def("write_fits_table", [](const std::string& filename, nb::dict tensor_dict, nb::dict header, bool overwrite,
+                                 nb::object schema, const std::string& table_type) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        write_fits_table(filename.c_str(), tensor_dict, header, overwrite, schema, table_type);
+    }, nb::arg("filename"), nb::arg("tensor_dict"), nb::arg("header"), nb::arg("overwrite"),
+       nb::arg("schema") = nb::none(), nb::arg("table_type") = "binary");
+
+    m.def("append_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        append_rows(filename.c_str(), hdu_num, tensor_dict);
+    });
+
+    m.def("insert_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
+                                       long start_row) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        insert_rows(filename.c_str(), hdu_num, tensor_dict, start_row);
+    });
+
+    m.def("update_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
+                                       long start_row, long num_rows) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        update_rows(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
+    });
+
+    m.def("update_fits_table_rows_mmap", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
+                                           long start_row, long num_rows) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        update_rows_mmap(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
+    });
+
+    m.def("rename_fits_table_columns", [](const std::string& filename, int hdu_num, nb::dict mapping) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        rename_columns(filename.c_str(), hdu_num, mapping);
+    });
+
+    m.def("drop_fits_table_columns", [](const std::string& filename, int hdu_num, nb::list columns) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        drop_columns(filename.c_str(), hdu_num, columns);
+    });
+
+    m.def("delete_fits_table_rows", [](const std::string& filename, int hdu_num, long start_row,
+                                       long num_rows) {
+        torchfits::invalidate_cached(filename);
+        torchfits::invalidate_shared_meta(filename);
+        delete_rows(filename.c_str(), hdu_num, start_row, num_rows);
+    });
+
+    m.def("read_fits_table", [](const std::string& filename, int hdu_num) -> nb::object {
+        nb::gil_scoped_release release;
+        torchfits::TableReader reader(filename, hdu_num);
+        auto result_map = reader.read_columns({}, 1, -1);
+        nb::gil_scoped_acquire acquire;
+        nb::dict result_dict;
+        for (auto& [key, col_data] : result_map) {
+            if (col_data.is_vla) {
+                nb::list vla_list;
+                for (const auto& tensor : col_data.vla_data) {
+                    vla_list.append(tensor_to_python(tensor));
+                }
+                result_dict[key.c_str()] = vla_list;
+            } else {
+                result_dict[key.c_str()] = tensor_to_python(col_data.fixed_data);
+            }
+        }
+        return result_dict;
+    });
+
+    m.def("read_fits_table_from_handle", [](nb::object file_obj, int hdu_num) -> nb::object {
+        nb::gil_scoped_release release;
+        fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        torchfits::TableReader reader(fptr, hdu_num);
+        auto result_map = reader.read_columns({}, 1, -1);
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_python(result_map, false);
+    });
+
+    m.def("read_fits_table_rows_from_handle", [](nb::object file_obj, int hdu_num,
+                                                 const std::vector<std::string>& column_names,
+                                                 long start_row, long num_rows) -> nb::object {
+        nb::gil_scoped_release release;
+        fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        torchfits::TableReader reader(fptr, hdu_num);
+        auto result_map = reader.read_columns(column_names, start_row, num_rows);
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_python(result_map, false);
+    }, nb::arg("file"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
+
+    m.def("read_fits_table", [](const std::string& filename, int hdu_num, const std::vector<std::string>& column_names, bool mmap) -> nb::object {
+        nb::gil_scoped_release release;
+        if (mmap) {
+            torchfits::TableReader reader(filename, hdu_num);
+            nb::gil_scoped_acquire acquire;
+            return reader.read_columns_mmap(column_names);
+        } else {
+            fitsfile* fptr = nullptr;
+            int status = 0;
+            fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
+            if (status != 0 || !fptr) {
+                throw std::runtime_error("Could not open FITS file");
+            }
+            torchfits::TableReader reader(fptr, hdu_num);
+            auto result_map = reader.read_columns(column_names);
+            nb::gil_scoped_acquire acquire;
+            nb::object out = nb::object(table_result_to_python(result_map, false));
+            int close_status = 0;
+            fits_close_file(fptr, &close_status);
+            return out;
+        }
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1, nb::arg("column_names") = std::vector<std::string>(), nb::arg("mmap") = false);
+
+    m.def("read_fits_table_rows", [](const std::string& filename, int hdu_num,
+                                     const std::vector<std::string>& column_names,
+                                     long start_row, long num_rows, bool mmap) -> nb::object {
+        nb::gil_scoped_release release;
+        if (mmap) {
+            torchfits::TableReader reader(filename, hdu_num);
+            nb::gil_scoped_acquire acquire;
+            return reader.read_columns_mmap(column_names, start_row, num_rows);
+        } else {
+            fitsfile* fptr = nullptr;
+            int status = 0;
+            fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
+            if (status != 0 || !fptr) {
+                throw std::runtime_error("Could not open FITS file");
+            }
+            torchfits::TableReader reader(fptr, hdu_num);
+            auto result_map = reader.read_columns(column_names, start_row, num_rows);
+            nb::gil_scoped_acquire acquire;
+            nb::object out = nb::object(table_result_to_python(result_map, false));
+            int close_status = 0;
+            fits_close_file(fptr, &close_status);
+            return out;
+        }
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1, nb::arg("mmap") = false);
+
+    m.def("read_fits_table_rows_numpy_from_handle", [](nb::object file_obj, int hdu_num,
+                                                       const std::vector<std::string>& column_names,
+                                                       long start_row, long num_rows) -> nb::object {
+        nb::gil_scoped_release release;
+        fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        torchfits::TableReader reader(fptr, hdu_num);
+        auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_python(result_map, true);
+    }, nb::arg("file"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
+
+    m.def("read_fits_table_rows_numpy", [](const std::string& filename, int hdu_num,
+                                           const std::vector<std::string>& column_names,
+                                           long start_row, long num_rows, bool mmap) -> nb::object {
+        if (mmap) {
+            torchfits::TableReader reader(filename, hdu_num);
+            nb::dict mapped = reader.read_columns_mmap(column_names, start_row, num_rows);
+            nb::dict numpy_result;
+            for (auto item : mapped) {
+                nb::handle key = item.first;
+                nb::handle value = item.second;
+                if (PyObject_HasAttrString(value.ptr(), "numpy")) {
+                    PyObject* np_obj = PyObject_CallMethod(value.ptr(), "numpy", nullptr);
+                    if (!np_obj) {
+                        throw nb::python_error();
+                    }
+                    numpy_result[key] = nb::steal(np_obj);
+                } else {
+                    numpy_result[key] = nb::borrow(value);
+                }
+            }
+            return nb::object(numpy_result);
+        } else {
+            nb::gil_scoped_release release;
+            fitsfile* fptr = nullptr;
+            int status = 0;
+            fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
+            if (status != 0 || !fptr) {
+                throw std::runtime_error("Could not open FITS file");
+            }
+            torchfits::TableReader reader(fptr, hdu_num);
+            auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
+            nb::gil_scoped_acquire acquire;
+            nb::object out = table_result_to_python(result_map, true);
+            int close_status = 0;
+            fits_close_file(fptr, &close_status);
+            return out;
+        }
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1, nb::arg("mmap") = false);
+
+    m.def("read_fits_table_filtered", [](const std::string& filename, int hdu_num,
+                                         const std::vector<std::string>& column_names,
+                                         nb::list filters_py) -> nb::object {
+        std::vector<torchfits::TableFilter> filters;
+        for (auto handle : filters_py) {
+            nb::tuple item = nb::cast<nb::tuple>(handle);
+            if (item.size() != 3) throw std::runtime_error("Filter must be (col, op, val)");
+
+            torchfits::TableFilter f;
+            f.col_name = nb::cast<std::string>(item[0]);
+            std::string op = nb::cast<std::string>(item[1]);
+
+            if (op == "==" || op == "eq") f.op = torchfits::FilterOp::EQ;
+            else if (op == "!=" || op == "ne") f.op = torchfits::FilterOp::NE;
+            else if (op == ">" || op == "gt") f.op = torchfits::FilterOp::GT;
+            else if (op == "<" || op == "lt") f.op = torchfits::FilterOp::LT;
+            else if (op == ">=" || op == "ge") f.op = torchfits::FilterOp::GE;
+            else if (op == "<=" || op == "le") f.op = torchfits::FilterOp::LE;
+            else throw std::runtime_error("Unknown operator: " + op);
+
+            nb::handle val = item[2];
+            if (nb::isinstance<float>(val)) {
+                 f.val_d = nb::cast<double>(val);
+                 f.type_idx = 0;
+            } else if (nb::isinstance<int>(val)) {
+                 f.val_i = nb::cast<int64_t>(val);
+                 f.type_idx = 1;
+            } else {
+                 throw std::runtime_error("Unsupported filter value type (only float/int)");
+            }
+            filters.push_back(f);
+        }
+
+        nb::gil_scoped_release release;
+        torchfits::TableReader reader(filename, hdu_num);
+        auto result_map = reader.read_columns_mmap_filtered(column_names, filters);
+        nb::gil_scoped_acquire acquire;
+
+        nb::dict result;
+        for (auto& [key, val] : result_map) {
+             result[key.c_str()] = tensor_to_python(val);
+        }
+        return result;
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("filters"));
 }

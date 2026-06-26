@@ -22,10 +22,19 @@
 #include <dlfcn.h>
 #endif
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/function.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/tuple.h>
 #include "torchfits_torch.h"
+#include "torch_compat.h"
+#include "security.h"
+#include "compression.h"
+#include "fits_helpers.h"
+#undef READONLY
 #include <fitsio.h>
 #include <fitsio2.h> // Internal CFITSIO routines (fits_rdecomp)
 
@@ -398,7 +407,7 @@ bool has_compressed_nulls(fitsfile* fptr) {
     return false;
 }
 }  // namespace
-#include "cache.cpp"
+#include "cache.h"
 
 namespace nb = nanobind;
 
@@ -3822,4 +3831,739 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header) {
     write_table_hdu(fptr, tensor_dict, header, nb::none(), false);
 }
 
+void* get_fptr_from_python_object(nanobind::object obj) {
+    return reinterpret_cast<void*>(nanobind::cast<FITSFile&>(obj).get_fptr());
+}
+
+}
+
+// Append bindings inside namespace torchfits
+void bind_fits(nb::module_& m) {
+    using namespace torchfits;
+    nb::class_<FITSFile>(m, "FITSFile")
+        .def(nb::init<const char*, int>(), nb::arg("filename"), nb::arg("mode") = 0)
+        .def("read_image", [](FITSFile& self, int hdu_num, bool use_mmap) {
+            torch::Tensor tensor;
+            {
+                nb::gil_scoped_release release;
+                tensor = self.read_image(hdu_num, use_mmap);
+            }
+            return tensor_to_python(tensor);
+        }, nb::arg("hdu_num"), nb::arg("use_mmap") = true)
+        .def("read_header", &FITSFile::get_header)
+        .def("get_num_hdus", &FITSFile::get_num_hdus)
+        .def("get_hdu_type", &FITSFile::get_hdu_type)
+        .def("close", &FITSFile::close)
+        .def("write_image", [](FITSFile& self, nb::ndarray<> tensor, int hdu_num, double bscale, double bzero) {
+            return self.write_image(tensor, hdu_num, bscale, bzero);
+        }, nb::arg("tensor"), nb::arg("hdu_num") = 0, nb::arg("bscale") = 1.0, nb::arg("bzero") = 0.0)
+        .def("write_hdus", &FITSFile::write_hdus)
+        .def("compute_stats", &FITSFile::compute_stats)
+        .def("get_shape", &FITSFile::get_shape)
+        .def("get_dtype", &FITSFile::get_dtype)
+        .def("read_subset", [](FITSFile& self, int hdu_num, long x1, long y1, long x2, long y2) {
+            torch::Tensor tensor;
+            {
+                nb::gil_scoped_release release;
+                tensor = self.read_subset(hdu_num, x1, y1, x2, y2);
+            }
+            return tensor_to_python(tensor);
+        });
+
+    nb::class_<SubsetReader>(m, "SubsetReader")
+        .def(nb::init<const std::string&, int>(), nb::arg("filename"), nb::arg("hdu_num") = 0)
+        .def("read", [](SubsetReader& self, long x1, long y1, long x2, long y2) {
+            torch::Tensor tensor;
+            {
+                nb::gil_scoped_release release;
+                tensor = self.read(x1, y1, x2, y2);
+            }
+            return tensor_to_python(tensor);
+        }, nb::arg("x1"), nb::arg("y1"), nb::arg("x2"), nb::arg("y2"))
+        .def("close", &SubsetReader::close)
+        .def_prop_ro("width", &SubsetReader::width)
+        .def_prop_ro("height", &SubsetReader::height)
+        .def_prop_ro("hdu", &SubsetReader::hdu);
+
+    m.def("read_full", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        FITSFile file(filename.c_str(), 0);
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image(hdu_num, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_cached", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_full_cached(filename, hdu_num, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("resolve_hdu_name_cached",
+          [](const std::string& filename, const std::string& hdu_name) {
+              int hdu_num = 0;
+              {
+                  nb::gil_scoped_release release;
+                  hdu_num = resolve_hdu_name_cached(filename, hdu_name);
+              }
+              return hdu_num;
+          },
+          nb::arg("filename"),
+          nb::arg("hdu_name"));
+
+    m.def("read_full_numpy_cached", [](const std::string& filename, int hdu_num, bool use_mmap) -> nb::object {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_full_cached(filename, hdu_num, use_mmap);
+        }
+        return tensor_to_numpy_object(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_numpy", [](const std::string& filename, int hdu_num, bool use_mmap) -> nb::object {
+        FITSFile file(filename.c_str(), 0);
+        fitsfile* fptr = file.get_fptr();
+
+        int status = 0;
+        file.ensure_hdu(hdu_num, &status);
+        if (status != 0) {
+            throw std::runtime_error("Could not move to HDU");
+        }
+
+        const int bitpix = file.get_dtype(hdu_num);
+        const auto scale_info = file.get_scale_info_for_hdu(hdu_num);
+        const bool scaled = scale_info.scaled;
+
+        status = 0;
+        const int is_comp = fits_is_compressed_image(fptr, &status);
+        const bool compressed = (status == 0) && (is_comp != 0);
+        if (status != 0) {
+            status = 0;
+        }
+
+        std::vector<long> shape_long = file.get_shape(hdu_num);
+        std::vector<size_t> shape;
+        shape.reserve(shape_long.size());
+        for (long d : shape_long) {
+            shape.push_back((size_t) d);
+        }
+
+        if (shape.empty()) {
+            return alloc_numpy_array<uint8_t>({0}).cast();
+        }
+
+        int datatype = 0;
+        nb::object out;
+        void* dst = nullptr;
+
+        if (scaled) {
+            if (bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0) {
+                auto arr = alloc_numpy_array<int8_t>(shape);
+                dst = (void*) arr.data();
+                datatype = TSBYTE;
+                out = arr.cast();
+            } else {
+                auto arr = alloc_numpy_array<float>(shape);
+                dst = (void*) arr.data();
+                datatype = TFLOAT;
+                out = arr.cast();
+            }
+        } else {
+            switch (bitpix) {
+                case BYTE_IMG: {
+                    auto arr = alloc_numpy_array<uint8_t>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TBYTE;
+                    out = arr.cast();
+                    break;
+                }
+                case SHORT_IMG: {
+                    auto arr = alloc_numpy_array<int16_t>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TSHORT;
+                    out = arr.cast();
+                    break;
+                }
+                case LONG_IMG: {
+                    auto arr = alloc_numpy_array<int32_t>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TINT;
+                    out = arr.cast();
+                    break;
+                }
+                case LONGLONG_IMG: {
+                    auto arr = alloc_numpy_array<int64_t>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TLONGLONG;
+                    out = arr.cast();
+                    break;
+                }
+                case FLOAT_IMG: {
+                    auto arr = alloc_numpy_array<float>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TFLOAT;
+                    out = arr.cast();
+                    break;
+                }
+                case DOUBLE_IMG: {
+                    auto arr = alloc_numpy_array<double>(shape);
+                    dst = (void*) arr.data();
+                    datatype = TDOUBLE;
+                    out = arr.cast();
+                    break;
+                }
+                default:
+                    throw std::runtime_error("Unsupported BITPIX for numpy read");
+            }
+        }
+
+        const bool signed_byte_scaled =
+            scaled && bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0;
+        if (use_mmap && !compressed && bitpix == BYTE_IMG && (!scaled || signed_byte_scaled)) {
+            if (filename.find('[') == std::string::npos) {
+                LONGLONG headstart = 0, data_offset = 0, dataend = 0;
+                status = 0;
+                fits_get_hduaddrll(fptr, &headstart, &data_offset, &dataend, &status);
+                if (status == 0 && data_offset > 0) {
+                    size_t nelem = 1;
+                    for (size_t d : shape) nelem *= d;
+                    const size_t nbytes = nelem;
+                    const int fd = open_readonly_fd(filename);
+                    if (fd != -1) {
+                        struct stat sb {};
+                        if (fstat(fd, &sb) == 0 &&
+                            (size_t) sb.st_size >= (size_t) data_offset + nbytes) {
+                            uint8_t* dst8 = static_cast<uint8_t*>(dst);
+                            size_t remaining = nbytes;
+                            off_t off = (off_t) data_offset;
+                            bool ok = true;
+                            while (remaining) {
+                                ssize_t got = pread(fd, dst8, remaining, off);
+                                if (got < 0) {
+                                    if (errno == EINTR) {
+                                        continue;
+                                    }
+                                    ok = false;
+                                    break;
+                                }
+                                if (got == 0) {
+                                    ok = false;
+                                    break;
+                                }
+                                dst8 += (size_t) got;
+                                off += (off_t) got;
+                                remaining -= (size_t) got;
+                            }
+                            if (ok) {
+                                ::close(fd);
+                                if (signed_byte_scaled) {
+                                    _xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                                }
+                                return out;
+                            }
+
+                            void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+                            if (map_ptr != MAP_FAILED) {
+                                const uint8_t* src = static_cast<const uint8_t*>(map_ptr) + data_offset;
+                                std::memcpy(dst, src, nbytes);
+                                munmap(map_ptr, sb.st_size);
+                                ::close(fd);
+                                if (signed_byte_scaled) {
+                                    _xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                                }
+                                return out;
+                            }
+                        }
+                        ::close(fd);
+                    }
+                } else {
+                    status = 0;
+                }
+            }
+        }
+
+        int anynul = 0;
+        float fnullval = NAN;
+        double dnullval = NAN;
+        void* nullval_ptr = nullptr;
+
+        if (compressed && !scaled && file.is_parallel_compressed_codec_cached(hdu_num)) {
+            char zcmptype[FLEN_VALUE];
+            std::memset(zcmptype, 0, sizeof(zcmptype));
+            status = 0;
+            fits_read_key(fptr, TSTRING, "ZCMPTYPE", zcmptype, nullptr, &status);
+            if (status == 0 && std::string(zcmptype).find("RICE") != std::string::npos) {
+                const auto& img_info = file.get_image_info(hdu_num);
+                int naxis_info = std::get<1>(img_info);
+                std::array<LONGLONG, 9> naxes_info = std::get<2>(img_info);
+                LONGLONG total_elements = 1;
+                for (int i = 0; i < naxis_info; ++i) total_elements *= naxes_info[i];
+
+                torch::Tensor t;
+                {
+                    nb::gil_scoped_release release;
+                    t = read_rice_parallel(filename, hdu_num + file.get_start_hdu() - 1, -1);
+                }
+
+                std::memcpy(dst, t.data_ptr(), total_elements * datatype_elem_size(datatype));
+                return out;
+            }
+
+            bool allow_float_parallel = true;
+            if (datatype == TFLOAT || datatype == TDOUBLE) {
+                allow_float_parallel = !file.has_compressed_nulls_cached(hdu_num);
+            }
+
+            const auto& img_info = file.get_image_info(hdu_num);
+            int naxis_info = std::get<1>(img_info);
+            std::array<LONGLONG, 9> naxes_info = std::get<2>(img_info);
+
+            LONGLONG nelements_info = 1;
+            for (int i = 0; i < naxis_info; ++i) nelements_info *= naxes_info[i];
+
+            nb::gil_scoped_release release;
+            if (try_read_compressed_rows_parallel(
+                    fptr,
+                    filename,
+                    hdu_num + file.get_start_hdu(),
+                    naxis_info,
+                    naxes_info,
+                    nelements_info,
+                    datatype,
+                    allow_float_parallel,
+                    dst)) {
+                return out;
+            }
+        }
+
+        if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
+            if (has_compressed_nulls(fptr)) {
+                nullval_ptr = (datatype == TFLOAT) ? (void*) &fnullval : (void*) &dnullval;
+            }
+        }
+
+        {
+            nb::gil_scoped_release release;
+            status = 0;
+            LONGLONG nelements = 1;
+            for (size_t d : shape) {
+                nelements *= (LONGLONG) d;
+            }
+            fits_read_img(fptr, datatype, 1, nelements, nullval_ptr, dst, &anynul, &status);
+        }
+        if (status != 0) {
+            char err_text[31];
+            fits_get_errstatus(status, err_text);
+            throw std::runtime_error("Error reading image data (numpy): status=" + std::to_string(status) +
+                                     " msg=" + std::string(err_text));
+        }
+        return out;
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_raw", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        FITSFile file(filename.c_str(), 0);
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image_raw(hdu_num, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_raw_with_scale", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        FITSFile file(filename.c_str(), 0);
+        torch::Tensor tensor;
+        FITSFile::ScaleInfo scale_info;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image_raw(hdu_num, use_mmap);
+            scale_info = file.get_scale_info_for_hdu(hdu_num);
+        }
+        return nb::make_tuple(
+            tensor_to_python(tensor),
+            scale_info.scaled,
+            scale_info.bscale,
+            scale_info.bzero
+        );
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_scaled_cpu", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        FITSFile file(filename.c_str(), 0);
+        torch::Tensor tensor;
+        FITSFile::ScaleInfo scale_info;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image_raw(hdu_num, use_mmap);
+            scale_info = file.get_scale_info_for_hdu(hdu_num);
+        }
+        if (scale_info.scaled) {
+            tensor = tensor.to(torch::kFloat32);
+            if (scale_info.bscale != 1.0) {
+                tensor.mul_(scale_info.bscale);
+            }
+            if (scale_info.bzero != 0.0) {
+                tensor.add_(scale_info.bzero);
+            }
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full_unmapped", [](const std::string& filename, int hdu_num) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_full_unmapped(filename, hdu_num);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"));
+
+    m.def("read_full_unmapped_raw", [](const std::string& filename, int hdu_num) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_full_unmapped_raw(filename, hdu_num);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"));
+
+    m.def("read_full_nocache", [](const std::string& filename, int hdu_num, bool use_mmap) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_full_nocache(filename, hdu_num, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("read_full", [](FITSFile& file, int hdu_num, bool use_mmap) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image(hdu_num, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("file"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
+
+    m.def("compute_stats", [](FITSFile& file, int hdu_num) {
+        return file.compute_stats(hdu_num);
+    });
+
+    m.def("write_fits_file", [](const std::string& path, nb::list hdus, bool overwrite) {
+        std::string final_path = path;
+        if (overwrite) {
+            final_path = "!" + path;
+        }
+        invalidate_cached(path);
+        invalidate_shared_meta(path);
+        FITSFile file(final_path.c_str(), 1);
+        file.write_hdus(hdus, overwrite);
+    });
+
+    m.def("write_fits_file_compressed_images",
+          [](const std::string& path, nb::list hdus, bool overwrite, const std::string& algorithm) {
+              std::string final_path = path;
+              if (overwrite) {
+                  final_path = "!" + path;
+              }
+
+              int comptype = RICE_1;
+              if (!algorithm.empty()) {
+                  std::string a = algorithm;
+                  std::transform(a.begin(), a.end(), a.begin(),
+                                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+                  if (a == "R" || a == "RICE" || a == "RICE_1") {
+                      comptype = RICE_1;
+                  } else if (a == "G" || a == "GZIP" || a == "GZIP_1") {
+                      comptype = GZIP_1;
+                  } else if (a == "GZIP_2") {
+                      comptype = GZIP_2;
+                  } else if (a == "H" || a == "HCOMPRESS" || a == "HCOMPRESS_1") {
+                      comptype = HCOMPRESS_1;
+                  } else if (a == "P" || a == "PLIO" || a == "PLIO_1") {
+                      comptype = PLIO_1;
+                  } else if (a == "NONE") {
+                      comptype = 0;
+                  } else {
+                      throw std::runtime_error("Unsupported compression algorithm: " + algorithm);
+                  }
+              }
+
+              invalidate_cached(path);
+              invalidate_shared_meta(path);
+              FITSFile file(final_path.c_str(), 1);
+              file.write_hdus_compressed_images(hdus, comptype);
+          },
+          nb::arg("path"), nb::arg("hdus"), nb::arg("overwrite"),
+          nb::arg("algorithm") = std::string("RICE_1"));
+
+    m.def("write_hdu_checksums", [](const std::string& path, int hdu_num) {
+        validate_fits_filename(path);
+        fitsfile* fptr = nullptr;
+        int status = 0;
+        check_fits_filename_security(path);
+        fits_open_file(&fptr, path.c_str(), 1 /* READWRITE */, &status);
+        if (status != 0 || !fptr) {
+            throw std::runtime_error("Could not open FITS file for checksum writing");
+        }
+        auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
+            int status = 0;
+            fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+            if (status != 0) {
+                throw std::runtime_error("Could not move to HDU");
+            }
+        };
+        move_to_hdu(fptr, hdu_num);
+        ffpcks(fptr, &status);
+        int close_status = 0;
+        fits_close_file(fptr, &close_status);
+        if (status != 0 || close_status != 0) {
+            throw std::runtime_error("Failed to write FITS checksums");
+        }
+    }, nb::arg("path"), nb::arg("hdu_num") = 0);
+
+    m.def("verify_hdu_checksums", [](const std::string& path, int hdu_num) {
+        validate_fits_filename(path);
+        fitsfile* fptr = nullptr;
+        int status = 0;
+        check_fits_filename_security(path);
+        fits_open_file(&fptr, path.c_str(), 0 /* READONLY */, &status);
+        if (status != 0 || !fptr) {
+            throw std::runtime_error("Could not open FITS file for checksum verification");
+        }
+        int datastatus = -1;
+        int hdustatus = -1;
+        auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
+            int status = 0;
+            fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+            if (status != 0) {
+                throw std::runtime_error("Could not move to HDU");
+            }
+        };
+        move_to_hdu(fptr, hdu_num);
+        ffvcks(fptr, &datastatus, &hdustatus, &status);
+        int close_status = 0;
+        fits_close_file(fptr, &close_status);
+        if (status != 0 || close_status != 0) {
+            throw std::runtime_error("Failed to verify FITS checksums");
+        }
+        return nb::make_tuple(datastatus, hdustatus);
+    }, nb::arg("path"), nb::arg("hdu_num") = 0);
+
+    m.def("write_hdu_header_cards", [](const std::string& path, int hdu_num, nb::list cards) {
+        validate_fits_filename(path);
+        fitsfile* fptr = nullptr;
+        int status = 0;
+        check_fits_filename_security(path);
+        fits_open_file(&fptr, path.c_str(), 1 /* READWRITE */, &status);
+        if (status != 0 || !fptr) {
+            throw std::runtime_error("Could not open FITS file for header-card writing");
+        }
+        auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
+            int status = 0;
+            fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+            if (status != 0) {
+                throw std::runtime_error("Could not move to HDU");
+            }
+        };
+        move_to_hdu(fptr, hdu_num);
+
+        auto skip_structural = [](const std::string& key_upper) {
+            return key_upper == "END" ||
+                   key_upper == "SIMPLE" ||
+                   key_upper == "XTENSION" ||
+                   key_upper == "BITPIX" ||
+                   key_upper == "NAXIS" ||
+                   key_upper == "EXTEND" ||
+                   key_upper == "PCOUNT" ||
+                   key_upper == "GCOUNT" ||
+                   key_upper == "TFIELDS" ||
+                   key_upper == "THEAP" ||
+                   key_upper == "DATASUM" ||
+                   key_upper == "CHECKSUM" ||
+                   key_upper.rfind("NAXIS", 0) == 0;
+        };
+
+        for (nb::handle card_h : cards) {
+            nb::object card = nb::borrow<nb::object>(card_h);
+            std::string key;
+            nb::object value = nb::none();
+            std::string comment;
+
+            if (nb::hasattr(card, "key")) {
+                key = nb::cast<std::string>(card.attr("key"));
+                value = nb::borrow<nb::object>(card.attr("value"));
+                if (nb::hasattr(card, "comment")) {
+                    comment = nb::cast<std::string>(card.attr("comment"));
+                }
+            } else {
+                nb::tuple tup = nb::cast<nb::tuple>(card);
+                if (tup.size() < 2) {
+                    continue;
+                }
+                key = nb::cast<std::string>(tup[0]);
+                value = nb::borrow<nb::object>(tup[1]);
+                if (tup.size() >= 3) {
+                    comment = nb::cast<std::string>(tup[2]);
+                }
+            }
+
+            key = sanitize_fits_key(key);
+            std::string key_upper = key;
+            std::transform(key_upper.begin(), key_upper.end(), key_upper.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (skip_structural(key_upper)) {
+                continue;
+            }
+
+            int key_status = 0;
+            std::string sanitized_comment = sanitize_fits_string(comment);
+            char* comment_ptr = sanitized_comment.empty() ? nullptr : sanitized_comment.data();
+
+            if (key_upper == "HISTORY") {
+                std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
+                text = sanitize_fits_string(text);
+                fits_write_history(fptr, text.c_str(), &key_status);
+            } else if (key_upper == "COMMENT") {
+                std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
+                text = sanitize_fits_string(text);
+                fits_write_comment(fptr, text.c_str(), &key_status);
+            } else if (nb::isinstance<nb::str>(value)) {
+                std::string val = sanitize_fits_string(nb::cast<std::string>(value));
+                fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), comment_ptr, &key_status);
+            } else if (nb::isinstance<bool>(value)) {
+                int val = nb::cast<bool>(value) ? 1 : 0;
+                fits_update_key(fptr, TLOGICAL, key.c_str(), &val, comment_ptr, &key_status);
+            } else if (nb::isinstance<int>(value)) {
+                long long val = nb::cast<long long>(value);
+                fits_update_key(fptr, TLONGLONG, key.c_str(), &val, comment_ptr, &key_status);
+            } else if (nb::isinstance<float>(value) || nb::isinstance<double>(value)) {
+                double val = nb::cast<double>(value);
+                fits_update_key(fptr, TDOUBLE, key.c_str(), &val, comment_ptr, &key_status);
+            }
+            if (key_status != 0) {
+                status = key_status;
+                break;
+            }
+        }
+
+        int close_status = 0;
+        fits_close_file(fptr, &close_status);
+        if (status != 0 || close_status != 0) {
+            throw std::runtime_error("Failed to write FITS header cards");
+        }
+    }, nb::arg("path"), nb::arg("hdu_num"), nb::arg("cards"));
+
+    m.def("open_and_read_headers", [](const std::string& path, int mode) {
+        nb::gil_scoped_release release;
+        auto result = open_and_read_headers(path, mode);
+        nb::gil_scoped_acquire acquire;
+
+        nb::object file_obj = nb::cast(result.first, nb::rv_policy::take_ownership);
+        nb::object infos_obj = nb::cast(result.second);
+
+        return nb::make_tuple(file_obj, infos_obj);
+    });
+
+    m.def("open_fits_file", [](const std::string& path, const std::string& mode) {
+        int mode_int = (mode == "w" || mode == "w+") ? 1 : 0;
+        return new FITSFile(path.c_str(), mode_int);
+    }, nb::rv_policy::take_ownership);
+
+    m.def("read_header", [](FITSFile& file, int hdu_num) {
+        return file.get_header(hdu_num);
+    });
+    m.def("read_header_string", [](FITSFile& file, int hdu_num) {
+        return file.read_header_to_string(hdu_num);
+    });
+
+    m.def("get_num_hdus", [](FITSFile& file) {
+        return file.get_num_hdus();
+    });
+
+    m.def("get_hdu_type", [](FITSFile& file, int hdu_num) {
+        return file.get_hdu_type(hdu_num);
+    });
+
+    m.def("read_image_from_handle", [](FITSFile& file, int hdu_num) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = file.read_image(hdu_num);
+        }
+        return tensor_to_python(tensor);
+    });
+
+    m.def("read_images_batch", [](const std::vector<std::string>& paths, int hdu_num) {
+        nb::gil_scoped_release release;
+        auto tensors = read_images_batch(paths, hdu_num);
+        nb::gil_scoped_acquire acquire;
+
+        nb::list result;
+        for (const auto& t : tensors) {
+            result.append(tensor_to_python(t));
+        }
+        return result;
+    });
+
+    m.def("read_hdus_batch", [](const std::string& path, const std::vector<int>& hdus, bool use_mmap) {
+        nb::gil_scoped_release release;
+        auto tensors = read_hdus_batch(path, hdus, use_mmap);
+        nb::gil_scoped_acquire acquire;
+
+        nb::list result;
+        for (const auto& t : tensors) {
+            result.append(tensor_to_python(t));
+        }
+        return result;
+    }, nb::arg("path"), nb::arg("hdus"), nb::arg("use_mmap") = true);
+
+    m.def("read_hdus_sequence_last", [](const std::string& path, const std::vector<int>& hdus, bool use_mmap) {
+        torch::Tensor tensor;
+        {
+            nb::gil_scoped_release release;
+            tensor = read_hdus_sequence_last(path, hdus, use_mmap);
+        }
+        return tensor_to_python(tensor);
+    }, nb::arg("path"), nb::arg("hdus"), nb::arg("use_mmap") = true);
+
+    nb::class_<HDUInfo>(m, "HDUInfo")
+        .def_prop_rw("index", [](HDUInfo& t) { return t.index; }, [](HDUInfo& t, int v) { t.index = v; })
+        .def_prop_rw("type", [](HDUInfo& t) { return t.type; }, [](HDUInfo& t, std::string v) { t.type = v; })
+        .def_prop_ro("header", [](HDUInfo& t) {
+            nb::dict d;
+            for (const auto& kv : t.header) {
+                d[std::get<0>(kv).c_str()] = std::get<1>(kv);
+            }
+            return d;
+        });
+
+    m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::list {
+        try {
+            nb::gil_scoped_release release;
+            FITSFile file(filename.c_str(), 0);
+            auto header = file.get_header(hdu_num);
+            nb::gil_scoped_acquire acquire;
+            nb::list result;
+            for (const auto& item : header) {
+                result.append(nb::make_tuple(std::get<0>(item), std::get<1>(item), std::get<2>(item)));
+            }
+            return result;
+        } catch (const std::exception& e) {
+            return nb::list();
+        }
+    });
+
+    m.def("configure_cache", &configure_cache, nb::arg("max_files"), nb::arg("max_memory_mb"));
+    m.def("clear_file_cache", &clear_file_cache);
+    m.def("clear_shared_read_meta_cache", &clear_shared_read_meta_cache);
+    m.def("get_cache_size", &get_cache_size);
+
+    m.def("echo_tensor", [](nb::object obj) {
+        return obj;
+    });
 }

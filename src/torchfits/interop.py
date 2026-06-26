@@ -1,9 +1,10 @@
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, cast
 
 import torch
 
 if TYPE_CHECKING:
     import pandas as pd
+    import polars as pl
     import pyarrow as pa
 
 
@@ -60,6 +61,38 @@ def to_pandas(
             processed_data[key] = value
 
     return pd.DataFrame(processed_data)
+
+
+def to_polars(
+    data: Dict[str, Any],
+    decode_bytes: bool = False,
+    encoding: str = "ascii",
+    strip: bool = True,
+    vla_policy: str = "list",
+) -> "pl.DataFrame":
+    """
+    Convert a dictionary of PyTorch tensors to a Polars DataFrame (via PyArrow).
+
+    Same arguments as :func:`to_arrow`; uses :func:`polars.from_arrow` on the
+    intermediate table so the result stays Arrow-backed.
+    """
+    try:
+        import polars as pl
+    except ImportError as exc:
+        raise ImportError("Polars is required for to_polars conversion.") from exc
+
+    return cast(
+        "pl.DataFrame",
+        pl.from_arrow(
+            to_arrow(
+                data,
+                decode_bytes=decode_bytes,
+                encoding=encoding,
+                strip=strip,
+                vla_policy=vla_policy,
+            )
+        ),
+    )
 
 
 def to_arrow(

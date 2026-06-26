@@ -4,11 +4,11 @@
 #include "torchfits_torch.h"
 #include <ATen/DLConvertor.h>
 #include <Python.h>
+#include <vector>
+#include <stdexcept>
+#include <nanobind/ndarray.h>
 
 namespace nb = nanobind;
-
-// Manual definitions to interface with libtorch_python without including headers that pull in pybind11
-// This allows us to use the native PyTorch C++ API for tensor conversion without conflicts.
 
 // Forward declare THPVariableClass
 extern PyObject* THPVariableClass;
@@ -20,6 +20,58 @@ inline bool THPVariable_Check(PyObject* obj) {
 
 // Extern declaration for THPVariable_Wrap (exported by libtorch_python)
 extern PyObject* THPVariable_Wrap(const at::TensorBase& var);
+
+inline nb::object tensor_to_numpy_object(const torch::Tensor& tensor) {
+    PyObject* tensor_obj = THPVariable_Wrap(tensor);
+    if (!tensor_obj) {
+        throw std::runtime_error("Failed to wrap tensor for NumPy conversion");
+    }
+
+    PyObject* numpy_obj = PyObject_CallMethod(tensor_obj, "numpy", nullptr);
+    Py_DECREF(tensor_obj);
+    if (!numpy_obj) {
+        throw nb::python_error();
+    }
+    return nb::steal(numpy_obj);
+}
+
+template <typename T>
+inline nb::ndarray<nb::numpy, T, nb::c_contig> alloc_numpy_array(
+    const std::vector<size_t>& shape
+) {
+    size_t nelem = 1;
+    for (size_t d : shape) {
+        nelem *= d;
+    }
+    const size_t nbytes = nelem * sizeof(T);
+
+    PyObject* ba = PyByteArray_FromStringAndSize(nullptr, (Py_ssize_t) nbytes);
+    if (!ba) {
+        throw std::runtime_error("Failed to allocate bytearray for numpy result");
+    }
+    nb::object owner = nb::steal(ba);
+    void* data = (void*) PyByteArray_AsString(owner.ptr());
+    if (!data) {
+        throw std::runtime_error("Failed to get bytearray buffer for numpy result");
+    }
+    return nb::ndarray<nb::numpy, T, nb::c_contig>(
+        data, shape.size(), shape.data(), owner
+    );
+}
+
+inline void check_fits_filename(const std::string& filename_) {
+    if (!filename_.empty()) {
+        size_t first = filename_.find_first_not_of(" \t");
+        size_t last = filename_.find_last_not_of(" \t");
+
+        if (first != std::string::npos) {
+            if (filename_[first] == '|' || filename_[last] == '|') {
+                throw std::runtime_error("Security Error: Filenames starting or ending with '|' are not allowed to prevent command execution.");
+            }
+        }
+    }
+}
+
 
 // Helper function to convert torch::Tensor to Python object - FAST PATH
 inline nb::object tensor_to_python(const torch::Tensor& tensor) {

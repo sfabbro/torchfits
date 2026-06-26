@@ -31,7 +31,6 @@ from benchmarks.bench_contract import (
     write_csv,
     write_json,
 )  # noqa: E402
-from benchmarks.bench_legacy_all import ExhaustiveBenchmarkSuite  # noqa: E402
 
 
 SMART_METHODS = [
@@ -45,6 +44,154 @@ SPECIALIZED_METHODS = [
     ("astropy", "astropy", "astropy"),
     ("fitsio", "fitsio", "fitsio"),
 ]
+
+
+class FITSBenchmarkSuite:
+    """Small FITS-only benchmark fixture suite.
+
+    The old exhaustive suite also owned WCS/sphere/table fixtures and was
+    removed during the torchfits/torchsky split. This local suite intentionally
+    covers only FITS image I/O cases used by this benchmark module.
+    """
+
+    def __init__(
+        self,
+        *,
+        output_dir: Path,
+        use_mmap: bool,
+        include_tables: bool = False,
+        include_wcs: bool = False,
+        include_sphere: bool = False,
+        profile: str = "user",
+    ) -> None:
+        self.output_dir = Path(output_dir)
+        self.use_mmap = bool(use_mmap)
+        self.profile = profile
+        self.temp_dir = self.output_dir / "fixtures"
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def cleanup(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def create_test_files(self) -> dict[str, Path]:
+        files: dict[str, Path] = {}
+
+        tiny = np.arange(64 * 64, dtype=np.int16).reshape(64, 64)
+        files["tiny_int16_2d"] = self.temp_dir / "tiny_int16_2d.fits"
+        astropy_fits.PrimaryHDU(tiny).writeto(files["tiny_int16_2d"], overwrite=True)
+
+        small = np.linspace(0.0, 1.0, 512 * 512, dtype=np.float32).reshape(512, 512)
+        files["small_float32_2d"] = self.temp_dir / "small_float32_2d.fits"
+        astropy_fits.PrimaryHDU(small).writeto(
+            files["small_float32_2d"], overwrite=True
+        )
+
+        scaled = np.arange(256 * 256, dtype=np.int16).reshape(256, 256)
+        files["scaled_int16_2d"] = self.temp_dir / "scaled_int16_2d.fits"
+        hdu = astropy_fits.PrimaryHDU(scaled)
+        hdu.header["BSCALE"] = 2.0
+        hdu.header["BZERO"] = 10.0
+        hdu.writeto(files["scaled_int16_2d"], overwrite=True)
+
+        mef = (np.arange(128 * 128, dtype=np.float32).reshape(128, 128) / 10.0)
+        files["mef_small"] = self.temp_dir / "mef_small.fits"
+        astropy_fits.HDUList(
+            [astropy_fits.PrimaryHDU(), astropy_fits.ImageHDU(mef, name="SCI")]
+        ).writeto(files["mef_small"], overwrite=True)
+
+        compressed = np.arange(128 * 128, dtype=np.int16).reshape(128, 128)
+        files["compressed_rice_1"] = self.temp_dir / "compressed_rice_1.fits"
+        astropy_fits.HDUList(
+            [
+                astropy_fits.PrimaryHDU(),
+                astropy_fits.CompImageHDU(
+                    compressed, compression_type="RICE_1", name="COMP"
+                ),
+            ]
+        ).writeto(files["compressed_rice_1"], overwrite=True)
+
+        return files
+
+    def _get_file_type(self, name: str) -> str:
+        lowered = name.lower()
+        if "compressed" in lowered:
+            return "compressed"
+        if "mef" in lowered:
+            return "mef"
+        if "scaled" in lowered:
+            return "scaled"
+        return "image"
+
+    def _get_compression_type(self, name: str) -> str:
+        return "rice" if "compressed" in name.lower() else "none"
+
+    @staticmethod
+    def _ensure_native_endian_numpy(arr: np.ndarray) -> np.ndarray:
+        if arr.dtype.byteorder not in ("=", "|"):
+            return arr.astype(arr.dtype.newbyteorder("="))
+        return arr
+
+    @staticmethod
+    def _table_to_numpy_dict(data: Any) -> dict[str, np.ndarray]:
+        return {name: np.asarray(data[name]) for name in data.names}
+
+    def _astropy_read(self, path: Path, hdu_num: int) -> np.ndarray:
+        with astropy_fits.open(path, memmap=self.use_mmap) as hdul:
+            return self._ensure_native_endian_numpy(np.array(hdul[hdu_num].data, copy=True))
+
+    def _astropy_to_torch(self, path: Path, hdu_num: int) -> torch.Tensor:
+        return torch.from_numpy(self._astropy_read(path, hdu_num))
+
+    @staticmethod
+    def _mb_per_second(path: Path, seconds: float | None) -> float | None:
+        if seconds is None or seconds <= 0:
+            return None
+        return path.stat().st_size / (1024.0 * 1024.0) / seconds
+
+    def run_exhaustive_benchmarks(self, files: dict[str, Path]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        runs = 3 if self.profile == "user" else 7
+        warmup = 1 if self.profile == "user" else 2
+
+        for name, path in sorted(files.items()):
+            file_type = self._get_file_type(name)
+            hdu = _hdu_for_file_type(file_type)
+
+            methods = {
+                "torchfits": lambda p=path, h=hdu: torchfits.read(
+                    str(p), hdu=h, mmap=self.use_mmap
+                ),
+                "astropy_torch": lambda p=path, h=hdu: self._astropy_to_torch(p, h),
+                "fitsio_torch": lambda p=path, h=hdu: torch.from_numpy(
+                    self._ensure_native_endian_numpy(fitsio.read(str(p), ext=h))
+                ),
+                "torchfits_specialized": lambda p=path, h=hdu: torchfits.read_image(
+                    str(p), hdu=h, mmap=self.use_mmap
+                ),
+                "astropy": lambda p=path, h=hdu: self._astropy_read(p, h),
+                "fitsio": lambda p=path, h=hdu: self._ensure_native_endian_numpy(
+                    fitsio.read(str(p), ext=h)
+                ),
+            }
+
+            row: dict[str, Any] = {
+                "filename": name,
+                "operation": "read_full",
+                "file_type": file_type,
+                "data_type": "image",
+                "dimensions": "2d",
+                "compression": self._get_compression_type(name),
+                "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+            }
+            for method_name, fn in methods.items():
+                median_s, _err = _time_median(fn, runs=runs, warmup=warmup)
+                row[f"{method_name}_median"] = median_s
+                row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+            rows.append(row)
+
+        return rows
 
 
 def _hdu_for_file_type(file_type: str) -> int:
@@ -74,7 +221,7 @@ def _time_median(fn, *, runs: int, warmup: int) -> tuple[float | None, str | Non
     return float(np.median(times)), None
 
 
-def _strict_patch_astropy(suite: ExhaustiveBenchmarkSuite) -> None:
+def _strict_patch_astropy(suite: FITSBenchmarkSuite) -> None:
     fallback_paths: set[str] = set()
 
     @contextmanager
@@ -302,7 +449,7 @@ def _benchmark_headers(
     *,
     run_id: str,
     files: dict[str, Path],
-    suite: ExhaustiveBenchmarkSuite,
+    suite: FITSBenchmarkSuite,
     mmap_target: str,
     runs: int,
     warmup: int,
@@ -401,7 +548,7 @@ def run_fits_domain(
     raw_dir = output_dir / "_raw" / "fits"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    suite = ExhaustiveBenchmarkSuite(
+    suite = FITSBenchmarkSuite(
         output_dir=raw_dir,
         use_mmap=use_mmap,
         include_tables=False,

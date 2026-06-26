@@ -16,8 +16,6 @@ The project uses [pixi](https://pixi.sh/) for environment management, [ruff](htt
 ```
 src/torchfits/          Python package
 src/torchfits/cpp_src/  C++ native extension (nanobind + CFITSIO)
-src/torchfits/wcs/      Pure-PyTorch WCS implementation
-src/torchfits/sphere/   HEALPix, spherical geometry, SHT
 extern/cfitsio/         Vendored CFITSIO sources
 tests/                  Unit and integration tests
 benchmarks/             Benchmark scripts and replay gates
@@ -56,21 +54,12 @@ pixi run test
 Upstream parity gates (require comparison libraries):
 
 ```bash
-pixi run wcs-upstream-gate
 pixi run fits-upstream-gate
-pixi run healsparse-upstream-gate
-pixi run sphere-upstream-gate
 ```
 
 ## Benchmarks
 
-Quick regression check:
-
-```bash
-pixi run python benchmarks/bench_sentinel.py --initial-repeats 3 --full-repeats 9
-```
-
-Full four-domain sweep:
+Quick FITS benchmark sweep:
 
 ```bash
 pixi run bench-all
@@ -82,9 +71,10 @@ Include benchmark evidence in PRs that touch performance-sensitive paths.
 
 - `README.md`: user-facing overview only.
 - `docs/api.md`: public API reference. Update if a PR changes a public API.
+- `docs/roadmap.md`: FITS I/O roadmap and parity tiers.
+- `docs/parity.md`: compatibility matrix. Update if support status changes.
 - `docs/changelog.md`: release notes, [Keep a Changelog](https://keepachangelog.com/) format.
 - `docs/benchmarks.md`: benchmark methodology and results.
-- `docs/sphere.md`: sphere/HEALPix API reference.
 
 ## PR guidelines
 
