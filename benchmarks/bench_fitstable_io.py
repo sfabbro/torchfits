@@ -510,12 +510,9 @@ def _torchfits_filter_local(path: Path, *, col: str, mmap: bool):
 def _torchfits_scan_count(path: Path, *, col: str, mmap: bool, has_pyarrow: bool):
     import torchfits
 
-    # Use hdu.num_rows if no filtering is needed, it's MUCH faster for FITS.
-    with torchfits.open(str(path)) as hdul:
-        for hdu in hdul:
-            if hasattr(hdu, "num_rows"):
-                return hdu.num_rows
-    return 0
+    # Counting rows needs only the table header. Avoid materializing an HDU list
+    # or any VLA heap data.
+    return int(torchfits.get_header(str(path), hdu=1).get("NAXIS2", 0))
 
 
 def _torchfits_scan_count_local(path: Path, *, col: str, mmap: bool):
@@ -733,6 +730,7 @@ def run_fitstable_domain(
         if keep_temp:
             print(f"[fitstable] temp files kept: {temp_root}", flush=True)
         else:
+            torchfits.clear_file_cache()
             shutil.rmtree(temp_root, ignore_errors=True)
 
 

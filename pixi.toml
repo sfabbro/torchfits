@@ -74,10 +74,12 @@ pre-commit = "pre-commit run --all-files"
 release-manual = "twine upload release_0.2.1/*"
 
 # Core benchmarks (essential)
-# Core benchmarks (essential)
-bench = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
-bench-fits = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --fits-only"
-bench-fitstable = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
+# After a fresh clone, run:  pixi run bench-install
+# This builds the C++ extension once; benchmarks reuse it.
+bench-install = "pip install -e . --no-build-isolation"
+bench = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-fits = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fits-only"
+bench-fitstable = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
 bench-fast = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv"
 bench-fast-stable = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3"
 bench-core = "pixi run -e bench python benchmarks/bench_fast.py"
@@ -86,18 +88,18 @@ bench-table-arrow = "pixi run -e bench python benchmarks/bench_arrow_tables.py"
 bench-table-arrow-diverse = "pixi run -e bench python benchmarks/bench_arrow_tables_diverse.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
-bench-all-keep = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all --keep-temp"
+bench-all = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-all-keep = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all --keep-temp"
 
 # Comprehensive benchmark runner
-bench-all-runner = "pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
-bench-all-force = "pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
+bench-all-runner = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
+bench-all-force = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
 bench-buffer = "pixi run -e bench python benchmarks/bench_buffer.py"
 bench-cache = "pixi run -e bench python benchmarks/bench_cache.py"
 bench-focused = "pixi run -e bench python benchmarks/bench_buffer.py && pixi run -e bench python benchmarks/bench_cache.py"
 
 # Pytest-based benchmarking
-bench-pytest = "pytest benchmarks/ --benchmark-only"
+bench-pytest = "pixi run -e bench pytest benchmarks/ --benchmark-only"
 
 # Development tools
 notebook = "pixi run -e default jupyter lab"
@@ -123,6 +125,12 @@ seaborn = ">=0.13"
 pandas = ">=2.2"
 psutil = ">=5.9"
 pytest-benchmark = ">=4.0"
+# Build deps needed so pip install -e . can compile the C++ extension
+cmake = ">=3.21"
+ninja = ">=1.10"
+nanobind = ">=2.10.2"
+scikit-build-core = ">=0.11.6"
+pip = ">=24.0"
 
 [environments]
 default = { features = ["prod"] }

@@ -47,12 +47,14 @@ SPECIALIZED_METHODS = [
 
 
 class FITSBenchmarkSuite:
-    """Small FITS-only benchmark fixture suite.
+    """FITS-only version of the pre-extraction exhaustive fixture suite.
 
-    The old exhaustive suite also owned WCS/sphere fixtures and was removed when
-    those domains left the package. This local suite intentionally covers only
-    FITS image I/O cases used by this benchmark module.
+    This preserves the historical 84 image workflows without retaining the
+    WCS/sphere benchmark implementation that moved out of torchfits.
     """
+
+    EXPECTED_FILE_COUNT = 81
+    EXPECTED_WORKFLOW_COUNT = 84
 
     def __init__(
         self,
@@ -69,6 +71,20 @@ class FITSBenchmarkSuite:
         self.profile = profile
         self.temp_dir = self.output_dir / "fixtures"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.data_types = {
+            "int8": np.int8,
+            "int16": np.int16,
+            "int32": np.int32,
+            "int64": np.int64,
+            "float32": np.float32,
+            "float64": np.float64,
+        }
+        self.size_categories = {
+            "tiny": {"1d": 1000, "2d": (64, 64), "3d": (5, 32, 32)},
+            "small": {"1d": 10000, "2d": (256, 256), "3d": (10, 128, 128)},
+            "medium": {"1d": 100000, "2d": (1024, 1024), "3d": (25, 256, 256)},
+            "large": {"1d": 1000000, "2d": (2048, 2048), "3d": (50, 512, 512)},
+        }
 
     def cleanup(self) -> None:
         import shutil
@@ -77,47 +93,113 @@ class FITSBenchmarkSuite:
 
     def create_test_files(self) -> dict[str, Path]:
         files: dict[str, Path] = {}
+        rng = np.random.default_rng(20260318)
 
-        tiny = np.arange(64 * 64, dtype=np.int16).reshape(64, 64)
-        files["tiny_int16_2d"] = self.temp_dir / "tiny_int16_2d.fits"
-        astropy_fits.PrimaryHDU(tiny).writeto(files["tiny_int16_2d"], overwrite=True)
+        for size_name, dimensions in self.size_categories.items():
+            for dtype_name, dtype in self.data_types.items():
+                for dim_name, shape in dimensions.items():
+                    if size_name == "large" and dim_name == "3d":
+                        continue
+                    name = f"{size_name}_{dtype_name}_{dim_name}"
+                    path = self.temp_dir / f"{name}.fits"
+                    astropy_fits.PrimaryHDU(
+                        self._generate_data(rng, shape, dtype)
+                    ).writeto(path, overwrite=True)
+                    files[name] = path
 
-        small = np.linspace(0.0, 1.0, 512 * 512, dtype=np.float32).reshape(512, 512)
-        files["small_float32_2d"] = self.temp_dir / "small_float32_2d.fits"
-        astropy_fits.PrimaryHDU(small).writeto(
-            files["small_float32_2d"], overwrite=True
-        )
+        for size_name in ("small", "medium"):
+            shape = self.size_categories[size_name]["2d"]
+            hdus = [astropy_fits.PrimaryHDU()]
+            for dtype_name, dtype in list(self.data_types.items())[:3]:
+                hdus.append(
+                    astropy_fits.ImageHDU(
+                        self._generate_data(rng, shape, dtype),
+                        name=f"EXT_{dtype_name.upper()}",
+                    )
+                )
+            path = self.temp_dir / f"mef_{size_name}.fits"
+            astropy_fits.HDUList(hdus).writeto(path, overwrite=True)
+            files[f"mef_{size_name}"] = path
 
-        scaled = np.arange(256 * 256, dtype=np.int16).reshape(256, 256)
-        files["scaled_int16_2d"] = self.temp_dir / "scaled_int16_2d.fits"
-        hdu = astropy_fits.PrimaryHDU(scaled)
-        hdu.header["BSCALE"] = 2.0
-        hdu.header["BZERO"] = 10.0
-        hdu.writeto(files["scaled_int16_2d"], overwrite=True)
-
-        mef = (np.arange(128 * 128, dtype=np.float32).reshape(128, 128) / 10.0)
-        files["mef_small"] = self.temp_dir / "mef_small.fits"
-        astropy_fits.HDUList(
-            [astropy_fits.PrimaryHDU(), astropy_fits.ImageHDU(mef, name="SCI")]
-        ).writeto(files["mef_small"], overwrite=True)
-
-        compressed = np.arange(128 * 128, dtype=np.int16).reshape(128, 128)
-        files["compressed_rice_1"] = self.temp_dir / "compressed_rice_1.fits"
-        astropy_fits.HDUList(
-            [
-                astropy_fits.PrimaryHDU(),
-                astropy_fits.CompImageHDU(
-                    compressed, compression_type="RICE_1", name="COMP"
-                ),
+        hdus = [astropy_fits.PrimaryHDU()]
+        for index in range(10):
+            dtype_name, dtype = list(self.data_types.items())[
+                index % len(self.data_types)
             ]
-        ).writeto(files["compressed_rice_1"], overwrite=True)
+            hdus.append(
+                astropy_fits.ImageHDU(
+                    self._generate_data(rng, (256, 256), dtype),
+                    name=f"EXT_{index:02d}_{dtype_name.upper()}",
+                )
+            )
+        multi_path = self.temp_dir / "multi_mef_10ext.fits"
+        astropy_fits.HDUList(hdus).writeto(multi_path, overwrite=True)
+        files["multi_mef_10ext"] = multi_path
 
+        for size_name in ("small", "medium", "large"):
+            shape = self.size_categories[size_name]["2d"]
+            data = (rng.normal(size=shape).astype(np.float32) * 1000 + 32768).astype(
+                np.int16
+            )
+            hdu = astropy_fits.PrimaryHDU(data)
+            hdu.header["BSCALE"] = 0.1
+            hdu.header["BZERO"] = 32768
+            path = self.temp_dir / f"scaled_{size_name}.fits"
+            hdu.writeto(path, overwrite=True)
+            files[f"scaled_{size_name}"] = path
+
+        compressed = self._generate_data(rng, (1024, 1024), np.float32)
+        for compression in ("RICE_1", "GZIP_1", "GZIP_2", "HCOMPRESS_1"):
+            name = f"compressed_{compression.lower()}"
+            path = self.temp_dir / f"{name}.fits"
+            astropy_fits.HDUList(
+                [
+                    astropy_fits.PrimaryHDU(),
+                    astropy_fits.CompImageHDU(
+                        compressed,
+                        compression_type=compression,
+                    ),
+                ]
+            ).writeto(path, overwrite=True)
+            files[name] = path
+
+        for index in range(5):
+            name = f"timeseries_frame_{index:03d}"
+            path = self.temp_dir / f"{name}.fits"
+            astropy_fits.PrimaryHDU(
+                self._generate_data(rng, (256, 256), np.float32) + index * 100
+            ).writeto(path, overwrite=True)
+            files[name] = path
+        if len(files) != self.EXPECTED_FILE_COUNT:
+            raise RuntimeError(
+                "FITS benchmark fixture contract changed: "
+                f"expected {self.EXPECTED_FILE_COUNT} files, created {len(files)}"
+            )
         return files
+
+    @staticmethod
+    def _generate_data(
+        rng: np.random.Generator,
+        shape: int | tuple[int, ...],
+        dtype: type[np.generic],
+    ) -> np.ndarray:
+        if np.issubdtype(dtype, np.integer):
+            bounds = {
+                np.dtype(np.int8): (-100, 100),
+                np.dtype(np.int16): (-1000, 1000),
+                np.dtype(np.int32): (-10000, 10000),
+                np.dtype(np.int64): (-100000, 100000),
+            }
+            low, high = bounds[np.dtype(dtype)]
+            return rng.integers(low, high, size=shape, dtype=dtype)
+        return rng.normal(size=shape).astype(dtype)
 
     def _get_file_type(self, name: str) -> str:
         lowered = name.lower()
         if "compressed" in lowered:
             return "compressed"
+        if "multi_mef" in lowered:
+            return "multi_mef"
         if "mef" in lowered:
             return "mef"
         if "scaled" in lowered:
@@ -125,7 +207,10 @@ class FITSBenchmarkSuite:
         return "image"
 
     def _get_compression_type(self, name: str) -> str:
-        return "rice" if "compressed" in name.lower() else "none"
+        lowered = name.lower()
+        if "compressed_" in lowered:
+            return lowered.split("compressed_", 1)[1]
+        return "none"
 
     @staticmethod
     def _ensure_native_endian_numpy(arr: np.ndarray) -> np.ndarray:
@@ -139,7 +224,9 @@ class FITSBenchmarkSuite:
 
     def _astropy_read(self, path: Path, hdu_num: int) -> np.ndarray:
         with astropy_fits.open(path, memmap=self.use_mmap) as hdul:
-            return self._ensure_native_endian_numpy(np.array(hdul[hdu_num].data, copy=True))
+            return self._ensure_native_endian_numpy(
+                np.array(hdul[hdu_num].data, copy=True)
+            )
 
     def _astropy_to_torch(self, path: Path, hdu_num: int) -> torch.Tensor:
         return torch.from_numpy(self._astropy_read(path, hdu_num))
@@ -154,6 +241,9 @@ class FITSBenchmarkSuite:
         rows: list[dict[str, Any]] = []
         runs = 3 if self.profile == "user" else 7
         warmup = 1 if self.profile == "user" else 2
+        torchfits_mmap: bool | str = (
+            "auto" if self.profile == "user" and self.use_mmap else self.use_mmap
+        )
 
         for name, path in sorted(files.items()):
             file_type = self._get_file_type(name)
@@ -161,14 +251,14 @@ class FITSBenchmarkSuite:
 
             methods = {
                 "torchfits": lambda p=path, h=hdu: torchfits.read(
-                    str(p), hdu=h, mmap=self.use_mmap
+                    str(p), hdu=h, mmap=torchfits_mmap
                 ),
                 "astropy_torch": lambda p=path, h=hdu: self._astropy_to_torch(p, h),
                 "fitsio_torch": lambda p=path, h=hdu: torch.from_numpy(
                     self._ensure_native_endian_numpy(fitsio.read(str(p), ext=h))
                 ),
                 "torchfits_specialized": lambda p=path, h=hdu: torchfits.read_image(
-                    str(p), hdu=h, mmap=self.use_mmap
+                    str(p), hdu=h, mmap=torchfits_mmap
                 ),
                 "astropy": lambda p=path, h=hdu: self._astropy_read(p, h),
                 "fitsio": lambda p=path, h=hdu: self._ensure_native_endian_numpy(
@@ -191,7 +281,138 @@ class FITSBenchmarkSuite:
                 row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
             rows.append(row)
 
+        rows.extend(
+            self._benchmark_cutout_rows(
+                files,
+                runs=runs,
+                warmup=warmup,
+            )
+        )
+        random_extension_row = self._benchmark_random_extensions(
+            files,
+            runs=runs,
+            warmup=warmup,
+        )
+        if random_extension_row is not None:
+            rows.append(random_extension_row)
         return rows
+
+    def _benchmark_cutout_rows(
+        self,
+        files: dict[str, Path],
+        *,
+        runs: int,
+        warmup: int,
+    ) -> list[dict[str, Any]]:
+        targets = [
+            ("multi_mef_10ext", 5, "uncompressed"),
+            ("compressed_rice_1", 1, "compressed"),
+        ]
+        rows: list[dict[str, Any]] = []
+        x1, y1, x2, y2 = 100, 100, 200, 200
+        for name, hdu, compression in targets:
+            path = files.get(name)
+            if path is None:
+                continue
+
+            def astropy_cutout(p=path, h=hdu):
+                with astropy_fits.open(p, memmap=self.use_mmap) as hdul:
+                    return self._ensure_native_endian_numpy(
+                        np.array(hdul[h].section[y1:y2, x1:x2], copy=True)
+                    )
+
+            def fitsio_cutout(p=path, h=hdu):
+                with fitsio.FITS(str(p)) as handle:
+                    return self._ensure_native_endian_numpy(handle[h][y1:y2, x1:x2])
+
+            methods = {
+                "torchfits": lambda p=path, h=hdu: torchfits.read_subset(
+                    str(p), h, x1, y1, x2, y2
+                ),
+                "astropy_torch": lambda: torch.from_numpy(astropy_cutout()),
+                "fitsio_torch": lambda: torch.from_numpy(fitsio_cutout()),
+                "torchfits_specialized": lambda p=path, h=hdu: torchfits.read_subset(
+                    str(p), h, x1, y1, x2, y2
+                ),
+                "astropy": astropy_cutout,
+                "fitsio": fitsio_cutout,
+            }
+            row: dict[str, Any] = {
+                "filename": name,
+                "operation": "cutout_100x100",
+                "file_type": self._get_file_type(name),
+                "data_type": "mixed",
+                "dimensions": "2d",
+                "compression": compression,
+                "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+            }
+            for method_name, fn in methods.items():
+                median_s, _err = _time_median(fn, runs=runs, warmup=warmup)
+                row[f"{method_name}_median"] = median_s
+                row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+            rows.append(row)
+        return rows
+
+    def _benchmark_random_extensions(
+        self,
+        files: dict[str, Path],
+        *,
+        runs: int,
+        warmup: int,
+    ) -> dict[str, Any] | None:
+        path = files.get("multi_mef_10ext")
+        if path is None:
+            return None
+        ext_sequence = [((index * 3) % 10) + 1 for index in range(200)]
+
+        def torchfits_sequence():
+            handle = torchfits.cpp.open_fits_file(str(path), "r")
+            try:
+                result = None
+                for hdu in ext_sequence:
+                    result = torchfits.cpp.read_full(handle, hdu, False)
+                return result
+            finally:
+                handle.close()
+
+        def astropy_sequence():
+            with astropy_fits.open(path, memmap=False) as hdul:
+                result = None
+                for hdu in ext_sequence:
+                    result = self._ensure_native_endian_numpy(
+                        np.array(hdul[hdu].data, copy=True)
+                    )
+                return result
+
+        def fitsio_sequence():
+            with fitsio.FITS(str(path)) as handle:
+                result = None
+                for hdu in ext_sequence:
+                    result = self._ensure_native_endian_numpy(handle[hdu].read())
+                return result
+
+        methods = {
+            "torchfits": torchfits_sequence,
+            "astropy_torch": lambda: torch.from_numpy(astropy_sequence()),
+            "fitsio_torch": lambda: torch.from_numpy(fitsio_sequence()),
+            "torchfits_specialized": torchfits_sequence,
+            "astropy": astropy_sequence,
+            "fitsio": fitsio_sequence,
+        }
+        row: dict[str, Any] = {
+            "filename": "multi_mef_10ext",
+            "operation": "random_ext_full_reads_200",
+            "file_type": "multi_mef",
+            "data_type": "mixed",
+            "dimensions": "2d",
+            "compression": "uncompressed",
+            "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+        }
+        for method_name, fn in methods.items():
+            median_s, _err = _time_median(fn, runs=runs, warmup=warmup)
+            row[f"{method_name}_median"] = median_s
+            row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+        return row
 
 
 def _hdu_for_file_type(file_type: str) -> int:
@@ -575,6 +796,12 @@ def run_fits_domain(
         )
 
         raw_rows = suite.run_exhaustive_benchmarks(files)
+        if not case_filter and len(raw_rows) != suite.EXPECTED_WORKFLOW_COUNT:
+            raise RuntimeError(
+                "FITS benchmark workflow contract changed: "
+                f"expected {suite.EXPECTED_WORKFLOW_COUNT} workflows, "
+                f"ran {len(raw_rows)}"
+            )
         astropy_fallback_paths = set(
             getattr(suite, "_astropy_memmap_fallback_paths", set())  # type: ignore[attr-defined]
         )
@@ -602,6 +829,11 @@ def run_fits_domain(
         if keep_temp:
             print(f"[fits] temp files kept: {suite.temp_dir}", flush=True)
         else:
+            # Do not unlink benchmark fixtures while the global CFITSIO handle
+            # cache still owns descriptors for them. The next benchmark domain
+            # runs in the same process and may otherwise inherit stale native
+            # handle state.
+            torchfits.clear_file_cache()
             suite.cleanup()
 
 

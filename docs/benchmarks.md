@@ -78,6 +78,12 @@ Latest local quick benchmark evidence:
 | `20260625_213448` | FITS image I/O | `pixi run python benchmarks/bench_all.py --profile user --fits-only --quick` | 27 | 0 |
 | `20260625_213459` | FITS table I/O | `pixi run python benchmarks/bench_all.py --profile user --fitstable-only --quick` | 90 | 0 |
 
+Latest pre-extraction full-suite audit:
+
+| Date | Scope | Comparable wins | Deficits | Report |
+|---|---|---:|---:|---|
+| 2026-06-26 | 81 FITS files / 84 image workflows and full table matrix | 308 / 308 | 0 | [Full report](benchmark_report_2026-06-26.md) |
+
 Keep this page current with the latest committed FITS and FITS-table benchmark
 run before making performance claims. Historical WCS/sphere benchmark results
 are no longer maintained here.

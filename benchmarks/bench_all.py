@@ -9,7 +9,9 @@ Domains:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -45,7 +47,9 @@ def _parse_args() -> argparse.Namespace:
         default="all",
         help="Benchmark scope selector",
     )
-    parser.add_argument("--fits-only", action="store_true", help="Alias for --scope fits")
+    parser.add_argument(
+        "--fits-only", action="store_true", help="Alias for --scope fits"
+    )
     parser.add_argument(
         "--fitstable-only",
         action="store_true",
@@ -62,8 +66,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mmap", action="store_true", help="Force mmap on")
     parser.add_argument("--no-mmap", action="store_true", help="Force mmap off")
     parser.add_argument("--filter", type=str, default="", help="Regex case filter")
-    parser.add_argument("--quick", action="store_true", help="Reduce workload for smoke checks")
-    parser.add_argument("--keep-temp", action="store_true", help="Keep temporary fixture files")
+    parser.add_argument(
+        "--quick", action="store_true", help="Reduce workload for smoke checks"
+    )
+    parser.add_argument(
+        "--keep-temp", action="store_true", help="Keep temporary fixture files"
+    )
     return parser.parse_args()
 
 
@@ -102,6 +110,51 @@ def _domain_failure_row(*, run_id: str, domain: str, error: str) -> dict[str, An
         "time_s": None,
         "median_s": None,
     }
+
+
+def _run_fitstable_isolated(
+    *,
+    args: argparse.Namespace,
+    run_id: str,
+    run_dir: Path,
+    use_mmap: bool,
+) -> list[dict[str, Any]]:
+    """Run the table domain in a fresh process after the full image matrix.
+
+    CFITSIO and PyTorch both retain process-global native state. Domain
+    isolation also prevents one benchmark's allocator/cache history from
+    contaminating the next domain's timings.
+    """
+    json_path = run_dir / "_fitstable_subprocess_rows.json"
+    command = [
+        sys.executable,
+        str(ROOT / "benchmarks" / "bench_fitstable_io.py"),
+        "--output-dir",
+        str(args.output_dir.resolve()),
+        "--run-id",
+        run_id,
+        "--profile",
+        args.profile,
+        "--warmup",
+        "0" if args.quick else "1",
+        "--json-out",
+        str(json_path.resolve()),
+        "--mmap" if use_mmap else "--no-mmap",
+    ]
+    if args.quick:
+        command.extend(["--quick", "--max-cases", str(QUICK_CASES_PER_DOMAIN)])
+    if args.keep_temp:
+        command.append("--keep-temp")
+
+    try:
+        subprocess.run(command, cwd=ROOT, check=True)
+        with json_path.open(encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if not isinstance(loaded, list):
+            raise RuntimeError("isolated table benchmark returned invalid JSON")
+        return loaded
+    finally:
+        json_path.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -145,22 +198,34 @@ def main() -> int:
 
     if "fitstable" in scopes:
         try:
-            rows.extend(
-                run_fitstable_domain(
-                    run_id=run_id,
-                    output_dir=run_dir,
-                    use_mmap=use_mmap,
-                    profile=args.profile,
-                    warmup=0 if args.quick else 1,
-                    quick=args.quick,
-                    max_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
-                    keep_temp=args.keep_temp,
+            if "fits" in scopes:
+                rows.extend(
+                    _run_fitstable_isolated(
+                        args=args,
+                        run_id=run_id,
+                        run_dir=run_dir,
+                        use_mmap=use_mmap,
+                    )
                 )
-            )
+            else:
+                rows.extend(
+                    run_fitstable_domain(
+                        run_id=run_id,
+                        output_dir=run_dir,
+                        use_mmap=use_mmap,
+                        profile=args.profile,
+                        warmup=0 if args.quick else 1,
+                        quick=args.quick,
+                        max_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
+                        keep_temp=args.keep_temp,
+                    )
+                )
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
             print(f"[bench-all][fitstable] failed: {err}", flush=True)
-            rows.append(_domain_failure_row(run_id=run_id, domain="fitstable", error=err))
+            rows.append(
+                _domain_failure_row(run_id=run_id, domain="fitstable", error=err)
+            )
 
     annotate_rankings(rows)
     deficits = compute_deficits(rows, run_id=run_id)
@@ -176,7 +241,10 @@ def main() -> int:
     )
 
     print(f"Wrote {len(rows)} benchmark rows to {run_dir / 'results.csv'}", flush=True)
-    print(f"Wrote {len(deficits)} deficit rows to {run_dir / 'torchfits_deficits.csv'}", flush=True)
+    print(
+        f"Wrote {len(deficits)} deficit rows to {run_dir / 'torchfits_deficits.csv'}",
+        flush=True,
+    )
     return 0
 
 
