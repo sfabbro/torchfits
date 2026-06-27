@@ -18,13 +18,16 @@ docs. Status values are:
 | FITS headers and cards | Supported | Astropy/fitsio header reads and torchfits `Header` | `tests/test_header_parser.py`, `tests/test_complex_header.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Checksums | Supported | fitsio/CFITSIO checksum workflows | `tests/test_checksum.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Compressed image reads | Supported | Astropy `CompImageHDU`, fitsio image reads | `tests/test_compression.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
-| Compressed image writes | Partial | CFITSIO compressed-image writer | `tests/test_writing.py`; tensor image payloads are supported, compressed dict HDUs require tensor image payloads |
+| Compressed image writes | Supported | CFITSIO compressed-image writer | `tests/test_writing.py`; tensor and numpy array/list payloads are supported for compressed image HDUs |
+| Unsigned image convention | Supported | Astropy/fitsio `BZERO` convention | `uint16`/`uint32` image reads and writes preserve unsigned integer semantics, including HDUList writes |
 | Binary table reads/writes | Supported | `astropy.io.fits`, `fitsio` | `tests/test_table.py`, `tests/test_table_file_ops.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | ASCII table reads/writes | Supported | Astropy `TableHDU` | `tests/test_ascii_table.py`, `tests/test_table_file_ops.py`, `tests/test_astropy_upstream_smoke.py` |
 | Table projection, row slicing, filtering | Supported | fitsio rows/columns/where workflows | `tests/test_table_filtering.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Table mutation | Supported | fitsio-readable results | `tests/test_table_file_ops.py`, `tests/test_fitsio_upstream_smoke.py` |
 | VLA table columns | Partial | Astropy/fitsio variable-length arrays | buffered reads/writes are covered; mmap reads/updates are unsupported |
-| Complex table columns | Partial | Astropy complex FITS columns | buffered reads/writes are covered; mmap reads/updates are unsupported |
+| Complex table columns | Partial | Astropy complex FITS columns | buffered and mmap reads are covered; mmap updates are unsupported |
+| Bit table columns | Supported | Astropy/fitsio `X` columns | read/write returns boolean bit arrays; mmap updates remain unsupported |
+| Unsigned table integer convention | Supported | Astropy/fitsio `TZERO` convention | `uint16`/`uint32` table reads and writes preserve unsigned integer semantics through root, `table.write`, and HDUList paths |
 | Scaled image data | Supported | FITS BSCALE/BZERO semantics | `tests/test_astropy_upstream_smoke.py`, `tests/test_integration.py`, `benchmarks/bench_scaled.py` |
 | Scaled table columns | Partial | CFITSIO-backed table path | buffered reads are covered; mmap updates are unsupported |
 | GPU reads | Supported | PyTorch device transfer after FITS decode | `tests/test_api.py`, examples |
@@ -37,6 +40,19 @@ docs. Status values are:
 | Sky coordinates, sphere geometry, HEALPix | Out of scope | sky-domain packages | outside torchfits |
 | Sky-domain simulation and training pipelines | Out of scope | application/domain code | belongs outside torchfits |
 
+## Why full parity is not claimed
+
+Astropy, fitsio, and CFITSIO each expose more than the FITS I/O workflows that
+torchfits intentionally owns. Full Astropy parity would include the wider
+Astropy package and many object-model conveniences. Full fitsio parity would
+include every method and keyword of its Python wrapper. Full CFITSIO parity
+would mean exposing a large low-level C API surface, including file drivers and
+update modes that are not PyTorch-native.
+
+The target is narrower and testable: common FITS image, HDU, header, checksum,
+compression, table, and slicing/filtering workflows, plus selected
+CFITSIO-backed behavior that torchfits exposes directly.
+
 ## Known mmap limitations
 
 The high-level table readers keep `mmap=True` ergonomic: cases that require
@@ -47,9 +63,7 @@ path.
 Affected layouts:
 
 - VLA columns;
-- bit columns;
 - scaled columns;
-- complex columns;
 - mmap updates for VLA, bit, scaled, string, and complex columns.
 
 Use the buffered table path for those cases.

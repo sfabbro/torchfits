@@ -16,16 +16,34 @@ Astropy, fitsio, or CFITSIO replacement.
 
 ## Near-term work
 
+- Treat parity as a tested compatibility surface, not a blanket claim that
+  torchfits reimplements Astropy, fitsio, or the CFITSIO C API.
 - Keep the package boundary clean: torchfits owns FITS I/O only; sky-domain
   tensor models and simulation workflows stay outside this repository.
 - Expand parity smoke tests for `fitsio` and `astropy.io.fits` whenever a public
   claim is added to `docs/parity.md`.
-- Keep unsupported mmap behavior explicit for VLA, bit, scaled, string, and
-  complex table cases.
+- Keep unsupported mmap behavior explicit for VLA, bit, scaled, and string table cases.
 - Keep benchmark evidence scoped to FITS images and FITS tables, with separate
   rows for mmap fairness, compression, scaling, and table pushdown.
 - Maintain release gates that scan docs for stale WCS/sphere/HEALPix ownership
   claims.
+
+### Permanent design decisions (not gaps)
+
+These Partial items are inherent format limitations or deliberate architectural
+choices, not work items to be closed:
+
+- **VLA mmap reads/updates** — Variable-length arrays use a separate heap with
+  pointer indirection; flat `mmap` cannot stride across variable-length records.
+  The buffered CFITSIO path is the correct solution.
+- **Scaled column mmap updates** — Reverse-scaling arithmetic risks precision
+  loss and overflow when writing floats back through integer storage. Unsafe by
+  design.
+- **GPU writes** — The CFITSIO C API requires host `void*` pointers. Bypassing
+  it requires CUDA kernels or GPUDirect Storage, massive engineering for
+  marginal gain. Host-copy is intentional.
+- **Arrow/Pandas/Polars/DuckDB interop as optional** — Keeping these as optional
+  dependencies preserves PyTorch's lightweight package boundaries.
 
 ## Longer-term candidates
 
