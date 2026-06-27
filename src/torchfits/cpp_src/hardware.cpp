@@ -90,6 +90,9 @@ HardwareInfo detect_hardware() {
 
 MMapHandle::MMapHandle(const std::string& filename) : MMapHandle(filename, false) {}
 
+MMapHandle::MMapHandle(void* ptr, size_t size, int fd, bool owner)
+    : ptr(ptr), size(size), fd(fd), owner(owner) {}
+
 MMapHandle::MMapHandle(const std::string& filename, bool writable) {
     fd = open(filename.c_str(), O_RDONLY);
     if (fd == -1) {

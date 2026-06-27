@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pytest
 import torch
 from astropy.io import fits
 
@@ -208,6 +209,38 @@ def test_write_compressed_image_tuple_roundtrip():
         torchfits.write(filename, payload, overwrite=True, compress=True)
         assert torch.equal(torchfits.read(filename, hdu=1), img0)
         assert torch.equal(torchfits.read(filename, hdu=2), img1)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
+def test_compressed_write_rejects_dict_hdu_with_non_tensor_image_payload():
+    filename = "test_write_compressed_dict_rejects_table_payload.fits"
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="Compressed FITS writing supports tensor image payloads",
+        ):
+            torchfits.write(
+                filename,
+                {"data": {"ID": torch.tensor([1, 2, 3], dtype=torch.int32)}},
+                overwrite=True,
+                compress=True,
+            )
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_write_cuda_tensor_copies_to_host_before_fits_write():
+    filename = "test_write_cuda_tensor_host_copy.fits"
+    data = torch.arange(16, dtype=torch.float32, device="cuda").reshape(4, 4)
+    try:
+        torchfits.write(filename, data, overwrite=True)
+        out = torchfits.read(filename, hdu=0)
+        assert out.device.type == "cpu"
+        assert torch.equal(out, data.cpu())
     finally:
         if os.path.exists(filename):
             os.remove(filename)

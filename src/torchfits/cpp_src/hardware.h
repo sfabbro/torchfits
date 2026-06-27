@@ -4,6 +4,8 @@
 #include <string>
 #include <mutex>
 
+#include "internal_utils.h"
+
 namespace torchfits {
 
 struct HardwareInfo {
@@ -39,6 +41,7 @@ public:
     MMapHandle() = default;
     explicit MMapHandle(const std::string& filename);
     explicit MMapHandle(const std::string& filename, bool writable);
+    explicit MMapHandle(void* ptr, size_t size, int fd, bool owner = true);
 
     // Move constructor
     MMapHandle(MMapHandle&& other) noexcept
@@ -72,19 +75,18 @@ public:
     void cleanup(); // Implementation in hardware.cpp or inline if header-only
 };
 
-// Helper to swap bytes for int16 (Big Endian -> Little Endian)
-inline int16_t bswap_16(int16_t x) {
-    return __builtin_bswap16(x);
-}
+// Convenience wrappers that accept signed integer types commonly used in
+// torchfits table/image code. Delegates to the canonical unsigned helpers
+// in internal_utils.h.
+inline int16_t bswap_16(int16_t x) { return static_cast<int16_t>(internal::bswap_16(static_cast<uint16_t>(x))); }
+inline int32_t bswap_32(int32_t x) { return static_cast<int32_t>(internal::bswap_32(static_cast<uint32_t>(x))); }
+inline int64_t bswap_64(int64_t x) { return static_cast<int64_t>(internal::bswap_64(static_cast<uint64_t>(x))); }
 
-// Helper to swap bytes for int32/float32 (Big Endian -> Little Endian)
-inline int32_t bswap_32(int32_t x) {
-    return __builtin_bswap32(x);
-}
-
-// Helper to swap bytes for int64/double (Big Endian -> Little Endian)
-inline int64_t bswap_64(int64_t x) {
-    return __builtin_bswap64(x);
-}
+// Re-export the unsigned overloads from internal_utils.h so callers with
+// uintXX_t arguments (e.g. from raw memory byte-swaps) get the canonical
+// helpers directly without implicit signed/unsigned conversions.
+using internal::bswap_16;
+using internal::bswap_32;
+using internal::bswap_64;
 
 }  // namespace torchfits

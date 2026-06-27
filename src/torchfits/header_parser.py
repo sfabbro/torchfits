@@ -324,15 +324,15 @@ class FastHeaderParser:
             return quoted_str[1:]
 
         if "''" not in quoted_str:
-            return quoted_str[1:end_idx]
+            return quoted_str[1:end_idx].rstrip()
 
         # We search for the first unescaped quote AFTER the opening quote.
         # We use [1:] to protect the opening quote at index 0 from being replaced.
         end_idx = quoted_str[1:].replace("''", "  ").find("'")
         if end_idx == -1:
-            return quoted_str[1:].replace("''", "'")
+            return quoted_str[1:].replace("''", "'").rstrip()
         # Add 1 back to end_idx because we searched in quoted_str[1:]
-        return quoted_str[1 : end_idx + 1].replace("''", "'")
+        return quoted_str[1 : end_idx + 1].replace("''", "'").rstrip()
 
     @classmethod
     def parse_with_performance_tracking(cls, header_string: str) -> tuple:
@@ -373,6 +373,27 @@ def fast_parse_header(header_string: str) -> Dict[str, Any]:
         Dictionary of header keywords and values
     """
     return FastHeaderParser.parse_header_string(header_string)
+
+
+def fast_parse_header_cards(header_string: str) -> list[tuple[str, Any, str]]:
+    """
+    Parse a raw FITS header string into ordered ``(keyword, value, comment)`` cards.
+
+    This preserves repeated HISTORY/COMMENT cards and keeps typed FITS scalar
+    values available to ``Header`` callers.
+    """
+    if not header_string:
+        return []
+
+    cards: list[tuple[str, Any, str]] = []
+    for i in range(0, len(header_string), 80):
+        card = header_string[i : i + 80]
+        if card.startswith("END     "):
+            break
+        key, value, comment = FastHeaderParser._parse_card(card)
+        if key:
+            cards.append((key, value, "" if comment is None else str(comment)))
+    return cards
 
 
 def benchmark_header_parsing(

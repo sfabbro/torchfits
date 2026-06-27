@@ -148,3 +148,275 @@ def test_fitsio_image_compression_and_slice_workflows_match_torchfits() -> None:
         np.testing.assert_array_equal(subset, image[2:5, 3:7])
     finally:
         path.unlink(missing_ok=True)
+
+
+def test_fitsio_hdu_navigation_and_header_reads_match_torchfits() -> None:
+    primary = torch.arange(9, dtype=torch.int16).reshape(3, 3)
+    science = torch.arange(16, dtype=torch.float32).reshape(4, 4)
+    catalog = {
+        "ID": np.array([1, 2], dtype=np.int32),
+        "FLUX": np.array([10.5, 20.5], dtype=np.float32),
+    }
+    hdul = torchfits.HDUList(
+        [
+            torchfits.TensorHDU(
+                primary,
+                header=torchfits.Header({"OBJECT": ("FIELD-A", "target name")}),
+            ),
+            torchfits.TensorHDU(
+                science,
+                header=torchfits.Header({"EXTNAME": "SCI", "BUNIT": "adu"}),
+            ),
+            torchfits.TableHDU(
+                catalog,
+                header=torchfits.Header({"EXTNAME": "CATALOG"}),
+            ),
+        ]
+    )
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = Path(fh.name)
+
+    try:
+        torchfits.write(path.as_posix(), hdul, overwrite=True)
+
+        np.testing.assert_array_equal(
+            torchfits.read(path.as_posix(), hdu="SCI").cpu().numpy(),
+            fitsio.read(path.as_posix(), ext="SCI"),
+        )
+        torch_table = torchfits.table.read(path.as_posix(), hdu="CATALOG")
+        fits_table = fitsio.read(path.as_posix(), ext="CATALOG")
+        np.testing.assert_array_equal(
+            np.asarray(torch_table.column("ID").to_pylist()),
+            fits_table["ID"],
+        )
+        np.testing.assert_allclose(
+            np.asarray(torch_table.column("FLUX").to_pylist()),
+            fits_table["FLUX"],
+        )
+
+        primary_header = fitsio.read_header(path.as_posix(), ext=0)
+        science_header = fitsio.read_header(path.as_posix(), ext="SCI")
+        assert primary_header["OBJECT"] == "FIELD-A"
+        assert science_header["EXTNAME"] == "SCI"
+        assert science_header["BUNIT"] == "adu"
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_fitsio_bit_column_read_write_workflows_match_torchfits() -> None:
+    bits = np.array(
+        [
+            [True, False, True, False, True, False, True, False],
+            [False, True, False, True, False, True, False, True],
+        ],
+        dtype=np.bool_,
+    )
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = Path(fh.name)
+
+    try:
+        torchfits.table.write(
+            path.as_posix(),
+            {"FLAGS": bits},
+            schema={"FLAGS": {"format": "8X"}},
+            overwrite=True,
+        )
+
+        fits_data = fitsio.read(path.as_posix(), ext=1)
+        assert fits_data.dtype["FLAGS"].shape == (8,)
+        assert fits_data["FLAGS"].dtype == np.bool_
+        np.testing.assert_array_equal(fits_data["FLAGS"], bits)
+
+        torch_data = torchfits.read(path.as_posix(), hdu=1)
+        assert torch_data["FLAGS"].dtype == torch.bool
+        assert torch_data["FLAGS"].shape == (2, 8)
+        assert torch_data["FLAGS"].tolist() == bits.tolist()
+
+        arrow_table = torchfits.table.read(path.as_posix(), hdu=1)
+        assert arrow_table.column("FLAGS").to_pylist() == bits.tolist()
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_fitsio_unsigned_table_convention_matches_torchfits() -> None:
+    fits = pytest.importorskip("astropy.io.fits")
+    cases = [
+        (
+            "U16",
+            "I",
+            np.array([-32768, 0, 32767], dtype=np.int16),
+            32768,
+            torch.uint16,
+        ),
+        (
+            "U32",
+            "J",
+            np.array([-2147483648, 0, 2147483647], dtype=np.int32),
+            2147483648,
+            torch.uint32,
+        ),
+    ]
+
+    for name, tform, raw, tzero, torch_dtype in cases:
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+            path = Path(fh.name)
+        try:
+            fits.HDUList(
+                [
+                    fits.PrimaryHDU(),
+                    fits.BinTableHDU.from_columns(
+                        [fits.Column(name=name, format=tform, array=raw)]
+                    ),
+                ]
+            ).writeto(path, overwrite=True)
+            with fits.open(path, mode="update") as hdul:
+                hdul[1].header["TZERO1"] = tzero
+
+            fits_data = fitsio.read(path.as_posix(), ext=1)[name]
+            torch_data = torchfits.read(path.as_posix(), hdu=1)[name]
+            assert torch_data.dtype == torch_dtype
+            assert torch_data.tolist() == fits_data.tolist()
+
+            arrow_table = torchfits.table.read(path.as_posix(), hdu=1)
+            assert arrow_table.column(name).to_pylist() == fits_data.tolist()
+        finally:
+            path.unlink(missing_ok=True)
+
+
+def test_fitsio_unsigned_image_convention_matches_torchfits() -> None:
+    fits = pytest.importorskip("astropy.io.fits")
+    u16 = np.array([[0, 32768, 65535]], dtype=np.uint16)
+    u32 = np.array([[0, 2147483648, 4294967295]], dtype=np.uint32)
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = Path(fh.name)
+
+    try:
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(u16),
+                fits.ImageHDU(u32, name="U32"),
+            ]
+        ).writeto(path, overwrite=True)
+
+        fits_u16 = fitsio.read(path.as_posix(), ext=0)
+        fits_u32 = fitsio.read(path.as_posix(), ext="U32")
+        assert fits_u16.dtype == np.uint16
+        assert fits_u32.dtype == np.uint32
+
+        torch_u16 = torchfits.read(path.as_posix(), hdu=0)
+        torch_u16_image = torchfits.read_image(path.as_posix(), hdu=0)
+        torch_u32 = torchfits.read(path.as_posix(), hdu="U32")
+        assert torch_u16.dtype == torch.uint16
+        assert torch_u16_image.dtype == torch.uint16
+        assert torch_u32.dtype == torch.uint32
+        assert torch_u16.tolist() == fits_u16.tolist()
+        assert torch_u16_image.tolist() == fits_u16.tolist()
+        assert torch_u32.tolist() == fits_u32.tolist()
+
+        batch = torchfits.read(path.as_posix(), hdu=[0, 1])
+        assert batch[0].dtype == torch.uint16
+        assert batch[1].dtype == torch.uint32
+        assert batch[0].tolist() == fits_u16.tolist()
+        assert batch[1].tolist() == fits_u32.tolist()
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_torchfits_unsigned_image_writes_match_fitsio_and_astropy() -> None:
+    fits = pytest.importorskip("astropy.io.fits")
+    u16 = torch.tensor([[0, 32768, 65535]], dtype=torch.uint16)
+    u32 = torch.tensor([[0, 2147483648, 4294967295]], dtype=torch.uint32)
+
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = Path(fh.name)
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        hdul_path = Path(fh.name)
+
+    try:
+        torchfits.write(path.as_posix(), u16, overwrite=True)
+        fits_data = fits.getdata(path.as_posix())
+        fitsio_data = fitsio.read(path.as_posix(), ext=0)
+        torch_data = torchfits.read(path.as_posix())
+        assert fits_data.dtype == np.uint16
+        assert fitsio_data.dtype == np.uint16
+        assert torch_data.dtype == torch.uint16
+        assert torch_data.tolist() == u16.tolist()
+        np.testing.assert_array_equal(fits_data, np.asarray(u16))
+        np.testing.assert_array_equal(fitsio_data, np.asarray(u16))
+
+        torchfits.HDUList(
+            [
+                torchfits.TensorHDU(u16),
+                torchfits.TensorHDU(u32, header=torchfits.Header({"EXTNAME": "U32"})),
+            ]
+        ).write(hdul_path.as_posix(), overwrite=True)
+        fits_u16 = fits.getdata(hdul_path.as_posix(), ext=0)
+        fits_u32 = fits.getdata(hdul_path.as_posix(), extname="U32")
+        fitsio_u16 = fitsio.read(hdul_path.as_posix(), ext=0)
+        fitsio_u32 = fitsio.read(hdul_path.as_posix(), ext="U32")
+        torch_u16 = torchfits.read(hdul_path.as_posix(), hdu=0)
+        torch_u32 = torchfits.read(hdul_path.as_posix(), hdu="U32")
+        assert fits_u16.dtype == np.uint16
+        assert fits_u32.dtype == np.uint32
+        assert fitsio_u16.dtype == np.uint16
+        assert fitsio_u32.dtype == np.uint32
+        assert torch_u16.dtype == torch.uint16
+        assert torch_u32.dtype == torch.uint32
+        assert torch_u16.tolist() == u16.tolist()
+        assert torch_u32.tolist() == u32.tolist()
+    finally:
+        path.unlink(missing_ok=True)
+        hdul_path.unlink(missing_ok=True)
+
+
+def test_torchfits_unsigned_table_writes_match_fitsio_and_astropy() -> None:
+    fits = pytest.importorskip("astropy.io.fits")
+    table = {
+        "U16": np.array([0, 32768, 65535], dtype=np.uint16),
+        "U32": np.array([0, 2147483648, 4294967295], dtype=np.uint32),
+    }
+
+    paths: list[Path] = []
+    try:
+        for writer in ("root", "table", "hdulist"):
+            with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+                path = Path(fh.name)
+            paths.append(path)
+            if writer == "root":
+                torchfits.write(path.as_posix(), table, overwrite=True)
+            elif writer == "table":
+                torchfits.table.write(path.as_posix(), table, overwrite=True)
+            else:
+                torchfits.HDUList(
+                    [
+                        torchfits.TensorHDU(torch.zeros(0, dtype=torch.uint8)),
+                        torchfits.TableHDU(table, header=torchfits.Header({"EXTNAME": "T"})),
+                    ]
+                ).write(path.as_posix(), overwrite=True)
+
+            ext = "T" if writer == "hdulist" else 1
+            if isinstance(ext, str):
+                fits_data = fits.getdata(path.as_posix(), extname=ext)
+            else:
+                fits_data = fits.getdata(path.as_posix(), ext=ext)
+            fitsio_data = fitsio.read(path.as_posix(), ext=ext)
+            torch_data = torchfits.read(path.as_posix(), hdu=ext)
+            arrow_table = torchfits.table.read(path.as_posix(), hdu=ext)
+
+            assert fits_data["U16"].dtype == np.uint16
+            assert fits_data["U32"].dtype == np.uint32
+            assert fitsio_data["U16"].dtype.kind == "u"
+            assert fitsio_data["U16"].dtype.itemsize == 2
+            assert fitsio_data["U32"].dtype.kind == "u"
+            assert fitsio_data["U32"].dtype.itemsize == 4
+            assert torch_data["U16"].dtype == torch.uint16
+            assert torch_data["U32"].dtype == torch.uint32
+            assert arrow_table.column("U16").to_pylist() == table["U16"].tolist()
+            assert arrow_table.column("U32").to_pylist() == table["U32"].tolist()
+            np.testing.assert_array_equal(fits_data["U16"], table["U16"])
+            np.testing.assert_array_equal(fits_data["U32"], table["U32"])
+            np.testing.assert_array_equal(fitsio_data["U16"], table["U16"])
+            np.testing.assert_array_equal(fitsio_data["U32"], table["U32"])
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)

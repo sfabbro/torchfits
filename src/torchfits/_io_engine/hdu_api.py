@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Optional, Union
 
-from ..header_parser import fast_parse_header
+from ..header_parser import fast_parse_header, fast_parse_header_cards
 from ..hdu import HDUList, Header
 
 from .caches import (
@@ -141,6 +141,23 @@ def get_header(
     """Get the header of a FITS file."""
     import torchfits._C as cpp
 
+    def _read_header(path: str, hdu_index: int) -> Header:
+        handle = None
+        try:
+            handle = cpp.open_fits_file(path, "r")
+            header_string = cpp.read_header_string(handle, hdu_index)
+            if header_string:
+                return Header(fast_parse_header_cards(header_string))
+        except Exception:
+            pass
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+        return Header(cpp.read_header_dict(path, hdu_index))
+
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
         hdu = autodetect_hdu(path, 16)
 
@@ -148,21 +165,19 @@ def get_header(
         if hasattr(cpp, "resolve_hdu_name_cached"):
             try:
                 hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
-                return Header(cpp.read_header_dict(path, hdu))
+                return _read_header(path, hdu)
             except Exception:
                 pass
 
         for i in range(100):  # Fallback scan
             try:
-                header_data = cpp.read_header_dict(path, i)
-                if not header_data:
+                header = _read_header(path, i)
+                if not header:
                     break
-                header = Header(header_data)
                 if header.get("EXTNAME") == hdu:
                     return header
             except Exception:
                 break
         raise ValueError(f"HDU '{hdu}' not found")
 
-    return Header(cpp.read_header_dict(path, hdu))
-
+    return _read_header(path, hdu)

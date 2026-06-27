@@ -2,6 +2,7 @@
 #include "cache.h"
 #include "security.h"
 #include "torch_compat.h"
+#include "internal_utils.h"
 #include <unordered_map>
 #include <list>
 #include <mutex>
@@ -20,34 +21,9 @@
 namespace torchfits {
 
 namespace {
-inline bool env_flag_default_true(const char* name) {
-    const char* v = std::getenv(name);
-    if (!v) {
-        return true;
-    }
-    std::string s(v);
-    return !(s == "0" || s == "false" || s == "FALSE" || s == "off" || s == "OFF" ||
-             s == "no" || s == "NO");
-}
-
-inline int64_t env_nonnegative_int(const char* name, int64_t default_value) {
-    const char* v = std::getenv(name);
-    if (!v) {
-        return default_value;
-    }
-    try {
-        int64_t parsed = std::stoll(std::string(v));
-        return parsed < 0 ? 0 : parsed;
-    } catch (...) {
-        return default_value;
-    }
-}
-
-inline int64_t monotonic_now_ns() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
+using torchfits::internal::env_flag_default_true;
+using torchfits::internal::env_nonnegative_int;
+using torchfits::internal::monotonic_now_ns;
 
 // Validate cached handles against filesystem state. This adds a stat() on cache hits.
 // Keep this enabled by default for correctness when files are modified externally;
@@ -94,13 +70,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
 
         auto mtime_ns_from_stat = [&](const struct stat& st) -> int64_t {
-#if defined(__APPLE__)
-            return (static_cast<int64_t>(st.st_mtimespec.tv_sec) * 1000000000LL) +
-                   static_cast<int64_t>(st.st_mtimespec.tv_nsec);
-#else
-            return (static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000LL) +
-                   static_cast<int64_t>(st.st_mtim.tv_nsec);
-#endif
+            return torchfits::internal::mtime_ns_from_stat(st);
         };
 
         auto read_stat = [&](bool* out_has_stat, off_t* out_size, int64_t* out_mtime_ns, ino_t* out_inode) {

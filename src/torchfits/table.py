@@ -888,6 +888,7 @@ def _tensor_to_arrow_array(
     null_sentinel: Any = None,
     *,
     fits_tform: str | None = None,
+    unsigned_dtype: str | None = None,
 ):
     t = tensor.detach()
     if t.device.type != "cpu":
@@ -903,6 +904,7 @@ def _tensor_to_arrow_array(
         strip,
         null_sentinel=null_sentinel,
         fits_tform=fits_tform,
+        unsigned_dtype=unsigned_dtype,
     )
 
 
@@ -917,6 +919,19 @@ def _uint8_matrix_to_fixed_binary(pa, value: "np.ndarray"):
         return _pa_array(pa, [b""] * int(arr.shape[0]))
     byte_view = arr.view(np.dtype(f"S{width}")).reshape(arr.shape[0])
     return _pa_array(pa, byte_view, type=pa.binary(width))
+
+
+def _uint8_matrix_to_fixed_bool_list(pa, value: "np.ndarray"):
+    import numpy as np
+
+    arr = np.ascontiguousarray(value)
+    if arr.ndim != 2:
+        return _pa_array(pa, arr.astype(np.bool_, copy=False))
+    width = int(arr.shape[1])
+    if width <= 0:
+        return _pa_array(pa, [[] for _ in range(int(arr.shape[0]))])
+    values = _pa_array(pa, arr.astype(np.bool_, copy=False).reshape(-1))
+    return pa.FixedSizeListArray.from_arrays(values, width)
 
 
 def _decode_uint8_matrix_to_arrow(pa, value: "np.ndarray", encoding: str, strip: bool):
@@ -959,10 +974,13 @@ def _numpy_to_arrow_array(
     null_sentinel: Any = None,
     *,
     fits_tform: str | None = None,
+    unsigned_dtype: str | None = None,
 ):
     import numpy as np
 
     arr = np.ascontiguousarray(value)
+    if unsigned_dtype and arr.dtype.kind == "f":
+        arr = arr.astype(np.dtype(unsigned_dtype), copy=False)
     if arr.ndim <= 1:
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
@@ -973,6 +991,8 @@ def _numpy_to_arrow_array(
         return _pa_array(pa, arr)
     if arr.ndim == 2:
         if arr.dtype == np.uint8:
+            if _fits_tform_is_bit(fits_tform):
+                return _uint8_matrix_to_fixed_bool_list(pa, arr)
             if decode_bytes and not _fits_tform_is_bit(fits_tform):
                 return _decode_uint8_matrix_to_arrow(pa, arr, encoding, strip)
             return _uint8_matrix_to_fixed_binary(pa, arr)
@@ -1030,6 +1050,7 @@ def _chunk_to_record_batch(
     null_meta: Optional[dict[str, dict[str, str]]] = None,
     apply_fits_nulls: bool = False,
     column_tforms: Optional[dict[str, str]] = None,
+    unsigned_dtypes: Optional[dict[str, str]] = None,
 ):
     import numpy as np
 
@@ -1042,6 +1063,11 @@ def _chunk_to_record_batch(
                 return tf
         if field_meta and name in field_meta:
             return field_meta[name].get("fits_tform")
+        return None
+
+    def _unsigned_dtype_for(name: str) -> str | None:
+        if unsigned_dtypes:
+            return unsigned_dtypes.get(name)
         return None
 
     # Fast path when schema metadata is not requested.
@@ -1077,6 +1103,7 @@ def _chunk_to_record_batch(
                     strip,
                     null_sentinel=null_sentinel,
                     fits_tform=_tform_for(name),
+                    unsigned_dtype=_unsigned_dtype_for(name),
                 )
             elif isinstance(value, np.ndarray):
                 pydict[name] = _numpy_to_arrow_array(
@@ -1087,6 +1114,7 @@ def _chunk_to_record_batch(
                     strip,
                     null_sentinel=null_sentinel,
                     fits_tform=_tform_for(name),
+                    unsigned_dtype=_unsigned_dtype_for(name),
                 )
             elif isinstance(value, list):
                 converted = []
@@ -1135,6 +1163,7 @@ def _chunk_to_record_batch(
                 strip,
                 null_sentinel=null_sentinel,
                 fits_tform=_tform_for(name),
+                unsigned_dtype=_unsigned_dtype_for(name),
             )
         elif isinstance(value, np.ndarray):
             arr = _numpy_to_arrow_array(
@@ -1145,6 +1174,7 @@ def _chunk_to_record_batch(
                 strip,
                 null_sentinel=null_sentinel,
                 fits_tform=_tform_for(name),
+                unsigned_dtype=_unsigned_dtype_for(name),
             )
         elif isinstance(value, list):
             converted = []
@@ -1272,6 +1302,37 @@ def _column_tforms_for_decode(
                 out[col] = tf
     except Exception:
         pass
+    return out
+
+
+def _unsigned_column_dtypes(
+    path: str,
+    hdu: int,
+    selected_columns: Optional[set[str]],
+) -> dict[str, str]:
+    """Map standard unsigned FITS table conventions to NumPy dtypes."""
+    try:
+        fm, _ = _build_fits_metadata(path, hdu, selected_columns)
+    except Exception:
+        return {}
+    targets = {
+        ("I", 32768.0): "uint16",
+        ("J", 2147483648.0): "uint32",
+    }
+    out: dict[str, str] = {}
+    for col, meta in fm.items():
+        parsed = _column_tform_code_and_repeat(meta.get("fits_tform"))
+        if parsed is None:
+            continue
+        code, _repeat = parsed
+        try:
+            tscal = float(meta.get("fits_tscal", "1"))
+            tzero = float(meta.get("fits_tzero", "0"))
+        except Exception:
+            continue
+        target = targets.get((code, tzero))
+        if target is not None and tscal == 1.0:
+            out[col] = target
     return out
 
 
@@ -1436,7 +1497,7 @@ def _iter_chunks_cpp_numpy(
 
 def scan(
     path: str,
-    hdu: int = 1,
+    hdu: int | str = 1,
     columns: Optional[list[str]] = None,
     row_slice: Optional[slice | tuple[int, int]] = None,
     where: Optional[str] = None,
@@ -1455,6 +1516,9 @@ def scan(
     This is out-of-core friendly: each yielded batch is independently materialized.
     FITS character columns are decoded to Python strings by default (`decode_bytes=True`).
     """
+    if isinstance(hdu, str):
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
+
     if batch_size <= 0:
         raise ValueError("batch_size must be > 0")
     validate_table_backend(backend)
@@ -1487,6 +1551,7 @@ def scan(
     col_tforms = (
         _column_tforms_for_decode(path, hdu, selected) if decode_bytes else None
     )
+    unsigned_dtypes = _unsigned_column_dtypes(path, hdu, selected)
     field_meta: dict[str, dict[str, str]] = {}
     table_meta: dict[str, str] = {}
     need_field_meta = include_fits_metadata or apply_fits_nulls
@@ -1530,12 +1595,13 @@ def scan(
             null_meta=field_meta,
             apply_fits_nulls=apply_fits_nulls,
             column_tforms=col_tforms,
+            unsigned_dtypes=unsigned_dtypes,
         )
 
 
 def read(
     path: str,
-    hdu: int = 1,
+    hdu: int | str = 1,
     columns: Optional[list[str]] = None,
     row_slice: Optional[slice | tuple[int, int]] = None,
     rows: Optional[list[int]] = None,
@@ -1555,6 +1621,8 @@ def read(
     """
     validate_table_backend(backend)
     pa = _require_pyarrow()
+    if isinstance(hdu, str):
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
 
     if backend in {"auto", "cpp_numpy"}:
         # For large tables with a where clause, the cpp_numpy backend (which resolves
@@ -1754,7 +1822,7 @@ def read(
 
 def schema(
     path: str,
-    hdu: int = 1,
+    hdu: int | str = 1,
     columns: Optional[list[str]] = None,
     where: Optional[str] = None,
     decode_bytes: bool = True,
@@ -1767,6 +1835,8 @@ def schema(
     """Fetch Arrow schema for a FITS table with minimal read."""
     pa = _require_pyarrow()
     validate_table_backend(backend)
+    if isinstance(hdu, str):
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
     scan_backend = backend
     iterator = scan(
         path,
@@ -1843,6 +1913,7 @@ def _read_cpp_numpy_table(
     col_tforms = (
         _column_tforms_for_decode(path, hdu, selected) if decode_bytes else None
     )
+    unsigned_dtypes = _unsigned_column_dtypes(path, hdu, selected)
     field_meta: dict[str, dict[str, str]] = {}
     table_meta: dict[str, str] = {}
     need_field_meta = include_fits_metadata or apply_fits_nulls
@@ -2033,6 +2104,7 @@ def _read_cpp_numpy_table(
                     strip,
                     null_sentinel=null_sentinel,
                     fits_tform=col_tforms.get(name) if col_tforms else None,
+                    unsigned_dtype=unsigned_dtypes.get(name),
                 )
             elif isinstance(value, torch.Tensor):
                 t = value.detach()
@@ -2048,6 +2120,7 @@ def _read_cpp_numpy_table(
                     strip,
                     null_sentinel=null_sentinel,
                     fits_tform=col_tforms.get(name) if col_tforms else None,
+                    unsigned_dtype=unsigned_dtypes.get(name),
                 )
             elif isinstance(value, list):
                 converted = []
@@ -2083,6 +2156,7 @@ def _read_cpp_numpy_table(
         null_meta=field_meta,
         apply_fits_nulls=apply_fits_nulls,
         column_tforms=col_tforms,
+        unsigned_dtypes=unsigned_dtypes,
     )
     return pa.Table.from_batches([batch])
 
@@ -2627,8 +2701,13 @@ def write(
     else:
         hdr = header
     import torchfits
+    from ._io_engine.write_api import _prepare_unsigned_table_data_for_write
 
-    if schema or table_kind == "ascii":
+    data, schema, unsigned_converted = _prepare_unsigned_table_data_for_write(
+        data, schema
+    )
+
+    if schema or unsigned_converted or table_kind == "ascii":
         import torchfits._C as cpp
 
         # Overwriting/creating a table can otherwise leave stale cached handles/metadata.

@@ -21,6 +21,188 @@ from .caches import (
 )
 
 
+def _bit_columns_from_header(header: Header | None) -> set[str]:
+    if not header:
+        return set()
+    try:
+        n_fields = int(header.get("TFIELDS", 0))
+    except Exception:
+        return set()
+    out: set[str] = set()
+    for idx in range(1, n_fields + 1):
+        name = header.get(f"TTYPE{idx}")
+        tform = header.get(f"TFORM{idx}")
+        if not isinstance(name, str) or not isinstance(tform, str):
+            continue
+        text = tform.strip().upper()
+        pos = 0
+        while pos < len(text) and text[pos].isdigit():
+            pos += 1
+        if pos < len(text) and text[pos] == "X":
+            out.add(name)
+    return out
+
+
+def _unsigned_columns_from_header(header: Header | None) -> dict[str, torch.dtype]:
+    if not header:
+        return {}
+    try:
+        n_fields = int(header.get("TFIELDS", 0))
+    except Exception:
+        return {}
+    out: dict[str, torch.dtype] = {}
+    targets = {
+        ("I", 32768.0): torch.uint16,
+        ("J", 2147483648.0): torch.uint32,
+    }
+    for idx in range(1, n_fields + 1):
+        name = header.get(f"TTYPE{idx}")
+        tform = header.get(f"TFORM{idx}")
+        if not isinstance(name, str) or not isinstance(tform, str):
+            continue
+        text = tform.strip().upper()
+        pos = 0
+        while pos < len(text) and text[pos].isdigit():
+            pos += 1
+        code = text[pos] if pos < len(text) else ""
+        try:
+            tscal = float(header.get(f"TSCAL{idx}", 1.0))
+            tzero = float(header.get(f"TZERO{idx}", 0.0))
+        except Exception:
+            continue
+        target = targets.get((code, tzero))
+        if target is not None and tscal == 1.0:
+            out[name] = target
+    return out
+
+
+def _coerce_bit_table_columns(table_data: Any, header: Header | None) -> Any:
+    if not isinstance(table_data, dict):
+        return table_data
+    bit_columns = _bit_columns_from_header(header)
+    if not bit_columns:
+        return table_data
+    out = dict(table_data)
+    for name in bit_columns:
+        value = out.get(name)
+        if isinstance(value, torch.Tensor) and value.dtype == torch.uint8:
+            out[name] = value.to(dtype=torch.bool)
+    return out
+
+
+def _coerce_unsigned_table_columns(table_data: Any, header: Header | None) -> Any:
+    if not isinstance(table_data, dict):
+        return table_data
+    unsigned_columns = _unsigned_columns_from_header(header)
+    if not unsigned_columns:
+        return table_data
+    out = dict(table_data)
+    for name, dtype in unsigned_columns.items():
+        value = out.get(name)
+        if isinstance(value, torch.Tensor) and (
+            value.dtype.is_floating_point
+            or value.dtype == torch.int32
+            or value.dtype == torch.int64
+        ):
+            out[name] = value.to(dtype=dtype)
+    return out
+
+
+def _unsigned_image_target(
+    header: Header | None,
+) -> tuple[torch.dtype, int] | None:
+    if not header:
+        return None
+    try:
+        bitpix = int(header.get("BITPIX", 0))
+        bscale = float(header.get("BSCALE", 1.0))
+        bzero = float(header.get("BZERO", 0.0))
+    except Exception:
+        return None
+    if bscale != 1.0:
+        return None
+    if bitpix == 16 and bzero == 32768.0:
+        return torch.uint16, 32768
+    if bitpix == 32 and bzero == 2147483648.0:
+        return torch.uint32, 2147483648
+    return None
+
+
+def _read_unsigned_image_if_needed(
+    *,
+    cpp_module: Any,
+    path: str,
+    hdu_num: int,
+    effective_mmap: bool,
+    header: Header | None,
+) -> torch.Tensor | None:
+    """Read image data with unsigned integer convention handling.
+
+    When a FITS image uses the unsigned integer convention
+    (e.g. BITPIX=16, BSCALE=1.0, BZERO=32768.0), the underlying
+    CFITSIO read returns float32. This function performs a raw read
+    instead and converts to the correct unsigned dtype in Python,
+    avoiding the lossy float32 intermediate representation.
+    """
+    target = _unsigned_image_target(header)
+    if target is None:
+        return None
+    dtype, offset = target
+    try:
+        if (
+            not effective_mmap
+            and hasattr(cpp_module, "read_full_unmapped_raw")
+        ):
+            raw = cpp_module.read_full_unmapped_raw(path, hdu_num)
+        elif hasattr(cpp_module, "read_full_raw"):
+            raw = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
+        else:
+            return None
+    except Exception:
+        return None
+    return raw.to(torch.int64).add_(offset).to(dtype=dtype)
+
+
+def _try_raw_scale_post(
+    data: torch.Tensor,
+    cpp_module: Any,
+    path: str,
+    hdu_num: int,
+    effective_mmap: bool,
+) -> torch.Tensor:
+    """Post-process a scaled-read tensor for unsigned integer convention.
+
+    After ``read_full`` (which applies CFITSIO BSCALE/BZERO scaling),
+    unsigned int16 images arrive as float32. This function reads the
+    header to detect the unsigned convention and re-reads raw data to
+    produce the correct uint16/uint32 tensor.
+
+    Non-float results (int8/int16/int32 from unscaled reads) pass
+    through with zero overhead — only float32/float64 results trigger
+    the header check.
+    """
+    if data.dtype != torch.float32:
+        return data
+    try:
+        header = Header(cpp_module.read_header_dict(path, hdu_num))
+    except Exception:
+        return data
+    target = _unsigned_image_target(header)
+    if target is None:
+        return data
+    dtype, offset = target
+    try:
+        if not effective_mmap and hasattr(cpp_module, "read_full_unmapped_raw"):
+            raw = cpp_module.read_full_unmapped_raw(path, hdu_num)
+        elif hasattr(cpp_module, "read_full_raw"):
+            raw = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
+        else:
+            return data
+    except Exception:
+        return data
+    return raw.to(torch.int64).add_(offset).to(dtype=dtype)
+
+
 def read_unified(
     *,
     cpp_module: Any,
@@ -454,7 +636,25 @@ def read_fallback_image(
 ) -> Any:
     """Read an image HDU in the generic fallback path."""
     effective_mmap = resolve_image_mmap(path, hdu_num, mmap, cache_capacity)
-    data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
+    header = None
+    header_data = None
+    if isinstance(hdu_num, int) and not (fp16 or bf16):
+        try:
+            header_data = read_header(file_handle, hdu_num, fast_header)
+            header = Header(header_data)
+        except Exception:
+            header = None
+    data = None
+    if isinstance(hdu_num, int) and not (fp16 or bf16):
+        data = _read_unsigned_image_if_needed(
+            cpp_module=cpp_module,
+            path=path,
+            hdu_num=hdu_num,
+            effective_mmap=bool(effective_mmap),
+            header=header,
+        )
+    if data is None:
+        data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
 
     if fp16:
         data = data.to(torch.float16)
@@ -464,10 +664,10 @@ def read_fallback_image(
     if device != "cpu":
         data = data.to(device)
 
-    header = None
     if return_header:
-        header_data = read_header(file_handle, hdu_num, fast_header)
-        header = Header(header_data)
+        if header is None:
+            header_data = read_header(file_handle, hdu_num, fast_header)
+            header = Header(header_data)
 
     if use_cache and cache_key is not None:
         file_cache[cache_key] = (
@@ -548,6 +748,13 @@ def read_fallback_table(
             table_result = cpp_module.read_fits_table(path, hdu_num, col_list, False)
 
     table_data = table_result
+    if header is None:
+        try:
+            header = Header(read_header(file_handle, hdu_num, fast_header))
+        except Exception:
+            header = None
+    table_data = _coerce_bit_table_columns(table_data, header)
+    table_data = _coerce_unsigned_table_columns(table_data, header)
 
     if (start_row > 1 or num_rows != -1) and not hasattr(
         cpp_module, "read_fits_table_rows"
@@ -683,6 +890,22 @@ def read_batch_hdus(
         except TypeError:
             effective_mmap = True if isinstance(mmap, str) else mmap
             data = cpp_module.read_hdus_batch(path, list(hdu), effective_mmap)
+        effective_mmap = True if isinstance(mmap, str) else bool(mmap)
+        if not raw_scale and not (fp16 or bf16):
+            for idx, hdu_num in enumerate(hdu):
+                try:
+                    header = Header(cpp_module.read_header_dict(path, int(hdu_num)))
+                except Exception:
+                    header = None
+                unsigned = _read_unsigned_image_if_needed(
+                    cpp_module=cpp_module,
+                    path=path,
+                    hdu_num=int(hdu_num),
+                    effective_mmap=effective_mmap,
+                    header=header,
+                )
+                if unsigned is not None:
+                    data[idx] = unsigned
         if device != "cpu":
             data = batch_to_device(data, device)
         return data
@@ -765,6 +988,9 @@ def read_cpu_fast_path(
                 except Exception:
                     pass
 
+        if not (fp16 or bf16):
+            data = _try_raw_scale_post(data, cpp_module, path, hdu, effective_mmap)
+
         if fp16:
             data = data.to(torch.float16)
         elif bf16:
@@ -820,11 +1046,28 @@ def read_generic_fast_path(
                     path, hdu, effective_mmap
                 )
                 if scaled:
-                    data = data.to(device=device, dtype=torch.float32)
-                    if bscale != 1.0:
-                        data.mul_(bscale)
-                    if bzero != 0.0:
-                        data.add_(bzero)
+                    if (
+                        data.dtype == torch.int16
+                        and bscale == 1.0
+                        and bzero == 32768.0
+                    ):
+                        data = data.to(torch.int64).add_(32768).to(
+                            device=device, dtype=torch.uint16
+                        )
+                    elif (
+                        data.dtype == torch.int32
+                        and bscale == 1.0
+                        and bzero == 2147483648.0
+                    ):
+                        data = data.to(torch.int64).add_(2147483648).to(
+                            device=device, dtype=torch.uint32
+                        )
+                    else:
+                        data = data.to(device=device, dtype=torch.float32)
+                        if bscale != 1.0:
+                            data.mul_(bscale)
+                        if bzero != 0.0:
+                            data.add_(bzero)
                 else:
                     data = data.to(device)
             else:
@@ -853,6 +1096,11 @@ def read_generic_fast_path(
                     data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
                 else:
                     data = cpp_module.read_full(path, hdu, effective_mmap)
+
+        if not (fp16 or bf16) and not (scale_on_device and hasattr(cpp_module, "read_full_raw_with_scale")):
+            data = _try_raw_scale_post(
+                data, cpp_module, path, hdu, effective_mmap
+            )
 
         if fp16:
             data = data.to(torch.float16)

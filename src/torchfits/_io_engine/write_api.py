@@ -28,6 +28,46 @@ def _host_tensor_for_fits_write(tensor: Tensor) -> Tensor:
     return tensor
 
 
+def _merge_fits_write_header(
+    header: Optional[Dict[str, Any]], extra: Dict[str, Any]
+) -> Header:
+    """Copy a header and overlay write-time FITS convention metadata."""
+    out = Header(header or {})
+    for key, value in extra.items():
+        out[key] = value
+    return out
+
+
+def _unsigned_image_storage_for_fits_write(
+    tensor: Tensor,
+) -> tuple[Tensor, Dict[str, Any]]:
+    """Convert unsigned image tensors to FITS-standard signed storage.
+
+    FITS image HDUs do not have native uint16/uint32 BITPIX values. Astropy and
+    fitsio represent those logical dtypes with signed storage plus BSCALE/BZERO.
+    Convert before delegating to the C++ writer so torchfits emits files those
+    libraries read back as unsigned data.
+    """
+    tensor = _host_tensor_for_fits_write(tensor)
+    if tensor.dtype == torch.uint16:
+        raw = (tensor.to(torch.int32) - 32768).to(torch.int16)
+        return raw, {"BSCALE": 1.0, "BZERO": 32768.0}
+    if tensor.dtype == torch.uint32:
+        raw = (tensor.to(torch.int64) - 2147483648).to(torch.int32)
+        return raw, {"BSCALE": 1.0, "BZERO": 2147483648.0}
+    return tensor, {}
+
+
+def _image_hdu_dict_for_fits_write(
+    tensor: Tensor, header: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    data, extra_header = _unsigned_image_storage_for_fits_write(tensor)
+    hdu_dict: Dict[str, Any] = {"data": data}
+    if header or extra_header:
+        hdu_dict["header"] = _merge_fits_write_header(header, extra_header)
+    return hdu_dict
+
+
 def _write_header_cards_if_supported(
     path: str,
     hdu: int,
@@ -86,10 +126,11 @@ def write(
         if compress:
             compressed_hdus: List[Any] = []
             if isinstance(data, Tensor):
+                img, img_header = _unsigned_image_storage_for_fits_write(data)
                 compressed_hdus = [
                     TensorHDU(
-                        data=_host_tensor_for_fits_write(data),
-                        header=Header(header or {}),
+                        data=img,
+                        header=_merge_fits_write_header(header, img_header),
                     )
                 ]
             elif isinstance(data, HDUList):
@@ -129,14 +170,22 @@ def write(
             return
 
         if isinstance(data, HDUList):
-            data.write(path, overwrite=overwrite)
+            _write_hdus_uncompressed(path, list(getattr(data, "_hdus", [])), overwrite)
             return
 
         if isinstance(data, dict) and "data" not in data:
+            data, table_schema, _ = _prepare_unsigned_table_data_for_write(data)
             if _can_use_cpp_table_writer(data):
                 data = _normalize_cpp_table_data(data)
                 header_obj = Header(header) if header else Header()
-                cpp.write_fits_table(path, data, header_obj, overwrite)
+                cpp.write_fits_table(
+                    path,
+                    data,
+                    header_obj,
+                    overwrite,
+                    table_schema,
+                    "binary",
+                )
                 _write_header_cards_if_supported(path, 1, header_obj)
                 return
             raise ValueError(
@@ -146,10 +195,7 @@ def write(
             )
 
         if isinstance(data, Tensor):
-            hdu_dict = {"data": _host_tensor_for_fits_write(data)}
-            if header:
-                hdu_dict["header"] = header
-            hdus_to_write.append(hdu_dict)
+            hdus_to_write.append(_image_hdu_dict_for_fits_write(data, header))
 
         elif hasattr(data, "__iter__") and not isinstance(data, (str, Tensor)):
             for item in data:
@@ -158,17 +204,23 @@ def write(
                         payload = item["data"]
                         if isinstance(payload, Tensor):
                             merged = dict(item)
-                            merged["data"] = _host_tensor_for_fits_write(payload)
+                            hdu_dict = _image_hdu_dict_for_fits_write(
+                                payload, merged.get("header")
+                            )
+                            merged["data"] = hdu_dict["data"]
+                            if "header" in hdu_dict:
+                                merged["header"] = hdu_dict["header"]
                             hdus_to_write.append(merged)
                         else:
                             hdus_to_write.append(item)
                 elif isinstance(item, Tensor):
-                    hdus_to_write.append({"data": _host_tensor_for_fits_write(item)})
+                    hdus_to_write.append(_image_hdu_dict_for_fits_write(item))
                 elif hasattr(item, "data") and isinstance(item.data, Tensor):
-                    hdu_dict = {"data": _host_tensor_for_fits_write(item.data)}
-                    if hasattr(item, "header"):
-                        hdu_dict["header"] = item.header
-                    hdus_to_write.append(hdu_dict)
+                    hdus_to_write.append(
+                        _image_hdu_dict_for_fits_write(
+                            item.data, getattr(item, "header", None)
+                        )
+                    )
         else:
             raise ValueError(f"Unsupported data type for FITS writing: {type(data)}")
 
@@ -336,6 +388,111 @@ def _normalize_ndarray_column(value: np.ndarray) -> Any:
     return value
 
 
+def _unsigned_table_storage_for_fits_write(value: Any) -> tuple[Any, str, float] | None:
+    """Return signed-storage column data plus FITS format/BZERO for uint columns."""
+    import numpy as np
+
+    if isinstance(value, torch.Tensor):
+        if value.dtype == torch.uint16:
+            raw = (value.detach().to(torch.int32) - 32768).to(torch.int16)
+            return raw, "I", 32768.0
+        if value.dtype == torch.uint32:
+            raw = (value.detach().to(torch.int64) - 2147483648).to(torch.int32)
+            return raw, "J", 2147483648.0
+        return None
+
+    if isinstance(value, np.ndarray):
+        if value.dtype == np.uint16:
+            raw = (value.astype(np.int32, copy=False) - 32768).astype(np.int16)
+            return np.ascontiguousarray(raw), "I", 32768.0
+        if value.dtype == np.uint32:
+            raw = (value.astype(np.int64, copy=False) - 2147483648).astype(np.int32)
+            return np.ascontiguousarray(raw), "J", 2147483648.0
+        return None
+
+    return None
+
+
+def _unsigned_table_tform(value: Any, code: str) -> str:
+    """Infer a TFORM repeat for an unsigned column that was converted to signed storage."""
+    import numpy as np
+
+    if isinstance(value, torch.Tensor):
+        if value.dim() <= 1:
+            repeat = 1
+        else:
+            repeat = 1
+            for size in value.shape[1:]:
+                repeat *= int(size)
+        return code if repeat == 1 else f"{repeat}{code}"
+
+    arr = np.asarray(value)
+    if arr.ndim <= 1:
+        repeat = 1
+    else:
+        repeat = int(np.prod(arr.shape[1:]))
+    return code if repeat == 1 else f"{repeat}{code}"
+
+
+def _prepare_unsigned_table_data_for_write(
+    table_dict: Dict[str, Any],
+    schema: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> tuple[Dict[str, Any], Optional[Dict[str, Dict[str, Any]]], bool]:
+    """Convert uint16/uint32 table columns to FITS pseudo-unsigned storage."""
+    out: Dict[str, Any] = {}
+    prepared_schema: Dict[str, Dict[str, Any]] = {
+        str(name): dict(meta or {}) for name, meta in (schema or {}).items()
+    }
+    changed = False
+
+    for name, value in table_dict.items():
+        col_name = str(name)
+        converted = _unsigned_table_storage_for_fits_write(value)
+        if converted is None:
+            out[col_name] = value
+            if schema is not None and col_name not in prepared_schema:
+                prepared_schema[col_name] = {}
+            continue
+
+        raw, code, bzero = converted
+        out[col_name] = raw
+        meta = prepared_schema.setdefault(col_name, {})
+        if "format" not in meta and "tform" not in meta:
+            meta["format"] = _unsigned_table_tform(value, code)
+        meta.setdefault("bscale", 1.0)
+        meta.setdefault("bzero", int(bzero))
+        changed = True
+
+    if schema is None and not changed:
+        return out, None, False
+
+    # Keep schema column order aligned with input data for callers that did not
+    # provide a complete schema.
+    ordered_schema: Dict[str, Dict[str, Any]] = {}
+    for name in out:
+        if name in prepared_schema:
+            ordered_schema[name] = prepared_schema[name]
+        elif schema is not None:
+            ordered_schema[name] = {}
+    return out, ordered_schema if (changed or schema is not None) else None, changed
+
+
+def _table_schema_scale_header_cards(
+    schema: Optional[Dict[str, Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Convert table scaling schema metadata into header cards for HDU-list writes."""
+    if not schema:
+        return {}
+    out: Dict[str, Any] = {}
+    for idx, meta in enumerate(schema.values(), start=1):
+        if "bscale" in meta:
+            out[f"TSCAL{idx}"] = float(meta["bscale"])
+        if "bzero" in meta:
+            bzero = meta["bzero"]
+            out[f"TZERO{idx}"] = int(bzero) if float(bzero).is_integer() else bzero
+    return out
+
+
 def _normalize_cpp_table_data(table_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize table data for the C++ writer (strings/VLA/object arrays)."""
     import numpy as np
@@ -370,17 +527,31 @@ def _coerce_compressed_hdu_item(item: Any) -> Any:
     if isinstance(item, TableHDURef):
         return item.materialize(device="cpu")
     if isinstance(item, Tensor):
-        return TensorHDU(data=_host_tensor_for_fits_write(item), header=Header())
+        img, img_header = _unsigned_image_storage_for_fits_write(item)
+        return TensorHDU(data=img, header=Header(img_header))
     if isinstance(item, dict):
         if "data" in item:
             img = item["data"]
             if not isinstance(img, Tensor):
-                raise NotImplementedError(
-                    "Compressed FITS writing supports tensor image payloads for dict HDUs."
-                )
+                try:
+                    import numpy as np
+
+                    if isinstance(img, np.ndarray):
+                        img = torch.from_numpy(img)
+                    elif isinstance(img, (list, tuple)):
+                        img = torch.tensor(img)
+                    else:
+                        img = torch.as_tensor(img)
+                except Exception:
+                    raise NotImplementedError(
+                        "Compressed FITS writing supports tensor image payloads"
+                        " for dict HDUs. Could not convert"
+                        f" {type(img).__name__} to a tensor."
+                    ) from None
+            img, img_header = _unsigned_image_storage_for_fits_write(img)
             return TensorHDU(
-                data=_host_tensor_for_fits_write(img),
-                header=Header(item.get("header", {})),
+                data=img,
+                header=_merge_fits_write_header(item.get("header", {}), img_header),
             )
         return _TableHDUWriteProxy(item, Header())
     raise NotImplementedError(
@@ -392,8 +563,11 @@ class _TableHDUWriteProxy:
     """Small table-HDU proxy for writer paths that should not build TensorFrame."""
 
     def __init__(self, raw_data: Dict[str, Any], header: Header):
-        self._raw_data = _normalize_cpp_table_data(dict(raw_data))
-        self.header = header
+        prepared, schema, _ = _prepare_unsigned_table_data_for_write(dict(raw_data))
+        self._raw_data = _normalize_cpp_table_data(prepared)
+        scale_cards = _table_schema_scale_header_cards(schema)
+        self.header = _merge_fits_write_header(header, scale_cards)
+        self._schema = schema
 
 
 def _detach_hdus_for_rewrite(path: str) -> List[Any]:
@@ -509,21 +683,88 @@ def _sanitize_table_header_for_write(
     return out
 
 
+def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> None:
+    """Write an HDU sequence through the uncompressed C++ writer."""
+    import torchfits._C as cpp
+
+    class _TableWriteProxy:
+        def __init__(
+            self,
+            raw_data: Any,
+            header: Header,
+            schema: Optional[Dict[str, Dict[str, Any]]] = None,
+        ):
+            self._raw_data = raw_data
+            self.header = header
+            self._schema = schema
+
+    payload: List[Any] = []
+    for idx, hdu in enumerate(hdus):
+        if isinstance(hdu, TableHDURef):
+            hdu = hdu.materialize(device="cpu")
+
+        if isinstance(hdu, TableHDU):
+            raw_data = dict(getattr(hdu, "_raw_data", {}))
+            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
+            scale_cards = _table_schema_scale_header_cards(schema)
+            header = _merge_fits_write_header(
+                _sanitize_table_header_for_write(hdu.header), scale_cards
+            )
+            raw_data = _normalize_cpp_table_data(raw_data)
+            payload.append(
+                _TableWriteProxy(raw_data, header, schema)
+            )
+            continue
+
+        if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
+            raw_data = dict(getattr(hdu, "_raw_data", {}))
+            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
+            scale_cards = _table_schema_scale_header_cards(schema)
+            header = _merge_fits_write_header(
+                _sanitize_table_header_for_write(hdu.header), scale_cards
+            )
+            raw_data = _normalize_cpp_table_data(raw_data)
+            payload.append(
+                _TableWriteProxy(raw_data, header, schema)
+            )
+            continue
+
+        if not isinstance(hdu, TensorHDU):
+            raise ValueError(
+                f"Unsupported HDU type for write at index {idx}: {type(hdu).__name__}"
+            )
+
+        payload.append(
+            _image_hdu_dict_for_fits_write(
+                hdu.to_tensor("cpu"), getattr(hdu, "header", None)
+            )
+        )
+
+    _invalidate_path_caches(path)
+    cpp.write_fits_file(path, payload, overwrite)
+
+
 def _write_hdus_with_optional_compression(
     path: str, hdus: List[Any], compress: Union[bool, str] = False
 ) -> None:
     """Rewrite HDUs, optionally using CFITSIO compressed-image writer."""
     algorithm = _resolve_compression_algorithm(compress)
     if algorithm is None:
-        write(path, HDUList(hdus), overwrite=True)
+        _write_hdus_uncompressed(path, hdus, overwrite=True)
         return
 
     import torchfits._C as cpp
 
     class _TableWriteProxy:
-        def __init__(self, raw_data: Any, header: Header):
+        def __init__(
+            self,
+            raw_data: Any,
+            header: Header,
+            schema: Optional[Dict[str, Dict[str, Any]]] = None,
+        ):
             self._raw_data = raw_data
             self.header = header
+            self._schema = schema
 
     payload = []
     for idx, hdu in enumerate(hdus):
@@ -532,17 +773,27 @@ def _write_hdus_with_optional_compression(
 
         if isinstance(hdu, TableHDU):
             raw_data = dict(getattr(hdu, "_raw_data", {}))
+            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
+            scale_cards = _table_schema_scale_header_cards(schema)
+            header = _merge_fits_write_header(
+                _sanitize_table_header_for_write(hdu.header), scale_cards
+            )
             raw_data = _normalize_cpp_table_data(raw_data)
             payload.append(
-                _TableWriteProxy(raw_data, _sanitize_table_header_for_write(hdu.header))
+                _TableWriteProxy(raw_data, header, schema)
             )
             continue
 
         if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
             raw_data = dict(getattr(hdu, "_raw_data", {}))
+            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
+            scale_cards = _table_schema_scale_header_cards(schema)
+            header = _merge_fits_write_header(
+                _sanitize_table_header_for_write(hdu.header), scale_cards
+            )
             raw_data = _normalize_cpp_table_data(raw_data)
             payload.append(
-                _TableWriteProxy(raw_data, _sanitize_table_header_for_write(hdu.header))
+                _TableWriteProxy(raw_data, header, schema)
             )
             continue
 
@@ -565,10 +816,14 @@ def _write_hdus_with_optional_compression(
             if not xtension:
                 continue
 
-        hdu_dict: Dict[str, Any] = {"data": hdu.to_tensor("cpu")}
+        hdu_dict = _image_hdu_dict_for_fits_write(
+            hdu.to_tensor("cpu"), getattr(hdu, "header", None)
+        )
         header = getattr(hdu, "header", None)
         if header:
-            hdu_dict["header"] = _sanitize_header_for_compressed_write(header)
+            hdu_dict["header"] = _sanitize_header_for_compressed_write(
+                hdu_dict.get("header", header)
+            )
         payload.append(hdu_dict)
 
     _invalidate_path_caches(path)

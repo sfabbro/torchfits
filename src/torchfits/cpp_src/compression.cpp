@@ -2,14 +2,11 @@
 
 #include "compression.h"
 #include <fitsio.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <vector>
 #include <thread>
+#include "internal_utils.h"
 #include "hardware.h"
-#include <iostream>
+#include "cache.h"
 #include <algorithm>
 #include <stdexcept>
 #include <string.h>
@@ -135,39 +132,16 @@ static int tf_rdecomp(const unsigned char *c, int clen, unsigned int array[], in
 // End Vendored Code
 // -----------------------------------------------------------------------------
 
-// Helper class for mmap RAII
-class MMapFile {
-public:
-    void* ptr = MAP_FAILED;
-    size_t size = 0;
-    int fd = -1;
-
-    MMapFile(const std::string& path) {
-        fd = open(path.c_str(), O_RDONLY);
-        if (fd == -1) throw std::runtime_error("Failed to open file: " + path);
-        struct stat st;
-        if (fstat(fd, &st) == -1) { close(fd); throw std::runtime_error("Failed to stat file"); }
-        size = st.st_size;
-        ptr = mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
-        if (ptr == MAP_FAILED) { close(fd); throw std::runtime_error("mmap failed"); }
-    }
-
-    ~MMapFile() {
-        if (ptr != MAP_FAILED) munmap(ptr, size);
-        if (fd != -1) close(fd);
-    }
-};
-
 inline void check_status(int status, const char* msg) {
     if (status) {
-        char err_text[30];
+        char err_text[FLEN_ERRMSG];
         fits_get_errstatus(status, err_text);
         throw std::runtime_error(std::string(msg) + ": " + err_text);
     }
 }
 
-inline uint32_t bswap32(uint32_t x) { return __builtin_bswap32(x); }
-inline uint64_t bswap64(uint64_t x) { return __builtin_bswap64(x); }
+using torchfits::internal::bswap_32;
+using torchfits::internal::bswap_64;
 
 torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threads) {
     torchfits::validate_fits_filename(path);
@@ -177,7 +151,8 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     fits_open_file(&fptr, path.c_str(), READONLY, &status);
     check_status(status, "open_file");
 
-    struct FileGuard { fitsfile* f; ~FileGuard() { int s=0; if(f) fits_close_file(f, &s); } } file_guard{fptr};
+    torchfits::FitsHandleGuard file_guard;
+    file_guard.fptr = fptr;
 
     fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
     check_status(status, "move_hdu");
@@ -236,7 +211,7 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
     fits_read_key(fptr, TSTRING, key, tform, nullptr, &status);
     bool descriptor_is_64bit = (strchr(tform, 'Q') != nullptr);
 
-    MMapFile mapped(path);
+    torchfits::MMapHandle mapped(path);
     uint8_t* map_ptr = (uint8_t*)mapped.ptr;
 
     auto options = torch::TensorOptions().dtype(torch::kInt32);
@@ -268,12 +243,12 @@ torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threa
 
             if (descriptor_is_64bit) {
                 uint64_t* p = (uint64_t*)desc_ptr;
-                len = bswap64(p[0]);
-                off = bswap64(p[1]);
+                len = bswap_64(p[0]);
+                off = bswap_64(p[1]);
             } else {
                 uint32_t* p = (uint32_t*)desc_ptr;
-                len = bswap32(p[0]);
-                off = bswap32(p[1]);
+                len = bswap_32(p[0]);
+                off = bswap_32(p[1]);
             }
 
             if (len == 0) continue;

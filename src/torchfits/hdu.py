@@ -2029,60 +2029,9 @@ class HDUList:
                 hdu._data_view = None
 
     def write(self, path: str, overwrite: bool = False):
-        import torchfits
-        import torchfits._C as cpp
+        from ._io_engine.write_api import _write_hdus_uncompressed
 
-        class _TableWriteProxy:
-            def __init__(self, raw_data, header):
-                self._raw_data = raw_data
-                self.header = header
-
-        def _sanitize_table_header_for_write(header):
-            skip_keys = {
-                "SIMPLE",
-                "XTENSION",
-                "BITPIX",
-                "NAXIS",
-                "NAXIS1",
-                "NAXIS2",
-                "PCOUNT",
-                "GCOUNT",
-                "TFIELDS",
-                "EXTEND",
-                "THEAP",
-            }
-            out = {}
-            for key, value in dict(header or {}).items():
-                key_upper = str(key).upper()
-                if key_upper in skip_keys or key_upper.startswith("NAXIS"):
-                    continue
-                out[str(key)] = value
-            return out
-
-        payload_hdus = []
-        for hdu in list(self._hdus):
-            if isinstance(hdu, TableHDU):
-                raw_data = dict(getattr(hdu, "_raw_data", {}))
-                raw_data = torchfits._normalize_cpp_table_data(raw_data)
-                payload_hdus.append(
-                    _TableWriteProxy(
-                        raw_data, _sanitize_table_header_for_write(hdu.header)
-                    )
-                )
-            elif isinstance(hdu, TableHDURef):
-                # Materialize lazy tables so rewrite/replace paths keep extension contents.
-                materialized = hdu.materialize()
-                raw_data = dict(getattr(materialized, "_raw_data", {}))
-                raw_data = torchfits._normalize_cpp_table_data(raw_data)
-                payload_hdus.append(
-                    _TableWriteProxy(
-                        raw_data, _sanitize_table_header_for_write(hdu.header)
-                    )
-                )
-            else:
-                payload_hdus.append(hdu)
-
-        cpp.write_fits_file(path, payload_hdus, overwrite)
+        _write_hdus_uncompressed(path, list(self._hdus), overwrite)
 
     def append(self, hdu: Union[TensorHDU, TableHDU]):
         self._hdus.append(hdu)

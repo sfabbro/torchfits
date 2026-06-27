@@ -24,6 +24,25 @@ void invalidate_cached(const std::string& filepath);
 void init_cache(size_t memory_limit_mb, const std::string& disk_cache_dir = "");
 void clear_cache();
 
+// RAII guard for fitsfile* handles.  Two modes:
+//   cached=false (default) — calls fits_close_file on destruction
+//   cached=true           — calls release_cached(path) on destruction
+struct FitsHandleGuard {
+    fitsfile* fptr = nullptr;
+    std::string path;
+    bool cached = false;
+
+    ~FitsHandleGuard() {
+        if (!fptr) return;
+        if (cached) {
+            release_cached(path);
+        } else {
+            int status = 0;
+            fits_close_file(fptr, &status);
+        }
+    }
+};
+
 class CacheManager {
 public:
     static CacheManager& instance();

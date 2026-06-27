@@ -61,7 +61,7 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "table_handles": False,
             }
         ),
-        "fits_wcs_extraction": MappingProxyType(
+        "fits_header_hdu_metadata": MappingProxyType(
             {
                 "data": False,
                 "handles": False,

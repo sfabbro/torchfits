@@ -811,14 +811,33 @@ def test_bit_and_vla_columns_readable():
         legacy = torchfits.read(path, hdu=1)
         assert "BITS" in legacy and "VLA" in legacy
         assert legacy["BITS"].shape == (3, 8)
-        assert legacy["BITS"].dtype == torch.uint8
+        assert legacy["BITS"].dtype == torch.bool
+        assert legacy["BITS"].tolist()[0] == [
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+        ]
         assert len(legacy["VLA"]) == 3
 
         table = torchfits.table.read(path, hdu=1, backend="cpp_numpy")
         assert set(table.column_names) == {"BITS", "VLA"}
         assert table.column("VLA").to_pylist() == [[1, 2], [3], [4, 5, 6]]
         bits_py = table.column("BITS").to_pylist()
-        assert bits_py[0] == b"\x01\x00\x01\x00\x01\x00\x01\x00"
+        assert bits_py[0] == [
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+        ]
     finally:
         os.unlink(path)
 

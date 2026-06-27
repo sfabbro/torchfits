@@ -57,8 +57,12 @@ from ._io_engine.write_api import delete_hdu as _delete_hdu_impl
 from ._io_engine.write_api import insert_hdu as _insert_hdu_impl
 from ._io_engine.write_api import replace_hdu as _replace_hdu_impl
 from ._io_engine.write_api import write as _write_impl
-from ._io_engine.write_api import _normalize_cpp_table_data as _normalize_cpp_table_data_impl
-from ._io_engine.write_api import _write_header_cards_if_supported as _write_header_cards_if_supported_impl
+from ._io_engine.write_api import (
+    _normalize_cpp_table_data as _normalize_cpp_table_data_impl,
+)
+from ._io_engine.write_api import (
+    _write_header_cards_if_supported as _write_header_cards_if_supported_impl,
+)
 
 _log = _stdlib_logging.getLogger(__name__)
 _DEBUG_SCALE = os.environ.get("TORCHFITS_DEBUG_SCALE") == "1"
@@ -228,7 +232,6 @@ def _write_header_cards_if_supported(*args: Any, **kwargs: Any):
     return _write_header_cards_if_supported_impl(*args, **kwargs)
 
 
-
 def stream_table(*args: Any, **kwargs: Any):
     return _stream_table_impl(get_header, *args, **kwargs)
 
@@ -307,6 +310,7 @@ def read_table_rows(
     handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
+    policy: str = "default",
 ):
     if not isinstance(hdu, int) or hdu < 0:
         raise ValueError("hdu must be a non-negative integer")
@@ -324,6 +328,7 @@ def read_table_rows(
         handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
+        policy=policy,
     )
 
 

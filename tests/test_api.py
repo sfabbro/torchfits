@@ -432,8 +432,16 @@ class TestTableAPI:
         try:
             fast = torchfits.read_table(filepath, hdu=1, policy="default")
             smart = torchfits.read_table(filepath, hdu=1, policy="smart")
+            rows = torchfits.read_table_rows(
+                filepath,
+                hdu=1,
+                start_row=1,
+                num_rows=16,
+                policy="default",
+            )
             assert isinstance(fast, dict)
             assert isinstance(smart, dict)
+            assert len(rows["RA"]) == 16
             for k in fast.keys():
                 v_fast = fast[k]
                 v_smart = smart[k]

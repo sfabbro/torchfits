@@ -34,6 +34,7 @@
 #include "security.h"
 #include "compression.h"
 #include "fits_helpers.h"
+#include "internal_utils.h"
 #undef READONLY
 #include <fitsio.h>
 #include <fitsio2.h> // Internal CFITSIO routines (fits_rdecomp)
@@ -43,9 +44,7 @@
 namespace {
 using fits_is_compressed_with_nulls_fn = int (*)(fitsfile*);
 
-static inline uint16_t _bswap16(uint16_t x) { return __builtin_bswap16(x); }
-static inline uint32_t _bswap32(uint32_t x) { return __builtin_bswap32(x); }
-static inline uint64_t _bswap64(uint64_t x) { return __builtin_bswap64(x); }
+
 
 inline void _xor_sign_bit_u8(uint8_t* p, size_t nbytes) {
     if (!p || nbytes == 0) {
@@ -103,10 +102,6 @@ inline void _xor_sign_bit_u8(uint8_t* p, size_t nbytes) {
     });
 }
 
-inline bool host_is_little_endian() {
-    const uint16_t x = 1;
-    return *reinterpret_cast<const uint8_t*>(&x) == 1;
-}
 
 struct ScaleDetectionResult {
     bool scaled = false;
@@ -202,45 +197,10 @@ std::mutex g_shared_meta_mutex;
 std::unordered_map<std::string, std::shared_ptr<SharedReadMeta>> g_shared_meta;
 std::atomic<uint64_t> g_shared_meta_uid{1};
 
-inline bool env_flag_default_true(const char* name) {
-    const char* v = std::getenv(name);
-    if (!v) {
-        return true;
-    }
-    std::string s(v);
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return !(s == "0" || s == "false" || s == "off" || s == "no");
-}
-
-inline int64_t env_nonnegative_int(const char* name, int64_t default_value) {
-    const char* v = std::getenv(name);
-    if (!v) {
-        return default_value;
-    }
-    try {
-        int64_t parsed = std::stoll(std::string(v));
-        return parsed < 0 ? 0 : parsed;
-    } catch (...) {
-        return default_value;
-    }
-}
-
-inline int64_t monotonic_now_ns() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
-inline int64_t mtime_ns_from_stat(const struct stat& st) {
-#if defined(__APPLE__)
-    return (static_cast<int64_t>(st.st_mtimespec.tv_sec) * 1000000000LL) +
-           static_cast<int64_t>(st.st_mtimespec.tv_nsec);
-#else
-    return (static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000LL) +
-           static_cast<int64_t>(st.st_mtim.tv_nsec);
-#endif
-}
+using torchfits::internal::env_flag_default_true;
+using torchfits::internal::env_nonnegative_int;
+using torchfits::internal::monotonic_now_ns;
+using torchfits::internal::mtime_ns_from_stat;
 
 // Validate shared metadata against filesystem state. This adds a stat() on each open
 // of a given path (even if the FITS handle itself is cached). Keep enabled by default
@@ -371,13 +331,20 @@ bool read_region_via_fd(int fd, off_t offset, void* dst_void, size_t nbytes) {
         return false;
     }
 
-    void* map_ptr = mmap(nullptr, static_cast<size_t>(sb.st_size), PROT_READ, MAP_SHARED, fd, 0);
+    // Map only the page-aligned region needed, not the entire file.
+    // Cache page size locally; this function is a fallback path so a static is fine.
+    static const long kPageSize = sysconf(_SC_PAGESIZE);
+    const off_t page_mask = kPageSize > 0 ? static_cast<off_t>(kPageSize - 1) : 0;
+    const off_t page_offset = offset & ~page_mask;
+    const size_t map_len = static_cast<size_t>(nbytes + (offset - page_offset));
+
+    void* map_ptr = mmap(nullptr, map_len, PROT_READ, MAP_SHARED, fd, page_offset);
     if (map_ptr == MAP_FAILED) {
         return false;
     }
-    const uint8_t* src = static_cast<const uint8_t*>(map_ptr) + offset;
+    const uint8_t* src = static_cast<const uint8_t*>(map_ptr) + (offset - page_offset);
     std::memcpy(dst_void, src, nbytes);
-    munmap(map_ptr, static_cast<size_t>(sb.st_size));
+    munmap(map_ptr, map_len);
     return true;
 }
 
@@ -427,9 +394,9 @@ void clear_shared_read_meta_cache() {
 }
 
 namespace {
-inline uint16_t bswap_16(uint16_t v) { return __builtin_bswap16(v); }
-inline uint32_t bswap_32(uint32_t v) { return __builtin_bswap32(v); }
-inline uint64_t bswap_64(uint64_t v) { return __builtin_bswap64(v); }
+using torchfits::internal::bswap_16;
+using torchfits::internal::bswap_32;
+using torchfits::internal::bswap_64;
 
 template <typename T>
 inline T load_bswap(const void* src);
@@ -938,6 +905,8 @@ public:
         double bscale = 1.0;
         double bzero = 0.0;
         bool active = false;
+        BScaleGuard() = default;
+        explicit BScaleGuard(fitsfile* f) : fptr(f) {}
         ~BScaleGuard() {
             if (!active || !fptr) return;
             int status = 0;
@@ -1400,8 +1369,7 @@ public:
 
         // For native floating-point images, CFITSIO scaling is not used.
         // Skip BSCALE/BZERO guard work to match a direct fitsio-like path.
-        FITSFile::BScaleGuard guard;
-        guard.fptr = fptr_;
+        FITSFile::BScaleGuard guard(fptr_);
         const bool needs_bscale_guard = (bitpix != FLOAT_IMG && bitpix != DOUBLE_IMG);
         if (needs_bscale_guard) {
             int key_status = 0;
@@ -1747,7 +1715,14 @@ public:
                 if (nb::hasattr(hdu_obj, "header")) {
                      header_dict = nb::cast<nb::dict>(hdu_obj.attr("header"));
                 }
-                write_table_hdu(fptr_, data_dict, header_dict, nb::none(), false);
+                nb::object schema_obj = nb::none();
+                if (nb::hasattr(hdu_obj, "_schema")) {
+                    schema_obj = hdu_obj.attr("_schema");
+                    if (schema_obj.is_none()) {
+                        schema_obj = nb::none();
+                    }
+                }
+                write_table_hdu(fptr_, data_dict, header_dict, schema_obj, false);
                 hdu_count++;
                 continue;
             }
@@ -1757,7 +1732,14 @@ public:
                 if (nb::hasattr(hdu_obj, "header")) {
                      header_dict = nb::cast<nb::dict>(hdu_obj.attr("header"));
                 }
-                write_table_hdu(fptr_, data_dict, header_dict, nb::none(), false);
+                nb::object schema_obj = nb::none();
+                if (nb::hasattr(hdu_obj, "_schema")) {
+                    schema_obj = hdu_obj.attr("_schema");
+                    if (schema_obj.is_none()) {
+                        schema_obj = nb::none();
+                    }
+                }
+                write_table_hdu(fptr_, data_dict, header_dict, schema_obj, false);
                 hdu_count++;
                 continue;
             }
@@ -1845,12 +1827,9 @@ public:
                                 val = sanitize_fits_string(val);
                                 fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
                             } else if (nb::isinstance<int>(item.second)) {
-                                int val = nb::cast<int>(item.second);
-                                fits_update_key(fptr_, TINT, key.c_str(), &val, nullptr, &key_status);
-                            } else if (nb::isinstance<float>(item.second)) {
-                                float val = nb::cast<float>(item.second);
-                                fits_update_key(fptr_, TFLOAT, key.c_str(), &val, nullptr, &key_status);
-                            } else if (nb::isinstance<double>(item.second)) {
+                                long long val = nb::cast<long long>(item.second);
+                                fits_update_key(fptr_, TLONGLONG, key.c_str(), &val, nullptr, &key_status);
+                            } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
                                 double val = nb::cast<double>(item.second);
                                 fits_update_key(fptr_, TDOUBLE, key.c_str(), &val, nullptr, &key_status);
                             } else if (nb::isinstance<bool>(item.second)) {
@@ -1935,12 +1914,9 @@ public:
                         val = sanitize_fits_string(val);
                         fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
                     } else if (nb::isinstance<int>(item.second)) {
-                        int val = nb::cast<int>(item.second);
-                        fits_update_key(fptr_, TINT, key.c_str(), &val, nullptr, &key_status);
-                    } else if (nb::isinstance<float>(item.second)) {
-                        float val = nb::cast<float>(item.second);
-                        fits_update_key(fptr_, TFLOAT, key.c_str(), &val, nullptr, &key_status);
-                    } else if (nb::isinstance<double>(item.second)) {
+                        long long val = nb::cast<long long>(item.second);
+                        fits_update_key(fptr_, TLONGLONG, key.c_str(), &val, nullptr, &key_status);
+                    } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
                         double val = nb::cast<double>(item.second);
                         fits_update_key(fptr_, TDOUBLE, key.c_str(), &val, nullptr, &key_status);
                     } else if (nb::isinstance<bool>(item.second)) {
@@ -2267,16 +2243,6 @@ private:
 };
 
 namespace {
-struct CachedHandleGuard {
-    std::string path;
-    fitsfile* fptr = nullptr;
-    bool active = false;
-    ~CachedHandleGuard() {
-        if (active) {
-            torchfits::release_cached(path);
-        }
-    }
-};
 }  // namespace
 
 // Fast path: use the unified cached CFITSIO handle directly without constructing a FITSFile wrapper.
@@ -2292,10 +2258,10 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     if (!fptr) {
         throw std::runtime_error("Could not open FITS file: " + path);
     }
-    CachedHandleGuard guard;
+    torchfits::FitsHandleGuard guard;
     guard.path = path;
     guard.fptr = fptr;
-    guard.active = true;
+    guard.cached = true;
 
     int status = 0;
     const int target_hdu = hdu_num + 1;
@@ -2640,21 +2606,21 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
                                 auto* p = static_cast<uint16_t*>(tensor.data_ptr());
                                 at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                     for (int64_t i = begin; i < end; ++i) {
-                                        p[i] = _bswap16(p[i]);
+                                        p[i] = bswap_16(p[i]);
                                     }
                                 });
                             } else if (elem_size == sizeof(uint32_t)) {
                                 auto* p = static_cast<uint32_t*>(tensor.data_ptr());
                                 at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                     for (int64_t i = begin; i < end; ++i) {
-                                        p[i] = _bswap32(p[i]);
+                                        p[i] = bswap_32(p[i]);
                                     }
                                 });
                             } else if (elem_size == sizeof(uint64_t)) {
                                 auto* p = static_cast<uint64_t*>(tensor.data_ptr());
                                 at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                     for (int64_t i = begin; i < end; ++i) {
-                                        p[i] = _bswap64(p[i]);
+                                        p[i] = bswap_64(p[i]);
                                     }
                                 });
                             }
@@ -2788,10 +2754,10 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
     if (!fptr) {
         throw std::runtime_error("Could not open FITS file: " + path);
     }
-    CachedHandleGuard guard;
+    torchfits::FitsHandleGuard guard;
     guard.path = path;
     guard.fptr = fptr;
-    guard.active = true;
+    guard.cached = true;
 
     int status = 0;
     fits_movnam_hdu(
@@ -3280,21 +3246,21 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                                     auto* p = static_cast<uint16_t*>(tensor.data_ptr());
                                     at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                         for (int64_t i = begin; i < end; ++i) {
-                                            p[i] = _bswap16(p[i]);
+                                            p[i] = bswap_16(p[i]);
                                         }
                                     });
                                 } else if (elem_size == sizeof(uint32_t)) {
                                     auto* p = static_cast<uint32_t*>(tensor.data_ptr());
                                     at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                         for (int64_t i = begin; i < end; ++i) {
-                                            p[i] = _bswap32(p[i]);
+                                            p[i] = bswap_32(p[i]);
                                         }
                                     });
                                 } else if (elem_size == sizeof(uint64_t)) {
                                     auto* p = static_cast<uint64_t*>(tensor.data_ptr());
                                     at::parallel_for(0, static_cast<int64_t>(nelements), 1 << 16, [&](int64_t begin, int64_t end) {
                                         for (int64_t i = begin; i < end; ++i) {
-                                            p[i] = _bswap64(p[i]);
+                                            p[i] = bswap_64(p[i]);
                                         }
                                     });
                                 }
@@ -3672,6 +3638,12 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         }
         if (has_schema_tform) {
             col.tform = schema_tform;
+            if (schema_info.code == 'X') {
+                col.datatype = TBIT;
+                if (schema_info.repeat > 0) {
+                    col.repeat = schema_info.repeat;
+                }
+            }
         } else if (is_ascii) {
             col.tform = ascii_tform(tensor.dtype(), col.repeat);
         } else {
@@ -3762,11 +3734,21 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         } else {
             nb::ndarray<> tensor = col.fixed;
             long nelements = num_rows * col.repeat;
-            if (col.datatype == TLOGICAL) {
-                const bool* src = static_cast<const bool*>(tensor.data());
+            if (col.datatype == TLOGICAL || col.datatype == TBIT) {
+                nb::dlpack::dtype dt = tensor.dtype();
                 std::vector<unsigned char> logical(nelements);
-                for (long idx = 0; idx < nelements; ++idx) {
-                    logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+                    const bool* src = static_cast<const bool*>(tensor.data());
+                    for (long idx = 0; idx < nelements; ++idx) {
+                        logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                    }
+                } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+                    const uint8_t* src = static_cast<const uint8_t*>(tensor.data());
+                    for (long idx = 0; idx < nelements; ++idx) {
+                        logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
+                    }
+                } else {
+                    throw std::runtime_error("Bit/logical table writes require bool or uint8 data");
                 }
                 fits_write_col(fptr, col.datatype, i + 1, 1, 1, nelements, logical.data(), &status);
             } else {
@@ -3784,12 +3766,9 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                 val = sanitize_fits_string(val);
                 fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
             } else if (nb::isinstance<int>(item.second)) {
-                int val = nb::cast<int>(item.second);
-                fits_update_key(fptr, TINT, key.c_str(), &val, nullptr, &status);
-            } else if (nb::isinstance<float>(item.second)) {
-                float val = nb::cast<float>(item.second);
-                fits_update_key(fptr, TFLOAT, key.c_str(), &val, nullptr, &status);
-            } else if (nb::isinstance<double>(item.second)) {
+                long long val = nb::cast<long long>(item.second);
+                fits_update_key(fptr, TLONGLONG, key.c_str(), &val, nullptr, &status);
+            } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
                 double val = nb::cast<double>(item.second);
                 fits_update_key(fptr, TDOUBLE, key.c_str(), &val, nullptr, &status);
             } else if (nb::isinstance<bool>(item.second)) {
@@ -3811,7 +3790,15 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         }
         if (col.has_bzero) {
             double bzero = col.bzero;
-            fits_update_key(fptr, TDOUBLE, ("TZERO" + std::to_string(i + 1)).c_str(), &bzero, nullptr, &status);
+            double rounded = std::round(bzero);
+            if (std::isfinite(bzero) && rounded == bzero &&
+                rounded >= static_cast<double>(std::numeric_limits<long long>::min()) &&
+                rounded <= static_cast<double>(std::numeric_limits<long long>::max())) {
+                long long bzero_int = static_cast<long long>(rounded);
+                fits_update_key(fptr, TLONGLONG, ("TZERO" + std::to_string(i + 1)).c_str(), &bzero_int, nullptr, &status);
+            } else {
+                fits_update_key(fptr, TDOUBLE, ("TZERO" + std::to_string(i + 1)).c_str(), &bzero, nullptr, &status);
+            }
         }
         if (!col.tdim.empty()) {
             std::string tdim = col.tdim;

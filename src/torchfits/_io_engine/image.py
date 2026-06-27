@@ -9,6 +9,8 @@ from torch import Tensor
 
 from ..hdu import Header
 
+from .read_dispatch import _read_unsigned_image_if_needed
+
 
 def batch_to_device(
     tensors: list[torch.Tensor], device: str | torch.device
@@ -83,7 +85,21 @@ def read_image(
 
     validate_read_image_args(path, hdu, mmap, handle_cache, device)
 
-    data = dispatch_read_image_cpp(cpp, path, hdu, mmap, handle_cache, raw_scale)
+    data = None
+    if not raw_scale and not (fp16 or bf16):
+        try:
+            header = Header(cpp.read_header_dict(path, hdu))
+        except Exception:
+            header = None
+        data = _read_unsigned_image_if_needed(
+            cpp_module=cpp,
+            path=path,
+            hdu_num=hdu,
+            effective_mmap=mmap,
+            header=header,
+        )
+    if data is None:
+        data = dispatch_read_image_cpp(cpp, path, hdu, mmap, handle_cache, raw_scale)
 
     if fp16:
         data = data.to(torch.float16)
@@ -138,6 +154,20 @@ def read_hdus(
         raise ValueError("each item in hdus must be an int or str")
 
     data = cpp.read_hdus_batch(path, resolved_hdus, mmap)
+    for idx, hdu_num in enumerate(resolved_hdus):
+        try:
+            header = Header(cpp.read_header_dict(path, hdu_num))
+        except Exception:
+            header = None
+        unsigned = _read_unsigned_image_if_needed(
+            cpp_module=cpp,
+            path=path,
+            hdu_num=hdu_num,
+            effective_mmap=mmap,
+            header=header,
+        )
+        if unsigned is not None:
+            data[idx] = unsigned
     if device != "cpu":
         data = batch_to_device(data, device)
 
