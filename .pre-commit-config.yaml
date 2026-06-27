@@ -8,6 +8,16 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
 
+  - repo: local
+    hooks:
+      - id: check-duplicate-cpp
+        name: Check for duplicate C++ file-scope functions
+        entry: python3 scripts/check_duplicate_cpp.py
+        language: system
+        files: ^src/torchfits/cpp_src/.*\.cpp$
+        pass_filenames: false
+        always_run: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.1.0
     hooks:

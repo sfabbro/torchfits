@@ -22,3 +22,13 @@ out of scope for this repository.
 - FITS I/O features, parity tests, benchmarks, and docs: **torchfits**
 - See [docs/roadmap.md](docs/roadmap.md) and [docs/parity.md](docs/parity.md) for
   the supported contract.
+
+## C++ code conventions
+
+- **No inline RAII structs in `.cpp` files.** All resource-management guards
+  live in shared headers:
+  - `FitsHandleGuard` (`cache.h`) — `fitsfile*` handles (cached/non-cached).
+  - `MMapHandle` (`hardware.h`) — mmap regions (filename-based or adopt existing).
+- If new C++ resources need RAII wrappering, add the guard to the appropriate
+  header rather than defining an inline struct at the usage site.
+- See `scripts/check_duplicate_cpp.py` for CI-enforced duplicate-function checks.

@@ -37,6 +37,13 @@ Rebuild after C++ changes:
 pip install -e . --no-build-isolation
 ```
 
+### C++ code conventions
+
+- **No inline RAII structs in `.cpp` files.** Use the shared guards from the headers below instead.
+- `FitsHandleGuard` (`cache.h`) — RAII wrapper for `fitsfile*` handles. Two modes: `cached=false` (calls `fits_close_file`) and `cached=true` (calls `release_cached`).
+- `MMapHandle` (`hardware.h`) — RAII wrapper for `mmap` regions. Construct with a filename (open + mmap) or adopt an existing mapping via `MMapHandle(ptr, size, fd)`.
+- If a new resource requires RAII, add the guard to the appropriate shared header rather than defining an inline struct at the usage site.
+
 ## Testing
 
 Minimum before a PR:
