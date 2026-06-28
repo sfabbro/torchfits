@@ -141,10 +141,15 @@ def read(
     hdu: Any = None,
     device: str = "cpu",
     mmap: bool | str = "auto",
+    mode: str = "auto",
     options: Any = None,
     return_header: bool = False,
     **kwargs: Any,
 ):
+    if "mode" in kwargs:
+        raise TypeError("read() got multiple values for argument 'mode'")
+    kwargs = dict(kwargs)
+    kwargs["mode"] = mode
     return _read_unified_impl(
         cpp_module=_cpp_module(),
         path=path,
@@ -153,7 +158,7 @@ def read(
         mmap=mmap,
         options=options,
         return_header=return_header,
-        kwargs=dict(kwargs),
+        kwargs=kwargs,
         autodetect_hdu=_autodetect_hdu_impl,
         batch_to_device=_batch_to_device_impl,
         resolve_image_mmap=_resolve_image_mmap,
@@ -310,7 +315,6 @@ def read_table_rows(
     handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
-    policy: str = "default",
 ):
     if not isinstance(hdu, int) or hdu < 0:
         raise ValueError("hdu must be a non-negative integer")
@@ -328,7 +332,6 @@ def read_table_rows(
         handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
-        policy=policy,
     )
 
 

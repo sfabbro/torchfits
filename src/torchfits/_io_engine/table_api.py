@@ -20,7 +20,6 @@ def read_table(
     handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
-    policy: str = "default",
 ):
     """Read a table HDU as a dictionary of tensors/lists."""
     if not isinstance(hdu, int) or hdu < 0:
@@ -39,7 +38,6 @@ def read_table(
         handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
-        policy=policy,
     )
     data = out[0] if return_header else out
     if isinstance(data, torch.Tensor):

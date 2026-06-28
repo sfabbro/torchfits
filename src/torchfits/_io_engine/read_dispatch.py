@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import fields
 from typing import Any
@@ -224,10 +225,22 @@ def read_unified(
     logger: Any,
 ) -> Any:
     """Unified root FITS read dispatcher implementation."""
-    opts = options if options is not None else ReadOptions()
-    for field in fields(ReadOptions):
-        if field.name in kwargs:
-            setattr(opts, field.name, kwargs[field.name])
+    option_field_names = {f.name for f in fields(ReadOptions)}
+    if options is not None:
+        # `mode` is owned by io.read's explicit `mode=` param, not by user kwargs,
+        # so it is injected into kwargs unconditionally and is not a collision.
+        colliding = (set(kwargs) & option_field_names) - {"mode"}
+        if colliding:
+            raise TypeError(
+                "Pass either options= or individual read kwargs, not both; "
+                f"collision on: {sorted(colliding)}"
+            )
+        opts = copy.copy(options)
+    else:
+        opts = ReadOptions()
+    for field_name in option_field_names:
+        if field_name in kwargs:
+            setattr(opts, field_name, kwargs[field_name])
 
     fp16 = opts.fp16
     bf16 = opts.bf16
@@ -241,7 +254,6 @@ def read_unified(
     handle_cache_capacity = opts.handle_cache_capacity
     fast_header = opts.fast_header
     mode = opts.mode
-    policy = opts.policy
 
     def recursive_read(*args: Any, **inner_kwargs: Any) -> Any:
         return read_unified(
@@ -297,7 +309,6 @@ def read_unified(
             fast_header=fast_header,
             return_header=return_header,
             mode=mode,
-            policy=policy,
             autodetect_hdu=autodetect_hdu,
             batch_to_device=batch_to_device,
             read_func=recursive_read,
@@ -316,9 +327,6 @@ def read_unified(
     mode = str(mode).strip().lower()
     if mode not in {"auto", "image", "table"}:
         raise ValueError("mode must be 'auto', 'image', or 'table'")
-    policy = str(policy).strip().lower()
-    if policy not in {"default", "smart"}:
-        raise ValueError("policy must be 'default' or 'smart'")
     force_image = mode == "image"
     force_table = mode == "table"
     if force_image and (columns is not None or start_row != 1 or num_rows != -1):
@@ -357,7 +365,6 @@ def read_unified(
             handle_cache_capacity=handle_cache_capacity,
             fast_header=fast_header,
             return_header=return_header,
-            policy=policy,
             batch_to_device=batch_to_device,
             read_func=recursive_read,
         )
@@ -810,7 +817,6 @@ def read_batch_paths(
     fast_header: bool,
     return_header: bool,
     mode: str,
-    policy: str,
     autodetect_hdu: Callable[[str, int], int],
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
     read_func: Callable[..., Any],
@@ -843,7 +849,6 @@ def read_batch_paths(
                 item_path,
                 hdu=hdu,
                 mode=mode,
-                policy=policy,
                 device=device,
                 mmap=mmap,
                 fp16=fp16,
@@ -879,7 +884,6 @@ def read_batch_hdus(
     handle_cache_capacity: int,
     fast_header: bool,
     return_header: bool,
-    policy: str,
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
     read_func: Callable[..., Any],
 ) -> Any:
@@ -914,7 +918,6 @@ def read_batch_hdus(
             path,
             hdu=item_hdu,
             device=device,
-            policy=policy,
             mmap=mmap,
             fp16=fp16,
             bf16=bf16,

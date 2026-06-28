@@ -164,16 +164,6 @@ class TestMainAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_policy_smart_matches_default_for_image(self):
-        """Image payloads should be numerically identical across read policies."""
-        filepath, _ = self.create_test_fits(shape=(64, 64), dtype=np.float32)
-        try:
-            fast = torchfits.read(filepath, hdu=0, policy="default", mmap=False)
-            smart = torchfits.read(filepath, hdu=0, policy="smart", mmap=False)
-            torch.testing.assert_close(fast, smart)
-        finally:
-            os.unlink(filepath)
-
     def test_read_mode_image_rejects_table_args(self):
         """mode='image' should reject table-specific options."""
         filepath, _ = self.create_test_fits(shape=(64, 64), dtype=np.float32)
@@ -348,7 +338,7 @@ class TestMainAPI:
         filepath, _ = self.create_test_fits()
         try:
             with pytest.raises(ValueError):
-                torchfits.read(filepath, policy="invalid")
+                torchfits.read(filepath, mode="invalid")
         finally:
             os.unlink(filepath)
 
@@ -426,27 +416,22 @@ class TestTableAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_table_wrapper_policy_smart(self):
-        """read_table should accept explicit policy selection."""
+    def test_read_table_wrapper(self):
+        """read_table / read_table_rows return consistent tensor dict views."""
         filepath = self.create_test_table(128)
         try:
-            fast = torchfits.read_table(filepath, hdu=1, policy="default")
-            smart = torchfits.read_table(filepath, hdu=1, policy="smart")
+            table = torchfits.read_table(filepath, hdu=1)
             rows = torchfits.read_table_rows(
                 filepath,
                 hdu=1,
                 start_row=1,
                 num_rows=16,
-                policy="default",
             )
-            assert isinstance(fast, dict)
-            assert isinstance(smart, dict)
+            assert isinstance(table, dict)
             assert len(rows["RA"]) == 16
-            for k in fast.keys():
-                v_fast = fast[k]
-                v_smart = smart[k]
-                if isinstance(v_fast, torch.Tensor):
-                    torch.testing.assert_close(v_fast, v_smart)
+            for k in table.keys():
+                if isinstance(table[k], torch.Tensor):
+                    torch.testing.assert_close(table[k][:16], rows[k])
         finally:
             os.unlink(filepath)
 

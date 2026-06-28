@@ -243,7 +243,7 @@ class TestCaching:
             torchfits.clear_file_cache()
 
     def test_read_mmap_auto_defaults_to_false_for_compressed(self, monkeypatch):
-        """In smart policy, `mmap='auto'` should disable mmap for compressed HDUs."""
+        """`mmap='auto'` should disable mmap for compressed HDUs."""
         import torchfits.io
         import torchfits._C as cpp
         if not hasattr(cpp, "read_full_cached"):
@@ -288,7 +288,6 @@ class TestCaching:
                 filepath,
                 hdu=0,
                 mmap="auto",
-                policy="smart",
                 cache_capacity=10,
                 handle_cache_capacity=16,
             )
@@ -301,7 +300,7 @@ class TestCaching:
             torchfits.clear_file_cache()
 
     def test_read_mmap_true_is_explicit_override(self, monkeypatch):
-        """In smart policy, `mmap=True` must stay enabled for compressed metadata."""
+        """`mmap=True` must stay enabled for compressed metadata reads."""
         import torchfits.io
         import torchfits._C as cpp
         if not hasattr(cpp, "read_full_cached"):
@@ -346,7 +345,6 @@ class TestCaching:
                 filepath,
                 hdu=0,
                 mmap=True,
-                policy="smart",
                 cache_capacity=10,
                 handle_cache_capacity=16,
             )
@@ -358,8 +356,8 @@ class TestCaching:
                 os.unlink(filepath)
             torchfits.clear_file_cache()
 
-    def test_read_mmap_auto_default_policy_uses_direct_mmap(self, monkeypatch):
-        """Default policy should skip smart auto-mmap heuristics."""
+    def test_read_mmap_auto_uses_direct_mmap(self, monkeypatch):
+        """`mmap='auto'` on a plain uncompressed HDU should use direct mmap."""
         import torchfits.io
         import torchfits._C as cpp
 
@@ -388,7 +386,6 @@ class TestCaching:
                 filepath,
                 hdu=0,
                 mmap="auto",
-                policy="default",
                 cache_capacity=10,
                 handle_cache_capacity=16,
             )

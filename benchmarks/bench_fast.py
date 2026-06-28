@@ -573,10 +573,7 @@ def main():
             else:
                 m, s = _time_method(tf_open_once, warmup_count, iter_count)
             print(f"  torchfits_open_once: {m:.6f}s ± {s:.6f}s")
-            try:
-                torchfits.cpp.close_fits_file(file_handle)
-            except Exception:
-                pass
+            file_handle.close()
 
         print("\nMicrobench: compressed_rice_1 (cached handle)")
 
@@ -664,10 +661,7 @@ def main():
             else:
                 m, s = _time_method(tf_open_once_hc, warmup_count, iter_count)
             print(f"  torchfits_open_once: {m:.6f}s ± {s:.6f}s")
-            try:
-                torchfits.cpp.close_fits_file(file_handle_hc)
-            except Exception:
-                pass
+            file_handle_hc.close()
 
         print("\nMicrobench: compressed_hcompress_1 (cached handle)")
 

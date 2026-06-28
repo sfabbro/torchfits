@@ -22,4 +22,3 @@ class ReadOptions:
     handle_cache_capacity: int = 16
     fast_header: bool = True
     mode: str = "auto"
-    policy: str = "default"
