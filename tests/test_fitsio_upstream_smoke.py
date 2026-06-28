@@ -329,6 +329,68 @@ def test_fitsio_complex_bit_string_table_mmap_updates_match_torchfits() -> None:
         path.unlink(missing_ok=True)
 
 
+def test_fitsio_complex128_int64_columns_roundtrip_match_torchfits() -> None:
+    """Double-precision complex (TFORM=M) and 64-bit integer (TFORM=K)
+    columns round-trip through torchfits.read_table / torchfits.write and
+    decode identically via fitsio and astropy.io.fits. The C/M/K TFORM
+    paths are exercised by other tests only for complex64 (C); int64 (K)
+    had no parity coverage at all and M only via the in-place write path."""
+    complex128_col = np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex128)
+    int64_col = np.array([10, 20, 30], dtype=np.int64)
+
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        src_path = Path(fh.name)
+    try:
+        astropy_fits.HDUList(
+            [
+                astropy_fits.PrimaryHDU(),
+                astropy_fits.BinTableHDU.from_columns(
+                    [
+                        astropy_fits.Column(name="ZM", format="M", array=complex128_col),
+                        astropy_fits.Column(name="K", format="K", array=int64_col),
+                    ],
+                    name="CAT",
+                ),
+            ]
+        ).writeto(src_path, overwrite=True)
+
+        out = torchfits.read_table(src_path.as_posix(), hdu=1, mmap=False)
+        np.testing.assert_allclose(
+            np.asarray(out["ZM"]).squeeze(), complex128_col, rtol=0.0, atol=0.0
+        )
+        np.testing.assert_array_equal(np.asarray(out["K"]).squeeze(), int64_col)
+
+        fits_src = fitsio.read(src_path.as_posix(), ext=1)
+        np.testing.assert_allclose(fits_src["ZM"], complex128_col, rtol=0.0, atol=0.0)
+        np.testing.assert_array_equal(fits_src["K"], int64_col)
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+            dst_path = Path(fh.name)
+        try:
+            torchfits.write(
+                dst_path.as_posix(),
+                {
+                    "ZM": torch.tensor(complex128_col),
+                    "K": torch.tensor(int64_col),
+                },
+                overwrite=True,
+            )
+            fits_dst = fitsio.read(dst_path.as_posix(), ext=1)
+            np.testing.assert_allclose(
+                fits_dst["ZM"], complex128_col, rtol=0.0, atol=0.0
+            )
+            np.testing.assert_array_equal(fits_dst["K"], int64_col)
+            with astropy_fits.open(dst_path) as hdul:
+                np.testing.assert_allclose(
+                    hdul[1].data["ZM"], complex128_col, rtol=0.0, atol=0.0
+                )
+                np.testing.assert_array_equal(hdul[1].data["K"], int64_col)
+        finally:
+            dst_path.unlink(missing_ok=True)
+    finally:
+        src_path.unlink(missing_ok=True)
+
+
 def test_fitsio_unsigned_table_convention_matches_torchfits() -> None:
     fits = pytest.importorskip("astropy.io.fits")
     cases = [
