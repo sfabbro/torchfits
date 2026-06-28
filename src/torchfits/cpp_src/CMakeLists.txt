@@ -172,6 +172,28 @@ if(TORCHFITS_PYTORCH_CUDA_VERSION AND NOT TARGET CUDA::nvrtc)
     endif()
 endif()
 
+# Pre-create dummy `torch::cudart` (and related) interface targets so Caffe2/public/cuda.cmake's
+# "poor man's include guard" at the top fires BEFORE its `find_package(CUDA)` / `find_package
+# (CUDAToolkit)` / `enable_language(CUDA)` probes. This sidesteps the FATAL_ERROR
+# "Your installed Caffe2 version uses CUDA but I cannot find the CUDA libraries" when pixi/conda
+# envs ship only libcudart.so (no cuda.h, no nvcc). The extension is CPU-only (compile-time)
+# so dummy interface targets are safe for link/load.
+if(TORCHFITS_PYTORCH_CUDA_VERSION)
+    foreach(_torchfits_cuda_target
+            torch::cudart torch::cuda torch::nvrtc torch::cudnn torch::cufile
+            caffe2::cuda caffe2::cublas caffe2::curand caffe2::cufft
+            caffe2::cudnn caffe2::cufft_static caffe2::nvrtc caffe2::cudart
+            caffe2::nvrtc caffe2::cudart_static caffe2::cusolver
+            caffe2::cusparse caffe2::nccl caffe2::cufile caffe2::cusparselt
+            caffe2::cudss caffe2::mkldnn
+            CUDA::cudart CUDA::cublas CUDA::curand CUDA::cufft CUDA::cudnn
+            CUDA::cusolver CUDA::cusparse CUDA::nccl CUDA::nvrtc CUDA::nvToolsExt)
+        if(NOT TARGET ${_torchfits_cuda_target})
+            add_library(${_torchfits_cuda_target} INTERFACE IMPORTED GLOBAL)
+        endif()
+    endforeach()
+endif()
+
 find_package(Torch REQUIRED)
 
 # Some distributions ship a Torch CMake target with include paths that may be missing.

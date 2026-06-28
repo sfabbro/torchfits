@@ -1573,19 +1573,12 @@ public:
             if (col->type == FITSColumnType::VARIABLE) {
                 throw std::runtime_error("VLA columns not supported for mmap updates");
             }
-            if (col->type == FITSColumnType::BIT) {
-                throw std::runtime_error("Bit columns not supported for mmap updates");
-            }
             if (col->scaled) {
                 throw std::runtime_error("Scaled columns not supported for mmap updates");
             }
-            if (col->type == FITSColumnType::STRING) {
-                throw std::runtime_error("String columns not supported for mmap updates");
-            }
-            if (col->type == FITSColumnType::COMPLEX_FLOAT ||
-                col->type == FITSColumnType::COMPLEX_DOUBLE) {
-                throw std::runtime_error("Complex columns not supported for mmap updates");
-            }
+            // BIT, STRING, COMPLEX_FLOAT, COMPLEX_DOUBLE, and LOGICAL are
+            // accepted and handled by the per-element dispatches below. Other
+            // column types fall through to the `default` branch in the write loop.
         }
 
         // Get offset to the start of the table data
@@ -1642,7 +1635,21 @@ public:
             }
 
             long expected_repeat = (col->repeat > 0) ? col->repeat : 1;
-            if (repeat != expected_repeat) {
+            // STRING columns allow shorter user-provided widths; trailing bytes
+            // are padded with ASCII spaces to match the FITS CHAR contract.
+            // BIT and COMPLEX columns require an exact repeat match.
+            long user_repeat = repeat;
+            if (col->type == FITSColumnType::STRING) {
+                if (user_repeat == 0 || user_repeat > expected_repeat) {
+                    munmap(map_ptr, sb.st_size);
+                    close(fd);
+                    throw std::runtime_error(
+                        "update_rows mmap string width must be 1.." + std::to_string(expected_repeat) +
+                        " for " + name
+                    );
+                }
+                repeat = expected_repeat;
+            } else if (repeat != expected_repeat) {
                 munmap(map_ptr, sb.st_size);
                 close(fd);
                 throw std::runtime_error("update_rows mmap repeat mismatch for " + name);
@@ -1683,8 +1690,12 @@ public:
                             bool val = false;
                             if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
                                 val = src_bool[idx];
-                            } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-                                val = src_u8[idx] != 0;
+                            } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+                                // Read via tensor.stride() to handle DLPack strided views.
+                                long byte_offset = (ndim == 2)
+                                    ? i * tensor.stride(0) + j * tensor.stride(1)
+                                    : i * tensor.stride(0) + j;
+                                val = src_u8[byte_offset] != 0;
                             } else {
                                 munmap(map_ptr, sb.st_size);
                                 close(fd);
@@ -1751,6 +1762,102 @@ public:
                             std::memcpy(&v, &src_f64[idx], sizeof(uint64_t));
                             v = bswap_64(v);
                             std::memcpy(dest, &v, sizeof(uint64_t));
+                            break;
+                        }
+                        case FITSColumnType::BIT: {
+                            // Extract a bool from a packed BIT column (MSB-first).
+                            bool val = false;
+                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+                                val = src_bool[idx];
+                            } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+                                // Read via tensor.stride() to handle DLPack strided views.
+                                long byte_offset = (ndim == 2)
+                                    ? i * tensor.stride(0) + j * tensor.stride(1)
+                                    : i * tensor.stride(0) + j;
+                                val = src_u8[byte_offset] != 0;
+                            } else {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            // FITS BIT columns are MSB-first within each byte.
+                            // The default dest stride (j * col->width) is meaningless
+                            // for BIT (col->width == 1 but storage is bit-packed), so
+                            // we operate directly on dest_row instead.
+                            uint8_t* target_byte = dest_row + (j / 8);
+                            uint8_t bit_position = static_cast<uint8_t>(7 - (j % 8));
+                            if (j % 8 == 0) {
+                                *target_byte = 0;
+                            }
+                            if (val) {
+                                *target_byte |= static_cast<uint8_t>(1U << bit_position);
+                            }
+                            break;
+                        }
+                        case FITSColumnType::STRING: {
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            // STRING: dest stride is 1 byte. Pad trailing bytes with
+                            // ASCII spaces when the user-provided width is shorter
+                            // than the FITS column width.
+                            if (j < user_repeat) {
+                                // Read src via tensor.stride() so nanobind DLPack
+                                // strided views (e.g. S8 over UCS-4 with stride(1)==4)
+                                // land the right byte instead of sweeping NUL padding.
+                                long byte_offset = (ndim == 2)
+                                    ? i * tensor.stride(0) + j * tensor.stride(1)
+                                    : i * tensor.stride(0) + j;
+                                dest[0] = src_u8[byte_offset];
+                            } else {
+                                dest[0] = 0x20; // ASCII space; matches FITS CHAR convention
+                            }
+                            break;
+                        }
+                        case FITSColumnType::COMPLEX_FLOAT: {
+                            // DLPack `Complex` with bits == 64 corresponds to complex64
+                            // (re/im float32). Total bit width is 64 (2 * 32-bit floats).
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 64)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            const auto* src_complex32 =
+                                static_cast<const c10::complex<float>*>(tensor.data());
+                            int32_t re_bits = 0;
+                            int32_t im_bits = 0;
+                            float re = src_complex32[idx].real();
+                            float im = src_complex32[idx].imag();
+                            std::memcpy(&re_bits, &re, sizeof(int32_t));
+                            std::memcpy(&im_bits, &im, sizeof(int32_t));
+                            re_bits = bswap_32(re_bits);
+                            im_bits = bswap_32(im_bits);
+                            std::memcpy(dest, &re_bits, sizeof(int32_t));
+                            std::memcpy(dest + sizeof(int32_t), &im_bits, sizeof(int32_t));
+                            break;
+                        }
+                        case FITSColumnType::COMPLEX_DOUBLE: {
+                            // DLPack `Complex` with bits == 128 corresponds to complex128
+                            // (re/im float64). Total bit width is 128 (2 * 64-bit floats).
+                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 128)) {
+                                munmap(map_ptr, sb.st_size);
+                                close(fd);
+                                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                            }
+                            const auto* src_complex64 =
+                                static_cast<const c10::complex<double>*>(tensor.data());
+                            int64_t re_bits = 0;
+                            int64_t im_bits = 0;
+                            double re = src_complex64[idx].real();
+                            double im = src_complex64[idx].imag();
+                            std::memcpy(&re_bits, &re, sizeof(int64_t));
+                            std::memcpy(&im_bits, &im, sizeof(int64_t));
+                            re_bits = bswap_64(re_bits);
+                            im_bits = bswap_64(im_bits);
+                            std::memcpy(dest, &re_bits, sizeof(int64_t));
+                            std::memcpy(dest + sizeof(int64_t), &im_bits, sizeof(int64_t));
                             break;
                         }
                         default:
@@ -2691,6 +2798,82 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                 }
             } else if (nb::isinstance<nb::str>(obj) || nb::isinstance<nb::bytes>(obj)) {
                 values.push_back(nb::cast<std::string>(obj));
+            } else if (nb::isinstance<nb::ndarray<>>(obj)) {
+                // Python's update_rows materialises fixed-width CHAR columns
+                // as a (num_rows, width) uint8 ndarray (see the
+                // has_string / dtype / string_widths branch in
+                // torchfits.table.update_rows). Mirror the mmap-path's
+                // STRING case: copy bytes left-to-right per row and
+                // right-pad with ASCII spaces (0x20) so short user
+                // payloads land the same bytes as the mmap writer.
+                nb::ndarray<> t_str = nb::cast<nb::ndarray<>>(obj);
+                nb::dlpack::dtype dt_str = t_str.dtype();
+                if (
+                    !(dt_str.code == (uint8_t)nb::dlpack::dtype_code::UInt &&
+                      dt_str.bits == 8)
+                ) {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error(
+                        "update_rows string ndarray must be uint8 for " + col_name
+                    );
+                }
+                int ndim_str = t_str.ndim();
+                long user_repeat_str = 1;
+                long rows_str = 1;
+                if (ndim_str == 0) {
+                    rows_str = 1;
+                    user_repeat_str = 1;
+                } else if (ndim_str == 1) {
+                    rows_str = static_cast<long>(t_str.shape(0));
+                    user_repeat_str = 1;
+                } else if (ndim_str == 2) {
+                    rows_str = static_cast<long>(t_str.shape(0));
+                    user_repeat_str = static_cast<long>(t_str.shape(1));
+                } else {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error(
+                        "update_rows string ndarray must be 1D/2D for " + col_name
+                    );
+                }
+                if (rows_str != num_rows) {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error(
+                        "update_rows column length mismatch for " + col_name
+                    );
+                }
+                long width_chars_str = repeat > 0 ? repeat : 1;
+                if (user_repeat_str > width_chars_str) {
+                    fits_close_file(fptr, &status);
+                    throw std::runtime_error(
+                        "update_rows string width " +
+                        std::to_string(user_repeat_str) + " exceeds column " +
+                        std::to_string(width_chars_str) + " for " + col_name
+                    );
+                }
+                const uint8_t* src_str = static_cast<const uint8_t*>(t_str.data());
+                std::vector<std::string> padded_str;
+                padded_str.reserve(static_cast<size_t>(num_rows));
+                for (long i = 0; i < num_rows; ++i) {
+                    std::string row(static_cast<size_t>(width_chars_str), ' ');
+                    for (long j = 0; j < user_repeat_str; ++j) {
+                        long byte_off_str = (ndim_str == 2)
+                            ? i * t_str.stride(0) + j * t_str.stride(1)
+                            : i * t_str.stride(0) + j;
+                        row[static_cast<size_t>(j)] =
+                            static_cast<char>(src_str[byte_off_str]);
+                    }
+                    padded_str.push_back(std::move(row));
+                }
+                std::vector<const char*> ptrs_str;
+                ptrs_str.reserve(padded_str.size());
+                for (const auto& s : padded_str) {
+                    ptrs_str.push_back(s.c_str());
+                }
+                fits_write_col(
+                    fptr, TSTRING, colnum, start_row, 1, num_rows,
+                    const_cast<char**>(ptrs_str.data()), &status
+                );
+                continue;
             } else {
                 fits_close_file(fptr, &status);
                 throw std::runtime_error("update_rows string column expects list/tuple/str for " + col_name);
@@ -2721,6 +2904,92 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 
             fits_write_col(fptr, TSTRING, colnum, start_row, 1, num_rows,
                            const_cast<char**>(ptrs.data()), &status);
+            continue;
+        }
+
+        if (typecode == TBIT) {
+            // BIT columns: pack booleans MSB-first into (ceil(repeat/8))
+            // bytes per row and write via fits_write_col(FT, TBIT, ...).
+            // CFITSIO's TBIT descriptor expects bytes containing 8 packed
+            // bits each, mirroring the mmap-path's per-byte packing so the
+            // two writers stay byte-equivalent.
+            nb::ndarray<> t = nb::cast<nb::ndarray<>>(item.second);
+            int ndim_t = t.ndim();
+            long rows_t = 1;
+            long user_repeat = 1;
+            if (ndim_t == 0) {
+                rows_t = 1;
+                user_repeat = 1;
+            } else if (ndim_t == 1) {
+                rows_t = static_cast<long>(t.shape(0));
+                user_repeat = 1;
+            } else if (ndim_t == 2) {
+                rows_t = static_cast<long>(t.shape(0));
+                user_repeat = static_cast<long>(t.shape(1));
+            } else {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error(
+                    "update_rows BIT only supports 1D/2D columns for " + col_name
+                );
+            }
+            if (rows_t != num_rows) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error(
+                    "update_rows column length mismatch for " + col_name
+                );
+            }
+            if (user_repeat <= 0 || user_repeat > repeat) {
+                fits_close_file(fptr, &status);
+                throw std::runtime_error(
+                    "update_rows BIT repeat must be 1.." + std::to_string(repeat) +
+                    " for " + col_name
+                );
+            }
+
+            long packed_bytes_per_row = (repeat + 7) / 8;
+            std::vector<unsigned char> packed(
+                static_cast<size_t>(num_rows * packed_bytes_per_row), 0
+            );
+
+            nb::dlpack::dtype dt_b = t.dtype();
+            const bool* src_bool_b = static_cast<const bool*>(t.data());
+            const uint8_t* src_u8_b = static_cast<const uint8_t*>(t.data());
+
+            for (long i = 0; i < num_rows; ++i) {
+                for (long j = 0; j < user_repeat; ++j) {
+                    bool val = false;
+                    long byte_off = (ndim_t == 2)
+                        ? i * t.stride(0) + j * t.stride(1)
+                        : i * t.stride(0) + j;
+                    if (
+                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::Bool &&
+                        dt_b.bits == 8
+                    ) {
+                        val = src_bool_b[byte_off];
+                    } else if (
+                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::UInt &&
+                        dt_b.bits == 8
+                    ) {
+                        val = src_u8_b[byte_off] != 0;
+                    } else {
+                        fits_close_file(fptr, &status);
+                        throw std::runtime_error(
+                            "update_rows BIT dtype must be bool or uint8 for " +
+                            col_name
+                        );
+                    }
+                    if (val) {
+                        packed[
+                            static_cast<size_t>(i * packed_bytes_per_row + j / 8)
+                        ] |= static_cast<unsigned char>(1U << (7 - (j % 8)));
+                    }
+                }
+            }
+
+            fits_write_col(
+                fptr, TBIT, colnum, start_row, 1,
+                num_rows * packed_bytes_per_row, packed.data(), &status
+            );
             continue;
         }
 

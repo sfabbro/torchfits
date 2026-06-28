@@ -104,6 +104,12 @@ def _ensure_runtime_init() -> None:
     cache = import_module("torchfits.cache")
     cache.configure_for_environment()
     try:
+        # Pre-import torch so its dependency libraries (libcudart.so.12,
+        # libtorch_cuda.so, libtorch_python.so) are loaded before torchfits._C
+        # dlopens them. Otherwise `import torchfits._C` first fails at import
+        # time with `libcudart.so.12: cannot open shared object file` even
+        # though `import torch; torch.cuda.is_available()` succeeds.
+        import torch  # noqa: F401
         cpp = import_module("torchfits._C")
         cache_mb = os.environ.get("TORCHFITS_CFITSIO_CACHE_MB")
         cache_files = os.environ.get("TORCHFITS_CFITSIO_CACHE_FILES")

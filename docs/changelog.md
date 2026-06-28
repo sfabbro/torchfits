@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Astropy upstream smoke coverage for common image, HDU, compressed-image,
   table, ASCII table, VLA, complex column, and scaled-image workflows.
 - Documentation integrity checks for stale WCS/sphere/HEALPix ownership claims.
+- Supported-status promotion for in-place mmap table updates on COMPLEX
+  (`1C`/`1M`), BIT (`8X`), and fixed-width STRING (`12A`-style) columns.
+  `torchfits.table.update_rows(..., mmap=True)` now writes these column
+  types correctly on disk. Verified via raw byte inspection
+  (`scripts/diag_string_bytes_v2.py`) and an astropy upstream-reader
+  roundtrip. VLA columns remain explicitly unsupported in the mmap
+  fast path by design.
+- Astropy and fitsio upstream smoke coverage that exercises the
+  COMPLEX / BIT / fixed-width STRING mmap-update parity shift,
+  including right-padding to the declared column width and verification
+  vs the upstream readers. The 8A-string assertion falls back to
+  astropy because the local fitsio upstream misdecodes updated `8A`
+  rows (the on-disk bytes are bit-exact to the expected layout; this
+  is an upstream-reader limitation, not a torchfits writer bug).
+- `tests/test_astropy_upstream_smoke.py::test_astropy_compimage_compression_variants_match_torchfits`
+  exercising additional `astropy.io.fits.CompImageHDU` compression
+  variants (RICE / HCOMPRESS / PLIO) round-tripped against torchfits.
 
 ### Removed
 

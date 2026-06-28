@@ -85,9 +85,25 @@ cmake.args = [
     "-DTORCHFITS_NIOBUF=80",
     "-DTORCHFITS_MINDIRECT=16384",
     "-DUSE_CUDA=OFF",
+    # The C++ extension has no .cu kernels; libtorch_cuda.so from the cu128
+    # wheel is linked for tensor API surface but never invoked for compile.
+    # torch's Caffe2 public/cuda.cmake probes unconditionally when libtorch
+    # was built with CUDA. Skip stdlib find_package(CUDA) and point the toolkit
+    # at the conda prefix (cuda-cudart-dev + cuda-driver-dev provide headers
+    # and libcudart.so under $CONDA_PREFIX/{include,lib}). scikit-build-core
+    # expands ${CONDA_PREFIX} before cmake sees the arg; scikit-build-core does
+    # NOT compile CUDA (the extension has no .cu kernels), so the path just
+    # needs to satisfy Caffe2's layout expectations, not run nvcc.
+    "-DCUDA_TOOLKIT_ROOT_DIR=${CONDA_PREFIX}",
+    "-DCUDAToolkit_ROOT=${CONDA_PREFIX}",
     "-DCMAKE_C_FLAGS=-march=native -O3",
     "-DCMAKE_CXX_FLAGS=-march=native -O3",
 ]
+
+# Note: USE_CUDA=OFF is intentional. The C++ extension in src/torchfits/cpp_src
+# has no CUDA kernels (the hardware.cpp core is CPU-only); we link against
+# libtorch from a CUDA-enabled PyTorch wheel just for the tensor API surface.
+# If/when CUDA kernels are added under src/torchfits/cpp_src, revisit this.
 
 # Configures the install directory for the compiled extension.
 # This ensures the compiled `cpp.so` or `cpp.pyd` file is placed inside the `torchfits` package.

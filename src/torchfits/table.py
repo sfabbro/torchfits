@@ -3690,7 +3690,32 @@ def update_rows(
             )
             if expected_rows is None:
                 expected_rows = len(values)
-            normalized[col_name] = values
+            # Materialise fixed-width CHAR columns as a (num_rows, width)
+            # uint8 ndarray so the mmap fast path
+            # (cpp.update_fits_table_rows_mmap) routes through the new
+            # STRING case in the C++ writer rather than the buffered
+            # fallback (which accepts list[str]). The C++ writer copies
+            # bytes left-to-right per row, so short user payloads are
+            # right-padded with ASCII spaces (0x20) before they hit
+            # disk. _coerce_table_string_values already truncates at
+            # the column width when user payloads are wider, so we
+            # only need to handle the short-payload case here.
+            import numpy as _np
+            width = string_widths[col_name]
+            arr = _np.full((expected_rows, width), 0x20, dtype=_np.uint8)
+            for i, s in enumerate(values):
+                if isinstance(s, (bytes, bytearray)):
+                    encoded = bytes(s)
+                elif isinstance(s, str):
+                    encoded = s.encode("ascii", "ignore")
+                else:
+                    encoded = str(s).encode("ascii", "ignore")
+                length = min(len(encoded), width)
+                if length > 0:
+                    arr[i, :length] = _np.frombuffer(
+                        encoded[:length], dtype=_np.uint8
+                    )
+            normalized[col_name] = arr
         elif col_name in complex_codes:
             arr = _coerce_table_complex_values(
                 col_name,
@@ -3727,14 +3752,14 @@ def update_rows(
 
     use_mmap = mmap in (True, "auto", "mmap")
     forced_mmap = mmap in (True, "mmap")
-    unsupported_mmap = sorted(
-        name
-        for name in normalized
-        if name in vla_codes or name in string_widths or name in complex_codes
-    )
+    # VLA columns are still unsupported in-place (heap indirection); the
+    # C++ layer additionally rejects scaled columns at write time.
+    # Fixed-width STRING (A), BIT (X), and COMPLEX (C/M) columns are now
+    # handled in the C++ mmap writer alongside numeric/logical columns.
+    unsupported_mmap = sorted(name for name in normalized if name in vla_codes)
     if forced_mmap and unsupported_mmap:
         raise ValueError(
-            "mmap table updates only support fixed-width numeric/logical columns; "
+            "mmap table updates do not support variable-length-array columns; "
             f"unsupported columns={unsupported_mmap}"
         )
     if use_mmap:

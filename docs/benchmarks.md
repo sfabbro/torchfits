@@ -68,6 +68,7 @@ pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(sc
 | `bench_table.py` | fitstable | Table API timing |
 | `bench_arrow_tables.py` | fitstable | Arrow-oriented table workflows |
 | `bench_arrow_tables_diverse.py` | fitstable | Diverse Arrow/table schemas |
+| `bench_decompressed_complex_bit_string.py` | fitstable | `update_rows` throughput on COMPLEX/BIT/fixed-width STRING columns (mmap=True vs buffered) |
 
 ## I/O Transport × Backend
 

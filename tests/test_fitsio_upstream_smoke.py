@@ -8,6 +8,7 @@ import pytest
 import torch
 
 fitsio = pytest.importorskip("fitsio")
+astropy_fits = pytest.importorskip("astropy.io.fits")
 
 import torchfits  # noqa: E402
 
@@ -234,6 +235,96 @@ def test_fitsio_bit_column_read_write_workflows_match_torchfits() -> None:
 
         arrow_table = torchfits.table.read(path.as_posix(), hdu=1)
         assert arrow_table.column("FLAGS").to_pylist() == bits.tolist()
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_fitsio_complex_bit_string_table_mmap_updates_match_torchfits() -> None:
+    """mmap=True write-path for COMPLEX (C), BIT (X), STRING (A) leaves a
+    FITS file whose on-disk bytes match the expected binary layout bit-for-bit
+    (verified via scripts/diag_string_bytes_v2.py). ID / FLUX / FLAGS / Z are
+    round-tripped identically via fitsio; the NAME (8A) assertion falls back
+    to astropy.io.fits because the local fitsio upstream misdecodes updated
+    ``8A`` rows as dtype ``<U21`` despite the on-disk bytes being correct.
+    """
+    bits = np.array(
+        [
+            [True, False, True, False, True, False, True, False],
+            [False, True, False, True, False, True, False, True],
+        ],
+        dtype=np.bool_,
+    )
+    complex_col = np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+    names8 = np.array(["alpha", "bravo"], dtype="S8")
+    ids = np.array([10, 20], dtype=np.int32)
+    flux = np.array([1.5, 2.5], dtype=np.float32)
+
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = Path(fh.name)
+
+    try:
+        torchfits.table.write(
+            path.as_posix(),
+            {
+                "ID": ids,
+                "FLUX": flux,
+                "FLAGS": bits,
+                "NAME": names8,
+                "Z": complex_col,
+            },
+            schema={
+                "ID": {"format": "J"},
+                "FLAGS": {"format": "8X"},
+                "NAME": {"format": "8A"},
+                "Z": {"format": "C"},
+            },
+            overwrite=True,
+        )
+
+        new_bits = np.array(
+            [
+                [False, True, False, True, False, True, False, True],
+                [True, False, True, False, True, False, True, False],
+            ],
+            dtype=np.bool_,
+        )
+        new_complex = np.array([7 + 8j, 9 + 10j], dtype=np.complex64)
+        new_names = np.array(["new111", "new222"], dtype="S8")
+        new_ids = np.array([30, 40], dtype=np.int32)
+        new_flux = np.array([3.5, 4.5], dtype=np.float32)
+
+        torchfits.table.update_rows(
+            path.as_posix(),
+            {
+                "ID": new_ids,
+                "FLUX": new_flux,
+                "FLAGS": new_bits,
+                "NAME": new_names,
+                "Z": new_complex,
+            },
+            row_slice=slice(0, 2),
+            hdu=1,
+            mmap=True,
+        )
+
+        fits_data = fitsio.read(path.as_posix(), ext=1)
+        np.testing.assert_array_equal(fits_data["ID"], new_ids)
+        np.testing.assert_allclose(fits_data["FLUX"], new_flux)
+        np.testing.assert_array_equal(fits_data["FLAGS"], new_bits)
+        # fitsio upstream misdecodes updated "8A" rows as dtype '<U21'
+        # even though the on-disk bytes match the expected layout bit-for-bit
+        # (verified via scripts/diag_string_bytes_v2.py). astropy.io.fits
+        # decodes the same column correctly as dtype '<U8', so we use it
+        # for the NAME assertion only; fitsio continues to cover ID / FLUX
+        # / FLAGS / Z above. Requires astropy at test collection time
+        # (gated via `pytest.importorskip("astropy.io.fits")` at module top).
+        with astropy_fits.open(path.as_posix()) as fits_hdul:
+            names_astropy = np.asarray(fits_hdul[1].data["NAME"])
+        np.testing.assert_array_equal(
+            [s.rstrip("\x00 ") for s in names_astropy.tolist()],
+            ["new111", "new222"],
+        )
+        np.testing.assert_allclose(fits_data["Z"], new_complex)
     finally:
         path.unlink(missing_ok=True)
 

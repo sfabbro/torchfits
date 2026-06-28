@@ -1,6 +1,15 @@
 from unittest.mock import MagicMock
-from torchfits.cache import CacheConfig, get_optimal_cache_config
+
+from torchfits.cache import (
+    CacheConfig,
+    get_optimal_cache_config,
+)
 import torchfits.cache
+
+
+# The autouse env-clear fixture lives in tests/conftest.py so every test in tests/
+# inherits the same sandbox-leak protection (single source of truth:
+# torchfits.cache.CACHE_ENV_SENTINELS).
 
 
 def test_optimal_cache_config_no_psutil(monkeypatch):
@@ -28,9 +37,7 @@ def test_optimal_cache_config_local(monkeypatch):
     mock_psutil.virtual_memory().total = 16 * (1024**3)
     monkeypatch.setattr(torchfits.cache, "psutil", mock_psutil)
 
-    # Ensure no other env vars are present
-    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
-    monkeypatch.delenv("AWS_EXECUTION_ENV", raising=False)
+    # _clear_env_profile autouse fixture already removed all CACHE_ENV_SENTINELS.
 
     # Mock GPU detection
     monkeypatch.setattr(CacheConfig, "_is_gpu_environment", lambda: False)

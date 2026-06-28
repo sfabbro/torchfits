@@ -14,6 +14,32 @@ except ImportError:
     psutil = None
 
 
+# Single source of truth for env vars that trigger environment classification in
+# CacheConfig._is_hpc_environment / _is_cloud_environment. Tests, docs, and any
+# downstream tooling should import these tuples rather than hard-code the lists, so a new
+# sentinel added here propagates everywhere automatically.
+HPC_ENV_SENTINELS: tuple[str, ...] = (
+    "SLURM_JOB_ID",
+    "PBS_JOBID",
+    "LSB_JOBID",
+    "SGE_JOB_ID",
+)
+CLOUD_ENV_SENTINELS: tuple[str, ...] = (
+    # AWS / GCP / Azure
+    "AWS_EXECUTION_ENV",
+    "AWS_LAMBDA_FUNCTION_NAME",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "AZURE_FUNCTIONS_ENVIRONMENT",
+    # Web / PaaS / k8s
+    "WEBSITE_SITE_NAME",
+    "KUBERNETES_SERVICE_HOST",
+    "K_SERVICE",
+)
+# Convenience union used by tests to clear every classification variable at once.
+CACHE_ENV_SENTINELS: tuple[str, ...] = HPC_ENV_SENTINELS + CLOUD_ENV_SENTINELS
+
+
 class CacheConfig:
     """Cache configuration for different environments."""
 
@@ -81,23 +107,12 @@ class CacheConfig:
     @staticmethod
     def _is_hpc_environment() -> bool:
         """Detect HPC batch system environment."""
-        hpc_vars = ["SLURM_JOB_ID", "PBS_JOBID", "LSB_JOBID", "SGE_JOB_ID"]
-        return any(var in os.environ for var in hpc_vars)
+        return any(var in os.environ for var in HPC_ENV_SENTINELS)
 
     @staticmethod
     def _is_cloud_environment() -> bool:
         """Detect cloud platform environment."""
-        cloud_vars = [
-            "AWS_EXECUTION_ENV",
-            "AWS_LAMBDA_FUNCTION_NAME",
-            "GOOGLE_CLOUD_PROJECT",
-            "GCLOUD_PROJECT",
-            "AZURE_FUNCTIONS_ENVIRONMENT",
-            "WEBSITE_SITE_NAME",
-            "KUBERNETES_SERVICE_HOST",
-            "K_SERVICE",
-        ]
-        return any(var in os.environ for var in cloud_vars)
+        return any(var in os.environ for var in CLOUD_ENV_SENTINELS)
 
     @staticmethod
     def _is_gpu_environment() -> bool:

@@ -16,8 +16,8 @@ docs. Status values are:
 | FITS image read/write | Supported | `astropy.io.fits`, `fitsio`, CFITSIO backend | `tests/test_api.py`, `tests/test_writing.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Multi-extension FITS files | Supported | `astropy.io.fits` HDUList workflows | `tests/test_hdu.py`, `tests/test_astropy_upstream_smoke.py` |
 | FITS headers and cards | Supported | Astropy/fitsio header reads and torchfits `Header` | `tests/test_header_parser.py`, `tests/test_complex_header.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
-| Checksums | Supported | fitsio/CFITSIO checksum workflows | `tests/test_checksum.py`, `tests/test_fitsio_upstream_smoke.py` |
-| Compressed image reads | Supported | Astropy `CompImageHDU`, fitsio image reads | `tests/test_compression.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
+| Checksums | Supported | fitsio/CFITSIO checksum workflows | `tests/test_checksum.py`, `tests/test_fitsio_upstream_smoke.py`, `tests/test_astropy_upstream_smoke.py` |
+| Compressed image reads | Supported | Astropy `CompImageHDU` (RICE_1, GZIP_1, PLIO_1, HCOMPRESS_1), fitsio image reads | `tests/test_compression.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Compressed image writes | Supported | CFITSIO compressed-image writer | `tests/test_writing.py`; tensor and numpy array/list payloads are supported for compressed image HDUs |
 | Unsigned image convention | Supported | Astropy/fitsio `BZERO` convention | `uint16`/`uint32` image reads and writes preserve unsigned integer semantics, including HDUList writes |
 | Binary table reads/writes | Supported | `astropy.io.fits`, `fitsio` | `tests/test_table.py`, `tests/test_table_file_ops.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
@@ -25,8 +25,9 @@ docs. Status values are:
 | Table projection, row slicing, filtering | Supported | fitsio rows/columns/where workflows | `tests/test_table_filtering.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Table mutation | Supported | fitsio-readable results | `tests/test_table_file_ops.py`, `tests/test_fitsio_upstream_smoke.py` |
 | VLA table columns | Partial | Astropy/fitsio variable-length arrays | buffered reads/writes are covered; mmap reads/updates are unsupported |
-| Complex table columns | Partial | Astropy complex FITS columns | buffered and mmap reads are covered; mmap updates are unsupported |
-| Bit table columns | Supported | Astropy/fitsio `X` columns | read/write returns boolean bit arrays; mmap updates remain unsupported |
+| Complex table columns | Supported | Astropy complex FITS columns | buffered and mmap reads and mmap in-place updates are covered (round-trip matches astropy.io.fits and fitsio) |
+| Bit table columns | Supported | Astropy/fitsio `X` columns | read/write returns boolean bit arrays, including MSB-first mmap in-place updates (round-trip matches astropy.io.fits and fitsio) |
+| Fixed-width string table columns | Supported | Astropy/fitsio `nA` columns | read/write is covered; mmap in-place updates accept shorter user payloads and pad trailing bytes with ASCII spaces (round-trip matches astropy.io.fits and fitsio) |
 | Unsigned table integer convention | Supported | Astropy/fitsio `TZERO` convention | `uint16`/`uint32` table reads and writes preserve unsigned integer semantics through root, `table.write`, and HDUList paths |
 | Scaled image data | Supported | FITS BSCALE/BZERO semantics | `tests/test_astropy_upstream_smoke.py`, `tests/test_integration.py`, `benchmarks/bench_scaled.py` |
 | Scaled table columns | Partial | CFITSIO-backed table path | buffered reads are covered; mmap updates are unsupported |
@@ -62,11 +63,13 @@ path.
 
 Affected layouts:
 
-- VLA columns;
-- scaled columns;
-- mmap updates for VLA, bit, scaled, string, and complex columns.
+- VLA columns (variable-length arrays with heap pointer indirection);
+- scaled columns (reverse-scaling float-to-integer arithmetic risks precision
+  loss and overflow when writing back through integer storage).
 
-Use the buffered table path for those cases.
+Use the buffered table path for those cases. mmap in-place updates are now
+covered for fixed-width numeric, logical, BIT, fixed-width string, and complex
+columns.
 
 ## Benchmark scope
 
