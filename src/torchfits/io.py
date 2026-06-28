@@ -365,11 +365,3 @@ __all__ = [
     "_normalize_cpp_table_data",
     "_write_header_cards_if_supported",
 ]
-
-# Internal capability flags preserved for downstream tests and diagnostics.
-_HAS_READ_HDUS_BATCH = hasattr(cpp, "read_hdus_batch")
-_HAS_READ_FULL_RAW_WITH_SCALE = hasattr(cpp, "read_full_raw_with_scale")
-_HAS_READ_FULL_RAW = hasattr(cpp, "read_full_raw")
-_HAS_READ_FULL_UNMAPPED_RAW = hasattr(cpp, "read_full_unmapped_raw")
-_HAS_READ_FULL_UNMAPPED = hasattr(cpp, "read_full_unmapped")
-_HAS_READ_FULL_NOCACHE = hasattr(cpp, "read_full_nocache")

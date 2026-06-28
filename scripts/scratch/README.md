@@ -13,8 +13,7 @@ COMPLEX / BIT / STRING `update_rows` parity work:
 | script | purpose |
 |---|---|
 | `diag_header.py` | Dump the FITS BinTableHDU header (TTYPE, TFORM) for a freshly-written file so an on-disk write can be compared against what the schema declared. |
-| `diag_string_bytes.py` | Dump raw on-disk bytes for the `NAME` row section to verify the writer output. |
-| `diag_string_bytes_v2.py` | Working version of `diag_string_bytes.py` after the upstream-smoke fix landed. |
+| `diag_string_bytes_v2.py` | Working `diag_string_bytes` (v1 removed) that dumps raw on-disk bytes for the `NAME` row section to verify the writer output. |
 | `apply_routing_fix.py` | Interim scratch used to chase a phantom `stride(1) == 4` bug in the mmap path (turned out to be a fitsio-upstream-reader misdecode). |
 | `fix_string_stride.py` | Interim scratch, sibling to `apply_routing_fix.py`. |
 

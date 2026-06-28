@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, TypedDict
+from typing import Optional
 
 
 @dataclass
@@ -23,19 +23,3 @@ class ReadOptions:
     fast_header: bool = True
     mode: str = "auto"
     policy: str = "default"
-
-
-class ReadOptionsKwargs(TypedDict, total=False):
-    fp16: bool
-    bf16: bool
-    raw_scale: bool
-    scale_on_device: bool
-    use_cache: Optional[bool]
-    columns: Optional[list[str]]
-    start_row: int
-    num_rows: int
-    cache_capacity: int
-    handle_cache_capacity: int
-    fast_header: bool
-    mode: str
-    policy: str
