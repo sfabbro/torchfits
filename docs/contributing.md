@@ -11,6 +11,45 @@ pixi run test
 
 The project uses [pixi](https://pixi.sh/) for environment management, [ruff](https://github.com/astral-sh/ruff) for linting, and [pytest](https://docs.pytest.org/) for testing.
 
+## Dependency policy
+
+**Every package must be installed through pixi.** Never run `pip install`,
+`pip install -e .`, `python -m pip install`, `conda install`, `mamba install`,
+`pipx install`, or any equivalent outside of an activated pixi environment.
+The pixi lockfile is the reproducibility contract for this repository;
+mixing it with bare-pip / bare-conda / system installs breaks the lockfile
+and the CI gates. If you find yourself reaching for one of the commands
+below, stop and add a `[dependencies]` entry in `pixi.toml` (or a feature's
+`[feature.<name>.dependencies]`) instead, then `pixi install`.
+
+**Do**
+
+- `pixi install` — install the workspace as declared in `pixi.toml`.
+- `pixi add <pkg>` — add a dependency to `pixi.toml` and re-lock.
+- `pixi run <task>` — run scripts and tests; tasks are defined in `pixi.toml`
+  and resolve dependencies from the lockfile.
+
+**Don't**
+
+- `pip install ...` / `python -m pip install ...` outside a pixi env.
+- `conda install ...` / `mamba install ...` outside a pixi env.
+- `pipx install ...` (creates a separate venv that drifts from the lockfile).
+- `pip install -e .` typed directly into a shell, even "just to try it".
+
+**Documented exceptions**
+
+- `pip install -e .` invocations inside any `[tasks]` or
+  `[feature.<name>.tasks]` block of `pixi.toml` and inside
+  `scripts/gpu-bootstrap.sh` run inside an activated pixi env and are
+  intentional — they rebuild the C++ extension against the
+  pixi-managed dependencies already on `$PATH`. They are not bare-pip
+  installs. (In particular, `bench-gpu-install` under
+  `[feature.gpu.tasks]` is the canonical pixi-tasked reinstallation of
+  the C++ extension with `--no-deps` against the pixi-managed torch.)
+- `pip install -r requirements.txt` style flows do not exist in this repo
+  and must not be added; pixi is the single source of truth for the
+  environment.
+
 ## Repository layout
 
 ```

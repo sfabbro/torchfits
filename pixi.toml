@@ -3,6 +3,9 @@ preview = ["pixi-build"]
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
+
+
+
 [package]
 name = "torchfits"
 version = "0.3.2"
@@ -108,6 +111,12 @@ notebook = "pixi run -e default jupyter lab"
 test-phase1 = "pixi run -e default python -c 'import sys; sys.path.insert(0, \"src\"); import torchfits; print(\"Phase 1 COMPLETE: All core features implemented\")'"
 test-buffer = "pixi run -e default pytest tests/test_buffer.py -v"
 
+# Render the bench-all CSV into the I/O Transport x Backend markdown section
+# of docs/benchmarks.md. This is the canonical pixi entrypoint for the
+# companion regenerator script; never invoke the script directly outside
+# pixi (see docs/contributing.md "Dependency policy").
+bench-table-render = "pixi run -e default python scripts/render_bench_iopath_table.py"
+
 [feature.prod.dependencies]
 python = "3.13.*"
 
@@ -131,15 +140,56 @@ ninja = ">=1.10"
 nanobind = ">=2.10.2"
 scikit-build-core = ">=0.11.6"
 pip = ">=24.0"
+cxx-compiler = ">=1.11.0,<2"
+# GPU feature pins its own gcc downgrade so nvcc 12.4 accepts the host
+# compiler. cudart-dev 12.8 bundles a libcudart that exposes cudaGetDriver*
+# symbols; the conda install path is satisfied by the CUDAToolkit_* cmake
+# flags in pyproject.toml.
+# GPU feature: real CUDA-enabled PyTorch for H100/Hopper (sm_90) benchmarking.
+# We start from the conda-forge CPU pytorch that the workspace already pins,
+# then swap it for the CUDA wheel via pip in 'gpu-bootstrap'. This avoids the
+# pytorch-channel python-version mismatch and lets us target H100 sm_90 with
+# the cu128 wheel while keeping the rest of the env on conda-forge.
+#
+# cuda-toolkit is added so the C++ extension's cmake can find_package(CUDA)
+# when scikit-build-core probes libtorch. The cu128 pip wheel replaces the
+# conda pytorch CPU build at runtime; cuda-toolkit satisfies the compile-time
+# probe without dragging in a full nvidia channel.
+[feature.gpu.dependencies]
+# Cuda-toolkit lives on the nvidia channel, which has no osx-arm64 builds; gate
+# it to linux-64 only. macOS users keep the CPU-only default and stay on bench-all.
+# cuda-cudart-dev + cuda-nvcc provide headers + libs that PyTorch's cuda.cmake
+# requires (FindCUDA bypass via CMAKE_DISABLE_FIND_PACKAGE_CUDA alone is not
+# enough: PyTorch's own cmake re-checks CUDA_TOOLKIT_ROOT_DIR).
+[feature.gpu.target.linux-64.dependencies]
+# cu128 wheel bundles its own nvidia-cuda-runtime-cu12/libs.
+# We don't need conda CUDA dev packages which only ship
+# libcudart.so without headers; -DCAFFE2_USE_CUDA=OFF in
+# pyproject.toml short-circuits Caffe2's CUDA probe.
+
+[feature.gpu.tasks]
+gpu-bootstrap = "bash scripts/gpu-bootstrap.sh"
+bench-gpu-install = "bash -c 'unset CC CXX CFLAGS CXXFLAGS LDFLAGS && rm -rf build src/torchfits.egg-info && find src/torchfits -name \"_C*.so\" -delete && python -m pip install -e . --no-build-isolation --no-deps'"
+bench-gpu = "pixi run -e bench-gpu gpu-bootstrap && pixi run -e bench-gpu bench-gpu-install && pixi run -e bench-gpu gpu-env-check && pixi run -e bench-gpu python benchmarks/bench_all.py --profile user --scope all --run-id gpu_$(date -u +%Y%m%d_%H%M%S)"
+gpu-env-check = "python -c \"import torch; assert torch.cuda.is_available(), 'gpu-env-check: CUDA not reachable from this env'; print('torch=', torch.__version__, 'cuda_available=', torch.cuda.is_available()); print('cuda runtime=', torch.version.cuda); print('device=', torch.cuda.get_device_name(0), 'cap=', torch.cuda.get_device_capability(0))\""# Propagation to all bench-gpu tasks at runtime. The C++ extension (torchfits._C) has no embedded
+# RPATH pointing at torch's bundled libtorch_python + libtorch_cuda + libc10_cuda, nor at
+# conda's libcudart.so.12. cu128 wheel's bundled nvidia-cuda-runtime-cu12 may also live under
+# site-packages/nvidia/cuda_runtime/lib. The CPU edit-install build doesn't link these at
+# compile time; they're dlopen-time only — without this LD_LIBRARY_PATH the loader fails on
+# `import torchfits._C` with libcudart.so.12 / libc10_cuda.so errors.
+[feature.gpu.activation.env]
+LD_LIBRARY_PATH = "$CONDA_PREFIX/lib/python3.13/site-packages/torch/lib:$CONDA_PREFIX/lib/python3.13/site-packages/nvidia/cuda_runtime/lib:$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 
 [environments]
 default = { features = ["prod"] }
 test = { features = ["prod", "test"] }
 bench = { features = ["prod", "bench"] }
 bench-all = { features = ["prod", "bench"] }
+bench-gpu = { features = ["prod", "bench", "gpu"] }
 
 [target.osx-arm64.dependencies]
 cfitsio = ">=4.6.4,<4.6.5"
 
 [target.linux-64.dependencies]
 cfitsio = ">=4.6.3,<4.6.4"
+
