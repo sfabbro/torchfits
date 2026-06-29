@@ -6,7 +6,6 @@ import tempfile
 
 import numpy as np
 import torch
-from astropy.io import fits
 from astropy.table import Table
 
 import torchfits
@@ -49,6 +48,8 @@ def test_release_smoke_image_read_write_roundtrip() -> None:
             assert torch.allclose(reopened.cpu(), image)
     finally:
         Path(path).unlink(missing_ok=True)
+
+
 def test_release_smoke_table_read() -> None:
     table = Table(
         {

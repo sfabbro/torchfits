@@ -39,9 +39,19 @@ Run the exhaustive benchmark suite:
 
 ```bash
 pixi run bench-all
+pixi run bench-mps    # Apple Silicon (device=mps)
+# Linux CUDA: pixi run -e bench-gpu bench-gpu
 ```
 
-Update `docs/benchmarks.md` with the run ID, date, and snapshot tables.
+Regenerate the I/O transport table:
+
+```bash
+pixi run bench-table-render -- --csv benchmarks_results/<run-id>/results.csv
+```
+
+Scheduled CI: `.github/workflows/bench-report.yml` (weekly + manual).
+
+Repository: https://github.com/astroai/torchfits — configure PyPI trusted publishing for `astroai/torchfits` after org transfer.
 
 Do not make new performance claims unless the benchmark run is archived and the
 comparison target is listed in `docs/parity.md`.

@@ -25,6 +25,25 @@ from ._table_engine import validate_table_backend
 
 logger = logging.getLogger(__name__)
 
+
+def _invalidate_path_caches(path: str) -> None:
+    from torchfits.io import _invalidate_path_caches as invalidate
+
+    invalidate(path)
+
+
+def _normalize_cpp_table_data(data):
+    from torchfits.io import _normalize_cpp_table_data as normalize
+
+    return normalize(data)
+
+
+def _write_header_cards_if_supported(path: str, hdu: int, hdr) -> None:
+    from torchfits.io import _write_header_cards_if_supported as write_hdr
+
+    write_hdr(path, hdu, hdr)
+
+
 _TABLE_IO_KEYS = {
     "hdu",
     "columns",
@@ -2711,8 +2730,8 @@ def write(
         import torchfits._C as cpp
 
         # Overwriting/creating a table can otherwise leave stale cached handles/metadata.
-        torchfits._invalidate_path_caches(path)
-        data = torchfits._normalize_cpp_table_data(data)
+        _invalidate_path_caches(path)
+        data = _normalize_cpp_table_data(data)
         cpp.write_fits_table(
             path,
             data,
@@ -2722,8 +2741,8 @@ def write(
             table_kind,
         )
         if hdr:
-            torchfits._write_header_cards_if_supported(path, 1, hdr)
-        torchfits._invalidate_path_caches(path)
+            _write_header_cards_if_supported(path, 1, hdr)
+        _invalidate_path_caches(path)
         return
 
     torchfits.write(path, data, header=hdr if hdr else None, overwrite=overwrite)
@@ -3179,7 +3198,7 @@ def insert_column(
     schema_by_name[name] = new_meta
     rewritten_schema = _ordered_dict_for_columns(new_columns, schema_by_name)
 
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     _rewrite_table_hdu_with_schema(
         path,
@@ -3190,7 +3209,7 @@ def insert_column(
         table_type,
     )
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def replace_column(
@@ -3262,7 +3281,7 @@ def replace_column(
     rewritten_schema = _ordered_dict_for_columns(columns, existing_schema)
     rewritten_data = _ordered_dict_for_columns(columns, rewritten_data)
 
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     _rewrite_table_hdu_with_schema(
         path,
@@ -3273,7 +3292,7 @@ def replace_column(
         table_type,
     )
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def _coerce_table_column_array(
@@ -3497,11 +3516,11 @@ def append_rows(
         return
 
     # Ensure no stale cached handles/metadata exist before mutating the file in-place.
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     cpp.append_fits_table_rows(path, target_hdu, normalized)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def insert_rows(
@@ -3550,7 +3569,7 @@ def insert_rows(
         return
 
     start_row = row + 1  # FITS rows are 1-based.
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     if hasattr(cpp, "insert_fits_table_rows"):
         cpp.insert_fits_table_rows(path, target_hdu, normalized, start_row)
@@ -3563,7 +3582,7 @@ def insert_rows(
             )
         torchfits.replace_hdu(path, target_hdu, rewritten)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def delete_rows(
@@ -3607,7 +3626,7 @@ def delete_rows(
     if num_rows <= 0:
         return
 
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     if hasattr(cpp, "delete_fits_table_rows"):
         cpp.delete_fits_table_rows(path, target_hdu, start_row, num_rows)
@@ -3620,7 +3639,7 @@ def delete_rows(
             rewritten[name] = _delete_column_rows(existing[name], start0, num_rows)
         torchfits.replace_hdu(path, target_hdu, rewritten)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def update_rows(
@@ -3701,6 +3720,7 @@ def update_rows(
             # the column width when user payloads are wider, so we
             # only need to handle the short-payload case here.
             import numpy as _np
+
             width = string_widths[col_name]
             arr = _np.full((expected_rows, width), 0x20, dtype=_np.uint8)
             for i, s in enumerate(values):
@@ -3712,9 +3732,7 @@ def update_rows(
                     encoded = str(s).encode("ascii", "ignore")
                 length = min(len(encoded), width)
                 if length > 0:
-                    arr[i, :length] = _np.frombuffer(
-                        encoded[:length], dtype=_np.uint8
-                    )
+                    arr[i, :length] = _np.frombuffer(encoded[:length], dtype=_np.uint8)
             normalized[col_name] = arr
         elif col_name in complex_codes:
             arr = _coerce_table_complex_values(
@@ -3748,7 +3766,7 @@ def update_rows(
     import torchfits._C as cpp
 
     # Ensure no stale cached handles/metadata exist before mutating the file in-place.
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
     use_mmap = mmap in (True, "auto", "mmap")
     forced_mmap = mmap in (True, "mmap")
@@ -3771,7 +3789,7 @@ def update_rows(
                     path, target_hdu, normalized, start_row, num_rows
                 )
                 torchfits.cache.clear()
-                torchfits._invalidate_path_caches(path)
+                _invalidate_path_caches(path)
                 return
             except Exception:
                 if mmap is True:
@@ -3780,7 +3798,7 @@ def update_rows(
     torchfits.cache.clear()
     cpp.update_fits_table_rows(path, target_hdu, normalized, start_row, num_rows)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def rename_columns(
@@ -3822,11 +3840,11 @@ def rename_columns(
     import torchfits
     import torchfits._C as cpp
 
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     cpp.rename_fits_table_columns(path, target_hdu, normalized)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
 
 
 def drop_columns(
@@ -3856,8 +3874,8 @@ def drop_columns(
     import torchfits
     import torchfits._C as cpp
 
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)
     torchfits.cache.clear()
     cpp.drop_fits_table_columns(path, target_hdu, normalized)
     torchfits.cache.clear()
-    torchfits._invalidate_path_caches(path)
+    _invalidate_path_caches(path)

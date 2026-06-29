@@ -1,0 +1,68 @@
+name: Benchmark report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 0"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bench-report:
+    name: Full benchmark + doc PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Vendor CFITSIO
+        run: bash extern/vendor.sh --cfitsio-version "$(cat extern/VERSIONS.txt)"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow pandas
+          pip install -e . --no-build-isolation
+
+      - name: Run bench-all (lab profile)
+        run: |
+          RUN_ID="ci_$(date -u +%Y%m%d_%H%M%S)"
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          python benchmarks/bench_all.py --profile lab --scope all --run-id "$RUN_ID"
+
+      - name: Patch docs/benchmarks.md
+        run: |
+          CSV="benchmarks_results/${RUN_ID}/results.csv"
+          DEFICITS="benchmarks_results/${RUN_ID}/torchfits_deficits.csv"
+          python scripts/patch_bench_docs.py \
+            --csv "$CSV" \
+            --deficits "$DEFICITS" \
+            --run-id "$RUN_ID"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ env.RUN_ID }}
+          path: benchmarks_results/${{ env.RUN_ID }}/
+
+      - name: Open PR with doc updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="chore/bench-report-${RUN_ID}"
+          git checkout -b "$BRANCH"
+          git add docs/benchmarks.md
+          git diff --staged --quiet && echo "No doc changes" && exit 0
+          git commit -m "chore: benchmark report ${RUN_ID}"
+          git push -u origin "$BRANCH"
+          gh pr create --title "chore: benchmark report ${RUN_ID}" \
+            --body "Automated bench-all run. Artifacts: benchmarks_results/${RUN_ID}/"

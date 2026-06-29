@@ -78,18 +78,22 @@ def main():
             except RuntimeError as e:
                 print(f"  Error with cache_capacity={capacity}: {e}")
 
-        # --- Test GPU read (if available) ---
-        if torch.cuda.is_available():
-            print("\n--- Testing GPU Read ---")
+        accel = None
+        if torch.backends.mps.is_available():
+            accel = "mps"
+        elif torch.cuda.is_available():
+            accel = "cuda"
+        if accel:
+            print(f"\n--- Testing accelerator read ({accel}) ---")
             try:
                 data, _ = torchfits.read(
-                    test_file, hdu="SCI", device="cuda", return_header=True
+                    test_file, hdu="SCI", device=accel, return_header=True
                 )
                 print(f"  Data device: {data.device}")
             except RuntimeError as e:
-                print(f"  Error reading to GPU: {e}")
+                print(f"  Error reading to {accel}: {e}")
         else:
-            print("\n--- CUDA not available, skipping GPU read test ---")
+            print("\n--- No MPS/CUDA accelerator available, skipping GPU read test ---")
 
     except RuntimeError as e:
         print(f"Error: {e}")

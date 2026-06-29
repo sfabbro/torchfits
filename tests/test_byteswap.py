@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -37,7 +36,10 @@ def _write_table(path: str, columns: dict[str, np.ndarray]) -> None:
     from astropy.io import fits
 
     hdu = fits.BinTableHDU.from_columns(
-        [fits.Column(name=name, format=_np_to_fits_format(arr), array=arr) for name, arr in columns.items()]
+        [
+            fits.Column(name=name, format=_np_to_fits_format(arr), array=arr)
+            for name, arr in columns.items()
+        ]
     )
     fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path, overwrite=True)
 
@@ -90,7 +92,10 @@ def test_image_roundtrip_byteswap(name, np_dtype, torch_dtype, mmap):
         # Exclude values near the dtype boundaries that could overflow.
         info = np.iinfo(np_dtype)
         data = rng.integers(
-            max(info.min, -10_000_000), min(info.max, 10_000_000), size=shape, dtype=np_dtype
+            max(info.min, -10_000_000),
+            min(info.max, 10_000_000),
+            size=shape,
+            dtype=np_dtype,
         )
     else:
         data = rng.uniform(-1000, 1000, size=shape).astype(np_dtype)
@@ -104,7 +109,9 @@ def test_image_roundtrip_byteswap(name, np_dtype, torch_dtype, mmap):
 
         tensor = torchfits.read_image(path, mmap=mmap)
 
-        assert tensor.dtype == torch_dtype, f"Expected {torch_dtype}, got {tensor.dtype}"
+        assert tensor.dtype == torch_dtype, (
+            f"Expected {torch_dtype}, got {tensor.dtype}"
+        )
         assert tensor.shape == shape
 
         np.testing.assert_array_equal(tensor.cpu().numpy(), data)
@@ -135,7 +142,9 @@ def test_int16_boundary_values():
         for mmap in (True, False):
             tensor = torchfits.read_image(path, mmap=mmap)
             np.testing.assert_array_equal(
-                tensor.cpu().numpy(), data, err_msg=f"mmap={mmap}: boundary value mismatch"
+                tensor.cpu().numpy(),
+                data,
+                err_msg=f"mmap={mmap}: boundary value mismatch",
             )
 
     finally:
@@ -145,7 +154,8 @@ def test_int16_boundary_values():
 def test_int32_boundary_values():
     """Test int32 boundary values for byte-swap correctness."""
     values = np.array(
-        [0, 1, -1, 0x01020304, 0x7FFFFFFF, -0x80000000, 0x00FF00FF, -0x01020304], dtype=np.int32
+        [0, 1, -1, 0x01020304, 0x7FFFFFFF, -0x80000000, 0x00FF00FF, -0x01020304],
+        dtype=np.int32,
     )
     shape = (4, 2)
     data = values.reshape(shape)
@@ -160,7 +170,9 @@ def test_int32_boundary_values():
         for mmap in (True, False):
             tensor = torchfits.read_image(path, mmap=mmap)
             np.testing.assert_array_equal(
-                tensor.cpu().numpy(), data, err_msg=f"mmap={mmap}: boundary value mismatch"
+                tensor.cpu().numpy(),
+                data,
+                err_msg=f"mmap={mmap}: boundary value mismatch",
             )
 
     finally:
@@ -190,7 +202,10 @@ def test_table_column_roundtrip_byteswap(name, np_dtype, torch_dtype, mmap):
     if np.issubdtype(np_dtype, np.integer):
         info = np.iinfo(np_dtype)
         col = rng.integers(
-            max(info.min, -10_000_000), min(info.max, 10_000_000), size=nrows, dtype=np_dtype
+            max(info.min, -10_000_000),
+            min(info.max, 10_000_000),
+            size=nrows,
+            dtype=np_dtype,
         )
     else:
         col = rng.uniform(-1000, 1000, size=nrows).astype(np_dtype)
@@ -206,7 +221,9 @@ def test_table_column_roundtrip_byteswap(name, np_dtype, torch_dtype, mmap):
         result = torchfits.read(path, hdu=1, mmap=mmap)
         tensor = result["COL"]
 
-        assert tensor.dtype == torch_dtype, f"Expected {torch_dtype}, got {tensor.dtype}"
+        assert tensor.dtype == torch_dtype, (
+            f"Expected {torch_dtype}, got {tensor.dtype}"
+        )
         assert tensor.shape == (nrows,)
         np.testing.assert_array_equal(tensor.cpu().numpy(), col)
 
@@ -244,7 +261,9 @@ def test_table_multiple_column_types():
             for name, expected in cols.items():
                 got = result[name].cpu().numpy()
                 np.testing.assert_array_equal(
-                    got, expected, err_msg=f"Legacy read mmap={mmap}: column {name} mismatch"
+                    got,
+                    expected,
+                    err_msg=f"Legacy read mmap={mmap}: column {name} mismatch",
                 )
 
         # Read via Arrow table path
@@ -292,7 +311,8 @@ def test_float32_special_values():
 def test_float64_special_values():
     """Test float64 NaN/Inf round-trip through byteswap paths."""
     data = np.array(
-        [[0.0, -0.0, 1.0, -1.0], [np.nan, np.inf, -np.inf, 3.14159265358979]], dtype=np.float64
+        [[0.0, -0.0, 1.0, -1.0], [np.nan, np.inf, -np.inf, 3.14159265358979]],
+        dtype=np.float64,
     )
 
     handle = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
@@ -320,8 +340,10 @@ def test_float64_special_values():
 def test_int64_large_values():
     """Test int64 values that would be garbled by incorrect byte-swap."""
     data = np.array(
-        [[0, 1, -1, 0x0102030405060708],
-         [0x7FFFFFFFFFFFFFFF, -0x8000000000000000, 0x00FF00FF00FF00FF, 42]],
+        [
+            [0, 1, -1, 0x0102030405060708],
+            [0x7FFFFFFFFFFFFFFF, -0x8000000000000000, 0x00FF00FF00FF00FF, 42],
+        ],
         dtype=np.int64,
     )
 

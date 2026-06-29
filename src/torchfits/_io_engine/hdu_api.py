@@ -43,8 +43,6 @@ def _header_truthy(value: Any) -> bool:
         return bool(value)
 
 
-
-
 def find_first_hdu(
     path: str,
     handle_cache_capacity: int = 16,

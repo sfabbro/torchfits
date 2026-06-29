@@ -362,7 +362,6 @@ class TensorHDU:
     def header(self) -> Header:
         return self._header
 
-
     def to_tensor(self, device: str = "cpu") -> Tensor:
         if self._data is not None:
             return self._data.to(device)

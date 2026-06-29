@@ -28,7 +28,14 @@ def create_test_file(filename):
 def main():
     test_file = "table_example.fits"
     create_test_file(test_file)
+    try:
+        _run_examples(test_file)
+    finally:
+        if os.path.exists(test_file):
+            os.unlink(test_file)
 
+
+def _run_examples(test_file: str) -> None:
     # Read the entire table
     try:
         table_data, header = torchfits.read(
@@ -108,21 +115,25 @@ def main():
         except RuntimeError as e:
             print(f"  Error with cache_capacity={capacity}: {e}")
 
-    # --- Test GPU read (if available) ---
-    if torch.cuda.is_available():
-        print("\n--- Testing GPU Read ---")
+    accel = None
+    if torch.backends.mps.is_available():
+        accel = "mps"
+    elif torch.cuda.is_available():
+        accel = "cuda"
+    if accel:
+        print(f"\n--- Testing accelerator read ({accel}) ---")
         try:
             table_data, _ = torchfits.read(
-                test_file, hdu=1, device="cuda", return_header=True
+                test_file, hdu=1, device=accel, return_header=True
             )
             if table_data is not None:
                 print(f"  Data device, first column: {table_data['ra'].device}")
             else:
                 print("  No data returned")
         except RuntimeError as e:
-            print(f"  Error reading to GPU: {e}")
+            print(f"  Error reading to {accel}: {e}")
     else:
-        print("\n--- CUDA not available, skipping GPU read test ---")
+        print("\n--- No MPS/CUDA accelerator available, skipping GPU read test ---")
 
 
 if __name__ == "__main__":

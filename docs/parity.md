@@ -29,7 +29,7 @@ docs. Status values are:
 | Bit table columns | Supported | Astropy/fitsio `X` columns | read/write returns boolean bit arrays, including MSB-first mmap in-place updates (round-trip matches astropy.io.fits and fitsio) |
 | Fixed-width string table columns | Supported | Astropy/fitsio `nA` columns | read/write is covered; mmap in-place updates accept shorter user payloads and pad trailing bytes with ASCII spaces (round-trip matches astropy.io.fits and fitsio) |
 | Unsigned table integer convention | Supported | Astropy/fitsio `TZERO` convention | `uint16`/`uint32` table reads and writes preserve unsigned integer semantics through root, `table.write`, and HDUList paths |
-| Scaled image data | Supported | FITS BSCALE/BZERO semantics | `tests/test_astropy_upstream_smoke.py`, `tests/test_integration.py`, `benchmarks/bench_scaled.py` |
+| Scaled image data | Supported | FITS BSCALE/BZERO semantics | `tests/test_astropy_upstream_smoke.py`, `tests/test_integration.py`, `benchmarks/bench_fits_io.py` |
 | Scaled table columns | Partial | CFITSIO-backed table path | buffered reads are covered; mmap updates are unsupported |
 | GPU reads | Supported | PyTorch device transfer after FITS decode | `tests/test_api.py`, examples |
 | GPU writes | Partial | torch tensor inputs | non-CPU tensors are copied to host before FITS write |

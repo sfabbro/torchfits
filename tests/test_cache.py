@@ -195,6 +195,7 @@ class TestCaching:
     def test_cold_nommap_heuristic_with_cache_enabled_int16(self):
         """Large int16 images should prefer non-mmap even when cache is enabled."""
         import torchfits.io
+
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
             from astropy.io import fits
 
@@ -215,6 +216,7 @@ class TestCaching:
     def test_cold_nommap_heuristic_float64_and_small_guard(self):
         """64-bit and sub-1MiB payloads should keep mmap enabled by default."""
         import torchfits.io
+
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f_large:
             from astropy.io import fits
 
@@ -246,6 +248,7 @@ class TestCaching:
         """`mmap='auto'` should disable mmap for compressed HDUs."""
         import torchfits.io
         import torchfits._C as cpp
+
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
 
@@ -303,6 +306,7 @@ class TestCaching:
         """`mmap=True` must stay enabled for compressed metadata reads."""
         import torchfits.io
         import torchfits._C as cpp
+
         if not hasattr(cpp, "read_full_cached"):
             pytest.skip("read_full_cached unavailable in this build")
 

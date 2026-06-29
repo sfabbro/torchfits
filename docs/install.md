@@ -8,7 +8,7 @@ pip install torchfits
 
 Pre-built wheels are available for Linux (x86_64, aarch64) and macOS (x86_64, arm64). The wheels bundle [CFITSIO](https://heasarc.gsfc.nasa.gov/fitsio/) — no system library needed.
 
-Requires Python 3.10+ and [PyTorch](https://pytorch.org/) 2.0+.
+Requires Python **3.10+** (development uses **3.13** via pixi) and [PyTorch](https://pytorch.org/) 2.0+.
 
 ## From source
 
@@ -30,7 +30,7 @@ xcode-select --install
 ### Build
 
 ```bash
-git clone https://github.com/sfabbro/torchfits.git
+git clone https://github.com/astroai/torchfits.git
 cd torchfits
 ./extern/vendor.sh      # download vendored CFITSIO sources
 pip install -e .        # editable install
@@ -89,8 +89,8 @@ pixi run bench-all      # exhaustive benchmarks
 |---|---|---|
 | `pip install torchfits[cache]` | psutil | Adaptive cache sizing |
 | `pip install torchfits[dev]` | pytest, ruff, mypy, ipykernel | Development |
-| `pip install torchfits[bench]` | astropy, fitsio, pandas, matplotlib, seaborn | Benchmarking |
-| `pip install torchfits[test]` | pytest, pytest-cov, pytest-benchmark | Testing |
+| `pip install torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking |
+| `pip install torchfits[test]` | pytest, pytest-cov | Testing |
 | `pip install torchfits[examples]` | torchvision, requests, matplotlib | Running examples |
 
 ## Troubleshooting

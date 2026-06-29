@@ -227,6 +227,16 @@ def main() -> int:
                 _domain_failure_row(run_id=run_id, domain="fitstable", error=err)
             )
 
+    try:
+        from benchmarks.bench_gpu_transports import run_gpu_transport_rows
+
+        gpu_rows = run_gpu_transport_rows(run_id=run_id)
+        if gpu_rows:
+            rows.extend(gpu_rows)
+            print(f"Added {len(gpu_rows)} GPU transport rows", flush=True)
+    except Exception as exc:
+        print(f"[bench-all][gpu] failed: {type(exc).__name__}: {exc}", flush=True)
+
     annotate_rankings(rows)
     deficits = compute_deficits(rows, run_id=run_id)
 

@@ -93,7 +93,9 @@ def cache_subsystem_policy(name: str) -> dict[str, bool]:
         return dict(IO_CACHE_SUBSYSTEMS[name])
     except KeyError as exc:
         valid = ", ".join(sorted(IO_CACHE_SUBSYSTEMS))
-        raise KeyError(f"unknown FITS I/O cache subsystem {name!r}; valid: {valid}") from exc
+        raise KeyError(
+            f"unknown FITS I/O cache subsystem {name!r}; valid: {valid}"
+        ) from exc
 
 
 def clear_cache_subsystem(

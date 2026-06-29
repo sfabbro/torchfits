@@ -10,7 +10,7 @@ import os
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.3.2"
+__version__ = "0.5.0b1"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
@@ -91,6 +91,7 @@ __all__ = tuple(
 
 _RUNTIME_INITIALIZED = False
 
+
 def _ensure_runtime_init() -> None:
     """Initialize optional runtime caches when an I/O entry point is used."""
     global _RUNTIME_INITIALIZED
@@ -106,6 +107,7 @@ def _ensure_runtime_init() -> None:
         # time with `libcudart.so.12: cannot open shared object file` even
         # though `import torch; torch.cuda.is_available()` succeeds.
         import torch  # noqa: F401
+
         cpp = import_module("torchfits._C")
         cache_mb = os.environ.get("TORCHFITS_CFITSIO_CACHE_MB")
         cache_files = os.environ.get("TORCHFITS_CFITSIO_CACHE_FILES")
@@ -118,6 +120,7 @@ def _ensure_runtime_init() -> None:
 
     _RUNTIME_INITIALIZED = True
 
+
 def _runtime_function(name: str) -> Any:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         _ensure_runtime_init()
@@ -128,6 +131,7 @@ def _runtime_function(name: str) -> Any:
     wrapper.__qualname__ = name
     wrapper.__module__ = __name__
     return wrapper
+
 
 def __getattr__(name: str) -> Any:
     if name in _NAMESPACES:
@@ -148,8 +152,10 @@ def __getattr__(name: str) -> Any:
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
 
 if TYPE_CHECKING:
     from . import (

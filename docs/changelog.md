@@ -5,6 +5,28 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0b1] - 2026-06-29
+
+### Changed
+
+- Repository home: `github.com/astroai/torchfits` (transferred from `sfabbro/torchfits`).
+- Default development Python is **3.13** (pixi); supported install range remains **3.10+**.
+- Development Status classifier promoted to **Beta**.
+- Removed obsolete diagnostic benchmarks, scratch scripts, and legacy HEALPix/WCS artifacts.
+- CI rewritten: ruff-only lint, multi-OS/Python test matrix, CFITSIO vendoring via `extern/VERSIONS.txt`.
+- Wheel builds: portable flags (no `-march=native`), `cp310`–`cp313` on macOS and Linux.
+
+### Added
+
+- GPU I/O transport benchmark rows (`bench_gpu_transports.py`) with **MPS** on Apple Silicon and **CUDA** on Linux.
+- `pixi run bench-mps` for Apple Silicon accelerator benchmarks.
+- Automated benchmark report workflow (`.github/workflows/bench-report.yml`).
+- `scripts/render_bench_deficits.py` for documenting performance deficits without fixing them.
+
+### Fixed
+
+- Table mutations now invalidate FITS path caches via internal `io` helper (fixes `torchfits._invalidate_path_caches` AttributeError).
+
 ## Unreleased
 
 ### Changed
@@ -29,9 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supported-status promotion for in-place mmap table updates on COMPLEX
   (`1C`/`1M`), BIT (`8X`), and fixed-width STRING (`12A`-style) columns.
   `torchfits.table.update_rows(..., mmap=True)` now writes these column
-  types correctly on disk. Verified via raw byte inspection
-  (`scripts/diag_string_bytes_v2.py`) and an astropy upstream-reader
-  roundtrip. VLA columns remain explicitly unsupported in the mmap
+  types correctly on disk. Verified via raw byte inspection and an astropy
+  upstream-reader roundtrip. VLA columns remain explicitly unsupported in the mmap
   fast path by design.
 - Astropy and fitsio upstream smoke coverage that exercises the
   COMPLEX / BIT / fixed-width STRING mmap-update parity shift,
@@ -54,10 +75,11 @@ Earlier 0.1.x through 0.3.x releases included broader experimental astronomy
 domains. The current package contract is FITS I/O only; consult the current
 README, API reference, roadmap, and parity matrix for supported behavior.
 
-[0.1.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.1.0
-[0.1.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.1.1
-[0.2.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.2.0
-[0.2.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.2.1
-[0.3.0]: https://github.com/sfabbro/torchfits/releases/tag/v0.3.0
-[0.3.1]: https://github.com/sfabbro/torchfits/releases/tag/v0.3.1
-[0.3.2]: https://github.com/sfabbro/torchfits/releases/tag/v0.3.2
+[0.1.0]: https://github.com/astroai/torchfits/releases/tag/v0.1.0
+[0.1.1]: https://github.com/astroai/torchfits/releases/tag/v0.1.1
+[0.2.0]: https://github.com/astroai/torchfits/releases/tag/v0.2.0
+[0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
+[0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
+[0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
+[0.5.0b1]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b1
+[0.3.2]: https://github.com/astroai/torchfits/releases/tag/v0.3.2

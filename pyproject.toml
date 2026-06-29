@@ -11,14 +11,14 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "0.3.2"
+version = "0.5.0b1"
 description = "High-performance FITS I/O for PyTorch"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
 license = { text = "GPL-2.0-only" }
 keywords = ["fits", "astronomy", "pytorch", "tensor", "cfitsio"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
     "Programming Language :: Python :: 3",
@@ -41,8 +41,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sfabbro/torchfits"
-Repository = "https://github.com/sfabbro/torchfits"
+Homepage = "https://github.com/astroai/torchfits"
+Repository = "https://github.com/astroai/torchfits"
 
 # Defines optional dependencies for different use cases.
 # For pixi environments, these are managed separately via features
@@ -62,14 +62,11 @@ bench = [
     "fitsio>=1.1",
     "pandas>=1.0",
     "matplotlib>=3.0",
-    "seaborn>=0.11.0",
-    "pytest-benchmark>=3.0",
     "psutil>=5.0",
 ]
 test = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
-    "pytest-benchmark>=3.0",
 ]
 examples = [
     "matplotlib>=3.0",
@@ -96,8 +93,8 @@ cmake.args = [
     # needs to satisfy Caffe2's layout expectations, not run nvcc.
     "-DCUDA_TOOLKIT_ROOT_DIR=${CONDA_PREFIX}",
     "-DCUDAToolkit_ROOT=${CONDA_PREFIX}",
-    "-DCMAKE_C_FLAGS=-march=native -O3",
-    "-DCMAKE_CXX_FLAGS=-march=native -O3",
+    "-DCMAKE_C_FLAGS=-O3",
+    "-DCMAKE_CXX_FLAGS=-O3",
 ]
 
 # Note: USE_CUDA=OFF is intentional. The C++ extension in src/torchfits/cpp_src

@@ -145,7 +145,9 @@ def test_astropy_vla_table_mmap_updates_are_explicit(tmp_path) -> None:
 
     # VLA mmap updates remain explicitly unsupported by design (heap pointer
     # indirection cannot be safely patched in-place via mmap).
-    with pytest.raises(ValueError, match="mmap table updates do not support variable-length-array"):
+    with pytest.raises(
+        ValueError, match="mmap table updates do not support variable-length-array"
+    ):
         torchfits.table.update_rows(
             path.as_posix(),
             {"VLA": [np.array([9, 10], dtype=np.int32)]},
@@ -180,9 +182,7 @@ def test_astropy_complex_bit_string_mmap_updates_roundtrip_match_astropy(
                     fits.Column(name="ID", format="J", array=int_col),
                     fits.Column(name="FLAGS", format="8X", array=bits),
                     fits.Column(name="NAME", format="8A", array=names8),
-                    fits.Column(
-                        name="Z", format="C", array=complex_col
-                    ),
+                    fits.Column(name="Z", format="C", array=complex_col),
                 ],
                 name="CATALOG",
             ),
@@ -226,9 +226,7 @@ def test_astropy_complex_bit_string_mmap_updates_roundtrip_match_astropy(
             np.asarray([s.rstrip() for s in hdul[1].data["NAME"]]),
             np.asarray([s.rstrip() for s in new_names]),
         )
-        np.testing.assert_allclose(
-            hdul[1].data["Z"], new_complex, rtol=0.0, atol=0.0
-        )
+        np.testing.assert_allclose(hdul[1].data["Z"], new_complex, rtol=0.0, atol=0.0)
 
     # Un-modified columns preserved accurately.
     with torchfits.open(path.as_posix()) as hdul:
@@ -320,15 +318,15 @@ def test_astropy_checksum_roundtrip_matches_verify_chksum(tmp_path) -> None:
         ]
     ).writeto(table_path, overwrite=True)
     torchfits.write_checksums(table_path.as_posix(), hdu=1)
-    torchfits_table_result = torchfits.verify_checksums(
-        table_path.as_posix(), hdu=1
-    )
+    torchfits_table_result = torchfits.verify_checksums(table_path.as_posix(), hdu=1)
     assert torchfits_table_result["ok"]
     with fits.open(table_path, mode="readonly") as hdul:
         assert hdul[1].verify_checksum()
 
 
-@pytest.mark.parametrize("compression_type", ["RICE_1", "GZIP_1", "PLIO_1", "HCOMPRESS_1"])
+@pytest.mark.parametrize(
+    "compression_type", ["RICE_1", "GZIP_1", "PLIO_1", "HCOMPRESS_1"]
+)
 def test_astropy_compimage_compression_variants_match_torchfits(
     tmp_path, compression_type
 ) -> None:
@@ -336,12 +334,8 @@ def test_astropy_compimage_compression_variants_match_torchfits(
     PLIO_1, HCOMPRESS_1."""
     image = np.arange(64, dtype=np.int16).reshape(8, 8)
     compressed_path = tmp_path / f"astropy_comp_{compression_type}.fits"
-    comp = fits.CompImageHDU(
-        image, compression_type=compression_type, name="COMP"
-    )
-    fits.HDUList([fits.PrimaryHDU(), comp]).writeto(
-        compressed_path, overwrite=True
-    )
+    comp = fits.CompImageHDU(image, compression_type=compression_type, name="COMP")
+    fits.HDUList([fits.PrimaryHDU(), comp]).writeto(compressed_path, overwrite=True)
 
     out = torchfits.read(compressed_path.as_posix(), hdu=1, mmap=False)
     np.testing.assert_array_equal(out.cpu().numpy(), image)

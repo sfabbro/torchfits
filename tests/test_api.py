@@ -404,7 +404,7 @@ class TestTableAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_table_wrapper(self):
+    def test_read_table_wrapper_columns(self):
         """read_table should return table columns and reject image HDUs."""
         filepath = self.create_test_table(256)
 

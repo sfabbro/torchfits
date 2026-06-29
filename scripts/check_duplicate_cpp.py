@@ -31,15 +31,25 @@ ALLOWLIST: set[str] = set()
 
 # Keywords that should never be treated as function names.
 KEYWORDS: set[str] = {
-    "if", "for", "while", "switch", "catch",
-    "class", "struct", "namespace", "enum",
-    "template", "typedef", "using",
+    "if",
+    "for",
+    "while",
+    "switch",
+    "catch",
+    "class",
+    "struct",
+    "namespace",
+    "enum",
+    "template",
+    "typedef",
+    "using",
 }
 
 
 # ---------------------------------------------------------------------------
 # Stripping helpers
 # ---------------------------------------------------------------------------
+
 
 def strip_comments_and_literals(code: str) -> str:
     """Remove C++ string/char literals, then comments.
@@ -82,6 +92,7 @@ def _tokens(code: str) -> list[str]:
 # Function-extraction engine
 # ---------------------------------------------------------------------------
 
+
 def extract_file_scope_functions(filepath: Path) -> set[str]:
     """Return the set of file-scope function names defined in *filepath*."""
 
@@ -106,7 +117,9 @@ def extract_file_scope_functions(filepath: Path) -> set[str]:
         # ---- entering a block ------------------------------------------------
         if token == "{":
             _detect_block_type(tokens, i, depth, anon_ns_depths, class_depths)
-            _try_extract_function(tokens, i, depth, anon_ns_depths, class_depths, functions)
+            _try_extract_function(
+                tokens, i, depth, anon_ns_depths, class_depths, functions
+            )
             depth += 1
 
         # ---- leaving a block -------------------------------------------------
@@ -136,7 +149,7 @@ def _detect_block_type(
         anon_ns_depths.add(depth)
 
     # Class / struct – look backwards a handful of tokens for 'class'/'struct'
-    window = tokens[max(0, brace_idx - 6): brace_idx]
+    window = tokens[max(0, brace_idx - 6) : brace_idx]
     if any(t in ("class", "struct") for t in window):
         class_depths.add(depth)
 
@@ -199,6 +212,7 @@ def _try_extract_function(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     cpp_files = sorted(CPP_SRC_DIR.glob("*.cpp"))

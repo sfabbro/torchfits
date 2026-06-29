@@ -150,10 +150,7 @@ def _read_unsigned_image_if_needed(
         return None
     dtype, offset = target
     try:
-        if (
-            not effective_mmap
-            and hasattr(cpp_module, "read_full_unmapped_raw")
-        ):
+        if not effective_mmap and hasattr(cpp_module, "read_full_unmapped_raw"):
             raw = cpp_module.read_full_unmapped_raw(path, hdu_num)
         elif hasattr(cpp_module, "read_full_raw"):
             raw = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
@@ -1049,21 +1046,21 @@ def read_generic_fast_path(
                     path, hdu, effective_mmap
                 )
                 if scaled:
-                    if (
-                        data.dtype == torch.int16
-                        and bscale == 1.0
-                        and bzero == 32768.0
-                    ):
-                        data = data.to(torch.int64).add_(32768).to(
-                            device=device, dtype=torch.uint16
+                    if data.dtype == torch.int16 and bscale == 1.0 and bzero == 32768.0:
+                        data = (
+                            data.to(torch.int64)
+                            .add_(32768)
+                            .to(device=device, dtype=torch.uint16)
                         )
                     elif (
                         data.dtype == torch.int32
                         and bscale == 1.0
                         and bzero == 2147483648.0
                     ):
-                        data = data.to(torch.int64).add_(2147483648).to(
-                            device=device, dtype=torch.uint32
+                        data = (
+                            data.to(torch.int64)
+                            .add_(2147483648)
+                            .to(device=device, dtype=torch.uint32)
                         )
                     else:
                         data = data.to(device=device, dtype=torch.float32)
@@ -1100,10 +1097,10 @@ def read_generic_fast_path(
                 else:
                     data = cpp_module.read_full(path, hdu, effective_mmap)
 
-        if not (fp16 or bf16) and not (scale_on_device and hasattr(cpp_module, "read_full_raw_with_scale")):
-            data = _try_raw_scale_post(
-                data, cpp_module, path, hdu, effective_mmap
-            )
+        if not (fp16 or bf16) and not (
+            scale_on_device and hasattr(cpp_module, "read_full_raw_with_scale")
+        ):
+            data = _try_raw_scale_post(data, cpp_module, path, hdu, effective_mmap)
 
         if fp16:
             data = data.to(torch.float16)

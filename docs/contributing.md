@@ -3,7 +3,7 @@
 ## Development setup
 
 ```bash
-git clone https://github.com/sfabbro/torchfits.git
+git clone https://github.com/astroai/torchfits.git
 cd torchfits
 pixi install
 pixi run test

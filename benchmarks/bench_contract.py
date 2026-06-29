@@ -508,8 +508,6 @@ def write_summary(
                     best_library = str(row.get("best_library") or "-")
                     best_method = str(row.get("best_method") or "-")
                     winner = f"{best_library}:{best_method}"
-                    if best_library in {"pyast", "kapteyn"}:
-                        winner += " (legacy)"
                     f.write(
                         f"| {case_label} | {row.get('operation')} | {tf_time} | {winner} | {best_time} | {lag} | {pct} | {mmap} |\n"
                     )
@@ -521,7 +519,4 @@ def write_summary(
         )
         f.write(
             "- Rankings are family-specific and never mix smart vs specialized method families.\n"
-        )
-        f.write(
-            "- WCS smart rankings can include cross-environment legacy comparators (`pyast`, `kapteyn`) when bridge data is available.\n"
         )

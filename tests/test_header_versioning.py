@@ -1,5 +1,6 @@
 from torchfits.hdu import Header
 
+
 def test_header_versioning():
     h = Header()
     assert h._version == 0

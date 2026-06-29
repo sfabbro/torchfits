@@ -60,8 +60,6 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
-DEFAULT_CSV_PATH = "benchmarks_results/run_20260627_235744/results.csv"
-
 IO_PATHS = [
     "disk\u2192CPU",
     "disk\u2192RAM\u2192CPU",
@@ -99,15 +97,39 @@ def backend_of(row: dict[str, str]) -> str | None:
     return None
 
 
-def io_path_of(row: dict[str, str]) -> str | None:
-    """Map an OK row onto one of the four I/O transports.
+def _metadata_dict(row: dict[str, str]) -> dict[str, str]:
+    md = row.get("metadata") or ""
+    if isinstance(md, dict):
+        return {str(k): str(v) for k, v in md.items()}
+    if not isinstance(md, str) or not md.strip():
+        return {}
+    try:
+        import ast
 
-    Every measured row in this run is ``mmap_target = "on"`` so they all
-    map to ``disk->RAM->CPU``. Returns ``None`` for non-OK rows so they
-    drop out of every aggregate.
-    """
+        parsed = ast.literal_eval(md.strip())
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items()}
+    except Exception:
+        pass
+    try:
+        import json
+
+        parsed = json.loads(md)
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items()}
+    except Exception:
+        return {}
+    return {}
+
+
+def io_path_of(row: dict[str, str]) -> str | None:
+    """Map an OK row onto one of the four I/O transports."""
     if row.get("status") != "OK":
         return None
+    md = _metadata_dict(row)
+    explicit = md.get("io_transport")
+    if explicit:
+        return explicit
     return "disk\u2192RAM\u2192CPU"
 
 
@@ -136,6 +158,8 @@ def cell_text(
     ``disk->RAM->CPU`` numbers change when the underlying CSV changes.
     """
     if transport in GPU_TRANSPORTS:
+        if samples:
+            return fmt_measured_cell(samples)
         return "_pending bench-gpu_"
     if transport == "disk\u2192CPU":
         return "_no measured row (this run is mmap-on)_"
@@ -187,8 +211,8 @@ def aggregate(
     """Read a bench-all ``results.csv`` and return ``(run_dir, buckets)``.
 
     ``run_dir`` is the parent directory of the CSV (e.g.
-    ``run_20260627_235744``); used to populate the rendered ``Source:``
-    line.
+    ``20260626_postfix_full_zero_deficit``); used to populate the rendered
+    ``Source:`` line when present.
     """
     buckets: dict[
         tuple[str, str, str],
@@ -218,41 +242,30 @@ def render_callout() -> str:
         [
             "> **GPU columns (`disk\u2192GPU`, `disk\u2192RAM\u2192GPU`) "
             "will be populated by**",
-            "> `pixi run -e bench-gpu bench-gpu`. **Cells presently "
-            "marked**",
-            "> `_pending bench-gpu_` **are deliberate reservations for "
-            "that run, not",
-            "> missing data.** Once `benchmarks_results/gpu_<id>/results."
-            "csv` lands,",
-            "> re-run `scripts/render_bench_iopath_table.py` with that "
-            "path to fill",
-            "> the cells. This section is regenerated from CSV by the "
-            "script \u2014 do",
+            "> `pixi run -e bench-gpu bench-gpu`. **Cells presently marked**",
+            "> `_pending bench-gpu_` **are deliberate reservations for that run, not",
+            "> missing data.** Once `benchmarks_results/gpu_<id>/results.csv` lands,",
+            "> re-run `scripts/render_bench_iopath_table.py` with that path to fill",
+            "> the cells. This section is regenerated from CSV by the script \u2014 do",
             "> not hand-edit.",
             "",
         ]
     )
 
 
-def render_source(run_dir: str) -> str:
+def render_source(run_dir: str, *, has_gpu: bool) -> str:
     """Render the trailing ``Source:`` paragraph that names the CSV."""
+    gpu_note = "MPS/CUDA GPU transport rows included." if has_gpu else "CPU mmap run."
     return "\n".join(
         [
-            f"Source: `benchmarks_results/{run_dir}/results.csv` "
-            "(CPU-only run).",
-            "Cell values are median wall-clock over all comparable OK rows "
-            "in the",
+            f"Source: `benchmarks_results/{run_dir}/results.csv` ({gpu_note})",
+            "Cell values are median wall-clock over all comparable OK rows in the",
             "`(domain \u00d7 I/O transport \u00d7 backend)` bucket; "
             "throughput is intentionally",
-            "omitted because the cell aggregates heterogeneous payloads "
-            "and would",
-            "produce physically-impossible rates when small and large "
-            "sizes are",
-            "median-mixed. See `scripts/render_bench_iopath_table.py` "
-            "for the",
-            "aggregation rules; per-operation / per-size-bucket splits "
-            "are a future",
-            "refinement once the GPU run unlocks finer partitioning.",
+            "omitted because the cell aggregates heterogeneous payloads and would",
+            "produce physically-impossible rates when small and large sizes are",
+            "median-mixed. See `scripts/render_bench_iopath_table.py` for the",
+            "aggregation rules.",
             "",
         ]
     )
@@ -271,19 +284,15 @@ def render_notes() -> str:
             "/ `cfitsio-direct`).",
             "- `cfitsio` is the C engine used by `torchfits`; no standalone "
             "`cfitsio`-only",
-            "  benchmark row is generated by `bench-all`, so the cell is "
-            "documented as",
-            "  \"engine exposed under `torchfits`\".",
+            "  benchmark row is generated by `bench-all`, so the cell is documented as",
+            '  "engine exposed under `torchfits`".',
             "- Cell `n=` counts comparable OK rows in the bucket; "
             "`\u2014` indicates the",
             "  bucket is empty (no rows match, or rows were excluded under",
             "  `strict_mmap_fairness` in the original `bench-all` summary).",
-            "- Median is computed over heterogeneous operations "
-            "(`read_full`,",
-            "  `cutout_100x100`, `header_read`, `predicate_filter`, "
-            "`projection`,",
-            "  `row_slice`, etc.) and payload sizes; treat the per-cell ms "
-            "as a",
+            "- Median is computed over heterogeneous operations (`read_full`,",
+            "  `cutout_100x100`, `header_read`, `predicate_filter`, `projection`,",
+            "  `row_slice`, etc.) and payload sizes; treat the per-cell ms as a",
             "  coarse representative number, not a precise benchmark.",
             "",
         ]
@@ -299,17 +308,20 @@ def main() -> int:
     )
     parser.add_argument(
         "--csv",
-        default=DEFAULT_CSV_PATH,
-        help="Path to the bench-all `results.csv` (default: %(default)s).",
+        required=True,
+        help="Path to the bench-all `results.csv` (e.g. benchmarks_results/<run-id>/results.csv).",
     )
     args = parser.parse_args()
     run_dir, buckets = aggregate(args.csv)
-    print(render_callout())
-    print(render_source(run_dir))
+    has_gpu = any(
+        io in GPU_TRANSPORTS and times
+        for (_, io, _), times in buckets.items()
+        if times
+    )
+    print(render_source(run_dir, has_gpu=has_gpu))
     for domain_key, domain_label in DOMAINS:
         if any(k[0] == domain_key for k in buckets):
             print(render_table(domain_key, domain_label, buckets))
-    print(render_notes())
     return 0
 
 

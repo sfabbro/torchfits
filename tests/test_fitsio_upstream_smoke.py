@@ -241,8 +241,8 @@ def test_fitsio_bit_column_read_write_workflows_match_torchfits() -> None:
 
 def test_fitsio_complex_bit_string_table_mmap_updates_match_torchfits() -> None:
     """mmap=True write-path for COMPLEX (C), BIT (X), STRING (A) leaves a
-    FITS file whose on-disk bytes match the expected binary layout bit-for-bit
-    (verified via scripts/diag_string_bytes_v2.py). ID / FLUX / FLAGS / Z are
+    FITS file whose on-disk bytes match the expected binary layout bit-for-bit.
+    ID / FLUX / FLAGS / Z are
     round-tripped identically via fitsio; the NAME (8A) assertion falls back
     to astropy.io.fits because the local fitsio upstream misdecodes updated
     ``8A`` rows as dtype ``<U21`` despite the on-disk bytes being correct.
@@ -312,8 +312,8 @@ def test_fitsio_complex_bit_string_table_mmap_updates_match_torchfits() -> None:
         np.testing.assert_allclose(fits_data["FLUX"], new_flux)
         np.testing.assert_array_equal(fits_data["FLAGS"], new_bits)
         # fitsio upstream misdecodes updated "8A" rows as dtype '<U21'
-        # even though the on-disk bytes match the expected layout bit-for-bit
-        # (verified via scripts/diag_string_bytes_v2.py). astropy.io.fits
+        # even though the on-disk bytes match the expected layout bit-for-bit.
+        # astropy.io.fits
         # decodes the same column correctly as dtype '<U8', so we use it
         # for the NAME assertion only; fitsio continues to cover ID / FLUX
         # / FLAGS / Z above. Requires astropy at test collection time
@@ -346,7 +346,9 @@ def test_fitsio_complex128_int64_columns_roundtrip_match_torchfits() -> None:
                 astropy_fits.PrimaryHDU(),
                 astropy_fits.BinTableHDU.from_columns(
                     [
-                        astropy_fits.Column(name="ZM", format="M", array=complex128_col),
+                        astropy_fits.Column(
+                            name="ZM", format="M", array=complex128_col
+                        ),
                         astropy_fits.Column(name="K", format="K", array=int64_col),
                     ],
                     name="CAT",
@@ -543,7 +545,9 @@ def test_torchfits_unsigned_table_writes_match_fitsio_and_astropy() -> None:
                 torchfits.HDUList(
                     [
                         torchfits.TensorHDU(torch.zeros(0, dtype=torch.uint8)),
-                        torchfits.TableHDU(table, header=torchfits.Header({"EXTNAME": "T"})),
+                        torchfits.TableHDU(
+                            table, header=torchfits.Header({"EXTNAME": "T"})
+                        ),
                     ]
                 ).write(path.as_posix(), overwrite=True)
 

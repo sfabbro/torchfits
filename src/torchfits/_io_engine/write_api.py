@@ -711,9 +711,7 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
                 _sanitize_table_header_for_write(hdu.header), scale_cards
             )
             raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(
-                _TableWriteProxy(raw_data, header, schema)
-            )
+            payload.append(_TableWriteProxy(raw_data, header, schema))
             continue
 
         if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
@@ -724,9 +722,7 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
                 _sanitize_table_header_for_write(hdu.header), scale_cards
             )
             raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(
-                _TableWriteProxy(raw_data, header, schema)
-            )
+            payload.append(_TableWriteProxy(raw_data, header, schema))
             continue
 
         if not isinstance(hdu, TensorHDU):
@@ -779,9 +775,7 @@ def _write_hdus_with_optional_compression(
                 _sanitize_table_header_for_write(hdu.header), scale_cards
             )
             raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(
-                _TableWriteProxy(raw_data, header, schema)
-            )
+            payload.append(_TableWriteProxy(raw_data, header, schema))
             continue
 
         if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
@@ -792,9 +786,7 @@ def _write_hdus_with_optional_compression(
                 _sanitize_table_header_for_write(hdu.header), scale_cards
             )
             raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(
-                _TableWriteProxy(raw_data, header, schema)
-            )
+            payload.append(_TableWriteProxy(raw_data, header, schema))
             continue
 
         if not isinstance(hdu, TensorHDU):

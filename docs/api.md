@@ -45,6 +45,7 @@ Unified reader. Auto-detects image or table HDUs when `mode="auto"`.
 
 ```python
 image = torchfits.read_image("image.fits", hdu=0, device="cpu", mmap=True)
+# Apple Silicon: device="mps"; Linux NVIDIA: device="cuda"
 sci, wht, msk = torchfits.read_hdus("mef.fits", hdus=["SCI", "WHT", "MASK"])
 stamp = torchfits.read_subset("mosaic.fits", 0, 0, 0, 256, 256)
 
@@ -162,6 +163,13 @@ torchfits.get_cache_stats()
 torchfits.clear_file_cache(data=True, handles=True, meta=True, cpp=True)
 torchfits.clear_cache()
 ```
+
+## Deprecated aliases (0.5.0b1)
+
+Still supported; prefer the canonical paths above:
+
+- `read_large_table` → `read_table` / `stream_table` / `table.scan`
+- `read_fast` → `read` / `read_image`
 
 ## Limitations
 

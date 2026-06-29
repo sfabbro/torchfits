@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/torchfits)](https://pypi.org/project/torchfits/)
 
-[![CI](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/sfabbro/torchfits/actions/workflows/ci.yml)
+[![CI](https://github.com/astroai/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/astroai/torchfits/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0-green)](LICENSE)
 
@@ -51,7 +51,7 @@ Pre-built wheels are available for Linux and macOS (x86_64, arm64). No system CF
 From source:
 
 ```bash
-git clone https://github.com/sfabbro/torchfits.git
+git clone https://github.com/astroai/torchfits.git
 cd torchfits
 pip install -e .
 ```
@@ -125,7 +125,7 @@ Methodology, reproducible commands, results, and known deficits: [`docs/benchmar
 ## Contributing
 
 ```bash
-git clone https://github.com/sfabbro/torchfits.git
+git clone https://github.com/astroai/torchfits.git
 cd torchfits
 pixi install
 pixi run test
