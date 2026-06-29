@@ -46,9 +46,11 @@ jobs:
       CIBW_BUILD: cp310-* cp311-* cp312-* cp313-*
       CIBW_SKIP: pp* *-musllinux_* *-manylinux_i686 *-win32
       CIBW_ARCHS_LINUX: x86_64
-      CIBW_ARCHS_MACOS: arm64 x86_64
-      CIBW_TEST_REQUIRES: pytest numpy
-      CIBW_TEST_COMMAND: pytest {project}/tests/test_api.py -q
+      # ponytail: macOS x86_64 hits nanobind LTO + libtorch link failures on GHA; arm64 is primary.
+      CIBW_ARCHS_MACOS: arm64
+      CIBW_TEST_REQUIRES: pytest numpy astropy
+      CIBW_BEFORE_TEST: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+      CIBW_TEST_COMMAND: pytest {project}/tests/test_release_smoke.py -q
       CIBW_BEFORE_ALL_LINUX: bash ./extern/vendor.sh --cfitsio-version $(cat extern/VERSIONS.txt)
       CIBW_BEFORE_ALL_MACOS: bash ./extern/vendor.sh --cfitsio-version $(cat extern/VERSIONS.txt)
       CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.13 CMAKE_OSX_DEPLOYMENT_TARGET=10.13
