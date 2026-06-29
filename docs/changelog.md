@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Repository home: `github.com/astroai/torchfits` (transferred from `sfabbro/torchfits`).
+- Repository home moving to `github.com/astroai/torchfits` (transfer from `sfabbro/torchfits` pending).
 - Default development Python is **3.13** (pixi); supported install range remains **3.10+**.
 - Development Status classifier promoted to **Beta**.
 - Removed obsolete diagnostic benchmarks, scratch scripts, and legacy HEALPix/WCS artifacts.
