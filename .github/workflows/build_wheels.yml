@@ -48,9 +48,10 @@ jobs:
       CIBW_ARCHS_LINUX: x86_64
       # ponytail: macOS x86_64 hits nanobind LTO + libtorch link failures on GHA; arm64 is primary.
       CIBW_ARCHS_MACOS: arm64
-      CIBW_TEST_REQUIRES: pytest numpy astropy
+      CIBW_TEST_REQUIRES: numpy
       CIBW_BEFORE_TEST: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
-      CIBW_TEST_COMMAND: pytest --import-mode=importlib {project}/tests/test_release_smoke.py -q
+      # tests/conftest.py prepends src/ and shadows the installed wheel; use inline smoke.
+      CIBW_TEST_COMMAND: python -c "import torchfits, torchfits._C; print(torchfits.__version__)"
       CIBW_BEFORE_ALL_LINUX: bash ./extern/vendor.sh --cfitsio-version $(cat extern/VERSIONS.txt)
       CIBW_BEFORE_ALL_MACOS: bash ./extern/vendor.sh --cfitsio-version $(cat extern/VERSIONS.txt)
       CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.13 CMAKE_OSX_DEPLOYMENT_TARGET=10.13
@@ -62,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+        uses: pypa/cibuildwheel@v2.23.1
       - uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
