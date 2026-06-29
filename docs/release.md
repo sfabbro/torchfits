@@ -51,7 +51,10 @@ pixi run bench-table-render -- --csv benchmarks_results/<run-id>/results.csv
 
 Scheduled CI: `.github/workflows/bench-report.yml` (weekly + manual).
 
-Repository: https://github.com/astroai/torchfits — ensure PyPI trusted publishing uses `astroai/torchfits`.
+Repository: https://github.com/astroai/torchfits.
+
+**PyPI trusted publishing:** register `astroai/torchfits` before **v0.5.0** (final).
+`0.5.0b1` was published from the pre-transfer repo; no retroactive re-publish needed.
 
 Do not make new performance claims unless the benchmark run is archived and the
 comparison target is listed in `docs/parity.md`.
