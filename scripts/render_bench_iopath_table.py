@@ -314,9 +314,7 @@ def main() -> int:
     args = parser.parse_args()
     run_dir, buckets = aggregate(args.csv)
     has_gpu = any(
-        io in GPU_TRANSPORTS and times
-        for (_, io, _), times in buckets.items()
-        if times
+        io in GPU_TRANSPORTS and times for (_, io, _), times in buckets.items() if times
     )
     print(render_source(run_dir, has_gpu=has_gpu))
     for domain_key, domain_label in DOMAINS:

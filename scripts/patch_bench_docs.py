@@ -50,7 +50,9 @@ def main() -> int:
     )
 
     text = args.docs.read_text(encoding="utf-8")
-    text = _replace_block(text, "<!-- BENCH_IOPATH_BEGIN -->", "<!-- BENCH_IOPATH_END -->", iopath)
+    text = _replace_block(
+        text, "<!-- BENCH_IOPATH_BEGIN -->", "<!-- BENCH_IOPATH_END -->", iopath
+    )
     text = _replace_block(
         text, "<!-- BENCH_DEFICITS_BEGIN -->", "<!-- BENCH_DEFICITS_END -->", deficits
     )
