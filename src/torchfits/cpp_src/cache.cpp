@@ -67,6 +67,7 @@ public:
     }
 
     fitsfile* get_or_open(const std::string& filepath) {
+        check_fits_filename_security(filepath);
         std::lock_guard<std::mutex> lock(mutex_);
 
         auto mtime_ns_from_stat = [&](const struct stat& st) -> int64_t {
