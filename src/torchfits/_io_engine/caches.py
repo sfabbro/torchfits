@@ -284,7 +284,11 @@ def check_read_cache(
 
 
 def invalidate_path_caches(path: str, table_module: ModuleType | None = None) -> None:
-    """Invalidate Python-side caches and open handles for one path."""
+    """Invalidate Python-side caches and open handles for one path.
+
+    ``table_module`` is deprecated; table handle caches are cleared via
+    :mod:`torchfits._table.cache` directly.
+    """
     stale_data_keys = [
         key
         for key in list(file_cache.keys())
@@ -318,13 +322,18 @@ def invalidate_path_caches(path: str, table_module: ModuleType | None = None) ->
     ]:
         auto_hdu_cache.pop(key, None)
 
-    if table_module is not None:
-        try:
-            invalidate = getattr(table_module, "_invalidate_caches_for_path", None)
-            if invalidate is not None:
-                invalidate(path)
-        except Exception:
-            pass
+    try:
+        from .._table.cache import invalidate_caches_for_path
+
+        invalidate_caches_for_path(path)
+    except Exception:
+        if table_module is not None:
+            try:
+                invalidate = getattr(table_module, "_invalidate_caches_for_path", None)
+                if invalidate is not None:
+                    invalidate(path)
+            except Exception:
+                pass
 
 
 def get_cache_performance() -> dict[str, Any]:

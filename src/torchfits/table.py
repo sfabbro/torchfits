@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from collections import OrderedDict
-import atexit
 import itertools
 import os
 import logging
 import re
-import threading
 from typing import Any, Optional, TYPE_CHECKING
 
 import torch
@@ -17,19 +14,22 @@ import torch
 if TYPE_CHECKING:
     import numpy as np
 
+from . import fits_schema
+from ._io_engine.caches import invalidate_path_caches as _invalidate_path_caches
+from ._table.cache import acquire_cpp_handle as _acquire_cpp_handle
+from ._table.cache import acquire_cpp_reader as _acquire_cpp_reader
 from ._where import (
     parse_where_expression,
     where_columns_from_ast,
 )
-from ._table_engine import validate_table_backend
+from ._table_engine import (
+    WhereStrategy,
+    choose_where_read_plan,
+    should_skip_cpp_numpy_for_where,
+    validate_table_backend,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _invalidate_path_caches(path: str) -> None:
-    from torchfits.io import _invalidate_path_caches as invalidate
-
-    invalidate(path)
 
 
 def _normalize_cpp_table_data(data):
@@ -60,26 +60,6 @@ _TABLE_IO_KEYS = {
     "backend",
 }
 
-_TFORM_RE = re.compile(r"^\s*(\d+)?\s*([A-Za-z])")
-_TFORM_VLA_RE = re.compile(r"^\s*(\d+)?\s*([PQ])\s*([A-Za-z])")
-_HANDLE_CACHE_MAX = max(1, int(os.getenv("TORCHFITS_TABLE_HANDLE_CACHE_SIZE", "8")))
-_HANDLE_CACHE_ENABLED = os.getenv("TORCHFITS_TABLE_HANDLE_CACHE", "1").lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
-_READER_CACHE_MAX = max(1, int(os.getenv("TORCHFITS_TABLE_READER_CACHE_SIZE", "8")))
-_READER_CACHE_ENABLED = os.getenv("TORCHFITS_TABLE_READER_CACHE", "1").lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
-_handle_cache_lock = threading.Lock()
-_handle_cache: "OrderedDict[str, Any]" = OrderedDict()
-_reader_cache_lock = threading.Lock()
-_reader_cache: "OrderedDict[tuple[str, int], Any]" = OrderedDict()
 _VLA_DTYPE_MAP: dict[str, Any] = {}
 _COMPLEX_DTYPE_MAP: dict[str, Any] = {}
 # FITS binary-table TFORM codes for complex columns (membership checks use this so a
@@ -87,85 +67,13 @@ _COMPLEX_DTYPE_MAP: dict[str, Any] = {}
 _COMPLEX_TFORM_CODES: frozenset[str] = frozenset({"C", "M"})
 
 
-def _close_cpp_handle(handle: Any) -> None:
-    try:
-        handle.close()
-    except Exception as e:
-        logger.debug("Failed to close C++ handle: %s", e)
+def _parse_tform(tform: str) -> tuple[bool, str, int]:
+    info = fits_schema.parse_tform(tform)
+    return info.vla, info.code or "", info.repeat
 
 
-def _acquire_cpp_handle(path: str, cpp) -> Any:
-    if not _HANDLE_CACHE_ENABLED:
-        return cpp.open_fits_file(path, "r")
-
-    with _handle_cache_lock:
-        handle = _handle_cache.get(path)
-        if handle is not None:
-            _handle_cache.move_to_end(path)
-            return handle
-
-    handle = cpp.open_fits_file(path, "r")
-    with _handle_cache_lock:
-        _handle_cache[path] = handle
-        _handle_cache.move_to_end(path)
-        while len(_handle_cache) > _HANDLE_CACHE_MAX:
-            _, old = _handle_cache.popitem(last=False)
-            _close_cpp_handle(old)
-    return handle
-
-
-def _acquire_cpp_reader(path: str, hdu: int, cpp) -> Any:
-    """
-    Return a cached C++ TableReader bound to a cached FITSFile handle.
-
-    This avoids re-parsing the table schema on every small projected read.
-    """
-    file_handle = _acquire_cpp_handle(path, cpp)
-    if not _READER_CACHE_ENABLED:
-        return cpp.TableReader(file_handle, int(hdu))
-
-    key = (path, int(hdu))
-    with _reader_cache_lock:
-        reader = _reader_cache.get(key)
-        if reader is not None:
-            _reader_cache.move_to_end(key)
-            return reader
-
-    reader = cpp.TableReader(file_handle, int(hdu))
-    with _reader_cache_lock:
-        _reader_cache[key] = reader
-        _reader_cache.move_to_end(key)
-        while len(_reader_cache) > _READER_CACHE_MAX:
-            _reader_cache.popitem(last=False)
-    return reader
-
-
-def _close_all_cached_handles() -> None:
-    # Readers borrow FITSFile pointers; clear them first.
-    with _reader_cache_lock:
-        _reader_cache.clear()
-    with _handle_cache_lock:
-        items = list(_handle_cache.items())
-        _handle_cache.clear()
-    for _, handle in items:
-        _close_cpp_handle(handle)
-
-
-def _invalidate_caches_for_path(path: str) -> None:
-    """Drop cached readers/handles bound to a given file path."""
-    with _reader_cache_lock:
-        stale_reader_keys = [k for k in _reader_cache.keys() if k[0] == path]
-        for key in stale_reader_keys:
-            _reader_cache.pop(key, None)
-
-    handle = None
-    with _handle_cache_lock:
-        handle = _handle_cache.pop(path, None)
-    if handle is not None:
-        _close_cpp_handle(handle)
-
-
-atexit.register(_close_all_cached_handles)
+def _column_tnull_map(header_map: dict[str, Any]) -> dict[str, Any]:
+    return fits_schema.column_tnull_map(header_map)
 
 
 def _require_pyarrow():
@@ -209,132 +117,6 @@ def _arrow_column_to_python(pa, column, name: str) -> Any:
         return out
 
     return column.to_numpy(zero_copy_only=False)
-
-
-def _parse_tform(tform: str) -> tuple[bool, str, int]:
-    tform = str(tform).strip().upper()
-    if not tform:
-        return False, "", 1
-    m = _TFORM_VLA_RE.match(tform)
-    if m:
-        repeat = int(m.group(1)) if m.group(1) else 1
-        code = m.group(3).upper()
-        return True, code, repeat
-    m = _TFORM_RE.match(tform)
-    if m:
-        repeat = int(m.group(1)) if m.group(1) else 1
-        code = m.group(2).upper()
-        return False, code, repeat
-    return False, "", 1
-
-
-def _fits_header_table_has_vla(header: Mapping[str, Any]) -> bool:
-    """True if any column uses FITS P/Q (variable-length array) heap storage."""
-    try:
-        tfields = int(header.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        return False
-    for i in range(1, tfields + 1):
-        raw = header.get(f"TFORM{i}")
-        if raw is None:
-            continue
-        raw_str = str(raw)
-        # Fast path rejection for VLA indicators before running regex
-        if (
-            "P" not in raw_str
-            and "Q" not in raw_str
-            and "p" not in raw_str
-            and "q" not in raw_str
-        ):
-            continue
-        is_vla, _, _ = _parse_tform(raw_str)
-        if is_vla:
-            return True
-    return False
-
-
-def _fits_header_column_is_vla(header: Mapping[str, Any], col_name: str) -> bool:
-    try:
-        tfields = int(header.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        return False
-    want = str(col_name)
-    for i in range(1, tfields + 1):
-        ttype = header.get(f"TTYPE{i}")
-        if ttype is None or str(ttype) != want:
-            continue
-        raw = header.get(f"TFORM{i}", "")
-        raw_str = str(raw)
-        if (
-            "P" not in raw_str
-            and "Q" not in raw_str
-            and "p" not in raw_str
-            and "q" not in raw_str
-        ):
-            return False
-        return _parse_tform(raw_str)[0]
-    return False
-
-
-def _fits_header_selected_includes_vla(
-    header: Mapping[str, Any], columns: Optional[list[str]]
-) -> bool:
-    """True when the read projection would include at least one VLA column."""
-    if columns is None:
-        return _fits_header_table_has_vla(header)
-
-    try:
-        tfields = int(header.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        return False
-
-    want = set(columns)
-    for i in range(1, tfields + 1):
-        ttype = header.get(f"TTYPE{i}")
-        if ttype is not None and str(ttype) in want:
-            raw = header.get(f"TFORM{i}")
-            if raw is not None:
-                raw_str = str(raw)
-                if "P" in raw_str or "Q" in raw_str or "p" in raw_str or "q" in raw_str:
-                    is_vla, _, _ = _parse_tform(raw_str)
-                    if is_vla:
-                        return True
-    return False
-
-
-def _column_tnull_map(header_map: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-
-    try:
-        tfields = int(header_map.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        tfields = 0
-
-    if tfields > 0:
-        for i in range(1, tfields + 1):
-            tnull = header_map.get(f"TNULL{i}")
-            if tnull is not None:
-                ttype = header_map.get(f"TTYPE{i}")
-                if ttype is not None:
-                    out[str(ttype)] = tnull
-    else:
-        name_by_idx: dict[int, str] = {}
-        tnull_by_idx: dict[int, Any] = {}
-        for key, value in header_map.items():
-            key_u = str(key).upper()
-            if key_u.startswith("TTYPE"):
-                suffix = key_u[5:]
-                if suffix.isdigit():
-                    name_by_idx[int(suffix)] = str(value)
-            elif key_u.startswith("TNULL"):
-                suffix = key_u[5:]
-                if suffix.isdigit():
-                    tnull_by_idx[int(suffix)] = value
-
-        for idx, name in name_by_idx.items():
-            if idx in tnull_by_idx:
-                out[name] = tnull_by_idx[idx]
-    return out
 
 
 def _default_table_column_values(
@@ -1291,19 +1073,11 @@ def _build_fits_metadata(
 
 
 def _column_tform_code_and_repeat(tform: Any) -> tuple[str, int] | None:
-    if not isinstance(tform, str):
-        return None
-    m = _TFORM_RE.match(tform)
-    if not m:
-        return None
-    repeat_text, code = m.groups()
-    repeat = int(repeat_text) if repeat_text else 1
-    return code.upper(), repeat
+    return fits_schema.tform_code_and_repeat(tform)
 
 
 def _fits_tform_is_bit(tform: Any) -> bool:
-    parsed = _column_tform_code_and_repeat(tform)
-    return parsed is not None and parsed[0] == "X"
+    return fits_schema.tform_is_bit(tform)
 
 
 def _column_tforms_for_decode(
@@ -1618,6 +1392,227 @@ def scan(
         )
 
 
+def _filter_table_with_where(pa, table: Any, where: str) -> Any:
+    mask = _where_mask_for_table(table, where)
+    if len(mask) == 0 or pa.compute.sum(mask).as_py() == 0:
+        return table.slice(0, 0)
+    return table.filter(mask)
+
+
+def _read_table_from_scan_batches(
+    *,
+    path: str,
+    hdu: int,
+    columns: Optional[list[str]],
+    row_slice: Optional[slice | tuple[int, int]],
+    batch_size: int,
+    mmap: bool,
+    decode_bytes: bool,
+    encoding: str,
+    strip: bool,
+    include_fits_metadata: bool,
+    apply_fits_nulls: bool,
+    backend: str,
+) -> Any:
+    pa = _require_pyarrow()
+    batches = list(
+        scan(
+            path,
+            hdu=hdu,
+            columns=columns,
+            row_slice=row_slice,
+            batch_size=batch_size,
+            mmap=mmap,
+            decode_bytes=decode_bytes,
+            encoding=encoding,
+            strip=strip,
+            include_fits_metadata=include_fits_metadata,
+            apply_fits_nulls=apply_fits_nulls,
+            backend=backend,
+        )
+    )
+    if not batches:
+        return pa.table({})
+    return pa.Table.from_batches(batches)
+
+
+def _read_table_unfiltered(
+    *,
+    path: str,
+    hdu: int,
+    columns: Optional[list[str]],
+    row_slice: Optional[slice | tuple[int, int]],
+    rows: Optional[list[int]],
+    batch_size: int,
+    mmap: bool,
+    decode_bytes: bool,
+    encoding: str,
+    strip: bool,
+    include_fits_metadata: bool,
+    apply_fits_nulls: bool,
+    backend: str,
+) -> Any:
+    if backend in {"auto", "cpp_numpy"}:
+        single = _read_cpp_numpy_table(
+            path=path,
+            hdu=hdu,
+            columns=columns,
+            row_slice=row_slice,
+            rows=rows,
+            where=None,
+            mmap=mmap,
+            decode_bytes=decode_bytes,
+            encoding=encoding,
+            strip=strip,
+            include_fits_metadata=include_fits_metadata,
+            apply_fits_nulls=apply_fits_nulls,
+        )
+        if single is not None:
+            return single
+    return _read_table_from_scan_batches(
+        path=path,
+        hdu=hdu,
+        columns=columns,
+        row_slice=row_slice,
+        batch_size=batch_size,
+        mmap=mmap,
+        decode_bytes=decode_bytes,
+        encoding=encoding,
+        strip=strip,
+        include_fits_metadata=include_fits_metadata,
+        apply_fits_nulls=apply_fits_nulls,
+        backend=backend,
+    )
+
+
+def _try_cpp_where_pushdown(
+    *,
+    pa,
+    path: str,
+    hdu: int,
+    columns: Optional[list[str]],
+    where: str,
+    decode_bytes: bool,
+    encoding: str,
+    strip: bool,
+) -> Any | None:
+    import torchfits._C as cpp
+
+    if not hasattr(cpp, "read_fits_table_filtered"):
+        return None
+    filters = _compile_where_to_simple_predicates(where)
+    if filters is None:
+        return None
+    try:
+        target_cols = columns
+        if target_cols is None:
+            target_cols = list(schema(path, hdu=hdu, backend="cpp_numpy").names)
+
+        data_dict = cpp.read_fits_table_filtered(path, hdu, target_cols, filters)
+        pushdown_tforms = (
+            _column_tforms_for_decode(path, hdu, set(target_cols))
+            if decode_bytes
+            else None
+        )
+        arrays = []
+        names_out = []
+        for name in target_cols:
+            if name not in data_dict:
+                continue
+            val = data_dict[name]
+            if isinstance(val, torch.Tensor):
+                if val.device.type != "cpu":
+                    val = val.cpu()
+                if not val.is_contiguous():
+                    val = val.contiguous()
+                arr = _numpy_to_arrow_array(
+                    pa,
+                    val.numpy(),
+                    decode_bytes,
+                    encoding,
+                    strip,
+                    fits_tform=pushdown_tforms.get(name) if pushdown_tforms else None,
+                )
+                arrays.append(arr)
+                names_out.append(name)
+
+        if not arrays:
+            return pa.table({})
+        return pa.Table.from_arrays(arrays, names=names_out)
+    except Exception:
+        return None
+
+
+def _read_table_with_where(
+    *,
+    pa,
+    path: str,
+    hdu: int,
+    columns: Optional[list[str]],
+    row_slice: Optional[slice | tuple[int, int]],
+    rows: Optional[list[int]],
+    where: str,
+    batch_size: int,
+    mmap: bool,
+    decode_bytes: bool,
+    encoding: str,
+    strip: bool,
+    include_fits_metadata: bool,
+    apply_fits_nulls: bool,
+    backend: str,
+) -> Any:
+    import torchfits
+
+    header_ok = False
+    hdr: Mapping[str, Any] = {}
+    n_rows = 0
+    try:
+        hdr = torchfits.get_header(path, hdu)
+        n_rows = int(hdr.get("NAXIS2", 0))
+        header_ok = True
+    except Exception:
+        n_rows = 0
+
+    plan = choose_where_read_plan(
+        header=hdr,
+        header_ok=header_ok,
+        columns=columns,
+        backend=backend,
+        n_rows=n_rows,
+    )
+
+    if plan.strategy == WhereStrategy.CPP_PUSHDOWN:
+        pushed = _try_cpp_where_pushdown(
+            pa=pa,
+            path=path,
+            hdu=hdu,
+            columns=columns,
+            where=where,
+            decode_bytes=decode_bytes,
+            encoding=encoding,
+            strip=strip,
+        )
+        if pushed is not None:
+            return pushed
+
+    base = _read_table_unfiltered(
+        path=path,
+        hdu=hdu,
+        columns=columns,
+        row_slice=row_slice,
+        rows=rows,
+        batch_size=batch_size,
+        mmap=mmap,
+        decode_bytes=decode_bytes,
+        encoding=encoding,
+        strip=strip,
+        include_fits_metadata=include_fits_metadata,
+        apply_fits_nulls=apply_fits_nulls,
+        backend=plan.unfiltered_backend,
+    )
+    return _filter_table_with_where(pa, base, where)
+
+
 def read(
     path: str,
     hdu: int | str = 1,
@@ -1643,187 +1638,35 @@ def read(
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
 
-    if backend in {"auto", "cpp_numpy"}:
-        # For large tables with a where clause, the cpp_numpy backend (which resolves
-        # indices first and then reads) can be very slow due to scattered IO.
-        # We skip it in 'auto' mode if we think the pushdown scanner will be faster.
-        skip_cpp_numpy = False
-        if backend == "auto" and where is not None:
-            # Always skip cpp_numpy when a where clause is provided in auto mode.
-            # Scattered index-based reads are extremely slow compared to full-table reads
-            # (for small tables) or the C++ pushdown scanner (for large tables).
-            skip_cpp_numpy = True
-
-        if not skip_cpp_numpy:
-            single = _read_cpp_numpy_table(
-                path=path,
-                hdu=hdu,
-                columns=columns,
-                row_slice=row_slice,
-                rows=rows,
-                where=where,
-                mmap=mmap,
-                decode_bytes=decode_bytes,
-                encoding=encoding,
-                strip=strip,
-                include_fits_metadata=include_fits_metadata,
-                apply_fits_nulls=apply_fits_nulls,
-            )
-            if single is not None:
-                return single
-
-    if where is not None:
-        # Hybrid strategy: for small-to-medium tables, reading the full projected table
-        # into Arrow and then filtering is often faster than the pushdown scanner
-        # (which has higher per-batch overhead and IPC costs).
-
-        import torchfits
-
-        header_ok = False
-        hdr: Mapping[str, Any] = {}
-        n_rows = 0
-        try:
-            hdr = torchfits.get_header(path, hdu)
-            n_rows = int(hdr.get("NAXIS2", 0))
-            header_ok = True
-        except Exception:
-            # Without NAXIS2 / TFIELDS we cannot safely choose mmap pushdown (see below).
-            n_rows = 0
-
-        is_vla_table = _fits_header_table_has_vla(hdr) if header_ok else False
-        vla_in_projection = (
-            _fits_header_selected_includes_vla(hdr, columns) if header_ok else True
-        )
-        # read_fits_table_filtered mmap gather skips P/Q columns silently; never use it when
-        # the caller expects VLA data. Without header metadata, skip pushdown as well.
-        cpp_pushdown_safe = header_ok and not vla_in_projection
-
-        # Default threshold is 100,000 rows, but lower for VLA tables (heap I/O dominates).
-        default_threshold = 1000 if is_vla_table else 100000
-        threshold = int(
-            os.environ.get("TORCHFITS_TABLE_SCANNER_THRESHOLD", str(default_threshold))
-        )
-
-        use_arrow_where_first = (
-            n_rows <= threshold or backend == "torch" or not cpp_pushdown_safe
-        )
-
-        if use_arrow_where_first:
-            base = read(
-                path,
-                hdu=hdu,
-                columns=columns,
-                row_slice=row_slice,
-                where=None,
-                batch_size=batch_size,
-                mmap=mmap,
-                decode_bytes=decode_bytes,
-                encoding=encoding,
-                strip=strip,
-                include_fits_metadata=include_fits_metadata,
-                apply_fits_nulls=apply_fits_nulls,
-                backend="cpp_numpy" if backend == "auto" else backend,
-            )
-            mask = _where_mask_for_table(base, where)
-            if len(mask) == 0 or pa.compute.sum(mask).as_py() == 0:
-                return base.slice(0, 0)
-            return base.filter(mask)
-
-        # For larger tables, try fast path: Predicate Pushdown (C++ scanner)
-        import torchfits._C as cpp
-
-        if hasattr(cpp, "read_fits_table_filtered"):
-            filters = _compile_where_to_simple_predicates(where)
-            if filters is not None:
-                # Use fast path
-                try:
-                    # columns=None in C++ means all columns? No, usually means return empty?
-                    # read_columns_mmap checks empty.
-                    # If columns is None here, we need to fetch all columns from header?
-                    # Or pass empty list?
-                    # If columns is None, we need schema to know ALL columns.
-                    # Better to let fallback handle 'columns=None' or fetch schema first.
-                    # But fetching schema defeats the purpose of speed if not careful.
-
-                    target_cols = columns
-                    if target_cols is None:
-                        # Fetch all column names quickly
-                        schema_ = schema(
-                            path, hdu=hdu, backend="cpp_numpy"
-                        )  # Minimal read?
-                        target_cols = list(schema_.names)
-
-                    data_dict = cpp.read_fits_table_filtered(
-                        path, hdu, target_cols, filters
-                    )
-
-                    # Convert to Arrow Table
-                    pushdown_tforms = (
-                        _column_tforms_for_decode(path, hdu, set(target_cols))
-                        if decode_bytes
-                        else None
-                    )
-                    arrays = []
-                    names_out = []
-                    for name in target_cols:
-                        if name in data_dict:
-                            # Convert tensor to arrow
-                            val = data_dict[name]
-                            if isinstance(val, torch.Tensor):
-                                # Ensure cpu/contiguous
-                                if val.device.type != "cpu":
-                                    val = val.cpu()
-                                if not val.is_contiguous():
-                                    val = val.contiguous()
-                                arr = _numpy_to_arrow_array(
-                                    pa,
-                                    val.numpy(),
-                                    decode_bytes,
-                                    encoding,
-                                    strip,
-                                    fits_tform=pushdown_tforms.get(name)
-                                    if pushdown_tforms
-                                    else None,
-                                )
-                                arrays.append(arr)
-                                names_out.append(name)
-
-                    if not arrays:
-                        return pa.table({})
-                    return pa.Table.from_arrays(arrays, names=names_out)
-
-                except Exception:
-                    # If fast path fails (e.g. type mismatch), fall back to slow path
-                    pass
-
-        base = read(
-            path,
+    if backend in {"auto", "cpp_numpy"} and not should_skip_cpp_numpy_for_where(
+        backend, where
+    ):
+        single = _read_cpp_numpy_table(
+            path=path,
             hdu=hdu,
             columns=columns,
             row_slice=row_slice,
             rows=rows,
-            where=None,
-            batch_size=batch_size,
+            where=where,
             mmap=mmap,
             decode_bytes=decode_bytes,
             encoding=encoding,
             strip=strip,
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
-            backend="cpp_numpy" if backend == "auto" else backend,
         )
-        mask = _where_mask_for_table(base, where)
-        if len(mask) == 0 or pa.compute.sum(mask).as_py() == 0:
-            return base.slice(0, 0)
-        return base.filter(mask)
+        if single is not None:
+            return single
 
-    scan_backend = backend
-    batches = list(
-        scan(
-            path,
+    if where is not None:
+        return _read_table_with_where(
+            pa=pa,
+            path=path,
             hdu=hdu,
             columns=columns,
             row_slice=row_slice,
+            rows=rows,
+            where=where,
             batch_size=batch_size,
             mmap=mmap,
             decode_bytes=decode_bytes,
@@ -1831,12 +1674,23 @@ def read(
             strip=strip,
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
-            backend=scan_backend,
+            backend=backend,
         )
+
+    return _read_table_from_scan_batches(
+        path=path,
+        hdu=hdu,
+        columns=columns,
+        row_slice=row_slice,
+        batch_size=batch_size,
+        mmap=mmap,
+        decode_bytes=decode_bytes,
+        encoding=encoding,
+        strip=strip,
+        include_fits_metadata=include_fits_metadata,
+        apply_fits_nulls=apply_fits_nulls,
+        backend=backend,
     )
-    if not batches:
-        return pa.table({})
-    return pa.Table.from_batches(batches)
 
 
 def schema(

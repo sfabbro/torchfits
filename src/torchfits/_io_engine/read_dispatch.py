@@ -10,6 +10,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from ..fits_schema import bit_column_names, unsigned_column_dtypes_from_header
 from ..hdu import Header
 from .options import ReadOptions
 from .caches import (
@@ -25,56 +26,13 @@ from .caches import (
 def _bit_columns_from_header(header: Header | None) -> set[str]:
     if not header:
         return set()
-    try:
-        n_fields = int(header.get("TFIELDS", 0))
-    except Exception:
-        return set()
-    out: set[str] = set()
-    for idx in range(1, n_fields + 1):
-        name = header.get(f"TTYPE{idx}")
-        tform = header.get(f"TFORM{idx}")
-        if not isinstance(name, str) or not isinstance(tform, str):
-            continue
-        text = tform.strip().upper()
-        pos = 0
-        while pos < len(text) and text[pos].isdigit():
-            pos += 1
-        if pos < len(text) and text[pos] == "X":
-            out.add(name)
-    return out
+    return bit_column_names(header)
 
 
 def _unsigned_columns_from_header(header: Header | None) -> dict[str, torch.dtype]:
     if not header:
         return {}
-    try:
-        n_fields = int(header.get("TFIELDS", 0))
-    except Exception:
-        return {}
-    out: dict[str, torch.dtype] = {}
-    targets = {
-        ("I", 32768.0): torch.uint16,
-        ("J", 2147483648.0): torch.uint32,
-    }
-    for idx in range(1, n_fields + 1):
-        name = header.get(f"TTYPE{idx}")
-        tform = header.get(f"TFORM{idx}")
-        if not isinstance(name, str) or not isinstance(tform, str):
-            continue
-        text = tform.strip().upper()
-        pos = 0
-        while pos < len(text) and text[pos].isdigit():
-            pos += 1
-        code = text[pos] if pos < len(text) else ""
-        try:
-            tscal = float(header.get(f"TSCAL{idx}", 1.0))
-            tzero = float(header.get(f"TZERO{idx}", 0.0))
-        except Exception:
-            continue
-        target = targets.get((code, tzero))
-        if target is not None and tscal == 1.0:
-            out[name] = target
-    return out
+    return unsigned_column_dtypes_from_header(header)
 
 
 def _coerce_bit_table_columns(table_data: Any, header: Header | None) -> Any:

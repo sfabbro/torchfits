@@ -2,7 +2,7 @@
 
 This module owns FITS file reads, writes, HDU operations, header extraction,
 checksum helpers, subset reads, batch reads, table streaming, and FITS cache
-controls. Broader convenience surfaces remain in :mod:`torchfits.io`.
+controls. Arrow-native table APIs live in :mod:`torchfits.table`.
 """
 
 from __future__ import annotations
