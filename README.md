@@ -40,6 +40,35 @@ FITS files with header round-trip coverage.
 fitsio core workflow parity, Astropy common workflow parity, selected CFITSIO
 backend behavior, and explicit non-goals. See [docs/parity.md](docs/parity.md).
 
+## What's New in 0.5.0
+
+0.5.0 is a focused FITS I/O release: tensor-native reads/writes, Arrow tables with
+C++ predicate pushdown, mmap in-place table updates (BIT, complex, fixed-width strings),
+unsigned integer conventions, compressed-image parity, and test-backed compatibility
+with common `astropy.io.fits` and `fitsio` workflows.
+
+Recent beta improvements:
+
+- Shared FITS table schema parsing (`fits_schema`) — one code path for TFORM/VLA/string/bit/unsigned columns across table, HDU, and read dispatch.
+- Smarter `where=` reads — automatic choice between Arrow filter and C++ pushdown based on table size and column layout.
+- Cleaner cache boundaries — table handle caches live in `_table.cache` without circular imports through `io`.
+
+Full history: [docs/changelog.md](docs/changelog.md). Engineering decomposition plan for 0.6.0: [docs/roadmap.md](docs/roadmap.md).
+
+## Performance
+
+Median wall-clock from the lab exhaustive benchmark suite (`0.5.0b3` snapshot, H100 CUDA where noted). See [docs/benchmarks.md](docs/benchmarks.md) for methodology and reproducible commands.
+
+| Case | torchfits | astropy | Speedup |
+|---|---:|---:|---:|
+| Large float32 image read (16 MB, CPU) | 4.26 ms | 15.19 ms | **3.6×** |
+| Same read @ CUDA | 3.61 ms | 16.16 ms | **4.6×** |
+| Compressed Rice image (CPU) | 9.20 ms | 29.33 ms | **3.2×** |
+| 50× repeated 100×100 cutouts (CPU) | 5.53 ms | 80.93 ms | **15.5×** |
+| Table read (100k rows, 8 cols) | 93 μs | 6.33 ms | **68×** |
+
+Tables and GPU transports are CPU-resident in all backends today; GPU rows measure host decode + H2D copy, not disk→GPU bypass.
+
 ## Install
 
 ```bash

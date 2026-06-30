@@ -18,9 +18,11 @@ Finalize the entry in `docs/changelog.md`. Follow [Keep a Changelog](https://kee
 
 ```bash
 pixi run test
+pixi run release-gate
 ```
 
-All tests must pass.
+All tests must pass. `release-gate` runs upstream parity smoke tests, docs
+integrity checks, and the runnable example scripts.
 
 ## 4. Correctness gates
 

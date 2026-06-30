@@ -166,7 +166,28 @@ Supported operators include `=`, `!=`, `<`, `>`, `<=`, `>=`, `AND`, `OR`,
 
 ```python
 torchfits.read("cat.fits", hdu=1, where="MAG_G < 20 AND DEC > 0")
+torchfits.table.read("cat.fits", hdu=1, where="MAG_G < 20", backend="auto")
 ```
+
+### Table read backends
+
+`torchfits.table.read` and `scan` accept `backend=`:
+
+| Backend | Behavior |
+|---|---|
+| `"auto"` (default) | Prefer fast C++ numpy path; for `where=`, choose Arrow filter vs C++ pushdown from table size and column layout |
+| `"cpp_numpy"` | C++ row/table reads materialized through NumPy → Arrow |
+| `"torch"` | `torchfits.stream_table` chunked path |
+
+Public constant: `torchfits.table.TABLE_BACKENDS`.
+
+Environment tuning:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `TORCHFITS_TABLE_SCANNER_THRESHOLD` | `100000` (or `1000` for VLA tables) | Row count below which `where=` uses read-then-filter instead of C++ pushdown |
+| `TORCHFITS_TABLE_HANDLE_CACHE` | `1` | Set `0` to disable LRU cache of open FITS file handles |
+| `TORCHFITS_TABLE_READER_CACHE` | `1` | Set `0` to disable cached `TableReader` instances per `(path, hdu)` |
 
 ## Batch And Cache Utilities
 

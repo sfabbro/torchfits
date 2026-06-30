@@ -28,6 +28,7 @@ from ._table_engine import (
     should_skip_cpp_numpy_for_where,
     validate_table_backend,
 )
+from ._table_engine.backend_policy import TABLE_BACKENDS
 
 logger = logging.getLogger(__name__)
 
@@ -1632,6 +1633,10 @@ def read(
     """Read a FITS table into an Arrow Table.
 
     FITS character columns are decoded to Python strings by default (`decode_bytes=True`).
+
+    With ``where=``, the reader picks between loading the projected table and filtering
+    in Arrow vs C++ predicate pushdown (see ``TORCHFITS_TABLE_SCANNER_THRESHOLD`` and
+    ``backend=`` in :doc:`api`). Valid backends: see ``TABLE_BACKENDS``.
     """
     validate_table_backend(backend)
     pa = _require_pyarrow()

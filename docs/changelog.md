@@ -5,7 +5,7 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0b4] - 2026-06-30
 
 ### Changed
 
@@ -13,10 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `table.read` no longer recurses for `where=`; strategy lives in `_table_engine.read_policy`.
 - Table C++ handle caches moved to `_table.cache`; I/O cache invalidation no longer depends on
   importing `torchfits.table`.
+- README highlights 0.5.0 features and published benchmark speedups; API docs document table
+  backends and `where=` tuning environment variables.
 
 ### Added
 
-- Unit tests for `fits_schema` and table where-read policy.
+- Unit tests for `fits_schema`, table where-read policy, and runnable example scripts.
+- Public `torchfits.table.TABLE_BACKENDS` constant.
+- `pixi run release-gate` task matching the release checklist parity/docs/examples gates.
 
 ## [0.5.0b3] - 2026-06-30
 
@@ -133,6 +137,7 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
+[0.5.0b4]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b4
 [0.5.0b3]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b3
 [0.5.0b2]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b2
 [0.5.0b1]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b1
