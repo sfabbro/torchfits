@@ -115,13 +115,21 @@ def clear_cache_subsystem(
         cpp=policy["cpp"],
         cpp_module=cpp_module,
     )
-    if policy["table_handles"] and table_module is not None:
+    if policy["table_handles"]:
         try:
-            close_handles = getattr(table_module, "_close_all_cached_handles", None)
-            if close_handles is not None:
-                close_handles()
+            from .._table.cache import close_all_cached_handles
+
+            close_all_cached_handles()
         except Exception:
-            pass
+            if table_module is not None:
+                try:
+                    close_handles = getattr(
+                        table_module, "_close_all_cached_handles", None
+                    )
+                    if close_handles is not None:
+                        close_handles()
+                except Exception:
+                    pass
 
 
 def path_signature(path: str) -> tuple[int, int, int] | None:

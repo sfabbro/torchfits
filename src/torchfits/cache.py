@@ -234,11 +234,9 @@ def clear_cache():
     except Exception:
         pass
     try:
-        from . import table as table_api
+        from ._table.cache import close_all_cached_handles
 
-        close_handles = getattr(table_api, "_close_all_cached_handles", None)
-        if close_handles is not None:
-            close_handles()
+        close_all_cached_handles()
     except Exception:
         pass
 

@@ -18,7 +18,7 @@ from .hdu_api import open_hdulist
 
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
-    _invalidate_io_path_caches(path, table)
+    _invalidate_io_path_caches(path)
 
 
 def _host_tensor_for_fits_write(tensor: Tensor) -> Tensor:

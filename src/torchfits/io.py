@@ -15,7 +15,6 @@ from typing import Any
 
 import torchfits._C as cpp
 
-from . import table
 from ._io_engine.batch import (
     get_batch_info as _get_batch_info_impl,
     read_batch as _read_batch_impl,
@@ -85,7 +84,7 @@ def read_fast(*args: Any, **kwargs: Any):
 
 
 def _invalidate_path_caches(path: str) -> None:
-    _invalidate_path_caches_impl(path, table)
+    _invalidate_path_caches_impl(path)
 
 
 def _cpp_module():
@@ -331,16 +330,12 @@ def cache_subsystem_policy(name: str) -> dict[str, bool]:
 
 
 def clear_cache_subsystem(name: str) -> None:
-    _clear_cache_subsystem_impl(name, table_module=table)
+    _clear_cache_subsystem_impl(name)
 
 
 def _shutdown_fits_io_caches() -> None:
     cpp_module = sys.modules.get("torchfits._C")
-    _clear_cache_subsystem_impl(
-        "all",
-        table_module=table,
-        cpp_module=cpp_module,
-    )
+    _clear_cache_subsystem_impl("all", cpp_module=cpp_module)
 
 
 atexit.register(_shutdown_fits_io_caches)

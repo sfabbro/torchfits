@@ -58,6 +58,63 @@ choices, not work items to be closed:
 - Consider additional CFITSIO-backed capabilities only when they can be exposed
   through a small PyTorch-native API and covered by tests.
 
+## 0.6.0 — core module decomposition
+
+Engineering milestone after the 0.5.0 beta quick wins (shared `fits_schema`, where-read
+policy, table handle cache split). Goal: keep behavior stable while making the Python I/O
+layer maintainable — no file in the hot path should sprawl past ~1k lines without a
+compelling reason.
+
+### Priority 1 — split `torchfits.table` into `_table/`
+
+`table.py` is still ~3.7k lines. Decompose into focused modules and keep
+`torchfits.table` as a thin re-export surface:
+
+| Module | Owns |
+|---|---|
+| `_table/cache.py` | C++ FITS file / TableReader LRU caches *(done in 0.5.0)* |
+| `_table/schema.py` | Thin wrappers over `fits_schema` for path-based metadata |
+| `_table/arrow_convert.py` | numpy/tensor/VLA/complex → Arrow conversion |
+| `_table/read.py` | `read`, `scan`, `_read_cpp_numpy_table`, batch assembly |
+| `_table/where.py` | where masks, C++ pushdown, `_filter_table_with_where` |
+| `_table/mutate.py` | insert/delete/update columns and rows, HDU rewrite |
+| `_table/interop.py` | pandas, polars, duckdb, parquet helpers |
+
+**Exit criteria:** each module ≤ ~600 lines; public `torchfits.table` API unchanged;
+existing table tests pass without modification.
+
+### Priority 2 — tame `read_dispatch.read_unified`
+
+`read_dispatch.py` crossed 1k lines via fast-path accretion. Refactor to:
+
+- `ReadDeps` dataclass (replace 18 injected callbacks)
+- Explicit strategy list: batch paths → CPU fast → generic fast → fallback
+- Each strategy returns `NotApplicable` or a result; no nested `recursive_read` closure
+
+**Exit criteria:** `read_unified` ≤ ~150 lines; no behavior change in image/table/batch reads.
+
+### Priority 3 — unify table read surfaces
+
+Today there are three paths to table bytes: `torchfits.table.read` (Arrow),
+`torchfits.read(..., mode="table")` (tensors), and `TableHDU` / `TableHDURef` (HDU workflow).
+Pick two canonical pipelines (Arrow + tensor) that share the same C++ reader layer.
+
+**Exit criteria:** documented ownership boundary in `docs/api.md`; no duplicated schema
+walks outside `fits_schema`.
+
+### Priority 4 — C++ table read consolidation *(optional, high effort)*
+
+Replace the seven-deep `_read_cpp_numpy_table` API fallback chain with one C++
+`read_table_chunk(...)` entry that picks mmap vs buffered vs row-ranges internally.
+
+**Exit criteria:** one Python call site for table chunk reads; fallback chain deleted.
+
+### Out of scope for 0.6.0
+
+- Full CFITSIO API parity
+- GPU FITS writes
+- Rewriting `TableHDU.__init__` type coercion (separate hardening pass)
+
 ## Release gate
 
 A release may claim parity only for rows that have one of:
