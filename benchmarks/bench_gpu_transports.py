@@ -105,9 +105,7 @@ def run_gpu_transport_rows(
 
         rows: list[dict[str, Any]] = []
         mmap_target = "on" if use_mmap else "off"
-        transport = (
-            "disk\u2192RAM\u2192GPU" if use_mmap else "disk\u2192CPU\u2192GPU"
-        )
+        transport = "disk\u2192RAM\u2192GPU" if use_mmap else "disk\u2192CPU\u2192GPU"
 
         # 1. Full image reads
         for name, path in sorted(files.items()):

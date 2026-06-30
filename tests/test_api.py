@@ -256,10 +256,10 @@ class TestMainAPI:
 
         with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
             try:
-                torchfits.write_tensor(
-                    f.name, data, header=header, overwrite=True
+                torchfits.write_tensor(f.name, data, header=header, overwrite=True)
+                result, hdr = torchfits.read_tensor(
+                    f.name, return_header=True, mmap=False
                 )
-                result, hdr = torchfits.read_tensor(f.name, return_header=True, mmap=False)
                 torch.testing.assert_close(result, data)
                 assert str(hdr["OBJECT"]).strip() == "WRITE_TENSOR"
             finally:
