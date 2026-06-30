@@ -1,4 +1,10 @@
+"""
+Example: PyTorch Dataset pattern using read_tensor and get_header.
+"""
+
 import os
+import shutil
+import tempfile
 
 import numpy as np
 import torch
@@ -7,126 +13,77 @@ from torch.utils.data import DataLoader, Dataset
 
 import torchfits
 
-# --- Synthetic Data Generation (for demonstration purposes) ---
 
-
-def create_dummy_fits(data_dir, num_files=10, size=(64, 64)):
-    """Creates a set of dummy FITS files for the example."""
+def _create_dummy_fits(
+    data_dir: str, num_files: int = 10, size: tuple[int, int] = (64, 64)
+) -> None:
     os.makedirs(data_dir, exist_ok=True)
     for i in range(num_files):
-        data = np.random.rand(*size).astype(np.float32)  # Random image data
+        data = np.random.rand(*size).astype(np.float32)
         hdu = fits.PrimaryHDU(data)
-        hdu.header["LABEL"] = i % 2  # Simple binary labels: 0 or 1
-        filename = os.path.join(data_dir, f"image_{i:03d}.fits")
-        hdu.writeto(filename, overwrite=True)
+        hdu.header["LABEL"] = i % 2
+        hdu.writeto(os.path.join(data_dir, f"image_{i:03d}.fits"), overwrite=True)
 
 
-# --- PyTorch Dataset ---
+class FitsImageDataset(Dataset):
+    """Minimal Dataset: header for labels, read_tensor for pixels."""
 
-
-class SimpleFitsDataset(Dataset):
-    def __init__(
-        self, data_dir, cache_capacity=0, device="cpu"
-    ):  # Add cache_capacity and device
-        self.data_dir = data_dir
-        self.file_list = []
-        self.labels = []
-        self.cache_capacity = cache_capacity
+    def __init__(self, data_dir: str, device: str = "cpu") -> None:
         self.device = device
+        self.files: list[str] = []
+        self.labels: list[int] = []
 
-        # Find all FITS files in the directory and extract labels
-        for filename in os.listdir(data_dir):
-            if filename.endswith(".fits"):
-                filepath = os.path.join(data_dir, filename)
-                self.file_list.append(filepath)
-                # Get label from header (more robust than filename parsing)
-                try:
-                    header = torchfits.get_header(filepath, hdu=0)  # Primary HDU is 0
-                    label = int(header["LABEL"])
-                    self.labels.append(label)
-                except (RuntimeError, KeyError) as e:  # Catch errors
-                    print(f"Warning: Skipping file {filename} due to error: {e}")
-                    # In a real dataset, you'd probably have a better way
-                    # to handle missing/corrupted files.
-                    continue  # Skip if error.
+        for name in sorted(os.listdir(data_dir)):
+            if not name.endswith(".fits"):
+                continue
+            path = os.path.join(data_dir, name)
+            header = torchfits.get_header(path, hdu=0)
+            self.files.append(path)
+            self.labels.append(int(header["LABEL"]))
 
-        # Sort files and labels (for reproducibility)
-        self.file_list, self.labels = zip(*sorted(zip(self.file_list, self.labels)))
-        self.file_list = list(self.file_list)
-        self.labels = list(self.labels)
+    def __len__(self) -> int:
+        return len(self.files)
 
-    def __len__(self):
-        return len(self.file_list)
-
-    def __getitem__(self, idx):
-        filename = self.file_list[idx]
-        label = self.labels[idx]
-
-        try:
-            data, _ = torchfits.read(
-                filename,
-                cache_capacity=self.cache_capacity,
-                device=self.device,
-                return_header=True,
-            )  # Pass cache and device
-            # Add a channel dimension if it's a 2D image (for consistency)
-            if data.ndim == 2:
-                data = data.unsqueeze(0)  # [H, W] -> [1, H, W]
-
-            return data, torch.tensor(label, dtype=torch.long)
-
-        except RuntimeError as e:
-            print(f"Error reading {filename}: {e}")
-            return None  # Return None if there's an error
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        image = torchfits.read_tensor(self.files[idx], hdu=0, device=self.device)
+        if image.ndim == 2:
+            image = image.unsqueeze(0)  # [H, W] -> [1, H, W]
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        return image, label
 
 
-# --- Collate Function (to handle potential None values) ---
-def collate_fn(batch):
-    # Remove any None values from the batch (caused by read errors)
-    batch = [item for item in batch if item is not None]
-    if not batch:  # Handle the case where *all* items in a batch are None
-        return torch.Tensor(), torch.Tensor()
-    return torch.utils.data.default_collate(batch)
+def main() -> None:
+    data_dir = tempfile.mkdtemp(prefix="torchfits_dataset_")
+    try:
+        _create_dummy_fits(data_dir, num_files=8)
 
+        devices = ["cpu"]
+        if torch.cuda.is_available():
+            devices.append("cuda")
 
-# --- Main Script ---
-
-
-def main():
-    data_dir = "data_simple_fits"
-    create_dummy_fits(data_dir)  # Generate the synthetic data
-
-    # --- Demonstrate different cache capacities and devices ---
-    for capacity in [0, 10]:  # Test with and without caching
-        for device in ["cpu", "cuda"] if torch.cuda.is_available() else ["cpu"]:
-            print(f"\n--- Cache Capacity: {capacity}, Device: {device} ---")
-
-            # Create dataset and dataloader
-            dataset = SimpleFitsDataset(
-                data_dir, cache_capacity=capacity, device=device
-            )
-            dataloader = DataLoader(
+        for device in devices:
+            print(f"\n--- device={device} ---")
+            dataset = FitsImageDataset(data_dir, device=device)
+            loader = DataLoader(
                 dataset,
                 batch_size=4,
                 shuffle=True,
                 num_workers=0,
-                collate_fn=collate_fn,
                 pin_memory=(device == "cuda"),
             )
-
-            # Iterate through a few batches
-            print("Iterating through DataLoader:")
-            for i, (images, labels) in enumerate(dataloader):
-                # The tensors are already in the correct device, because of torchfits.
-                if images.numel() == 0:
-                    continue
-                print(f"  Batch {i}:")
+            for i, (images, labels) in enumerate(loader):
                 print(
-                    f"    Image shape: {images.shape}, Device: {images.device}"
-                )  # Show device
-                print(f"    Labels: {labels}, Device: {labels.device}")
-                if i == 2:
+                    f"  batch {i}: images={images.shape} on {images.device}, "
+                    f"labels={labels.tolist()}"
+                )
+                if i >= 1:
                     break
+
+        # Batch read multiple files at once (useful for inference pipelines)
+        batch = torchfits.read_batch(dataset.files[:4], hdu=0)
+        print(f"\nread_batch: {len(batch)} images, first shape={batch[0].shape}")
+    finally:
+        shutil.rmtree(data_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

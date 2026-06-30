@@ -1,45 +1,47 @@
 # Examples
 
-Runnable scripts covering the main torchfits workflows. Each script is self-contained and creates temporary FITS files as needed.
+Runnable scripts covering the main torchfits workflows. Each script is self-contained, creates temporary FITS files as needed, and cleans up after itself.
 
-## Images
+## Arrays and Tensors
 
 | Script | What it demonstrates |
 |---|---|
-| [`example_image.py`](../examples/example_image.py) | Read a FITS image into a tensor, inspect the header |
-| [`example_image_cutouts.py`](../examples/example_image_cutouts.py) | Extract sub-regions with `read_subset` (0-based pixel bounds) |
-| [`example_image_cube.py`](../examples/example_image_cube.py) | Read and slice 3D data cubes (e.g. RA, Dec, velocity) |
-| [`example_image_mef.py`](../examples/example_image_mef.py) | Work with multi-extension FITS files (primary + image + table HDUs) |
+| [`example_image.py`](../examples/example_image.py) | `read_tensor`, `read`, `get_header`, and `write_tensor` round-trip |
+| [`example_image_cutouts.py`](../examples/example_image_cutouts.py) | `read_subset`, tensor slicing, and `open_subset_reader` |
+| [`example_image_cube.py`](../examples/example_image_cube.py) | 3D cubes with `read_tensor` and tensor slicing |
+| [`example_image_mef.py`](../examples/example_image_mef.py) | Multi-extension files with `open`, `read_hdus`, and table `filter` |
 
 ## Tables
 
 | Script | What it demonstrates |
 |---|---|
-| [`example_table.py`](../examples/example_table.py) | Read binary tables into tensors, access columns, write back |
-| [`example_table_interop.py`](../examples/example_table_interop.py) | Variable-length array columns, interop with [Astropy](https://www.astropy.org/) |
-| [`example_polars.py`](../examples/example_polars.py) | Table workflows with [Polars](https://pola.rs/) and [Apache Arrow](https://arrow.apache.org/) |
-| [`example_table_recipes.py`](../examples/example_table_recipes.py) | Arrow scanner, [Polars](https://pola.rs/) lazy frames, and [DuckDB](https://duckdb.org/) SQL queries on FITS tables |
+| [`example_table.py`](../examples/example_table.py) | `read_table`, `table.read` with `where=`, `stream_table`, and `table.write` |
+| [`example_table_interop.py`](../examples/example_table_interop.py) | VLA columns and `to_pandas` / `to_arrow` / `to_polars` conversion |
+| [`example_polars.py`](../examples/example_polars.py) | Direct FITS → Polars via `table.to_polars` and `table.to_polars_lazy` |
+| [`example_table_recipes.py`](../examples/example_table_recipes.py) | Arrow scanner, Polars lazy frames, and DuckDB SQL on FITS tables |
 
 ## PyTorch dataset pattern
 
 | Script | What it demonstrates |
 |---|---|
-| [`example_image_dataset.py`](../examples/example_image_dataset.py) | Minimal PyTorch `Dataset` using `torchfits.read` and `torchfits.get_header` |
+| [`example_image_dataset.py`](../examples/example_image_dataset.py) | PyTorch `Dataset` with `read_tensor`, `get_header`, and `read_batch` |
 
 ## Running
+
+Run every example (including optional-deps skips):
+
+```bash
+pixi run python examples/test_examples.py
+```
+
+Or run one script directly:
 
 ```bash
 pixi run python examples/example_image.py
 ```
 
-Or directly:
+Some examples require optional dependencies (Polars, DuckDB). They exit cleanly with a message when those packages are missing. Install them with:
 
 ```bash
-python examples/example_image.py
-```
-
-Some examples require optional dependencies (e.g. Polars, DuckDB, Astropy). Install them with:
-
-```bash
-pip install torchfits[examples]
+pip install polars duckdb pyarrow
 ```

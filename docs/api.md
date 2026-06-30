@@ -11,14 +11,15 @@ training transforms. Those domains are out of scope for torchfits.
 | Goal | Entry point |
 |---|---|
 | Read image or table | `torchfits.read(path, hdu=..., return_header=True)` |
-| Read image only | `torchfits.read_image(path, hdu=0, mmap=True)` |
+| Read N-D array/tensor | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
 | Read table only | `torchfits.read_table(path, hdu=1, columns=[...])` |
 | Row slice | `torchfits.read_table_rows(path, hdu=1, start_row=1, num_rows=N)` |
 | Cutout | `torchfits.read_subset(path, hdu, x1, y1, x2, y2)` |
-| Multi-HDU images | `torchfits.read_hdus(path, hdus=[0, 1, 2])` |
+| Multi-HDU arrays | `torchfits.read_hdus(path, hdus=[0, 1, 2])` |
 | Repeated cutouts | `torchfits.open_subset_reader(path, hdu)` |
 | Stream table | `torchfits.stream_table(path, chunk_rows=10000)` |
-| Write | `torchfits.write(path, data, header=None, overwrite=False)` |
+| Write generic | `torchfits.write(path, data, header=None, overwrite=False)` |
+| Write tensor | `torchfits.write_tensor(path, tensor, header=None, overwrite=False)` |
 | Header only | `torchfits.get_header(path, hdu=0)` |
 | Multi-HDU handle | `with torchfits.open(path) as hdul: ...` |
 | Table with pushdown | `where=` parameter in `read` / `read_table` / `stream_table` |
@@ -41,10 +42,11 @@ Unified reader. Auto-detects image or table HDUs when `mode="auto"`.
 - `return_header=True`: returns `(data, Header)`.
 - `where`: SQL-style table predicate pushdown.
 
-### Image reads
+### Array and Tensor reads
 
 ```python
-image = torchfits.read_image("image.fits", hdu=0, device="cpu", mmap=True)
+# Read any N-dimensional array directly as a PyTorch Tensor
+data = torchfits.read_tensor("image.fits", hdu=0, device="cpu", mmap=True)
 # Apple Silicon: device="mps"; Linux NVIDIA: device="cuda"
 sci, wht, msk = torchfits.read_hdus("mef.fits", hdus=["SCI", "WHT", "MASK"])
 stamp = torchfits.read_subset("mosaic.fits", 0, 0, 0, 256, 256)
@@ -164,12 +166,13 @@ torchfits.clear_file_cache(data=True, handles=True, meta=True, cpp=True)
 torchfits.clear_cache()
 ```
 
-## Deprecated aliases (0.5.0b1)
+## Deprecated aliases (0.5.0b2)
 
 Still supported; prefer the canonical paths above:
 
 - `read_large_table` → `read_table` / `stream_table` / `table.scan`
-- `read_fast` → `read` / `read_image`
+- `read_fast` → `read` / `read_tensor`
+- `read_image` → `read_tensor`
 
 ## Limitations
 

@@ -459,13 +459,13 @@ def test_fitsio_unsigned_image_convention_matches_torchfits() -> None:
         assert fits_u32.dtype == np.uint32
 
         torch_u16 = torchfits.read(path.as_posix(), hdu=0)
-        torch_u16_image = torchfits.read_image(path.as_posix(), hdu=0)
+        torch_u16_tensor = torchfits.read_tensor(path.as_posix(), hdu=0)
         torch_u32 = torchfits.read(path.as_posix(), hdu="U32")
         assert torch_u16.dtype == torch.uint16
-        assert torch_u16_image.dtype == torch.uint16
+        assert torch_u16_tensor.dtype == torch.uint16
         assert torch_u32.dtype == torch.uint32
         assert torch_u16.tolist() == fits_u16.tolist()
-        assert torch_u16_image.tolist() == fits_u16.tolist()
+        assert torch_u16_tensor.tolist() == fits_u16.tolist()
         assert torch_u32.tolist() == fits_u32.tolist()
 
         batch = torchfits.read(path.as_posix(), hdu=[0, 1])

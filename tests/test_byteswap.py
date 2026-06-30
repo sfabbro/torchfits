@@ -107,7 +107,7 @@ def test_image_roundtrip_byteswap(name, np_dtype, torch_dtype, mmap):
     try:
         _write_image(path, data)
 
-        tensor = torchfits.read_image(path, mmap=mmap)
+        tensor = torchfits.read_tensor(path, mmap=mmap)
 
         assert tensor.dtype == torch_dtype, (
             f"Expected {torch_dtype}, got {tensor.dtype}"
@@ -140,7 +140,7 @@ def test_int16_boundary_values():
         _write_image(path, data)
 
         for mmap in (True, False):
-            tensor = torchfits.read_image(path, mmap=mmap)
+            tensor = torchfits.read_tensor(path, mmap=mmap)
             np.testing.assert_array_equal(
                 tensor.cpu().numpy(),
                 data,
@@ -168,7 +168,7 @@ def test_int32_boundary_values():
         _write_image(path, data)
 
         for mmap in (True, False):
-            tensor = torchfits.read_image(path, mmap=mmap)
+            tensor = torchfits.read_tensor(path, mmap=mmap)
             np.testing.assert_array_equal(
                 tensor.cpu().numpy(),
                 data,
@@ -292,7 +292,7 @@ def test_float32_special_values():
         _write_image(path, data)
 
         for mmap in (True, False):
-            tensor = torchfits.read_image(path, mmap=mmap)
+            tensor = torchfits.read_tensor(path, mmap=mmap)
             got = tensor.cpu().numpy()
 
             # Exact match for non-NaN values
@@ -323,7 +323,7 @@ def test_float64_special_values():
         _write_image(path, data)
 
         for mmap in (True, False):
-            tensor = torchfits.read_image(path, mmap=mmap)
+            tensor = torchfits.read_tensor(path, mmap=mmap)
             got = tensor.cpu().numpy()
 
             mask = ~np.isnan(data)
@@ -355,7 +355,7 @@ def test_int64_large_values():
         _write_image(path, data)
 
         for mmap in (True, False):
-            tensor = torchfits.read_image(path, mmap=mmap)
+            tensor = torchfits.read_tensor(path, mmap=mmap)
             np.testing.assert_array_equal(
                 tensor.cpu().numpy(), data, err_msg=f"mmap={mmap}: int64 mismatch"
             )

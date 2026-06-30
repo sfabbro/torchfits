@@ -192,8 +192,8 @@ class CPPBackendBenchmark:
                 result["torchfits_dtype"] = tf_last["tensor_dtype"]
 
                 def read_torchfits_specialized() -> torch.Tensor:
-                    # Direct/specialized image path.
-                    return torchfits.read_image(
+                    # Direct/specialized tensor path.
+                    return torchfits.read_tensor(
                         filepath,
                         hdu=hdu,
                         mmap=(not compressed),

@@ -43,18 +43,4 @@ struct FitsHandleGuard {
     }
 };
 
-class CacheManager {
-public:
-    static CacheManager& instance();
-
-    void set_memory_limit(size_t limit_mb);
-    void set_disk_cache_dir(const std::string& dir);
-    void clear_all();
-
-private:
-    CacheManager() = default;
-    size_t memory_limit_ = 0;
-    std::string disk_cache_dir_;
-};
-
 } // namespace torchfits

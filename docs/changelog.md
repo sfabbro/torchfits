@@ -5,6 +5,26 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0b2] - 2026-06-30
+
+### Fixed
+
+- Patched `fitstable` specialised column projection and row slicing benchmark errors due to invalid `policy` argument.
+- Cleaned up C++ build flags in `bench-gpu` to remove strict CUDA and Torch pins.
+- Audited C++ codebase for potential memory leaks, redundant hardware heuristics, and API bounds.
+
+### Added
+
+- Restored core FITS benchmarks from v0.3.2: ML DataLoader performance (`bench_ml_loader.py`) and GPU Memory usage/leak validator (`bench_gpu_memory.py`).
+- Added exhaustive progress print logging during benchmark execution.
+- Added persistent cutout / multi-cutout repeated read benchmarks (`SubsetReader` / `open_subset_reader`) for both CPU and GPU.
+- Added `read_tensor` for reading N-dimensional arrays (1D spectra, 2D images, 3D cubes, xD arrays) directly to a single PyTorch `Tensor`.
+- Added `write_tensor` as the specialized PyTorch-native writer for writing single PyTorch `Tensor`s directly to FITS files.
+
+### Deprecated
+
+- Deprecated `read_image` in favor of the more general and PyTorch-native `read_tensor`.
+
 ## [0.5.0b1] - 2026-06-29
 
 ### Changed
@@ -81,5 +101,6 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
+[0.5.0b2]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b2
 [0.5.0b1]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b1
 [0.3.2]: https://github.com/astroai/torchfits/releases/tag/v0.3.2

@@ -171,7 +171,43 @@ def read(
     )
 
 
+def read_tensor(
+    path: str,
+    hdu: int = 0,
+    device: str = "cpu",
+    mmap: bool = True,
+    handle_cache: bool = True,
+    fp16: bool = False,
+    bf16: bool = False,
+    raw_scale: bool = False,
+    return_header: bool = False,
+    fallback_get_header: Any = None,
+) -> Any:
+    """Read an N-dimensional array directly to a PyTorch Tensor."""
+    fallback = fallback_get_header if fallback_get_header is not None else get_header
+    return _read_image_impl(
+        path=path,
+        hdu=hdu,
+        device=device,
+        mmap=mmap,
+        handle_cache=handle_cache,
+        fp16=fp16,
+        bf16=bf16,
+        raw_scale=raw_scale,
+        return_header=return_header,
+        fallback_get_header=fallback,
+    )
+
+
 def read_image(*args: Any, **kwargs: Any):
+    """Deprecated alias for read_tensor."""
+    import warnings
+
+    warnings.warn(
+        "read_image is deprecated and will be removed in a future version. Use read_tensor instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     kwargs.setdefault("fallback_get_header", get_header)
     return _read_image_impl(*args, **kwargs)
 
@@ -215,6 +251,21 @@ def open(*args: Any, **kwargs: Any):
 
 def write(*args: Any, **kwargs: Any):
     return _write_impl(*args, **kwargs)
+
+
+def write_tensor(
+    path: str,
+    tensor: Any,
+    header: Any = None,
+    overwrite: bool = False,
+    compress: bool | str = False,
+) -> None:
+    """Write a single PyTorch Tensor directly to a FITS image extension."""
+    import torch
+
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError("tensor must be a torch.Tensor")
+    return write(path, tensor, header=header, overwrite=overwrite, compress=compress)
 
 
 def insert_hdu(*args: Any, **kwargs: Any):
@@ -355,6 +406,7 @@ __all__ = [
     "read_fast",
     "read_hdus",
     "read_image",
+    "read_tensor",
     "read_large_table",
     "read_subset",
     "read_table",
@@ -363,6 +415,7 @@ __all__ = [
     "stream_table",
     "verify_checksums",
     "write",
+    "write_tensor",
     "write_checksums",
     "IO_CACHE_SUBSYSTEMS",
     "_normalize_cpp_table_data",

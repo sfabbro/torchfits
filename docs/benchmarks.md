@@ -65,14 +65,12 @@ pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(sc
 
 ## I/O Transport × Backend
 
-> **GPU columns (`disk→GPU`, `disk→RAM→GPU`)** are populated from
-> `bench_gpu_transports.py` rows (metadata `io_transport`). On Apple Silicon
-> use `pixi run bench-mps` (`device=mps`); on Linux CUDA use
-> `pixi run -e bench-gpu bench-gpu`. CUDA columns for **0.5.0 final** are
-> validated on Linux; **0.5.0b1** ships MPS evidence from macOS runs.
+> **GPU transport benchmarks (`disk→RAM→GPU`)** are included for FITS images in `v0.5.0b2`, measured with CUDA.
+> Note that direct `disk→GPU` (e.g. GPUDirect Storage) is not supported by any of the Python FITS backends, and table GPU reading is not benchmarked.
+
 
 <!-- BENCH_IOPATH_BEGIN -->
-Source: `benchmarks_results/20260629_114056_gpu/results.csv` (MPS/CUDA GPU transport rows included.)
+Source: `benchmarks_results/exhaustive_0.5.0b2/results.csv` (MPS/CUDA GPU transport rows included.)
 Cell values are median wall-clock over all comparable OK rows in the
 `(domain × I/O transport × backend)` bucket; throughput is intentionally
 omitted because the cell aggregates heterogeneous payloads and would
@@ -85,18 +83,18 @@ aggregation rules.
 | I/O transport | `torchfits` (libcfitsio) | `astropy` | `fitsio` | `cfitsio` (direct) |
 |---|---:|---:|---:|---:|
 | `disk→CPU` | _no measured row (this run is mmap-on)_ | _no measured row (this run is mmap-on)_ | _no measured row (this run is mmap-on)_ | — (engine exposed under `torchfits`) |
-| `disk→RAM→CPU` | `0.13 ms` (n=249) | `0.80 ms` (n=211) | — (rows skipped under `strict_mmap_fairness`) | — (engine exposed under `torchfits`) |
-| `disk→GPU` | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ |
-| `disk→RAM→GPU` | `0.42 ms` (n=20) | _pending bench-gpu_ | `0.31 ms` (n=20) | _pending bench-gpu_ |
+| `disk→RAM→CPU` | `0.14 ms` (n=251) | `0.68 ms` (n=213) | — (rows skipped under `strict_mmap_fairness`) | — (engine exposed under `torchfits`) |
+| `disk→GPU` | — | — | — | — |
+| `disk→RAM→GPU` | `0.18 ms` (n=168) | `0.93 ms` (n=84) | `0.22 ms` (n=84) | — |
 
 ### FITS table I/O (fitstable)
 
 | I/O transport | `torchfits` (libcfitsio) | `astropy` | `fitsio` | `cfitsio` (direct) |
 |---|---:|---:|---:|---:|
 | `disk→CPU` | _no measured row (this run is mmap-on)_ | _no measured row (this run is mmap-on)_ | _no measured row (this run is mmap-on)_ | — (engine exposed under `torchfits`) |
-| `disk→RAM→CPU` | `0.12 ms` (n=70) | `5.08 ms` (n=126) | — (rows skipped under `strict_mmap_fairness`) | — (engine exposed under `torchfits`) |
-| `disk→GPU` | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ |
-| `disk→RAM→GPU` | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ | _pending bench-gpu_ |
+| `disk→RAM→CPU` | `0.10 ms` (n=140) | `3.77 ms` (n=126) | — (rows skipped under `strict_mmap_fairness`) | — (engine exposed under `torchfits`) |
+| `disk→GPU` | — | — | — | — |
+| `disk→RAM→GPU` | — | — | — | — |
 <!-- BENCH_IOPATH_END -->
 
 ### Notes on the layout
@@ -114,6 +112,352 @@ aggregation rules.
   `row_slice`, etc.) and payload sizes; treat the per-cell ms as a
   coarse representative number, not a precise benchmark.
 
+## Performance Highlights
+
+<!-- BENCH_HIGHLIGHTS_BEGIN -->
+The following table showcases median wall-clock execution times of key representative FITS benchmarks.
+In almost all core I/O paths, `torchfits` is significantly faster than standard astronomical tools, with extra performance wins from persistent handle caches and direct-to-device transfers.
+
+| Benchmark Case | Device | torchfits | torchfits (persistent) | astropy (via torch) | fitsio (via torch) | Win vs Astropy | Win vs fitsio |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Large Image Read (Float32 2D, 16.0 MB) | CPU | **4.04 ms** | 3.95 ms | 13.20 ms | — | **3.34x** | **—** |
+| Large Image Read (Float32 2D @ CUDA) | CUDA | **3.89 ms** | 3.21 ms | 13.49 ms | 5.65 ms | **4.20x** | **1.76x** |
+| Compressed Image Read (Rice, 1.1 MB) | CPU | **9.26 ms** | 9.19 ms | 28.31 ms | — | **3.08x** | **—** |
+| Compressed Image Read (Rice @ CUDA) | CUDA | **8.93 ms** | 8.92 ms | 28.15 ms | 9.20 ms | **3.16x** | **1.03x** |
+| Repeated Cutouts (50x 100x100) | CPU | **5.24 ms** | 4.90 ms | 40.46 ms | — | **8.26x** | **—** |
+| Table Read (100k rows, 8 cols, mixed) | CPU | **89.1 μs** | 94.6 μs | 5.73 ms | — | **64.32x** | **—** |
+| Varlen Table Read (100k rows, 3 cols) | CPU | **96.4 μs** | 101.7 μs | 2.98 ms | — | **30.91x** | **—** |
+<!-- BENCH_HIGHLIGHTS_END -->
+
+## Exhaustive Benchmark Results
+
+<!-- BENCH_FULL_TABLE_BEGIN -->
+The complete, un-cherrypicked list of all measured benchmark configurations.
+
+| Domain | Benchmark Case | Operation | Size | Device | torchfits | torchfits (persistent) | astropy (via torch) | fitsio (via torch) | Speedup vs Astropy | Speedup vs fitsio |
+|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| fits | compressed_gzip_1 | header_read | 1.29 MB | CPU | **—** | 163.1 μs | 2.05 ms | — | **12.57x** | **—** |
+| fits | compressed_gzip_1 | read_full | 1.29 MB | CPU | **16.20 ms** | 16.19 ms | 40.78 ms | — | **2.52x** | **—** |
+| fits | compressed_gzip_2 | header_read | 0.89 MB | CPU | **—** | 162.9 μs | 2.06 ms | — | **12.63x** | **—** |
+| fits | compressed_gzip_2 | read_full | 0.89 MB | CPU | **15.69 ms** | 15.63 ms | 66.47 ms | — | **4.25x** | **—** |
+| fits | compressed_hcompress_1 | header_read | 0.82 MB | CPU | **—** | 173.6 μs | 2.14 ms | — | **12.34x** | **—** |
+| fits | compressed_hcompress_1 | read_full | 0.82 MB | CPU | **30.90 ms** | 30.83 ms | 37.16 ms | — | **1.21x** | **—** |
+| fits | compressed_rice_1 | cutout_100x100 | 0.90 MB | CPU | **941.1 μs** | 933.1 μs | 9.04 ms | — | **9.69x** | **—** |
+| fits | compressed_rice_1 | header_read | 0.90 MB | CPU | **—** | 175.9 μs | 2.12 ms | — | **12.06x** | **—** |
+| fits | compressed_rice_1 | read_full | 0.90 MB | CPU | **9.26 ms** | 9.19 ms | 28.31 ms | — | **3.08x** | **—** |
+| fits | large_float32_1d | header_read | 3.82 MB | CPU | **—** | 93.5 μs | 587.7 μs | — | **6.29x** | **—** |
+| fits | large_float32_1d | read_full | 3.82 MB | CPU | **1.08 ms** | 1.04 ms | 1.89 ms | — | **1.82x** | **—** |
+| fits | large_float32_2d | header_read | 16.00 MB | CPU | **—** | 92.3 μs | 619.9 μs | — | **6.72x** | **—** |
+| fits | large_float32_2d | read_full | 16.00 MB | CPU | **4.04 ms** | 3.95 ms | 13.20 ms | — | **3.34x** | **—** |
+| fits | large_float64_1d | header_read | 7.63 MB | CPU | **—** | 91.2 μs | 583.0 μs | — | **6.39x** | **—** |
+| fits | large_float64_1d | read_full | 7.63 MB | CPU | **2.10 ms** | 2.12 ms | 3.14 ms | — | **1.50x** | **—** |
+| fits | large_float64_2d | header_read | 32.00 MB | CPU | **—** | 92.8 μs | 616.0 μs | — | **6.64x** | **—** |
+| fits | large_float64_2d | read_full | 32.00 MB | CPU | **11.42 ms** | 11.37 ms | 17.73 ms | — | **1.56x** | **—** |
+| fits | large_int16_1d | header_read | 1.91 MB | CPU | **—** | 86.1 μs | 586.3 μs | — | **6.81x** | **—** |
+| fits | large_int16_1d | read_full | 1.91 MB | CPU | **934.3 μs** | 911.6 μs | 1.25 ms | — | **1.37x** | **—** |
+| fits | large_int16_2d | header_read | 8.00 MB | CPU | **—** | 92.4 μs | 620.0 μs | — | **6.71x** | **—** |
+| fits | large_int16_2d | read_full | 8.00 MB | CPU | **3.38 ms** | 3.36 ms | 3.30 ms | — | **0.98x** | **—** |
+| fits | large_int32_1d | header_read | 3.82 MB | CPU | **—** | 90.4 μs | 585.6 μs | — | **6.48x** | **—** |
+| fits | large_int32_1d | read_full | 3.82 MB | CPU | **1.04 ms** | 1.02 ms | 1.89 ms | — | **1.85x** | **—** |
+| fits | large_int32_2d | header_read | 16.00 MB | CPU | **—** | 90.9 μs | 616.9 μs | — | **6.79x** | **—** |
+| fits | large_int32_2d | read_full | 16.00 MB | CPU | **3.99 ms** | 3.98 ms | 13.22 ms | — | **3.32x** | **—** |
+| fits | large_int64_1d | header_read | 7.63 MB | CPU | **—** | 89.3 μs | 583.0 μs | — | **6.53x** | **—** |
+| fits | large_int64_1d | read_full | 7.63 MB | CPU | **2.13 ms** | 2.12 ms | 3.13 ms | — | **1.47x** | **—** |
+| fits | large_int64_2d | header_read | 32.00 MB | CPU | **—** | 92.7 μs | 613.8 μs | — | **6.62x** | **—** |
+| fits | large_int64_2d | read_full | 32.00 MB | CPU | **11.54 ms** | 11.34 ms | 17.89 ms | — | **1.58x** | **—** |
+| fits | large_int8_1d | header_read | 0.96 MB | CPU | **—** | 97.7 μs | 640.8 μs | — | **6.56x** | **—** |
+| fits | large_int8_1d | read_full | 0.96 MB | CPU | **375.8 μs** | 383.9 μs | — | — | **—** | **—** |
+| fits | large_int8_2d | header_read | 4.00 MB | CPU | **—** | 96.9 μs | 690.4 μs | — | **7.12x** | **—** |
+| fits | large_int8_2d | read_full | 4.00 MB | CPU | **1.16 ms** | 1.17 ms | — | — | **—** | **—** |
+| fits | medium_float32_1d | header_read | 0.38 MB | CPU | **—** | 90.2 μs | 589.1 μs | — | **6.53x** | **—** |
+| fits | medium_float32_1d | read_full | 0.38 MB | CPU | **253.4 μs** | 220.5 μs | 758.6 μs | — | **3.44x** | **—** |
+| fits | medium_float32_2d | header_read | 4.00 MB | CPU | **—** | 92.3 μs | 615.8 μs | — | **6.67x** | **—** |
+| fits | medium_float32_2d | read_full | 4.00 MB | CPU | **1.13 ms** | 1.09 ms | 2.56 ms | — | **2.34x** | **—** |
+| fits | medium_float32_3d | header_read | 6.25 MB | CPU | **—** | 94.7 μs | 638.7 μs | — | **6.74x** | **—** |
+| fits | medium_float32_3d | read_full | 6.25 MB | CPU | **1.71 ms** | 1.66 ms | 2.79 ms | — | **1.68x** | **—** |
+| fits | medium_float64_1d | header_read | 0.77 MB | CPU | **—** | 90.2 μs | 586.7 μs | — | **6.50x** | **—** |
+| fits | medium_float64_1d | read_full | 0.77 MB | CPU | **322.1 μs** | 322.4 μs | 882.9 μs | — | **2.74x** | **—** |
+| fits | medium_float64_2d | header_read | 8.00 MB | CPU | **—** | 92.2 μs | 615.5 μs | — | **6.67x** | **—** |
+| fits | medium_float64_2d | read_full | 8.00 MB | CPU | **2.27 ms** | 2.27 ms | 3.36 ms | — | **1.48x** | **—** |
+| fits | medium_float64_3d | header_read | 12.51 MB | CPU | **—** | 94.0 μs | 644.2 μs | — | **6.85x** | **—** |
+| fits | medium_float64_3d | read_full | 12.51 MB | CPU | **3.39 ms** | 3.39 ms | 4.79 ms | — | **1.41x** | **—** |
+| fits | medium_int16_1d | header_read | 0.20 MB | CPU | **—** | 90.4 μs | 584.8 μs | — | **6.47x** | **—** |
+| fits | medium_int16_1d | read_full | 0.20 MB | CPU | **196.5 μs** | 200.7 μs | 678.5 μs | — | **3.45x** | **—** |
+| fits | medium_int16_2d | header_read | 2.01 MB | CPU | **—** | 91.8 μs | 613.7 μs | — | **6.69x** | **—** |
+| fits | medium_int16_2d | read_full | 2.01 MB | CPU | **976.6 μs** | 961.3 μs | 1.33 ms | — | **1.38x** | **—** |
+| fits | medium_int16_3d | header_read | 3.13 MB | CPU | **—** | 91.0 μs | 641.2 μs | — | **7.05x** | **—** |
+| fits | medium_int16_3d | read_full | 3.13 MB | CPU | **1.44 ms** | 1.42 ms | 1.72 ms | — | **1.21x** | **—** |
+| fits | medium_int32_1d | header_read | 0.38 MB | CPU | **—** | 87.9 μs | 588.3 μs | — | **6.69x** | **—** |
+| fits | medium_int32_1d | read_full | 0.38 MB | CPU | **214.9 μs** | 212.5 μs | 737.9 μs | — | **3.47x** | **—** |
+| fits | medium_int32_2d | header_read | 4.00 MB | CPU | **—** | 90.6 μs | 615.7 μs | — | **6.80x** | **—** |
+| fits | medium_int32_2d | read_full | 4.00 MB | CPU | **1.10 ms** | 1.12 ms | 2.57 ms | — | **2.34x** | **—** |
+| fits | medium_int32_3d | header_read | 6.25 MB | CPU | **—** | 93.1 μs | 640.6 μs | — | **6.88x** | **—** |
+| fits | medium_int32_3d | read_full | 6.25 MB | CPU | **1.66 ms** | 1.66 ms | 2.78 ms | — | **1.67x** | **—** |
+| fits | medium_int64_1d | header_read | 0.77 MB | CPU | **—** | 91.3 μs | 589.0 μs | — | **6.45x** | **—** |
+| fits | medium_int64_1d | read_full | 0.77 MB | CPU | **317.6 μs** | 332.8 μs | 887.7 μs | — | **2.80x** | **—** |
+| fits | medium_int64_2d | header_read | 8.00 MB | CPU | **—** | 88.9 μs | 614.3 μs | — | **6.91x** | **—** |
+| fits | medium_int64_2d | read_full | 8.00 MB | CPU | **2.28 ms** | 2.29 ms | 4.95 ms | — | **2.17x** | **—** |
+| fits | medium_int64_3d | header_read | 12.51 MB | CPU | **—** | 92.4 μs | 648.6 μs | — | **7.02x** | **—** |
+| fits | medium_int64_3d | read_full | 12.51 MB | CPU | **3.50 ms** | 3.49 ms | 4.88 ms | — | **1.40x** | **—** |
+| fits | medium_int8_1d | header_read | 0.10 MB | CPU | **—** | 95.2 μs | 652.6 μs | — | **6.85x** | **—** |
+| fits | medium_int8_1d | read_full | 0.10 MB | CPU | **143.6 μs** | 150.1 μs | — | — | **—** | **—** |
+| fits | medium_int8_2d | header_read | 1.01 MB | CPU | **—** | 97.3 μs | 681.6 μs | — | **7.00x** | **—** |
+| fits | medium_int8_2d | read_full | 1.01 MB | CPU | **386.6 μs** | 396.8 μs | — | — | **—** | **—** |
+| fits | medium_int8_3d | header_read | 1.57 MB | CPU | **—** | 99.3 μs | 709.2 μs | — | **7.14x** | **—** |
+| fits | medium_int8_3d | read_full | 1.57 MB | CPU | **550.4 μs** | 554.1 μs | — | — | **—** | **—** |
+| fits | mef_medium | header_read | 7.02 MB | CPU | **—** | 105.7 μs | 964.3 μs | — | **9.12x** | **—** |
+| fits | mef_medium | read_full | 7.02 MB | CPU | **383.2 μs** | 390.1 μs | — | — | **—** | **—** |
+| fits | mef_small | header_read | 0.45 MB | CPU | **—** | 106.2 μs | 956.5 μs | — | **9.00x** | **—** |
+| fits | mef_small | read_full | 0.45 MB | CPU | **132.7 μs** | 148.2 μs | — | — | **—** | **—** |
+| fits | multi_mef_10ext | cutout_100x100 | 2.68 MB | CPU | **108.8 μs** | 109.7 μs | — | — | **—** | **—** |
+| fits | multi_mef_10ext | header_read | 2.68 MB | CPU | **—** | 105.6 μs | 971.8 μs | — | **9.20x** | **—** |
+| fits | multi_mef_10ext | random_ext_full_reads_200 | 2.68 MB | CPU | **6.55 ms** | 6.56 ms | — | — | **—** | **—** |
+| fits | multi_mef_10ext | read_full | 2.68 MB | CPU | **131.9 μs** | 150.5 μs | — | — | **—** | **—** |
+| fits | repeated_cutouts_50x_100x100 | repeated_cutouts_50x_100x100 | 4.00 MB | CPU | **5.24 ms** | 4.90 ms | 40.46 ms | — | **8.26x** | **—** |
+| fits | scaled_large | header_read | 8.00 MB | CPU | **—** | 97.9 μs | 679.0 μs | — | **6.93x** | **—** |
+| fits | scaled_large | read_full | 8.00 MB | CPU | **3.73 ms** | 3.67 ms | — | — | **—** | **—** |
+| fits | scaled_medium | header_read | 2.01 MB | CPU | **—** | 96.6 μs | 692.7 μs | — | **7.17x** | **—** |
+| fits | scaled_medium | read_full | 2.01 MB | CPU | **1.09 ms** | 1.05 ms | — | — | **—** | **—** |
+| fits | scaled_small | header_read | 0.13 MB | CPU | **—** | 97.3 μs | 682.3 μs | — | **7.01x** | **—** |
+| fits | scaled_small | read_full | 0.13 MB | CPU | **235.0 μs** | 193.7 μs | — | — | **—** | **—** |
+| fits | small_float32_1d | header_read | 42.2 KB | CPU | **—** | 90.9 μs | 590.7 μs | — | **6.50x** | **—** |
+| fits | small_float32_1d | read_full | 42.2 KB | CPU | **180.1 μs** | 140.9 μs | 620.1 μs | — | **4.40x** | **—** |
+| fits | small_float32_2d | header_read | 0.26 MB | CPU | **—** | 94.5 μs | 617.4 μs | — | **6.53x** | **—** |
+| fits | small_float32_2d | read_full | 0.26 MB | CPU | **224.3 μs** | 190.0 μs | 724.2 μs | — | **3.81x** | **—** |
+| fits | small_float32_3d | header_read | 0.63 MB | CPU | **—** | 93.6 μs | 649.7 μs | — | **6.94x** | **—** |
+| fits | small_float32_3d | read_full | 0.63 MB | CPU | **318.3 μs** | 278.6 μs | 874.3 μs | — | **3.14x** | **—** |
+| fits | small_float64_1d | header_read | 0.08 MB | CPU | **—** | 89.2 μs | 588.8 μs | — | **6.60x** | **—** |
+| fits | small_float64_1d | read_full | 0.08 MB | CPU | **139.5 μs** | 146.1 μs | 630.8 μs | — | **4.52x** | **—** |
+| fits | small_float64_2d | header_read | 0.51 MB | CPU | **—** | 94.1 μs | 621.4 μs | — | **6.60x** | **—** |
+| fits | small_float64_2d | read_full | 0.51 MB | CPU | **246.8 μs** | 252.0 μs | 806.8 μs | — | **3.27x** | **—** |
+| fits | small_float64_3d | header_read | 1.26 MB | CPU | **—** | 93.7 μs | 648.5 μs | — | **6.92x** | **—** |
+| fits | small_float64_3d | read_full | 1.26 MB | CPU | **453.7 μs** | 455.7 μs | 1.08 ms | — | **2.38x** | **—** |
+| fits | small_int16_1d | header_read | 22.5 KB | CPU | **—** | 89.1 μs | 581.0 μs | — | **6.52x** | **—** |
+| fits | small_int16_1d | read_full | 22.5 KB | CPU | **126.7 μs** | 131.1 μs | 609.7 μs | — | **4.81x** | **—** |
+| fits | small_int16_2d | header_read | 0.13 MB | CPU | **—** | 88.9 μs | 617.4 μs | — | **6.94x** | **—** |
+| fits | small_int16_2d | read_full | 0.13 MB | CPU | **177.8 μs** | 178.6 μs | 660.4 μs | — | **3.71x** | **—** |
+| fits | small_int16_3d | header_read | 0.32 MB | CPU | **—** | 90.8 μs | 643.2 μs | — | **7.08x** | **—** |
+| fits | small_int16_3d | read_full | 0.32 MB | CPU | **254.3 μs** | 259.3 μs | 760.8 μs | — | **2.99x** | **—** |
+| fits | small_int32_1d | header_read | 42.2 KB | CPU | **—** | 87.3 μs | 590.4 μs | — | **6.76x** | **—** |
+| fits | small_int32_1d | read_full | 42.2 KB | CPU | **135.5 μs** | 139.3 μs | 616.3 μs | — | **4.55x** | **—** |
+| fits | small_int32_2d | header_read | 0.26 MB | CPU | **—** | 89.1 μs | 609.2 μs | — | **6.83x** | **—** |
+| fits | small_int32_2d | read_full | 0.26 MB | CPU | **187.3 μs** | 188.3 μs | 713.9 μs | — | **3.81x** | **—** |
+| fits | small_int32_3d | header_read | 0.63 MB | CPU | **—** | 94.4 μs | 647.3 μs | — | **6.86x** | **—** |
+| fits | small_int32_3d | read_full | 0.63 MB | CPU | **278.6 μs** | 280.6 μs | 870.7 μs | — | **3.12x** | **—** |
+| fits | small_int64_1d | header_read | 0.08 MB | CPU | **—** | 84.3 μs | 595.5 μs | — | **7.06x** | **—** |
+| fits | small_int64_1d | read_full | 0.08 MB | CPU | **139.9 μs** | 147.2 μs | 632.6 μs | — | **4.52x** | **—** |
+| fits | small_int64_2d | header_read | 0.51 MB | CPU | **—** | 87.5 μs | 615.9 μs | — | **7.03x** | **—** |
+| fits | small_int64_2d | read_full | 0.51 MB | CPU | **250.6 μs** | 247.8 μs | 822.5 μs | — | **3.32x** | **—** |
+| fits | small_int64_3d | header_read | 1.26 MB | CPU | **—** | 92.7 μs | 640.9 μs | — | **6.92x** | **—** |
+| fits | small_int64_3d | read_full | 1.26 MB | CPU | **447.2 μs** | 450.7 μs | 1.10 ms | — | **2.46x** | **—** |
+| fits | small_int8_1d | header_read | 14.1 KB | CPU | **—** | 93.7 μs | 646.2 μs | — | **6.89x** | **—** |
+| fits | small_int8_1d | read_full | 14.1 KB | CPU | **124.4 μs** | 127.3 μs | — | — | **—** | **—** |
+| fits | small_int8_2d | header_read | 0.07 MB | CPU | **—** | 94.3 μs | 670.4 μs | — | **7.11x** | **—** |
+| fits | small_int8_2d | read_full | 0.07 MB | CPU | **134.4 μs** | 141.1 μs | — | — | **—** | **—** |
+| fits | small_int8_3d | header_read | 0.16 MB | CPU | **—** | 102.4 μs | 697.7 μs | — | **6.82x** | **—** |
+| fits | small_int8_3d | read_full | 0.16 MB | CPU | **159.1 μs** | 167.3 μs | — | — | **—** | **—** |
+| fits | timeseries_frame_000 | header_read | 0.26 MB | CPU | **—** | 91.4 μs | 628.5 μs | — | **6.88x** | **—** |
+| fits | timeseries_frame_000 | read_full | 0.26 MB | CPU | **222.6 μs** | 194.2 μs | 735.4 μs | — | **3.79x** | **—** |
+| fits | timeseries_frame_001 | header_read | 0.26 MB | CPU | **—** | 91.4 μs | 617.2 μs | — | **6.75x** | **—** |
+| fits | timeseries_frame_001 | read_full | 0.26 MB | CPU | **225.0 μs** | 187.3 μs | 726.9 μs | — | **3.88x** | **—** |
+| fits | timeseries_frame_002 | header_read | 0.26 MB | CPU | **—** | 93.1 μs | 617.8 μs | — | **6.63x** | **—** |
+| fits | timeseries_frame_002 | read_full | 0.26 MB | CPU | **223.3 μs** | 188.0 μs | 718.9 μs | — | **3.82x** | **—** |
+| fits | timeseries_frame_003 | header_read | 0.26 MB | CPU | **—** | 89.7 μs | 609.7 μs | — | **6.80x** | **—** |
+| fits | timeseries_frame_003 | read_full | 0.26 MB | CPU | **228.2 μs** | 188.5 μs | 729.6 μs | — | **3.87x** | **—** |
+| fits | timeseries_frame_004 | header_read | 0.26 MB | CPU | **—** | 91.5 μs | 622.3 μs | — | **6.80x** | **—** |
+| fits | timeseries_frame_004 | read_full | 0.26 MB | CPU | **229.8 μs** | 188.6 μs | 716.9 μs | — | **3.80x** | **—** |
+| fits | tiny_float32_1d | header_read | 8.4 KB | CPU | **—** | 88.9 μs | 596.7 μs | — | **6.71x** | **—** |
+| fits | tiny_float32_1d | read_full | 8.4 KB | CPU | **150.9 μs** | 115.8 μs | 617.1 μs | — | **5.33x** | **—** |
+| fits | tiny_float32_2d | header_read | 19.7 KB | CPU | **—** | 90.3 μs | 618.9 μs | — | **6.85x** | **—** |
+| fits | tiny_float32_2d | read_full | 19.7 KB | CPU | **171.9 μs** | 139.5 μs | 633.2 μs | — | **4.54x** | **—** |
+| fits | tiny_float32_3d | header_read | 25.3 KB | CPU | **—** | 94.8 μs | 649.8 μs | — | **6.85x** | **—** |
+| fits | tiny_float32_3d | read_full | 25.3 KB | CPU | **172.4 μs** | 144.9 μs | 649.0 μs | — | **4.48x** | **—** |
+| fits | tiny_float64_1d | header_read | 11.2 KB | CPU | **—** | 88.6 μs | 589.1 μs | — | **6.65x** | **—** |
+| fits | tiny_float64_1d | read_full | 11.2 KB | CPU | **120.4 μs** | 124.2 μs | 604.1 μs | — | **5.02x** | **—** |
+| fits | tiny_float64_2d | header_read | 36.6 KB | CPU | **—** | 92.5 μs | 617.3 μs | — | **6.68x** | **—** |
+| fits | tiny_float64_2d | read_full | 36.6 KB | CPU | **126.1 μs** | 131.9 μs | 638.5 μs | — | **5.06x** | **—** |
+| fits | tiny_float64_3d | header_read | 45.0 KB | CPU | **—** | 96.0 μs | 643.1 μs | — | **6.70x** | **—** |
+| fits | tiny_float64_3d | read_full | 45.0 KB | CPU | **127.2 μs** | 135.2 μs | 676.9 μs | — | **5.32x** | **—** |
+| fits | tiny_int16_1d | header_read | 5.6 KB | CPU | **—** | 88.8 μs | 590.5 μs | — | **6.65x** | **—** |
+| fits | tiny_int16_1d | read_full | 5.6 KB | CPU | **117.5 μs** | 123.9 μs | 595.3 μs | — | **5.07x** | **—** |
+| fits | tiny_int16_2d | header_read | 11.2 KB | CPU | **—** | 89.3 μs | 613.4 μs | — | **6.87x** | **—** |
+| fits | tiny_int16_2d | read_full | 11.2 KB | CPU | **124.8 μs** | 123.8 μs | 631.9 μs | — | **5.10x** | **—** |
+| fits | tiny_int16_3d | header_read | 14.1 KB | CPU | **—** | 95.1 μs | 646.7 μs | — | **6.80x** | **—** |
+| fits | tiny_int16_3d | read_full | 14.1 KB | CPU | **124.4 μs** | 128.3 μs | 643.0 μs | — | **5.17x** | **—** |
+| fits | tiny_int32_1d | header_read | 8.4 KB | CPU | **—** | 89.8 μs | 590.0 μs | — | **6.57x** | **—** |
+| fits | tiny_int32_1d | read_full | 8.4 KB | CPU | **113.3 μs** | 116.6 μs | 602.3 μs | — | **5.32x** | **—** |
+| fits | tiny_int32_2d | header_read | 19.7 KB | CPU | **—** | 87.7 μs | 615.4 μs | — | **7.02x** | **—** |
+| fits | tiny_int32_2d | read_full | 19.7 KB | CPU | **130.8 μs** | 135.6 μs | 630.5 μs | — | **4.82x** | **—** |
+| fits | tiny_int32_3d | header_read | 25.3 KB | CPU | **—** | 95.2 μs | 645.8 μs | — | **6.79x** | **—** |
+| fits | tiny_int32_3d | read_full | 25.3 KB | CPU | **133.8 μs** | 139.7 μs | 658.4 μs | — | **4.92x** | **—** |
+| fits | tiny_int64_1d | header_read | 11.2 KB | CPU | **—** | 84.8 μs | 588.2 μs | — | **6.94x** | **—** |
+| fits | tiny_int64_1d | read_full | 11.2 KB | CPU | **123.7 μs** | 126.9 μs | 601.0 μs | — | **4.86x** | **—** |
+| fits | tiny_int64_2d | header_read | 36.6 KB | CPU | **—** | 91.7 μs | 618.8 μs | — | **6.75x** | **—** |
+| fits | tiny_int64_2d | read_full | 36.6 KB | CPU | **127.6 μs** | 131.9 μs | 641.9 μs | — | **5.03x** | **—** |
+| fits | tiny_int64_3d | header_read | 45.0 KB | CPU | **—** | 90.6 μs | 645.9 μs | — | **7.13x** | **—** |
+| fits | tiny_int64_3d | read_full | 45.0 KB | CPU | **128.1 μs** | 136.8 μs | 658.3 μs | — | **5.14x** | **—** |
+| fits | tiny_int8_1d | header_read | 5.6 KB | CPU | **—** | 95.2 μs | 649.0 μs | — | **6.82x** | **—** |
+| fits | tiny_int8_1d | read_full | 5.6 KB | CPU | **113.6 μs** | 121.6 μs | — | — | **—** | **—** |
+| fits | tiny_int8_2d | header_read | 8.4 KB | CPU | **—** | 98.0 μs | 671.9 μs | — | **6.85x** | **—** |
+| fits | tiny_int8_2d | read_full | 8.4 KB | CPU | **124.9 μs** | 131.5 μs | — | — | **—** | **—** |
+| fits | tiny_int8_3d | header_read | 8.4 KB | CPU | **—** | 101.1 μs | 701.6 μs | — | **6.94x** | **—** |
+| fits | tiny_int8_3d | read_full | 8.4 KB | CPU | **117.5 μs** | 126.1 μs | — | — | **—** | **—** |
+| fits | compressed_gzip_1 | read_full | 1.29 MB | CUDA | **15.97 ms** | 15.96 ms | 40.48 ms | 17.61 ms | **2.54x** | **1.10x** |
+| fits | compressed_gzip_2 | read_full | 0.89 MB | CUDA | **15.50 ms** | 15.50 ms | 64.81 ms | 17.40 ms | **4.18x** | **1.12x** |
+| fits | compressed_hcompress_1 | read_full | 0.82 MB | CUDA | **30.58 ms** | 30.54 ms | 36.37 ms | 29.24 ms | **1.19x** | **0.96x** |
+| fits | compressed_rice_1 | cutout_100x100 | 0.90 MB | CUDA | **832.6 μs** | 835.1 μs | 8.64 ms | 965.7 μs | **10.37x** | **1.16x** |
+| fits | compressed_rice_1 | read_full | 0.90 MB | CUDA | **8.93 ms** | 8.92 ms | 28.15 ms | 9.20 ms | **3.16x** | **1.03x** |
+| fits | large_float32_1d | read_full | 3.82 MB | CUDA | **761.6 μs** | 747.4 μs | 1.37 ms | 1.25 ms | **1.83x** | **1.67x** |
+| fits | large_float32_2d | read_full | 16.00 MB | CUDA | **3.89 ms** | 3.21 ms | 13.49 ms | 5.65 ms | **4.20x** | **1.76x** |
+| fits | large_float64_1d | read_full | 7.63 MB | CUDA | **1.40 ms** | 1.58 ms | 2.35 ms | 1.90 ms | **1.68x** | **1.36x** |
+| fits | large_float64_2d | read_full | 32.00 MB | CUDA | **11.48 ms** | 11.93 ms | 19.12 ms | 11.89 ms | **1.67x** | **1.04x** |
+| fits | large_int16_1d | read_full | 1.91 MB | CUDA | **533.4 μs** | 885.5 μs | 931.2 μs | 554.1 μs | **1.75x** | **1.04x** |
+| fits | large_int16_2d | read_full | 8.00 MB | CUDA | **1.56 ms** | 3.02 ms | 4.82 ms | 1.90 ms | **3.08x** | **1.21x** |
+| fits | large_int32_1d | read_full | 3.82 MB | CUDA | **751.6 μs** | 750.0 μs | 1.35 ms | 1.24 ms | **1.81x** | **1.66x** |
+| fits | large_int32_2d | read_full | 16.00 MB | CUDA | **3.81 ms** | 3.35 ms | 13.41 ms | 5.28 ms | **4.00x** | **1.57x** |
+| fits | large_int64_1d | read_full | 7.63 MB | CUDA | **551.9 μs** | 1.60 ms | 2.61 ms | 1.93 ms | **4.74x** | **3.49x** |
+| fits | large_int64_2d | read_full | 32.00 MB | CUDA | **2.83 ms** | 11.78 ms | 19.13 ms | 12.12 ms | **6.77x** | **4.29x** |
+| fits | large_int8_1d | read_full | 0.96 MB | CUDA | **1.05 ms** | 289.7 μs | 1.27 ms | 351.8 μs | **4.37x** | **1.21x** |
+| fits | large_int8_2d | read_full | 4.00 MB | CUDA | **2.12 ms** | 886.1 μs | 2.31 ms | 1.05 ms | **2.60x** | **1.19x** |
+| fits | medium_float32_1d | read_full | 0.38 MB | CUDA | **150.6 μs** | 150.0 μs | 534.1 μs | 211.8 μs | **3.56x** | **1.41x** |
+| fits | medium_float32_2d | read_full | 4.00 MB | CUDA | **788.4 μs** | 790.8 μs | 1.49 ms | 1.31 ms | **1.89x** | **1.66x** |
+| fits | medium_float32_3d | read_full | 6.25 MB | CUDA | **1.16 ms** | 1.16 ms | 2.00 ms | 2.38 ms | **1.72x** | **2.06x** |
+| fits | medium_float64_1d | read_full | 0.77 MB | CUDA | **216.2 μs** | 235.5 μs | 644.3 μs | 292.4 μs | **2.98x** | **1.35x** |
+| fits | medium_float64_2d | read_full | 8.00 MB | CUDA | **1.51 ms** | 1.68 ms | 4.51 ms | 2.35 ms | **2.98x** | **1.55x** |
+| fits | medium_float64_3d | read_full | 12.51 MB | CUDA | **2.73 ms** | 2.64 ms | 4.24 ms | 3.15 ms | **1.61x** | **1.19x** |
+| fits | medium_int16_1d | read_full | 0.20 MB | CUDA | **85.9 μs** | 118.5 μs | 482.1 μs | 130.1 μs | **5.61x** | **1.51x** |
+| fits | medium_int16_2d | read_full | 2.01 MB | CUDA | **476.1 μs** | 852.3 μs | 964.4 μs | 583.7 μs | **2.03x** | **1.23x** |
+| fits | medium_int16_3d | read_full | 3.13 MB | CUDA | **682.6 μs** | 1.27 ms | 1.32 ms | 822.9 μs | **1.94x** | **1.21x** |
+| fits | medium_int32_1d | read_full | 0.38 MB | CUDA | **133.2 μs** | 130.9 μs | 538.0 μs | 215.3 μs | **4.11x** | **1.65x** |
+| fits | medium_int32_2d | read_full | 4.00 MB | CUDA | **802.8 μs** | 801.2 μs | 1.51 ms | 1.32 ms | **1.88x** | **1.64x** |
+| fits | medium_int32_3d | read_full | 6.25 MB | CUDA | **1.21 ms** | 1.18 ms | 1.96 ms | 1.97 ms | **1.66x** | **1.66x** |
+| fits | medium_int64_1d | read_full | 0.77 MB | CUDA | **143.5 μs** | 242.2 μs | 642.3 μs | 292.1 μs | **4.48x** | **2.04x** |
+| fits | medium_int64_2d | read_full | 8.00 MB | CUDA | **592.0 μs** | 1.73 ms | 3.98 ms | 2.07 ms | **6.73x** | **3.50x** |
+| fits | medium_int64_3d | read_full | 12.51 MB | CUDA | **842.8 μs** | 2.70 ms | 4.23 ms | 3.32 ms | **5.01x** | **3.94x** |
+| fits | medium_int8_1d | read_full | 0.10 MB | CUDA | **225.2 μs** | 65.3 μs | 929.5 μs | 102.1 μs | **14.23x** | **1.56x** |
+| fits | medium_int8_2d | read_full | 1.01 MB | CUDA | **906.7 μs** | 305.9 μs | 1.31 ms | 376.7 μs | **4.29x** | **1.23x** |
+| fits | medium_int8_3d | read_full | 1.57 MB | CUDA | **916.0 μs** | 417.1 μs | 1.51 ms | 505.2 μs | **3.63x** | **1.21x** |
+| fits | mef_medium | read_full | 7.02 MB | CUDA | **628.2 μs** | 358.8 μs | 3.16 ms | 405.9 μs | **8.80x** | **1.13x** |
+| fits | mef_small | read_full | 0.45 MB | CUDA | **176.8 μs** | 77.1 μs | 1.40 ms | 141.5 μs | **18.10x** | **1.83x** |
+| fits | multi_mef_10ext | cutout_100x100 | 2.68 MB | CUDA | **42.1 μs** | 42.0 μs | 2.39 ms | 207.9 μs | **57.00x** | **4.95x** |
+| fits | multi_mef_10ext | read_full | 2.68 MB | CUDA | **148.9 μs** | 72.3 μs | 1.39 ms | 196.1 μs | **19.25x** | **2.71x** |
+| fits | repeated_cutouts_50x_100x100_gpu | repeated_cutouts_50x_100x100 | 4.00 MB | CUDA | **5.53 ms** | 5.00 ms | 41.61 ms | 5.59 ms | **8.32x** | **1.12x** |
+| fits | scaled_large | read_full | 8.00 MB | CUDA | **4.39 ms** | 4.11 ms | 8.44 ms | 4.67 ms | **2.05x** | **1.14x** |
+| fits | scaled_medium | read_full | 2.01 MB | CUDA | **1.03 ms** | 1.07 ms | 2.21 ms | 1.28 ms | **2.14x** | **1.25x** |
+| fits | scaled_small | read_full | 0.13 MB | CUDA | **177.0 μs** | 135.5 μs | 1.09 ms | 167.2 μs | **8.03x** | **1.23x** |
+| fits | small_float32_1d | read_full | 42.2 KB | CUDA | **56.8 μs** | 55.9 μs | 419.8 μs | 82.4 μs | **7.51x** | **1.47x** |
+| fits | small_float32_2d | read_full | 0.26 MB | CUDA | **98.1 μs** | 117.6 μs | 528.2 μs | 160.8 μs | **5.38x** | **1.64x** |
+| fits | small_float32_3d | read_full | 0.63 MB | CUDA | **259.0 μs** | 211.2 μs | 734.3 μs | 440.6 μs | **3.48x** | **2.09x** |
+| fits | small_float64_1d | read_full | 0.08 MB | CUDA | **64.2 μs** | 61.7 μs | 450.1 μs | 101.3 μs | **7.29x** | **1.64x** |
+| fits | small_float64_2d | read_full | 0.51 MB | CUDA | **157.7 μs** | 178.1 μs | 605.8 μs | 217.9 μs | **3.84x** | **1.38x** |
+| fits | small_float64_3d | read_full | 1.26 MB | CUDA | **320.0 μs** | 356.7 μs | 820.3 μs | 433.2 μs | **2.56x** | **1.35x** |
+| fits | small_int16_1d | read_full | 22.5 KB | CUDA | **48.9 μs** | 50.8 μs | 418.0 μs | 75.1 μs | **8.54x** | **1.53x** |
+| fits | small_int16_2d | read_full | 0.13 MB | CUDA | **69.7 μs** | 93.3 μs | 486.0 μs | 102.3 μs | **6.98x** | **1.47x** |
+| fits | small_int16_3d | read_full | 0.32 MB | CUDA | **116.2 μs** | 335.1 μs | 945.8 μs | 162.4 μs | **8.14x** | **1.40x** |
+| fits | small_int32_1d | read_full | 42.2 KB | CUDA | **107.4 μs** | 74.1 μs | 700.1 μs | 168.2 μs | **9.45x** | **2.27x** |
+| fits | small_int32_2d | read_full | 0.26 MB | CUDA | **131.4 μs** | 96.1 μs | 527.7 μs | 217.4 μs | **5.49x** | **2.26x** |
+| fits | small_int32_3d | read_full | 0.63 MB | CUDA | **192.5 μs** | 197.9 μs | 672.9 μs | 298.7 μs | **3.50x** | **1.55x** |
+| fits | small_int64_1d | read_full | 0.08 MB | CUDA | **62.9 μs** | 59.1 μs | 436.1 μs | 88.4 μs | **7.38x** | **1.50x** |
+| fits | small_int64_2d | read_full | 0.51 MB | CUDA | **108.2 μs** | 174.3 μs | 590.9 μs | 220.9 μs | **5.46x** | **2.04x** |
+| fits | small_int64_3d | read_full | 1.26 MB | CUDA | **189.3 μs** | 354.7 μs | 804.6 μs | 442.7 μs | **4.25x** | **2.34x** |
+| fits | small_int8_1d | read_full | 14.1 KB | CUDA | **83.8 μs** | 47.6 μs | 884.7 μs | 79.5 μs | **18.59x** | **1.67x** |
+| fits | small_int8_2d | read_full | 0.07 MB | CUDA | **178.3 μs** | 66.4 μs | 1.26 ms | 123.8 μs | **18.94x** | **1.86x** |
+| fits | small_int8_3d | read_full | 0.16 MB | CUDA | **287.8 μs** | 82.3 μs | 1.03 ms | 118.5 μs | **12.48x** | **1.44x** |
+| fits | timeseries_frame_000 | read_full | 0.26 MB | CUDA | **94.0 μs** | 98.7 μs | 526.7 μs | 159.1 μs | **5.61x** | **1.69x** |
+| fits | timeseries_frame_001 | read_full | 0.26 MB | CUDA | **93.0 μs** | 96.4 μs | 527.0 μs | 165.4 μs | **5.67x** | **1.78x** |
+| fits | timeseries_frame_002 | read_full | 0.26 MB | CUDA | **96.0 μs** | 101.0 μs | 514.9 μs | 165.7 μs | **5.36x** | **1.73x** |
+| fits | timeseries_frame_003 | read_full | 0.26 MB | CUDA | **97.1 μs** | 98.1 μs | 531.5 μs | 158.7 μs | **5.48x** | **1.63x** |
+| fits | timeseries_frame_004 | read_full | 0.26 MB | CUDA | **92.4 μs** | 101.4 μs | 523.0 μs | 168.5 μs | **5.66x** | **1.82x** |
+| fits | tiny_float32_1d | read_full | 8.4 KB | CUDA | **41.9 μs** | 75.9 μs | 708.3 μs | 71.5 μs | **16.90x** | **1.71x** |
+| fits | tiny_float32_2d | read_full | 19.7 KB | CUDA | **106.6 μs** | 77.8 μs | 975.6 μs | 181.2 μs | **12.54x** | **2.33x** |
+| fits | tiny_float32_3d | read_full | 25.3 KB | CUDA | **72.8 μs** | 53.4 μs | 677.4 μs | 119.2 μs | **12.70x** | **2.23x** |
+| fits | tiny_float64_1d | read_full | 11.2 KB | CUDA | **43.3 μs** | 46.2 μs | 438.0 μs | 73.6 μs | **10.11x** | **1.70x** |
+| fits | tiny_float64_2d | read_full | 36.6 KB | CUDA | **51.5 μs** | 54.8 μs | 461.6 μs | 82.5 μs | **8.97x** | **1.60x** |
+| fits | tiny_float64_3d | read_full | 45.0 KB | CUDA | **52.9 μs** | 55.1 μs | 480.3 μs | 84.8 μs | **9.08x** | **1.60x** |
+| fits | tiny_int16_1d | read_full | 5.6 KB | CUDA | **41.6 μs** | 43.2 μs | 401.8 μs | 69.5 μs | **9.65x** | **1.67x** |
+| fits | tiny_int16_2d | read_full | 11.2 KB | CUDA | **44.6 μs** | 47.3 μs | 425.5 μs | 71.5 μs | **9.53x** | **1.60x** |
+| fits | tiny_int16_3d | read_full | 14.1 KB | CUDA | **45.9 μs** | 49.1 μs | 441.5 μs | 71.3 μs | **9.62x** | **1.55x** |
+| fits | tiny_int32_1d | read_full | 8.4 KB | CUDA | **43.0 μs** | 42.0 μs | 397.0 μs | 69.5 μs | **9.45x** | **1.65x** |
+| fits | tiny_int32_2d | read_full | 19.7 KB | CUDA | **46.8 μs** | 84.3 μs | 759.2 μs | 75.3 μs | **16.23x** | **1.61x** |
+| fits | tiny_int32_3d | read_full | 25.3 KB | CUDA | **81.1 μs** | 72.0 μs | 657.9 μs | 134.7 μs | **9.14x** | **1.87x** |
+| fits | tiny_int64_1d | read_full | 11.2 KB | CUDA | **76.9 μs** | 44.4 μs | 406.2 μs | 103.4 μs | **9.14x** | **2.33x** |
+| fits | tiny_int64_2d | read_full | 36.6 KB | CUDA | **57.9 μs** | 51.8 μs | 456.7 μs | 78.8 μs | **8.82x** | **1.52x** |
+| fits | tiny_int64_3d | read_full | 45.0 KB | CUDA | **62.8 μs** | 55.6 μs | 465.6 μs | 80.6 μs | **8.37x** | **1.45x** |
+| fits | tiny_int8_1d | read_full | 5.6 KB | CUDA | **72.3 μs** | 45.2 μs | 895.0 μs | 68.0 μs | **19.81x** | **1.51x** |
+| fits | tiny_int8_2d | read_full | 8.4 KB | CUDA | **75.4 μs** | 47.3 μs | 930.0 μs | 71.6 μs | **19.67x** | **1.51x** |
+| fits | tiny_int8_3d | read_full | 8.4 KB | CUDA | **77.5 μs** | 49.1 μs | 956.4 μs | 72.8 μs | **19.49x** | **1.48x** |
+| fitstable | mixed_1000000 | predicate_filter | 50.55 MB | CPU | **17.68 ms** | 1.53 ms | 102.45 ms | — | **67.05x** | **—** |
+| fitstable | mixed_1000000 | projection | 50.55 MB | CPU | **91.4 μs** | 96.3 μs | 9.25 ms | — | **101.19x** | **—** |
+| fitstable | mixed_1000000 | read_full | 50.55 MB | CPU | **91.6 μs** | 94.9 μs | 50.53 ms | — | **551.73x** | **—** |
+| fitstable | mixed_1000000 | row_slice | 50.55 MB | CPU | **89.6 μs** | 98.1 μs | 11.45 ms | — | **127.84x** | **—** |
+| fitstable | mixed_1000000 | scan_count | 50.55 MB | CPU | **150.9 μs** | 111.4 μs | 10.19 ms | — | **91.50x** | **—** |
+| fitstable | mixed_100000 | predicate_filter | 5.06 MB | CPU | **2.94 ms** | 500.7 μs | 11.21 ms | — | **22.39x** | **—** |
+| fitstable | mixed_100000 | projection | 5.06 MB | CPU | **91.5 μs** | 96.3 μs | 3.46 ms | — | **37.85x** | **—** |
+| fitstable | mixed_100000 | read_full | 5.06 MB | CPU | **89.1 μs** | 94.6 μs | 5.73 ms | — | **64.32x** | **—** |
+| fitstable | mixed_100000 | row_slice | 5.06 MB | CPU | **89.2 μs** | 99.1 μs | 4.85 ms | — | **54.32x** | **—** |
+| fitstable | mixed_100000 | scan_count | 5.06 MB | CPU | **150.7 μs** | 105.3 μs | 3.54 ms | — | **33.66x** | **—** |
+| fitstable | mixed_10000 | predicate_filter | 0.51 MB | CPU | **1.01 ms** | 349.9 μs | 4.55 ms | — | **13.01x** | **—** |
+| fitstable | mixed_10000 | projection | 0.51 MB | CPU | **90.6 μs** | 97.9 μs | 2.84 ms | — | **31.31x** | **—** |
+| fitstable | mixed_10000 | read_full | 0.51 MB | CPU | **91.5 μs** | 95.9 μs | 3.00 ms | — | **32.81x** | **—** |
+| fitstable | mixed_10000 | row_slice | 0.51 MB | CPU | **93.6 μs** | 95.6 μs | 3.94 ms | — | **42.13x** | **—** |
+| fitstable | mixed_10000 | scan_count | 0.51 MB | CPU | **148.9 μs** | 105.5 μs | 2.83 ms | — | **26.78x** | **—** |
+| fitstable | mixed_1000 | predicate_filter | 0.06 MB | CPU | **777.1 μs** | 268.8 μs | 3.87 ms | — | **14.40x** | **—** |
+| fitstable | mixed_1000 | projection | 0.06 MB | CPU | **91.3 μs** | 98.8 μs | 2.72 ms | — | **29.78x** | **—** |
+| fitstable | mixed_1000 | read_full | 0.06 MB | CPU | **90.6 μs** | 95.3 μs | 2.79 ms | — | **30.75x** | **—** |
+| fitstable | mixed_1000 | row_slice | 0.06 MB | CPU | **92.2 μs** | 95.9 μs | 3.78 ms | — | **41.03x** | **—** |
+| fitstable | mixed_1000 | scan_count | 0.06 MB | CPU | **150.3 μs** | 107.2 μs | 2.71 ms | — | **25.26x** | **—** |
+| fitstable | narrow_1000000 | predicate_filter | 12.40 MB | CPU | **13.28 ms** | 1.55 ms | 35.79 ms | — | **23.11x** | **—** |
+| fitstable | narrow_1000000 | projection | 12.40 MB | CPU | **89.7 μs** | 99.8 μs | 4.53 ms | — | **50.53x** | **—** |
+| fitstable | narrow_1000000 | read_full | 12.40 MB | CPU | **92.6 μs** | 95.6 μs | 9.25 ms | — | **99.93x** | **—** |
+| fitstable | narrow_1000000 | row_slice | 12.40 MB | CPU | **90.3 μs** | 94.6 μs | 5.46 ms | — | **60.52x** | **—** |
+| fitstable | narrow_1000000 | scan_count | 12.40 MB | CPU | **130.2 μs** | 106.1 μs | 4.76 ms | — | **44.90x** | **—** |
+| fitstable | narrow_100000 | predicate_filter | 1.25 MB | CPU | **2.06 ms** | 526.1 μs | 6.10 ms | — | **11.59x** | **—** |
+| fitstable | narrow_100000 | projection | 1.25 MB | CPU | **91.5 μs** | 96.4 μs | 2.33 ms | — | **25.46x** | **—** |
+| fitstable | narrow_100000 | read_full | 1.25 MB | CPU | **92.2 μs** | 93.6 μs | 2.74 ms | — | **29.76x** | **—** |
+| fitstable | narrow_100000 | row_slice | 1.25 MB | CPU | **91.3 μs** | 102.1 μs | 3.01 ms | — | **32.99x** | **—** |
+| fitstable | narrow_100000 | scan_count | 1.25 MB | CPU | **130.0 μs** | 107.3 μs | 2.34 ms | — | **21.77x** | **—** |
+| fitstable | narrow_10000 | predicate_filter | 0.13 MB | CPU | **815.9 μs** | 362.9 μs | 2.97 ms | — | **8.18x** | **—** |
+| fitstable | narrow_10000 | projection | 0.13 MB | CPU | **90.2 μs** | 101.9 μs | 2.04 ms | — | **22.64x** | **—** |
+| fitstable | narrow_10000 | read_full | 0.13 MB | CPU | **89.5 μs** | 97.2 μs | 2.09 ms | — | **23.38x** | **—** |
+| fitstable | narrow_10000 | row_slice | 0.13 MB | CPU | **92.7 μs** | 101.1 μs | 2.65 ms | — | **28.59x** | **—** |
+| fitstable | narrow_10000 | scan_count | 0.13 MB | CPU | **136.0 μs** | 108.1 μs | 2.02 ms | — | **18.71x** | **—** |
+| fitstable | narrow_1000 | predicate_filter | 19.7 KB | CPU | **720.7 μs** | 288.0 μs | 2.67 ms | — | **9.27x** | **—** |
+| fitstable | narrow_1000 | projection | 19.7 KB | CPU | **90.3 μs** | 97.5 μs | 2.02 ms | — | **22.32x** | **—** |
+| fitstable | narrow_1000 | read_full | 19.7 KB | CPU | **91.1 μs** | 94.2 μs | 2.04 ms | — | **22.39x** | **—** |
+| fitstable | narrow_1000 | row_slice | 19.7 KB | CPU | **91.6 μs** | 98.6 μs | 2.58 ms | — | **28.23x** | **—** |
+| fitstable | narrow_1000 | scan_count | 19.7 KB | CPU | **133.6 μs** | 103.1 μs | 2.00 ms | — | **19.44x** | **—** |
+| fitstable | varlen_100000 | predicate_filter | 3.06 MB | CPU | **1.27 ms** | 485.7 μs | 5.58 ms | — | **11.48x** | **—** |
+| fitstable | varlen_100000 | projection | 3.06 MB | CPU | **96.1 μs** | 107.3 μs | 770.86 ms | — | **8025.04x** | **—** |
+| fitstable | varlen_100000 | read_full | 3.06 MB | CPU | **96.4 μs** | 101.7 μs | 2.98 ms | — | **30.91x** | **—** |
+| fitstable | varlen_100000 | row_slice | 3.06 MB | CPU | **99.3 μs** | 108.0 μs | 2.58 ms | — | **25.96x** | **—** |
+| fitstable | varlen_100000 | scan_count | 3.06 MB | CPU | **131.1 μs** | 116.0 μs | 1.94 ms | — | **16.72x** | **—** |
+| fitstable | varlen_10000 | predicate_filter | 0.31 MB | CPU | **554.4 μs** | 347.1 μs | 2.83 ms | — | **8.16x** | **—** |
+| fitstable | varlen_10000 | projection | 0.31 MB | CPU | **93.7 μs** | 97.3 μs | 78.60 ms | — | **838.48x** | **—** |
+| fitstable | varlen_10000 | read_full | 0.31 MB | CPU | **90.3 μs** | 94.9 μs | 2.04 ms | — | **22.66x** | **—** |
+| fitstable | varlen_10000 | row_slice | 0.31 MB | CPU | **91.6 μs** | 97.2 μs | 2.46 ms | — | **26.83x** | **—** |
+| fitstable | varlen_10000 | scan_count | 0.31 MB | CPU | **130.7 μs** | 106.1 μs | 1.91 ms | — | **18.04x** | **—** |
+| fitstable | varlen_1000 | predicate_filter | 39.4 KB | CPU | **705.2 μs** | 290.3 μs | 2.53 ms | — | **8.73x** | **—** |
+| fitstable | varlen_1000 | projection | 39.4 KB | CPU | **91.4 μs** | 97.4 μs | 9.70 ms | — | **106.11x** | **—** |
+| fitstable | varlen_1000 | read_full | 39.4 KB | CPU | **90.7 μs** | 96.1 μs | 1.97 ms | — | **21.67x** | **—** |
+| fitstable | varlen_1000 | row_slice | 39.4 KB | CPU | **92.3 μs** | 99.3 μs | 2.45 ms | — | **26.52x** | **—** |
+| fitstable | varlen_1000 | scan_count | 39.4 KB | CPU | **129.0 μs** | 106.5 μs | 1.91 ms | — | **17.97x** | **—** |
+| fitstable | wide_100000 | predicate_filter | 20.71 MB | CPU | **6.87 ms** | 531.2 μs | 47.71 ms | — | **89.80x** | **—** |
+| fitstable | wide_100000 | projection | 20.71 MB | CPU | **92.0 μs** | 98.2 μs | 9.83 ms | — | **106.84x** | **—** |
+| fitstable | wide_100000 | read_full | 20.71 MB | CPU | **90.4 μs** | 95.1 μs | 26.05 ms | — | **288.28x** | **—** |
+| fitstable | wide_100000 | row_slice | 20.71 MB | CPU | **92.1 μs** | 99.2 μs | 16.07 ms | — | **174.50x** | **—** |
+| fitstable | wide_100000 | scan_count | 20.71 MB | CPU | **291.9 μs** | 106.2 μs | 10.15 ms | — | **95.55x** | **—** |
+| fitstable | wide_10000 | predicate_filter | 2.08 MB | CPU | **1.96 ms** | 364.5 μs | 15.68 ms | — | **43.03x** | **—** |
+| fitstable | wide_10000 | projection | 2.08 MB | CPU | **91.0 μs** | 96.2 μs | 8.50 ms | — | **93.44x** | **—** |
+| fitstable | wide_10000 | read_full | 2.08 MB | CPU | **91.9 μs** | 99.4 μs | 9.63 ms | — | **104.78x** | **—** |
+| fitstable | wide_10000 | row_slice | 2.08 MB | CPU | **93.6 μs** | 96.1 μs | 13.38 ms | — | **142.99x** | **—** |
+| fitstable | wide_10000 | scan_count | 2.08 MB | CPU | **291.0 μs** | 105.6 μs | 8.51 ms | — | **80.57x** | **—** |
+| fitstable | wide_1000 | predicate_filter | 0.22 MB | CPU | **1.37 ms** | 289.7 μs | 13.39 ms | — | **46.21x** | **—** |
+| fitstable | wide_1000 | projection | 0.22 MB | CPU | **90.6 μs** | 95.8 μs | 8.31 ms | — | **91.67x** | **—** |
+| fitstable | wide_1000 | read_full | 0.22 MB | CPU | **93.9 μs** | 97.0 μs | 8.51 ms | — | **90.59x** | **—** |
+| fitstable | wide_1000 | row_slice | 0.22 MB | CPU | **91.7 μs** | 95.9 μs | 13.03 ms | — | **141.99x** | **—** |
+| fitstable | wide_1000 | scan_count | 0.22 MB | CPU | **290.3 μs** | 105.5 μs | 8.28 ms | — | **78.46x** | **—** |
+<!-- BENCH_FULL_TABLE_END -->
+
 ## Performance deficits
 
 <!-- BENCH_DEFICITS_BEGIN -->
@@ -121,27 +465,23 @@ Cases where torchfits is **not** first in its comparison family (documented for 
 
 | Domain | Case | torchfits | Winner | Lag ratio |
 |---|---|---|---:|---:|
-| fits | tiny_int16_1d [read_full @ mps] | 0.0004003749927505851 | fitsio/fitsio_torch_device | 2.3416608849056204 |
-| fits | timeseries_frame_001 [read_full @ mps] | 0.00040087499655783176 | fitsio/fitsio_torch_device | 1.7521411445761064 |
-| fits | scaled_small [read_full @ mps] | 0.0004840835463255644 | fitsio/fitsio_torch_device | 1.7192784501940068 |
-| fits | timeseries_frame_002 [read_full @ mps] | 0.0003870624932460487 | fitsio/fitsio_torch_device | 1.6831874965353795 |
-| fits | tiny_int32_1d [read_full @ mps] | 0.0002795205218717456 | fitsio/fitsio_torch_device | 1.6594957504615158 |
-| fits | tiny_int8_1d [read_full @ mps] | 0.00031602103263139725 | fitsio/fitsio_torch_device | 1.6109797772959622 |
-| fits | timeseries_frame_004 [read_full @ mps] | 0.00034795800456777215 | fitsio/fitsio_torch_device | 1.596745380211369 |
-| fits | wcs_image [read_full @ mps] | 0.0004939584759995341 | fitsio/fitsio_torch_device | 1.5734267756934661 |
-| fits | timeseries_frame_000 [read_full @ mps] | 0.00036395795177668333 | fitsio/fitsio_torch_device | 1.5356841644566634 |
-| fits | medium_int16_2d [read_full @ mps] | 0.0009762919507920742 | fitsio/fitsio_torch_device | 1.5335926052105637 |
-| fits | scaled_medium [read_full @ mps] | 0.0017416665214113891 | fitsio/fitsio_torch_device | 1.4193308289557955 |
-| fits | small_int32_3d [read_full @ mps] | 0.0004101460799574852 | fitsio/fitsio_torch_device | 1.3214510828622499 |
-| fits | tiny_float64_2d [read_full @ mps] | 0.00027295801555737853 | fitsio/fitsio_torch_device | 1.254382356088166 |
-| fits | timeseries_frame_003 [read_full @ mps] | 0.00037372851511463523 | fitsio/fitsio_torch_device | 1.2053326610140283 |
-| fits | multi_mef_10ext [read_full @ mps] | 0.0004381045000627637 | fitsio/fitsio_torch_device | 1.15779507278043 |
-| fits | medium_float32_3d [read_full @ mps] | 0.002103958046063781 | fitsio/fitsio_torch_device | 1.1510404550851165 |
-| fits | medium_int32_3d [read_full @ mps] | 0.0020045004785060883 | fitsio/fitsio_torch_device | 1.0983062026277086 |
-| fits | large_int32_1d [read_full @ mps] | 0.0011520834523253143 | fitsio/fitsio_torch_device | 1.0440659371208085 |
-| fits | compressed_hcompress_1 [read_full @ mps] | 0.03341781202470884 | fitsio/fitsio_torch_device | 1.029113785206993 |
-| fits | compressed_rice_1 [read_full @ mps] | 0.010672708100173622 | fitsio/fitsio_torch_device | 1.009830395871548 |
-| fits | large_int16_2d [read_full] | 0.00326020794454962 | astropy/astropy | 1.064108808298818 |
+| fits | large_int8_1d [read_full @ cuda] | 0.0010475270100869238 | fitsio/fitsio_torch_device | 2.9778154418569556 |
+| fits | small_int8_3d [read_full @ cuda] | 0.0002878030063584447 | fitsio/fitsio_torch_device | 2.429290720835008 |
+| fits | medium_int8_2d [read_full @ cuda] | 0.0009067250066436827 | fitsio/fitsio_torch_device | 2.406842530242711 |
+| fits | medium_int8_1d [read_full @ cuda] | 0.00022517499746754766 | fitsio/fitsio_torch_device | 2.2052417628585714 |
+| fits | large_int8_2d [read_full @ cuda] | 0.002116994990501553 | fitsio/fitsio_torch_device | 2.0070697233244856 |
+| fits | medium_int8_3d [read_full @ cuda] | 0.0009159910259768367 | fitsio/fitsio_torch_device | 1.8129855736329974 |
+| fits | mef_medium [read_full @ cuda] | 0.0006281820242293179 | fitsio/fitsio_torch_device | 1.5475549627195913 |
+| fits | small_int8_2d [read_full @ cuda] | 0.00017825397662818432 | fitsio/fitsio_torch_device | 1.4403547479950651 |
+| fits | mef_small [read_full @ cuda] | 0.00017684296471998096 | fitsio/fitsio_torch_device | 1.2499944456376038 |
+| fits | tiny_int8_3d [read_full @ cuda] | 7.747701602056623e-05 | fitsio/fitsio_torch_device | 1.0645958271813878 |
+| fits | tiny_int8_1d [read_full @ cuda] | 7.231894414871931e-05 | fitsio/fitsio_torch_device | 1.0628880187592125 |
+| fits | scaled_small [read_full @ cuda] | 0.00017695699352771044 | fitsio/fitsio_torch_device | 1.0583110596206773 |
+| fits | small_int8_1d [read_full @ cuda] | 8.379999781027436e-05 | fitsio/fitsio_torch_device | 1.0538361761653026 |
+| fits | tiny_int8_2d [read_full @ cuda] | 7.54230422899127e-05 | fitsio/fitsio_torch_device | 1.0532468577550436 |
+| fits | compressed_hcompress_1 [read_full @ cuda] | 0.030575187993235886 | fitsio/fitsio_torch_device | 1.0457201441681794 |
+| fits | large_int16_2d [read_full] | 0.003384913958143443 | astropy/astropy_torch | 1.0072089307354908 |
+| fits | large_int16_2d [read_full] | 0.00336127303307876 | astropy/astropy | 1.0170444706578226 |
 <!-- BENCH_DEFICITS_END -->
 
 ## Release Snapshot
@@ -151,7 +491,7 @@ Latest full lab benchmark:
 | Run ID | Scope | Rows | Deficits | Notes |
 |---|---|---:|---:|---|
 <!-- BENCH_SNAPSHOT_BEGIN -->
-| `20260629_114056_gpu` | fits + fitstable (lab) | (see CSV) | (see deficits CSV) | CI weekly bench-all |
+| `exhaustive_0.5.0b2` | fits + fitstable (lab) | (see CSV) | (see deficits CSV) | CI weekly bench-all |
 <!-- BENCH_SNAPSHOT_END -->
 
 Latest local quick benchmark evidence:

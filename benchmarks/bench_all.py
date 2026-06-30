@@ -230,7 +230,17 @@ def main() -> int:
     try:
         from benchmarks.bench_gpu_transports import run_gpu_transport_rows
 
-        gpu_rows = run_gpu_transport_rows(run_id=run_id)
+        iterations = 7 if args.profile == "lab" else 3
+        warmup = 2 if args.profile == "lab" else 1
+        if args.quick:
+            iterations = 1
+            warmup = 0
+        gpu_rows = run_gpu_transport_rows(
+            run_id=run_id,
+            iterations=iterations,
+            warmup=warmup,
+            quick=args.quick,
+        )
         if gpu_rows:
             rows.extend(gpu_rows)
             print(f"Added {len(gpu_rows)} GPU transport rows", flush=True)

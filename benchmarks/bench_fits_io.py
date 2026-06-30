@@ -54,7 +54,7 @@ class FITSBenchmarkSuite:
     """
 
     EXPECTED_FILE_COUNT = 81
-    EXPECTED_WORKFLOW_COUNT = 84
+    EXPECTED_WORKFLOW_COUNT = 85
 
     def __init__(
         self,
@@ -248,6 +248,7 @@ class FITSBenchmarkSuite:
         for name, path in sorted(files.items()):
             file_type = self._get_file_type(name)
             hdu = _hdu_for_file_type(file_type)
+            print(f"[fits] case={name} file_type={file_type} runs={runs}", flush=True)
 
             methods = {
                 "torchfits": lambda p=path, h=hdu: torchfits.read(
@@ -257,8 +258,8 @@ class FITSBenchmarkSuite:
                 "fitsio_torch": lambda p=path, h=hdu: torch.from_numpy(
                     self._ensure_native_endian_numpy(fitsio.read(str(p), ext=h))
                 ),
-                "torchfits_specialized": lambda p=path, h=hdu: torchfits.read_image(
-                    str(p), hdu=h, mmap=torchfits_mmap
+                "torchfits_specialized": lambda p=path, h=hdu: torchfits.read_tensor(
+                    str(p), hdu=h, mmap=self.use_mmap
                 ),
                 "astropy": lambda p=path, h=hdu: self._astropy_read(p, h),
                 "fitsio": lambda p=path, h=hdu: self._ensure_native_endian_numpy(
@@ -283,6 +284,13 @@ class FITSBenchmarkSuite:
 
         rows.extend(
             self._benchmark_cutout_rows(
+                files,
+                runs=runs,
+                warmup=warmup,
+            )
+        )
+        rows.extend(
+            self._benchmark_repeated_cutout_rows(
                 files,
                 runs=runs,
                 warmup=warmup,
@@ -352,6 +360,107 @@ class FITSBenchmarkSuite:
                 row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
             rows.append(row)
         return rows
+
+    def _benchmark_repeated_cutout_rows(
+        self,
+        files: dict[str, Path],
+        *,
+        runs: int,
+        warmup: int,
+    ) -> list[dict[str, Any]]:
+        path = files.get("medium_float32_2d")
+        if path is None:
+            for k in sorted(files.keys()):
+                if "2d" in k:
+                    path = files[k]
+                    break
+        if path is None:
+            return []
+
+        file_type = self._get_file_type(path.stem)
+        hdu = _hdu_for_file_type(file_type)
+
+        with fitsio.FITS(str(path)) as f:
+            header = f[hdu].read_header()
+            naxis1 = header.get("NAXIS1", 1024)
+            naxis2 = header.get("NAXIS2", 1024)
+
+        cutout_size = min(100, naxis1 // 2, naxis2 // 2)
+        if cutout_size < 2:
+            cutout_size = 2
+
+        coords_rng = np.random.default_rng(42)
+        cutouts_coords = []
+        for _ in range(50):
+            x1 = int(coords_rng.integers(0, max(1, naxis1 - cutout_size)))
+            y1 = int(coords_rng.integers(0, max(1, naxis2 - cutout_size)))
+            cutouts_coords.append((x1, y1, x1 + cutout_size, y1 + cutout_size))
+
+        print(
+            f"[fits] case=repeated_cutouts_50x_{cutout_size}x{cutout_size} runs={runs}",
+            flush=True,
+        )
+
+        def astropy_repeated_cutout():
+            with astropy_fits.open(path, memmap=self.use_mmap) as hdul:
+                results = []
+                for x1, y1, x2, y2 in cutouts_coords:
+                    results.append(
+                        self._ensure_native_endian_numpy(
+                            np.array(hdul[hdu].section[y1:y2, x1:x2], copy=True)
+                        )
+                    )
+                return results
+
+        def fitsio_repeated_cutout():
+            with fitsio.FITS(str(path)) as handle:
+                results = []
+                for x1, y1, x2, y2 in cutouts_coords:
+                    results.append(
+                        self._ensure_native_endian_numpy(handle[hdu][y1:y2, x1:x2])
+                    )
+                return results
+
+        def tf_repeated_cutout_persistent():
+            with torchfits.open_subset_reader(str(path), hdu=hdu) as reader:
+                results = []
+                for x1, y1, x2, y2 in cutouts_coords:
+                    results.append(reader.read_subset(x1, y1, x2, y2))
+                return results
+
+        def tf_repeated_cutout_naive():
+            results = []
+            for x1, y1, x2, y2 in cutouts_coords:
+                results.append(torchfits.read_subset(str(path), hdu, x1, y1, x2, y2))
+            return results
+
+        methods = {
+            "torchfits": tf_repeated_cutout_naive,
+            "astropy_torch": lambda: torch.from_numpy(
+                np.array(astropy_repeated_cutout())
+            ),
+            "fitsio_torch": lambda: torch.from_numpy(
+                np.array(fitsio_repeated_cutout())
+            ),
+            "torchfits_specialized": tf_repeated_cutout_persistent,
+            "astropy": astropy_repeated_cutout,
+            "fitsio": fitsio_repeated_cutout,
+        }
+
+        row: dict[str, Any] = {
+            "filename": f"repeated_cutouts_50x_{cutout_size}x{cutout_size}",
+            "operation": f"repeated_cutouts_50x_{cutout_size}x{cutout_size}",
+            "file_type": "image",
+            "data_type": "mixed",
+            "dimensions": "2d",
+            "compression": "none",
+            "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+        }
+        for method_name, fn in methods.items():
+            median_s, _err = _time_median(fn, runs=runs, warmup=warmup)
+            row[f"{method_name}_median"] = median_s
+            row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+        return [row]
 
     def _benchmark_random_extensions(
         self,

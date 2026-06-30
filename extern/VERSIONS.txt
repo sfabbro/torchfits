@@ -1,1 +1,2 @@
-cfitsio-4.6.3
+cfitsio_repo=HEASARC/cfitsio
+cfitsio_tag=cfitsio-4.6.4

@@ -153,7 +153,6 @@ struct ColumnInfo {
 class TableReader {
 public:
     TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num), use_cache_(true) {
-        validate_fits_filename(filename);
         torchfits::check_fits_filename_security(filename);
         target_hdu_ = hdu_num + 1;  // CFITSIO 1-based absolute HDU
         fptr_ = torchfits::get_or_open_cached(filename);
@@ -2308,7 +2307,7 @@ int read_table_columns(void* reader_handle, const char** column_names, int num_c
 
 
 void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite, nb::object schema_obj, const std::string& table_type) {
-    torchfits::validate_fits_filename(filename ? filename : "");
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
@@ -2374,13 +2373,12 @@ long infer_num_rows_from_payload(nb::dict tensor_dict) {
 void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows);
 
 void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     // Use explicit cfitsio mode value to avoid macro collisions with Python headers.
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2590,18 +2588,16 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
 }
 
 void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     long num_rows = infer_num_rows_from_payload(tensor_dict);
     if (num_rows <= 0) {
         return;
     }
 
-    check_fits_filename(std::string(filename));
     fitsfile* fptr = nullptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2640,17 +2636,15 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 }
 
 void delete_rows(const char* filename, int hdu_num, long start_row, long num_rows) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     if (num_rows <= 0) {
         return;
     }
 
-    check_fits_filename(std::string(filename));
     fitsfile* fptr = nullptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -2689,17 +2683,15 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
 }
 
 void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     if (num_rows <= 0) {
         return;
     }
 
-    check_fits_filename(std::string(filename));
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -3063,18 +3055,16 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 }
 
 void update_rows_mmap(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
-    torchfits::validate_fits_filename(filename ? filename : "");
-    torchfits::TableReader reader(filename, hdu_num);
+    torchfits::TableReader reader(filename ? filename : "", hdu_num);
     reader.update_rows_mmap(tensor_dict, start_row, num_rows);
 }
 
 void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
@@ -3129,12 +3119,11 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
 }
 
 void drop_columns(const char* filename, int hdu_num, nb::list columns) {
-    torchfits::validate_fits_filename(filename ? filename : "");
     fitsfile* fptr;
     int status = 0;
 
     constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename);
+    torchfits::check_fits_filename_security(filename ? filename : "");
     fits_open_file(&fptr, filename, kFitsReadWrite, &status);
     if (status != 0) {
         char err_msg[FLEN_STATUS];

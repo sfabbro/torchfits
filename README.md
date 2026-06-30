@@ -78,10 +78,11 @@ table = torchfits.table.read(
     columns=["RA", "DEC", "MAG_G"],
     where="MAG_G < 20.0 AND CLASS_STAR > 0.9",
 )
+# table: pyarrow.Table
 
 # Stream 100M rows in constant memory
 for batch in torchfits.table.scan("survey.fits", batch_size=50_000):
-    process(batch)
+    process(batch)  # batch: pyarrow.RecordBatch
 ```
 
 ### Multi-HDU access
@@ -90,7 +91,7 @@ for batch in torchfits.table.scan("survey.fits", batch_size=50_000):
 with torchfits.open("multi_ext.fits") as hdul:
     print(hdul)            # pretty-printed summary
     img = hdul[0].data     # image tensor
-    tbl = hdul[1].data     # table dict
+    tbl = hdul[1].data     # dict-like table accessor
     tbl_filtered = hdul[1].filter("FLUX > 100 AND FLAG = 0")
 ```
 
@@ -98,7 +99,8 @@ with torchfits.open("multi_ext.fits") as hdul:
 
 ```python
 torchfits.write("output.fits", data, header=header, overwrite=True)
-torchfits.table.write("catalog_out.fits", table_dict, header=header)
+# table_dict is a dict of column names to 1D arrays/tensors
+torchfits.table.write("catalog_out.fits", table_dict, header=header, overwrite=True)
 ```
 
 ## Benchmarks

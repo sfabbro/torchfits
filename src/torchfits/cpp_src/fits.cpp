@@ -4289,7 +4289,6 @@ void bind_fits(nb::module_& m) {
           nb::arg("algorithm") = std::string("RICE_1"));
 
     m.def("write_hdu_checksums", [](const std::string& path, int hdu_num) {
-        validate_fits_filename(path);
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);
@@ -4314,7 +4313,6 @@ void bind_fits(nb::module_& m) {
     }, nb::arg("path"), nb::arg("hdu_num") = 0);
 
     m.def("verify_hdu_checksums", [](const std::string& path, int hdu_num) {
-        validate_fits_filename(path);
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);
@@ -4342,7 +4340,6 @@ void bind_fits(nb::module_& m) {
     }, nb::arg("path"), nb::arg("hdu_num") = 0);
 
     m.def("write_hdu_header_cards", [](const std::string& path, int hdu_num, nb::list cards) {
-        validate_fits_filename(path);
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);

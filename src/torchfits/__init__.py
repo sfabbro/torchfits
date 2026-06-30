@@ -10,7 +10,7 @@ import os
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.5.0b1"
+__version__ = "0.5.0b2"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
@@ -24,6 +24,7 @@ _ROOT_FUNCTIONS: dict[str, tuple[str, str]] = {
     "open": ("torchfits.io", "open"),
     "get_header": ("torchfits.io", "get_header"),
     "read_image": ("torchfits.io", "read_image"),
+    "read_tensor": ("torchfits.io", "read_tensor"),
     "read_table": ("torchfits.io", "read_table"),
     "read_hdus": ("torchfits.io", "read_hdus"),
     "read_subset": ("torchfits.io", "read_subset"),
@@ -40,6 +41,7 @@ _ROOT_FUNCTIONS: dict[str, tuple[str, str]] = {
     "replace_hdu": ("torchfits.io", "replace_hdu"),
     "delete_hdu": ("torchfits.io", "delete_hdu"),
     "write_checksums": ("torchfits.io", "write_checksums"),
+    "write_tensor": ("torchfits.io", "write_tensor"),
     "read_fast": ("torchfits.io", "read_fast"),
     "to_pandas": ("torchfits.interop", "to_pandas"),
     "to_arrow": ("torchfits.interop", "to_arrow"),
@@ -61,6 +63,7 @@ __all__ = tuple(
         "open",
         "get_header",
         "read_image",
+        "read_tensor",
         "read_table",
         "read_hdus",
         "read_subset",
@@ -81,6 +84,7 @@ __all__ = tuple(
         "replace_hdu",
         "delete_hdu",
         "write_checksums",
+        "write_tensor",
         "read_fast",
         "to_pandas",
         "to_arrow",

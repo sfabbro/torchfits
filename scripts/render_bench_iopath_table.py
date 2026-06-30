@@ -147,20 +147,20 @@ def fmt_measured_cell(
 
 
 def cell_text(
+    domain: str,
     transport: str,
     backend: str,
     samples: list[tuple[float, float | None, float | None, str]],
 ) -> str:
-    """Decide the cell text from the (transport, backend) bucket.
-
-    Special cases (GPU transports, streamed disk->CPU, fitsio-strict) are
-    hard-coded so the table stays a stable contract; only the measured
-    ``disk->RAM->CPU`` numbers change when the underlying CSV changes.
-    """
-    if transport in GPU_TRANSPORTS:
+    """Decide the cell text from the (domain, transport, backend) bucket."""
+    if transport == "disk\u2192GPU":
+        return "\u2014"
+    if domain == "fitstable" and transport in GPU_TRANSPORTS:
+        return "\u2014"
+    if transport == "disk\u2192RAM\u2192GPU":
         if samples:
             return fmt_measured_cell(samples)
-        return "_pending bench-gpu_"
+        return "\u2014"
     if transport == "disk\u2192CPU":
         return "_no measured row (this run is mmap-on)_"
     if backend == "fitsio":
@@ -191,10 +191,10 @@ def render_table(
         cells: list[str] = []
         for backend in BACKENDS:
             samples = buckets.get((domain_key, transport, backend), [])
-            cells.append(cell_text(transport, backend, samples))
-        # cfitsio-direct column is the same in every row except GPU.
+            cells.append(cell_text(domain_key, transport, backend, samples))
+        # cfitsio-direct column has no GPU support.
         if transport in GPU_TRANSPORTS:
-            cells.append("_pending bench-gpu_")
+            cells.append("\u2014")
         else:
             cells.append("\u2014 (engine exposed under `torchfits`)")
         lines.append(f"| `{transport}` | " + " | ".join(cells) + " |")

@@ -1,76 +1,90 @@
 #!/usr/bin/env python
-"""Quick smoke runner for selected example scripts."""
+"""Smoke runner for all example scripts."""
 
-import subprocess
+from __future__ import annotations
+
 import os
-import sys
 import shutil
+import subprocess
+import sys
 
-# Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-examples = [
+# Examples that must succeed in the default dev environment.
+REQUIRED = [
     "example_image.py",
+    "example_image_cutouts.py",
+    "example_image_cube.py",
+    "example_image_mef.py",
+    "example_image_dataset.py",
     "example_table.py",
     "example_table_interop.py",
+    "example_table_recipes.py",
+]
+
+# Optional-deps examples: pass if they exit 0 or print a known skip message.
+OPTIONAL = [
+    "example_polars.py",
 ]
 
 
-def run_test():
-    print(f"Running tests from: {os.getcwd()}")
-
+def _python_cmd() -> list[str]:
     if os.environ.get("PIXI_ENVIRONMENT_NAME"):
-        python_cmd = [sys.executable]
-    elif shutil.which("pixi"):
-        python_cmd = ["pixi", "run", "python"]
-    else:
-        python_cmd = [sys.executable]
+        return [sys.executable]
+    if shutil.which("pixi"):
+        return ["pixi", "run", "python"]
+    return [sys.executable]
 
-    # Check if we should adjust paths based on where we are running from
-    # If running from root (where src/ is), examples are in examples/
-    # If running from examples/, examples are in .
 
-    base_dir = "."
-    if os.path.exists("examples") and os.path.isdir("examples"):
-        base_dir = "examples"
+def _example_path(name: str) -> str:
+    base_dir = "examples" if os.path.isdir("examples") else SCRIPT_DIR
+    path = os.path.join(base_dir, name)
+    if not os.path.exists(path):
+        path = os.path.join(SCRIPT_DIR, name)
+    return path
 
+
+def _run_example(name: str) -> tuple[bool, str]:
+    path = _example_path(name)
+    if not os.path.exists(path):
+        return False, f"file not found: {path}"
+
+    result = subprocess.run(
+        [*_python_cmd(), path],
+        cwd=".",
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode == 0:
+        return True, ""
+
+    output = (result.stderr or "") + (result.stdout or "")
+    skip_markers = ("not installed", "skipping")
+    if any(marker in output.lower() for marker in skip_markers):
+        return True, "skipped (optional dependency missing)"
+    return False, output[:1500]
+
+
+def main() -> int:
+    print(f"Running examples from: {os.getcwd()}")
     success = True
 
-    for example in examples:
-        print(f"\n{'=' * 60}")
-        print(f"Testing: {example}")
-        print("=" * 60)
-
-        # Construct path to example file
-        example_path = os.path.join(base_dir, example)
-        if not os.path.exists(example_path) and os.path.exists(
-            os.path.join(SCRIPT_DIR, example)
-        ):
-            example_path = os.path.join(SCRIPT_DIR, example)
-
-        if not os.path.exists(example_path):
-            print(f"FAIL {example} - SKIPPED (File not found at {example_path})")
-            success = False
-            continue
-
-        result = subprocess.run(
-            [*python_cmd, example_path],
-            cwd=".",  # Run in current directory
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-
-        if result.returncode == 0:
-            print(f"PASS {example}")
+    for name in REQUIRED + OPTIONAL:
+        print(f"\n{'=' * 60}\n{name}\n{'=' * 60}")
+        ok, detail = _run_example(name)
+        if ok:
+            label = "PASS"
+            if detail:
+                label = f"PASS ({detail})"
+            print(label)
         else:
-            print(f"FAIL {example}")
-            print("Error output:")
-            print(result.stderr[:1000])  # Show more output
+            print("FAIL")
+            print(detail)
             success = False
 
     return 0 if success else 1
 
 
 if __name__ == "__main__":
-    sys.exit(run_test())
+    sys.exit(main())

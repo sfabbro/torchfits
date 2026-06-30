@@ -261,7 +261,7 @@ def _bench_case(
                 str(path), hdu=1, mode="table", policy="smart", mmap=target_memmap
             ),
             "torchfits_specialized": lambda: torchfits.read_table(
-                str(path), hdu=1, policy="default", mmap=target_memmap
+                str(path), hdu=1, mmap=target_memmap
             ),
             "astropy": lambda: _astropy_read_full(path, memmap=target_memmap),
             "astropy_torch": lambda: _table_to_torch_dict(
@@ -283,7 +283,6 @@ def _bench_case(
                 str(path),
                 hdu=1,
                 columns=proj_cols,
-                policy="default",
                 mmap=target_memmap,
             ),
             "astropy": lambda: _astropy_projection(
@@ -312,7 +311,6 @@ def _bench_case(
                 hdu=1,
                 start_row=row_slice_start,
                 num_rows=row_slice_n,
-                policy="default",
                 mmap=target_memmap,
             ),
             "astropy": lambda: _astropy_row_slice(
@@ -499,7 +497,7 @@ def _torchfits_filter_pushdown(path: Path, *, col: str, mmap: bool, has_pyarrow:
 
 
 def _torchfits_filter_local(path: Path, *, col: str, mmap: bool):
-    data = torchfits.read_table(str(path), hdu=1, mmap=mmap, policy="default")
+    data = torchfits.read_table(str(path), hdu=1, mmap=mmap)
     values = data[col]
     if isinstance(values, torch.Tensor):
         return values[values > 0]
@@ -516,7 +514,7 @@ def _torchfits_scan_count(path: Path, *, col: str, mmap: bool, has_pyarrow: bool
 
 
 def _torchfits_scan_count_local(path: Path, *, col: str, mmap: bool):
-    data = torchfits.read_table(str(path), hdu=1, mmap=mmap, policy="default")
+    data = torchfits.read_table(str(path), hdu=1, mmap=mmap)
     values = data[col]
     if isinstance(values, torch.Tensor):
         return int(values.shape[0])

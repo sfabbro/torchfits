@@ -144,10 +144,9 @@ using torchfits::internal::bswap_32;
 using torchfits::internal::bswap_64;
 
 torch::Tensor read_rice_parallel(const std::string& path, int hdu, int num_threads) {
-    torchfits::validate_fits_filename(path);
+    torchfits::check_fits_filename_security(path);
     int status = 0;
     fitsfile* fptr = nullptr;
-    torchfits::check_fits_filename_security(path);
     fits_open_file(&fptr, path.c_str(), READONLY, &status);
     check_status(status, "open_file");
 

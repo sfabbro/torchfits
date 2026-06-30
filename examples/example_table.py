@@ -1,139 +1,85 @@
+"""
+Example: FITS table I/O — tensor reads, Arrow reads, predicate pushdown, and write.
+"""
+
 import os
+import tempfile
 
 import numpy as np
 import torch
-from astropy.io import fits
 from astropy.table import Table
 
 import torchfits
 
 
-def create_test_file(filename):
-    if not os.path.exists(filename):
-        data = {
+def _create_test_file(path: str) -> None:
+    from astropy.io import fits
+
+    table = Table(
+        {
             "ra": np.array([200.0, 201.0, 202.0], dtype=np.float64),
             "dec": np.array([45.0, 46.0, 47.0], dtype=np.float64),
             "flux": np.array([1.0, 2.0, 3.0], dtype=np.float32),
             "id": np.array([1, 2, 3], dtype=np.int32),
-            "comments": np.array(
-                ["This is star 1", "This is star 2", "This is star 3"], dtype="U20"
-            ),
-            "flag": np.array([True, False, True], dtype=bool),  # Boolean col
+            "flag": np.array([True, False, True], dtype=bool),
         }
-        table = Table(data)
-        hdu = fits.BinTableHDU(table, name="MY_TABLE")
-        hdu.writeto(filename, overwrite=True)
+    )
+    fits.BinTableHDU(table, name="MY_TABLE").writeto(path, overwrite=True)
 
 
-def main():
-    test_file = "table_example.fits"
-    create_test_file(test_file)
+def main() -> None:
+    with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as fh:
+        path = fh.name
+
     try:
-        _run_examples(test_file)
-    finally:
-        if os.path.exists(test_file):
-            os.unlink(test_file)
+        _create_test_file(path)
 
+        # --- Tensor path: read_table returns dict[str, Tensor] ---
+        tensors = torchfits.read_table(path, hdu=1)
+        print("read_table columns:", list(tensors.keys()))
+        print(f"  ra: {tensors['ra'].tolist()}")
 
-def _run_examples(test_file: str) -> None:
-    # Read the entire table
-    try:
-        table_data, header = torchfits.read(
-            test_file, hdu="MY_TABLE", return_header=True
-        )  # Read by name
-        print("Table Data:")
-        for col_name in table_data:
-            print(f"  Column '{col_name}': {table_data[col_name]}")
-            if hasattr(table_data[col_name], "dtype"):
-                print(f"    Data Type: {table_data[col_name].dtype}")
-            else:
-                print("    Data Type: string list")
-    except RuntimeError as e:
-        print(f"  Error: {e}")
-
-    # Read specific columns
-    try:
-        table_subset, _ = torchfits.read(
-            test_file, hdu=1, columns=["ra", "id"], return_header=True
+        # Column projection and row slice on the tensor path
+        subset = torchfits.read_table_rows(
+            path, hdu=1, start_row=1, num_rows=2, columns=["id", "flag"]
         )
-        print("\nSubset of Columns (ra, id):")
-        if table_subset is not None:
-            for col_name in table_subset:
-                print(f"  Column '{col_name}': {table_subset[col_name]}")
-        else:
-            print("  No data returned")
-    except RuntimeError as e:
-        print(f"  Error: {e}")
-
-    # Read a subset of rows
-    try:
-        table_rows, _ = torchfits.read(
-            test_file, hdu=1, start_row=1, num_rows=2, return_header=True
+        print(
+            f"read_table_rows id={subset['id'].tolist()}, flag={subset['flag'].tolist()}"
         )
-        print("\nSubset of Rows (start_row=1, num_rows=2):")
-        if table_rows is not None:
-            for col_name in table_rows:
-                print(f"  Column '{col_name}': {table_rows[col_name]}")
-        else:
-            print("  No data returned")
-    except RuntimeError as e:
-        print(f" Error: {e}")
 
-    # Read specific columns and rows
-    try:
-        table_subset, _ = torchfits.read(
-            test_file,
+        # --- Arrow path: table.read returns pyarrow.Table ---
+        arrow_table = torchfits.table.read(
+            path,
             hdu=1,
-            columns=["id", "flag"],
-            start_row=1,
-            num_rows=2,
-            return_header=True,
+            columns=["ra", "dec", "flux"],
+            where="flux >= 2.0",
         )
-        print("\nSubset of Columns and Rows:")
-        if table_subset is not None:
-            for col_name in table_subset:
-                print(f"  Column '{col_name}': {table_subset[col_name]}")
-        else:
-            print("  No data returned")
-    except RuntimeError as e:
-        print(f"  Error: {e}")
+        print(f"table.read (where flux >= 2): {arrow_table.num_rows} rows")
+        print(f"  flux values: {arrow_table.column('flux').to_pylist()}")
 
-    # --- Test different cache capacities ---
-    print("\n--- Testing with different cache capacities ---")
-    for capacity in [0, 2, 10]:
-        try:
-            table_data, _ = torchfits.read(
-                test_file, hdu=1, cache_capacity=capacity, return_header=True
-            )
-            print(f"\nCache Capacity: {capacity}")
-            if table_data is not None:
-                print(
-                    f"  Number of Columns: {len(table_data)}"
-                )  # Just print the number of columns
-            else:
-                print("  No data returned")
-        except RuntimeError as e:
-            print(f"  Error with cache_capacity={capacity}: {e}")
+        # Stream large tables in fixed-size chunks
+        chunks = list(torchfits.stream_table(path, hdu=1, chunk_rows=2, columns=["id"]))
+        print(
+            f"stream_table: {len(chunks)} chunk(s), ids={[c['id'].tolist() for c in chunks]}"
+        )
 
-    accel = None
-    if torch.backends.mps.is_available():
-        accel = "mps"
-    elif torch.cuda.is_available():
-        accel = "cuda"
-    if accel:
-        print(f"\n--- Testing accelerator read ({accel}) ---")
-        try:
-            table_data, _ = torchfits.read(
-                test_file, hdu=1, device=accel, return_header=True
-            )
-            if table_data is not None:
-                print(f"  Data device, first column: {table_data['ra'].device}")
-            else:
-                print("  No data returned")
-        except RuntimeError as e:
-            print(f"  Error reading to {accel}: {e}")
-    else:
-        print("\n--- No MPS/CUDA accelerator available, skipping GPU read test ---")
+        # --- Write back with table.write ---
+        out_path = path.replace(".fits", "_out.fits")
+        new_data = {
+            "ra": torch.tensor([300.0, 301.0], dtype=torch.float64),
+            "dec": torch.tensor([50.0, 51.0], dtype=torch.float64),
+        }
+        torchfits.table.write(
+            out_path,
+            new_data,
+            header={"EXTNAME": "FILTERED"},
+            overwrite=True,
+        )
+        written = torchfits.read_table(out_path, hdu=1)
+        print(f"table.write round-trip: {written['ra'].tolist()}")
+        os.unlink(out_path)
+    finally:
+        os.unlink(path)
 
 
 if __name__ == "__main__":

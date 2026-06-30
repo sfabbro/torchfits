@@ -67,12 +67,12 @@ class TestMainAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_image_basic(self):
-        """read_image should expose deterministic low-level image reads."""
+    def test_read_tensor_basic(self):
+        """read_tensor should expose N-dimensional tensor reads."""
         filepath, expected_data = self.create_test_fits()
 
         try:
-            result, header = torchfits.read_image(
+            result, header = torchfits.read_tensor(
                 filepath, return_header=True, mmap=False
             )
             assert isinstance(result, torch.Tensor)
@@ -83,23 +83,34 @@ class TestMainAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_image_matches_read(self):
-        """read_image and default read should agree numerically."""
+    def test_read_image_deprecated(self):
+        """read_image should emit a deprecation warning and delegate to read_tensor."""
+        filepath, expected_data = self.create_test_fits()
+        try:
+            with pytest.deprecated_call():
+                result = torchfits.read_image(filepath, mmap=False)
+            assert isinstance(result, torch.Tensor)
+            assert result.shape == expected_data.shape
+        finally:
+            os.unlink(filepath)
+
+    def test_read_tensor_matches_read(self):
+        """read_tensor and default read should agree numerically."""
         filepath, _ = self.create_test_fits(shape=(128, 128), dtype=np.float64)
 
         try:
             default = torchfits.read(filepath, hdu=0, mmap=False)
-            image = torchfits.read_image(filepath, hdu=0, mmap=False)
+            image = torchfits.read_tensor(filepath, hdu=0, mmap=False)
             torch.testing.assert_close(default, image)
         finally:
             os.unlink(filepath)
 
-    def test_read_image_rejects_auto_hdu(self):
-        """Specialized image API should require explicit HDU index."""
+    def test_read_tensor_rejects_auto_hdu(self):
+        """Specialized tensor API should require explicit HDU index."""
         filepath, _ = self.create_test_fits()
         try:
             with pytest.raises(ValueError, match="non-negative integer"):
-                torchfits.read_image(filepath, hdu="auto", mmap=False)  # type: ignore[arg-type]
+                torchfits.read_tensor(filepath, hdu="auto", mmap=False)  # type: ignore[arg-type]
         finally:
             os.unlink(filepath)
 
@@ -122,15 +133,15 @@ class TestMainAPI:
         finally:
             os.unlink(filepath)
 
-    def test_read_image_handle_cache_flag(self):
-        """read_image should accept explicit handle-cache control."""
+    def test_read_tensor_handle_cache_flag(self):
+        """read_tensor should accept explicit handle-cache control."""
         filepath, _ = self.create_test_fits(shape=(96, 96), dtype=np.float32)
         try:
-            a = torchfits.read_image(filepath, hdu=0, mmap=False, handle_cache=True)
-            b = torchfits.read_image(filepath, hdu=0, mmap=False, handle_cache=False)
+            a = torchfits.read_tensor(filepath, hdu=0, mmap=False, handle_cache=True)
+            b = torchfits.read_tensor(filepath, hdu=0, mmap=False, handle_cache=False)
             torch.testing.assert_close(a, b)
             with pytest.raises(ValueError, match="handle_cache must be bool"):
-                torchfits.read_image(filepath, hdu=0, mmap=False, handle_cache="yes")  # type: ignore[arg-type]
+                torchfits.read_tensor(filepath, hdu=0, mmap=False, handle_cache="yes")  # type: ignore[arg-type]
         finally:
             os.unlink(filepath)
 
@@ -159,7 +170,7 @@ class TestMainAPI:
 
         try:
             a = torchfits.read(filepath, hdu=0, mode="image", mmap=False)
-            b = torchfits.read_image(filepath, hdu=0, mmap=False)
+            b = torchfits.read_tensor(filepath, hdu=0, mmap=False)
             torch.testing.assert_close(a, b)
         finally:
             os.unlink(filepath)

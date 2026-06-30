@@ -42,6 +42,6 @@ def read_table(
     data = out[0] if return_header else out
     if isinstance(data, torch.Tensor):
         raise ValueError(
-            f"HDU {hdu!r} is an image HDU. Use read_image(...) or read(...)."
+            f"HDU {hdu!r} is an image HDU. Use read_tensor(...) or read(...)."
         )
     return out
