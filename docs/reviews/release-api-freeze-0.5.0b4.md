@@ -15,10 +15,15 @@ None.
 
 ## Should-fix (non-blocking)
 
-| Item | Notes |
-|---|---|
-| `read_image` deprecation | Documented alias; keep until 0.6+ removal per changelog |
-| Bot PRs #171–#173 | Unrelated automated PRs; do not merge for 0.5.0b4 |
+None after merging PRs #171–#173.
+
+## Merged for 0.5.0b4 (2026-06-30)
+
+| PR | Change | Eval |
+|---|---|---|
+| [#173](https://github.com/astroai/torchfits/pull/173) | CFITSIO `!|pipe` injection bypass fix + cache path check | **Ship** — critical; tests extended for `!|`, `!! \|` |
+| [#172](https://github.com/astroai/torchfits/pull/172) | O(N) `Header` dict construction | **Ship** — 2000 keys ~0.002s (regression test) |
+| [#171](https://github.com/astroai/torchfits/pull/171) | Jupyter scrollable/sticky HTML repr | **Ship** — UX only; no API change |
 
 ## Defer to 0.6.0
 

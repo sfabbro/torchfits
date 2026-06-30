@@ -9,25 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security:** Block CFITSIO pipe injection bypass via leading `!` prefix (`!|command`) in
+  `check_fits_filename_security`; also enforced on unified cache open path (PR #173).
 - GPU `scale_on_device` preserves narrow integer H2D for FITS signed-byte (int8) and
   unsigned uint16/uint32 conventions instead of promoting through float32 or int64 on CPU.
 - CPU unsigned image reads use int32 widening for uint16 (not int64) where applicable.
+
+### Added
+
+- **Header:** O(N) construction for large dict inputs via keyed fast-path in `_set_card`
+  (PR #172; 2000 keys ~0.002s locally vs ~2.5s pre-fix).
+- **Jupyter:** Scrollable, sticky-header HTML repr for `Header` and `HDUList` (PR #171).
+- `tests/test_scale_on_device.py` — signed-byte, unsigned, and fitsio parity checks.
+- Release gate includes `test_scale_on_device.py`.
+- `.cursor/skills/release-api-freeze-review/` — pre-tag API/feature freeze audit workflow.
 
 ### Changed
 
 - GPU transport benchmarks add **`torchfits_dtype_fair_device`** (`read_tensor` +
   `raw_scale=True`) for dtype-equivalent integer comparisons vs fitsio.
-- README and `docs/benchmarks.md` document integer GPU semantics, known deficits, and
-  `cache.optimize_for_dataset` for training loops.
-- `examples/example_image_dataset.py` calls `torchfits.cache.optimize_for_dataset` before
-  DataLoader epochs; `pin_memory=False` when tensors are read directly to CUDA.
-- `scripts/run_exhaustive_bench_and_patch_docs.sh` skips rebuild when `torchfits._C` already imports
-  (avoids flaky LTO link failures mid-benchmark).
-
-### Added
-
-- `tests/test_scale_on_device.py` — signed-byte, unsigned, and fitsio parity checks.
-- Release gate includes `test_scale_on_device.py`.
+- Lab benchmark snapshot `exhaustive_mmap_0.5.0b4_20260630_162835` (3626 rows, 13 deficits).
+- README and `docs/benchmarks.md` document integer GPU semantics and training cache guidance.
+- `examples/example_image_dataset.py`: `optimize_for_dataset` + correct `pin_memory` when
+  reading directly to CUDA.
+- `scripts/run_exhaustive_bench_and_patch_docs.sh` skips rebuild when extension imports.
 
 ### Performance notes
 

@@ -14,6 +14,9 @@ def test_security_cve_cfitsio_command_injection():
         "valid.fits |",
         "valid.fits | ",
         "|/bin/sh -c 'touch /tmp/pwned'",
+        "!| echo 'pwned'",
+        "!! | ls",
+        "! !| id",
     ]
 
     for filename in dangerous_filenames:
@@ -21,15 +24,39 @@ def test_security_cve_cfitsio_command_injection():
             torchfits.read(filename)
 
 
+def test_forced_overwrite_prefix_allowed():
+    """Leading '!' is valid CFITSIO overwrite syntax and must not bypass pipe checks."""
+    try:
+        torchfits.read("!nonexistent_file.fits")
+    except RuntimeError as e:
+        assert "Security Error" not in str(e)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+def test_header_large_dict_construction_fast():
+    """Regression: Header(dict) must stay O(N), not O(N^2) (PR #172)."""
+    import time
+
+    from torchfits.hdu import Header
+
+    d = {f"KEY{i}": i for i in range(2000)}
+    t0 = time.perf_counter()
+    h = Header(d)
+    elapsed = time.perf_counter() - t0
+    assert len(h) == 2000
+    assert elapsed < 0.5, f"Header(2000) took {elapsed:.3f}s; expected sub-second"
+
+
 def test_valid_filenames_allowed():
     """Test that normal filenames are still allowed."""
-    # We can't easily test success without a real file, but we can verify
-    # it doesn't raise the Security Error.
     try:
         torchfits.read("nonexistent_file.fits")
     except RuntimeError as e:
         assert "Security Error" not in str(e)
     except FileNotFoundError:
-        pass  # Expected
+        pass
     except Exception:
-        pass  # Other errors are fine, as long as not Security Error
+        pass
