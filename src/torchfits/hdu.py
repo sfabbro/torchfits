@@ -248,12 +248,16 @@ class Header(dict):
             self._append_card(card, update_mapping=True, bump=bump)
             return
 
-        for idx, existing in enumerate(self._cards):
-            if existing.key == key:
-                self._cards[idx] = card
-                break
+        # ⚡ Bolt: Fast-path O(1) dictionary lookup to avoid O(N) iteration
+        # over all cards when inserting a brand new key.
+        if key in self:
+            for idx, existing in enumerate(self._cards):
+                if existing.key == key:
+                    self._cards[idx] = card
+                    break
         else:
             self._cards.append(card)
+
         super().__setitem__(key, value)
         if bump:
             self._version += 1
