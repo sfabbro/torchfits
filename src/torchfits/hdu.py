@@ -274,6 +274,43 @@ class Header(dict):
         elif key in self:
             super().__delitem__(key)
 
+    def _repr_html_(self):
+        """HTML representation for Jupyter notebooks."""
+        html = [
+            "<div style='max-height: 400px; overflow: auto; border: 1px solid #ddd; margin-bottom: 1em;'>",
+            "<table style='border-collapse: collapse; width: 100%; margin: 0;'>",
+            "<thead><tr>",
+        ]
+        headers = ["Keyword", "Value", "Comment"]
+        for h in headers:
+            html.append(
+                f"<th style='text-align: left; padding: 8px; position: sticky; top: 0; "
+                f"background-color: var(--theme-ui-colors-background, white); "
+                f"border-bottom: 2px solid #ddd; z-index: 1;'>{h}</th>"
+            )
+        html.append("</tr></thead><tbody>")
+
+        import html as pyhtml
+
+        for card in self._cards:
+            k = pyhtml.escape(str(card.key))
+            v = pyhtml.escape(str(card.value)) if card.value is not None else ""
+            c = pyhtml.escape(str(card.comment))
+            html.append("<tr>")
+            html.append(
+                f"<td style='padding: 8px; border-bottom: 1px solid #eee; font-weight: bold;'>{k}</td>"
+            )
+            html.append(
+                f"<td style='padding: 8px; border-bottom: 1px solid #eee;'>{v}</td>"
+            )
+            html.append(
+                f"<td style='padding: 8px; border-bottom: 1px solid #eee; color: #666;'>{c}</td>"
+            )
+            html.append("</tr>")
+
+        html.append("</tbody></table></div>")
+        return "".join(html)
+
 
 class DataView:
     """Lazy data accessor."""
@@ -1881,7 +1918,11 @@ class HDUList:
 
     def _repr_html_(self):
         """HTML representation for Jupyter notebooks."""
-        html = ["<table style='border-collapse: collapse; width: 100%;'><thead><tr>"]
+        html = [
+            "<div style='max-height: 400px; overflow: auto; border: 1px solid #ddd; margin-bottom: 1em;'>",
+            "<table style='border-collapse: collapse; width: 100%; margin: 0;'>",
+            "<thead><tr>",
+        ]
         headers = ["No.", "Name", "Type", "Cards", "Dimensions", "Format"]
         styles = (
             ["text-align: left;"] * 3
@@ -1890,7 +1931,9 @@ class HDUList:
         )
         for h, s in zip(headers, styles):
             html.append(
-                f"<th style='{s} padding: 4px; border-bottom: 2px solid #ddd;'>{h}</th>"
+                f"<th style='{s} padding: 8px; position: sticky; top: 0; "
+                f"background-color: var(--theme-ui-colors-background, white); "
+                f"border-bottom: 2px solid #ddd; z-index: 1;'>{h}</th>"
             )
         html.append("</tr></thead><tbody>")
 
@@ -1921,11 +1964,11 @@ class HDUList:
             for val, s in zip(row, styles):
                 escaped_val = pyhtml.escape(str(val))
                 html.append(
-                    f"<td style='{s} padding: 4px; border-bottom: 1px solid #eee;'>{escaped_val}</td>"
+                    f"<td style='{s} padding: 8px; border-bottom: 1px solid #eee;'>{escaped_val}</td>"
                 )
             html.append("</tr>")
 
-        html.append("</tbody></table>")
+        html.append("</tbody></table></div>")
         return "".join(html)
 
     def __repr__(self):
