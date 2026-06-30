@@ -8,9 +8,9 @@ This directory contains the GitHub Actions CI/CD workflows for torchfits.
 
 **Triggers:** Push to main/develop, pull requests, releases.
 
-**Jobs:** code quality (ruff), multi-version build & test (Python 3.11/3.12 on Ubuntu), C++ backend performance check, and PyPI publish on release.
+**Jobs:** code quality (ruff), multi-OS build & test (Python 3.10–3.13 on Ubuntu and macOS), C++ backend performance check, and PyPI publish on release.
 
-**System deps:** `cfitsio` (via apt on Linux CI).
+**CFITSIO:** vendored via `extern/vendor.sh` and `extern/VERSIONS.txt` (not a system apt dependency).
 
 ### `build_wheels.yml` — Wheel builds
 

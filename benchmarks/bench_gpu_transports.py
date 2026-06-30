@@ -2,7 +2,14 @@
 """GPU I/O transport rows for bench-all (MPS on macOS, CUDA on Linux).
 
 Emits normalized rows with metadata.io_transport set so
-scripts/render_bench_iopath_table.py can fill disk→GPU columns.
+scripts/render_bench_iopath_table.py can fill GPU transport rows.
+
+``device="cuda"`` / ``device="mps"`` always decode on the host first
+(CFITSIO / astropy / fitsio read into host RAM), then copy with
+``.to(device)``. There is no native disk→GPU path (no GPUDirect Storage).
+
+* mmap on  -> ``disk→RAM→GPU`` (page-cache / mmap decode + H2D copy)
+* mmap off -> ``disk→CPU→GPU`` (buffered host decode + H2D copy)
 """
 
 from __future__ import annotations
@@ -63,6 +70,7 @@ def run_gpu_transport_rows(
     iterations: int = 10,
     warmup: int = 3,
     quick: bool = False,
+    use_mmap: bool = True,
 ) -> list[dict[str, Any]]:
     device = device or default_device()
     if device == "cpu":
@@ -76,7 +84,7 @@ def run_gpu_transport_rows(
     data_dir = Path(tempfile.mkdtemp(prefix="torchfits_bench_gpu_"))
     suite = FITSBenchmarkSuite(
         output_dir=data_dir,
-        use_mmap=True,
+        use_mmap=use_mmap,
         profile="user",
     )
     _strict_patch_astropy(suite)
@@ -96,7 +104,10 @@ def run_gpu_transport_rows(
             }
 
         rows: list[dict[str, Any]] = []
-        transport = "disk\u2192RAM\u2192GPU"
+        mmap_target = "on" if use_mmap else "off"
+        transport = (
+            "disk\u2192RAM\u2192GPU" if use_mmap else "disk\u2192CPU\u2192GPU"
+        )
 
         # 1. Full image reads
         for name, path in sorted(files.items()):
@@ -110,13 +121,13 @@ def run_gpu_transport_rows(
             )
 
             # Methods to benchmark
-            def tf_read(p=path, h=hdu):
+            def tf_read(p=path, h=hdu, um=use_mmap):
                 return torchfits.read(
-                    str(p), hdu=h, mmap=True, device=device, scale_on_device=True
+                    str(p), hdu=h, mmap=um, device=device, scale_on_device=True
                 )
 
-            def tf_specialized_read(p=path, h=hdu):
-                return torchfits.read_tensor(str(p), hdu=h, mmap=True, device=device)
+            def tf_specialized_read(p=path, h=hdu, um=use_mmap):
+                return torchfits.read_tensor(str(p), hdu=h, mmap=um, device=device)
 
             def fitsio_torch_read(p=path, h=hdu):
                 arr = fitsio.read(str(p), ext=h)
@@ -169,7 +180,7 @@ def run_gpu_transport_rows(
                         "status": "OK",
                         "skip_reason": "",
                         "comparable": True,
-                        "mmap_target": "on",
+                        "mmap_target": mmap_target,
                         "time_s": t,
                         "throughput": "",
                         "unit": "MB/s",
@@ -205,8 +216,8 @@ def run_gpu_transport_rows(
                     arr = suite._ensure_native_endian_numpy(handle[h][y1:y2, x1:x2])
                     return torch.from_numpy(arr).to(device)
 
-            def astropy_cutout(p=path, h=hdu):
-                with astropy_fits.open(p, memmap=True) as hdul:
+            def astropy_cutout(p=path, h=hdu, um=use_mmap):
+                with astropy_fits.open(p, memmap=um) as hdul:
                     arr = suite._ensure_native_endian_numpy(
                         np.array(hdul[h].section[y1:y2, x1:x2], copy=True)
                     )
@@ -250,7 +261,7 @@ def run_gpu_transport_rows(
                         "status": "OK",
                         "skip_reason": "",
                         "comparable": True,
-                        "mmap_target": "on",
+                        "mmap_target": mmap_target,
                         "time_s": t,
                         "throughput": "",
                         "unit": "MB/s",
@@ -323,8 +334,8 @@ def run_gpu_transport_rows(
                         results.append(torch.from_numpy(arr).to(device))
                     return results
 
-            def astropy_repeated_cutout(p=path):
-                with astropy_fits.open(p, memmap=True) as hdul:
+            def astropy_repeated_cutout(p=path, um=use_mmap):
+                with astropy_fits.open(p, memmap=um) as hdul:
                     results = []
                     for x1, y1, x2, y2 in cutouts_coords:
                         arr = suite._ensure_native_endian_numpy(
@@ -389,7 +400,7 @@ def run_gpu_transport_rows(
                         "status": "OK",
                         "skip_reason": "",
                         "comparable": True,
-                        "mmap_target": "on",
+                        "mmap_target": mmap_target,
                         "time_s": t,
                         "throughput": "",
                         "unit": "MB/s",

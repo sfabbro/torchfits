@@ -249,6 +249,31 @@ class TestMainAPI:
             finally:
                 os.unlink(f.name)
 
+    def test_write_tensor_basic(self):
+        """write_tensor should round-trip a single torch.Tensor image."""
+        data = torch.randn(32, 32, dtype=torch.float32)
+        header = {"OBJECT": "WRITE_TENSOR"}
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            try:
+                torchfits.write_tensor(
+                    f.name, data, header=header, overwrite=True
+                )
+                result, hdr = torchfits.read_tensor(f.name, return_header=True, mmap=False)
+                torch.testing.assert_close(result, data)
+                assert str(hdr["OBJECT"]).strip() == "WRITE_TENSOR"
+            finally:
+                os.unlink(f.name)
+
+    def test_write_tensor_rejects_non_tensor(self):
+        """write_tensor should require a torch.Tensor payload."""
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            try:
+                with pytest.raises(TypeError, match="torch.Tensor"):
+                    torchfits.write_tensor(f.name, [[1.0, 2.0]], overwrite=True)
+            finally:
+                os.unlink(f.name)
+
     def test_subset_reader_matches_read_subset(self):
         """SubsetReader should match read_subset for repeated cutouts."""
         filepath, _ = self.create_test_fits(shape=(128, 128), dtype=np.float32)

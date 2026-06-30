@@ -53,8 +53,8 @@ class FITSBenchmarkSuite:
     WCS/sphere benchmark implementation that moved out of torchfits.
     """
 
-    EXPECTED_FILE_COUNT = 81
-    EXPECTED_WORKFLOW_COUNT = 85
+    EXPECTED_FILE_COUNT = 87
+    EXPECTED_WORKFLOW_COUNT = 91
 
     def __init__(
         self,
@@ -148,6 +148,16 @@ class FITSBenchmarkSuite:
             hdu.writeto(path, overwrite=True)
             files[f"scaled_{size_name}"] = path
 
+        for size_name in ("small", "medium", "large"):
+            shape = self.size_categories[size_name]["2d"]
+            for dtype_name, np_dtype in (("uint16", np.uint16), ("uint32", np.uint32)):
+                name = f"{size_name}_{dtype_name}_2d"
+                path = self.temp_dir / f"{name}.fits"
+                high = min(np.iinfo(np_dtype).max, 100_000)
+                data = rng.integers(0, high, size=shape, dtype=np_dtype)
+                astropy_fits.PrimaryHDU(data).writeto(path, overwrite=True)
+                files[name] = path
+
         compressed = self._generate_data(rng, (1024, 1024), np.float32)
         for compression in ("RICE_1", "GZIP_1", "GZIP_2", "HCOMPRESS_1"):
             name = f"compressed_{compression.lower()}"
@@ -204,6 +214,8 @@ class FITSBenchmarkSuite:
             return "mef"
         if "scaled" in lowered:
             return "scaled"
+        if "uint" in lowered:
+            return "uint"
         return "image"
 
     def _get_compression_type(self, name: str) -> str:

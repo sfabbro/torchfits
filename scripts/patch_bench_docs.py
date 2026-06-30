@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import re
 import subprocess
 import sys
@@ -28,6 +29,34 @@ def _replace_block(text: str, begin: str, end: str, body: str) -> str:
     if not pattern.search(text):
         raise SystemExit(f"missing markers {begin!r} .. {end!r} in docs")
     return pattern.sub(rf"\1\n{body.rstrip()}\n\2", text, count=1)
+
+
+def _snapshot_row(run_id: str, csv_path: Path, deficits_path: Path) -> str:
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        row_count = sum(1 for _ in csv.DictReader(fh))
+    deficit_count = 0
+    if deficits_path.is_file():
+        with deficits_path.open(newline="", encoding="utf-8") as fh:
+            deficit_count = sum(1 for _ in csv.DictReader(fh))
+    has_mmap_off = False
+    has_gpu = False
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            mmap = (row.get("mmap_target") or "").lower()
+            if mmap in {"off", "false", "0"}:
+                has_mmap_off = True
+            md = row.get("metadata") or ""
+            if "io_transport" in md and row.get("status") == "OK":
+                has_gpu = True
+    notes = ["lab bench-all"]
+    if has_mmap_off:
+        notes.append("`--mmap-matrix`")
+    if has_gpu:
+        notes.append("CUDA/MPS")
+    return (
+        f"| `{run_id}` | fits + fitstable (lab) | {row_count} | {deficit_count} | "
+        f"{' + '.join(notes)} |\n"
+    )
 
 
 def main() -> int:
@@ -58,10 +87,7 @@ def main() -> int:
         full_table = full_table.split("\n", 2)[-1] if "\n\n" in full_table else ""
         if full_table.startswith("\n"):
             full_table = full_table[1:]
-    snapshot = (
-        f"| `{args.run_id}` | fits + fitstable (lab) | "
-        f"(see CSV) | (see deficits CSV) | CI weekly bench-all |\n"
-    )
+    snapshot = _snapshot_row(args.run_id, args.csv, args.deficits)
 
     text = args.docs.read_text(encoding="utf-8")
     text = _replace_block(

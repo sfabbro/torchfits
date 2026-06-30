@@ -22,7 +22,7 @@ Astropy, fitsio, or CFITSIO replacement.
   tensor models and simulation workflows stay outside this repository.
 - Expand parity smoke tests for `fitsio` and `astropy.io.fits` whenever a public
   claim is added to `docs/parity.md`.
-- Keep unsupported mmap behavior explicit for VLA, bit, scaled, and string table cases.
+- Keep unsupported mmap behavior explicit for VLA and scaled table columns.
 - Keep benchmark evidence scoped to FITS images and FITS tables, with separate
   rows for mmap fairness, compression, scaling, and table pushdown.
 - Maintain release gates that scan docs for stale WCS/sphere/HEALPix ownership

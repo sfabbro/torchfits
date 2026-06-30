@@ -12,18 +12,15 @@ Mapping rules (single source of truth):
     * ``library == "fitsio"``     -> ``"fitsio"``
 
   I/O transport (row index):
-    * ``disk->CPU``         streamed read to CPU buffer (no mmap). This run
-                           uses ``mmap_target = "on"`` for every measured
-                           row, so no measured row lands here.
+    * ``disk->CPU``         streamed read to CPU buffer (``mmap_target = "off"``).
     * ``disk->RAM->CPU``    mmap -> OS page cache -> CPU tensor on host
-                           RAM. The only transport populated by the
-                           current CPU-only run.
-    * ``disk->GPU``         directly to GPU memory (``device=cuda``).
-                           Reserved pending ``pixi run -e bench-gpu
-                           bench-gpu``.
-    * ``disk->RAM->GPU``    mmap -> CPU RAM -> explicit GPU copy.
-                           Reserved pending ``pixi run -e bench-gpu
-                           bench-gpu``.
+                           RAM (``mmap_target = "on"``).
+  * ``disk->GPU``         direct host-bypass to GPU memory. No Python FITS
+                           backend supports this; cells always render ``—``.
+  * ``disk->CPU->GPU``    buffered host decode then explicit GPU copy
+                           (``bench_gpu_transports`` with ``mmap_target = "off"``).
+  * ``disk->RAM->GPU``    mmap decode on host then explicit GPU copy
+                           (``bench_gpu_transports`` with ``mmap_target = "on"``).
 
 Cell text rules:
   * Populated cells are the median of comparable OK rows in the bucket,
@@ -31,10 +28,9 @@ Cell text rules:
   * Throughput (MB/s) is intentionally OMITTED: aggregating it across
     heterogeneous operations + payload sizes produces physically-
     impossible median rates (e.g. ``>10^8 MB/s`` for ``fitstable``).
-  * ``disk->GPU`` / ``disk->RAM->GPU`` cells always render
-    ``_pending bench-gpu_``.
-  * ``disk->CPU`` cells always render
-    ``_no measured row (this run is mmap-on)_`` for the measured backends.
+  * ``disk->GPU`` / ``disk->CPU->GPU`` / ``disk->RAM->GPU`` with no matching CSV
+    rows render ``—``.
+  * ``fitstable`` rows in GPU transports always render ``—`` (tables not benchmarked on GPU).
   * ``fitsio`` cells in ``disk->RAM->CPU`` render
     ``— (rows skipped under ``strict_mmap_fairness``)`` (fitsio rows are
     present in the CSV but the mmap-fairness rule excludes them).
@@ -64,11 +60,12 @@ IO_PATHS = [
     "disk\u2192CPU",
     "disk\u2192RAM\u2192CPU",
     "disk\u2192GPU",
+    "disk\u2192CPU\u2192GPU",
     "disk\u2192RAM\u2192GPU",
 ]
 BACKENDS = ["torchfits", "astropy", "fitsio"]
 DOMAINS = [("fits", "FITS image I/O"), ("fitstable", "FITS table I/O")]
-GPU_TRANSPORTS = ("disk\u2192GPU", "disk\u2192RAM\u2192GPU")
+GPU_TRANSPORTS = ("disk\u2192GPU", "disk\u2192CPU\u2192GPU", "disk\u2192RAM\u2192GPU")
 
 
 def to_float(s: str | None) -> float | None:
@@ -123,13 +120,16 @@ def _metadata_dict(row: dict[str, str]) -> dict[str, str]:
 
 
 def io_path_of(row: dict[str, str]) -> str | None:
-    """Map an OK row onto one of the four I/O transports."""
+    """Map an OK row onto one of the I/O transports."""
     if row.get("status") != "OK":
         return None
     md = _metadata_dict(row)
     explicit = md.get("io_transport")
     if explicit:
         return explicit
+    mmap = (row.get("mmap_target") or "on").lower()
+    if mmap in {"off", "false", "0"}:
+        return "disk\u2192CPU"
     return "disk\u2192RAM\u2192CPU"
 
 
@@ -157,13 +157,11 @@ def cell_text(
         return "\u2014"
     if domain == "fitstable" and transport in GPU_TRANSPORTS:
         return "\u2014"
-    if transport == "disk\u2192RAM\u2192GPU":
+    if transport in ("disk\u2192CPU\u2192GPU", "disk\u2192RAM\u2192GPU"):
         if samples:
             return fmt_measured_cell(samples)
         return "\u2014"
-    if transport == "disk\u2192CPU":
-        return "_no measured row (this run is mmap-on)_"
-    if backend == "fitsio":
+    if backend == "fitsio" and transport == "disk\u2192RAM\u2192CPU":
         return "\u2014 (rows skipped under `strict_mmap_fairness`)"
     return fmt_measured_cell(samples)
 
@@ -253,12 +251,19 @@ def render_callout() -> str:
     )
 
 
-def render_source(run_dir: str, *, has_gpu: bool) -> str:
+def render_source(run_dir: str, *, has_gpu: bool, has_mmap_off: bool) -> str:
     """Render the trailing ``Source:`` paragraph that names the CSV."""
-    gpu_note = "MPS/CUDA GPU transport rows included." if has_gpu else "CPU mmap run."
+    if has_gpu and has_mmap_off:
+        mmap_note = "mmap on+off matrix; MPS/CUDA GPU transport rows included."
+    elif has_gpu:
+        mmap_note = "mmap-on run; MPS/CUDA GPU transport rows included."
+    elif has_mmap_off:
+        mmap_note = "mmap on+off matrix."
+    else:
+        mmap_note = "CPU mmap-on run."
     return "\n".join(
         [
-            f"Source: `benchmarks_results/{run_dir}/results.csv` ({gpu_note})",
+            f"Source: `benchmarks_results/{run_dir}/results.csv` ({mmap_note})",
             "Cell values are median wall-clock over all comparable OK rows in the",
             "`(domain \u00d7 I/O transport \u00d7 backend)` bucket; "
             "throughput is intentionally",
@@ -279,7 +284,7 @@ def render_notes() -> str:
             "",
             "- Rows are **I/O transports** (`disk\u2192CPU`, "
             "`disk\u2192RAM\u2192CPU`, `disk\u2192GPU`, "
-            "`disk\u2192RAM\u2192GPU`).",
+            "`disk\u2192CPU\u2192GPU`, `disk\u2192RAM\u2192GPU`).",
             "- Columns are **backends** (`torchfits` / `astropy` / `fitsio` "
             "/ `cfitsio-direct`).",
             "- `cfitsio` is the C engine used by `torchfits`; no standalone "
@@ -316,7 +321,14 @@ def main() -> int:
     has_gpu = any(
         io in GPU_TRANSPORTS and times for (_, io, _), times in buckets.items() if times
     )
-    print(render_source(run_dir, has_gpu=has_gpu))
+    has_mmap_off = False
+    with open(args.csv, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            mmap = (row.get("mmap_target") or "").lower()
+            if mmap in {"off", "false", "0"}:
+                has_mmap_off = True
+                break
+    print(render_source(run_dir, has_gpu=has_gpu, has_mmap_off=has_mmap_off))
     for domain_key, domain_label in DOMAINS:
         if any(k[0] == domain_key for k in buckets):
             print(render_table(domain_key, domain_label, buckets))

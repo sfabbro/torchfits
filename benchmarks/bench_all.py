@@ -65,6 +65,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", choices=["user", "lab"], default="user")
     parser.add_argument("--mmap", action="store_true", help="Force mmap on")
     parser.add_argument("--no-mmap", action="store_true", help="Force mmap off")
+    parser.add_argument(
+        "--mmap-matrix",
+        action="store_true",
+        help="Run each domain twice (mmap on then off) and merge rows",
+    )
     parser.add_argument("--filter", type=str, default="", help="Regex case filter")
     parser.add_argument(
         "--quick", action="store_true", help="Reduce workload for smoke checks"
@@ -87,6 +92,16 @@ def _resolve_use_mmap(args: argparse.Namespace) -> bool:
     if args.no_mmap:
         return False
     return True
+
+
+def _resolve_mmap_settings(args: argparse.Namespace) -> list[bool]:
+    if args.mmap_matrix:
+        if args.mmap or args.no_mmap:
+            raise SystemExit(
+                "--mmap-matrix cannot be combined with --mmap or --no-mmap"
+            )
+        return [True, False]
+    return [_resolve_use_mmap(args)]
 
 
 def _scopes_from_scope(scope: str) -> list[str]:
@@ -157,11 +172,17 @@ def _run_fitstable_isolated(
         json_path.unlink(missing_ok=True)
 
 
+def _clear_bench_caches() -> None:
+    import torchfits
+
+    torchfits.clear_file_cache()
+
+
 def main() -> int:
     args = _parse_args()
     scope = _resolve_scope(args)
     scopes = _scopes_from_scope(scope)
-    use_mmap = _resolve_use_mmap(args)
+    mmap_settings = _resolve_mmap_settings(args)
     run_id = args.run_id or make_run_id()
     run_dir = args.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -170,82 +191,100 @@ def main() -> int:
     print(f"run_id={run_id}", flush=True)
     print(f"scopes={scopes}", flush=True)
     print(f"output={run_dir}", flush=True)
-    print(f"mmap={'on' if use_mmap else 'off'}", flush=True)
+    mmap_labels = ["on" if m else "off" for m in mmap_settings]
+    print(f"mmap={' then '.join(mmap_labels)}", flush=True)
 
     rows: list[dict[str, Any]] = []
 
-    if "fits" in scopes:
-        try:
-            case_filter = args.filter
-            if args.quick and not case_filter:
-                case_filter = "^(tiny_int16_2d|mef_small|compressed_rice_1)$"
-            rows.extend(
-                run_fits_domain(
-                    run_id=run_id,
-                    output_dir=run_dir,
-                    profile=args.profile,
-                    use_mmap=use_mmap,
-                    case_filter=case_filter,
-                    header_runs=3 if args.quick else 7,
-                    header_warmup=1 if args.quick else 2,
-                    keep_temp=args.keep_temp,
-                )
-            )
-        except Exception as exc:
-            err = f"{type(exc).__name__}: {exc}"
-            print(f"[bench-all][fits] failed: {err}", flush=True)
-            rows.append(_domain_failure_row(run_id=run_id, domain="fits", error=err))
+    for use_mmap in mmap_settings:
+        mmap_label = "on" if use_mmap else "off"
+        print(f"[bench-all] mmap pass: {mmap_label}", flush=True)
+        _clear_bench_caches()
 
-    if "fitstable" in scopes:
-        try:
-            if "fits" in scopes:
+        if "fits" in scopes:
+            try:
+                case_filter = args.filter
+                if args.quick and not case_filter:
+                    case_filter = "^(tiny_int16_2d|mef_small|compressed_rice_1)$"
                 rows.extend(
-                    _run_fitstable_isolated(
-                        args=args,
-                        run_id=run_id,
-                        run_dir=run_dir,
-                        use_mmap=use_mmap,
-                    )
-                )
-            else:
-                rows.extend(
-                    run_fitstable_domain(
+                    run_fits_domain(
                         run_id=run_id,
                         output_dir=run_dir,
-                        use_mmap=use_mmap,
                         profile=args.profile,
-                        warmup=0 if args.quick else 1,
-                        quick=args.quick,
-                        max_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
+                        use_mmap=use_mmap,
+                        case_filter=case_filter,
+                        header_runs=3 if args.quick else 7,
+                        header_warmup=1 if args.quick else 2,
                         keep_temp=args.keep_temp,
                     )
                 )
-        except Exception as exc:
-            err = f"{type(exc).__name__}: {exc}"
-            print(f"[bench-all][fitstable] failed: {err}", flush=True)
-            rows.append(
-                _domain_failure_row(run_id=run_id, domain="fitstable", error=err)
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}"
+                print(f"[bench-all][fits][mmap={mmap_label}] failed: {err}", flush=True)
+                rows.append(
+                    _domain_failure_row(run_id=run_id, domain="fits", error=err)
+                )
+
+        if "fitstable" in scopes:
+            try:
+                if "fits" in scopes:
+                    rows.extend(
+                        _run_fitstable_isolated(
+                            args=args,
+                            run_id=run_id,
+                            run_dir=run_dir,
+                            use_mmap=use_mmap,
+                        )
+                    )
+                else:
+                    rows.extend(
+                        run_fitstable_domain(
+                            run_id=run_id,
+                            output_dir=run_dir,
+                            use_mmap=use_mmap,
+                            profile=args.profile,
+                            warmup=0 if args.quick else 1,
+                            quick=args.quick,
+                            max_cases=QUICK_CASES_PER_DOMAIN if args.quick else None,
+                            keep_temp=args.keep_temp,
+                        )
+                    )
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}"
+                print(
+                    f"[bench-all][fitstable][mmap={mmap_label}] failed: {err}",
+                    flush=True,
+                )
+                rows.append(
+                    _domain_failure_row(run_id=run_id, domain="fitstable", error=err)
+                )
+
+        try:
+            from benchmarks.bench_gpu_transports import run_gpu_transport_rows
+
+            iterations = 7 if args.profile == "lab" else 3
+            warmup = 2 if args.profile == "lab" else 1
+            if args.quick:
+                iterations = 1
+                warmup = 0
+            gpu_rows = run_gpu_transport_rows(
+                run_id=run_id,
+                iterations=iterations,
+                warmup=warmup,
+                quick=args.quick,
+                use_mmap=use_mmap,
             )
-
-    try:
-        from benchmarks.bench_gpu_transports import run_gpu_transport_rows
-
-        iterations = 7 if args.profile == "lab" else 3
-        warmup = 2 if args.profile == "lab" else 1
-        if args.quick:
-            iterations = 1
-            warmup = 0
-        gpu_rows = run_gpu_transport_rows(
-            run_id=run_id,
-            iterations=iterations,
-            warmup=warmup,
-            quick=args.quick,
-        )
-        if gpu_rows:
-            rows.extend(gpu_rows)
-            print(f"Added {len(gpu_rows)} GPU transport rows", flush=True)
-    except Exception as exc:
-        print(f"[bench-all][gpu] failed: {type(exc).__name__}: {exc}", flush=True)
+            if gpu_rows:
+                rows.extend(gpu_rows)
+                print(
+                    f"Added {len(gpu_rows)} GPU transport rows (mmap={mmap_label})",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(
+                f"[bench-all][gpu][mmap={mmap_label}] failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     annotate_rankings(rows)
     deficits = compute_deficits(rows, run_id=run_id)

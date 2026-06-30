@@ -10,7 +10,7 @@ import os
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.5.0b2"
+__version__ = "0.5.0b3"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
@@ -74,6 +74,7 @@ __all__ = tuple(
         "TensorHDU",
         "TableHDU",
         "read_batch",
+        "get_batch_info",
         "get_cache_performance",
         "read_large_table",
         "read_table_rows",

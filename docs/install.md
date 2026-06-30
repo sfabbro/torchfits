@@ -101,4 +101,4 @@ pixi run bench-all      # exhaustive benchmarks
 
 **`ImportError: ... symbol not found`** — Version mismatch between the compiled extension and the installed PyTorch. Rebuild: `pip install -e . --no-build-isolation --force-reinstall`.
 
-**Slow first read** — The first call compiles internal caches. Subsequent reads are faster. Call `torchfits.configure_for_environment()` at startup for auto-tuning.
+**Slow first read** — The first call compiles internal caches. Subsequent reads are faster. Call `torchfits.cache.configure_for_environment()` at startup for auto-tuning before the first read.

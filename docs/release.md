@@ -40,7 +40,8 @@ Run the exhaustive benchmark suite:
 ```bash
 pixi run bench-all
 pixi run bench-mps    # Apple Silicon (device=mps)
-# Linux CUDA: pixi run -e bench-gpu bench-gpu
+# Linux CUDA lab (lab profile + auto doc patch):
+pixi run -e bench-gpu bench-exhaustive
 ```
 
 Regenerate the I/O transport table:

@@ -8,7 +8,7 @@ platforms = ["osx-arm64", "linux-64"]
 
 [package]
 name = "torchfits"
-version = "0.5.0b2"
+version = "0.5.0b3"
 description = "High-performance FITS I/O for PyTorch"
 authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 
@@ -87,6 +87,7 @@ bench-all = "pixi run -e bench-all bench-install && pixi run -e bench-all python
 bench-all-keep = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all --keep-temp"
 
 bench-all-force = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
+bench-exhaustive = "bash scripts/run_exhaustive_bench_and_patch_docs.sh"
 bench-cache = "pixi run -e bench python benchmarks/bench_cache.py"
 
 # Render the bench-all CSV into the I/O Transport x Backend markdown section

@@ -125,6 +125,50 @@ def _write_varlen_file(*, out_path: Path, nrows: int, rng_seed: int) -> list[str
     return ["id", "flux", "values"]
 
 
+def _write_typed_file(*, out_path: Path, nrows: int, rng_seed: int) -> list[str]:
+    """Binary table with BIT, fixed string, and complex columns."""
+    rng = np.random.default_rng(rng_seed)
+    ids = np.arange(nrows, dtype=np.int32)
+    flags = rng.integers(0, 256, size=nrows, dtype=np.uint8)
+    names = np.array([f"obj_{i:06d}"[:12] for i in range(nrows)], dtype="S12")
+    cvals = (
+        rng.normal(size=nrows).astype(np.float32)
+        + 1j * rng.normal(size=nrows).astype(np.float32)
+    ).astype(np.complex64)
+
+    cols = [
+        astropy_fits.Column(name="id", format="J", array=ids),
+        astropy_fits.Column(name="flags", format="8X", array=flags),
+        astropy_fits.Column(name="name", format="A12", array=names),
+        astropy_fits.Column(name="cval", format="C", array=cvals),
+    ]
+    hdu = astropy_fits.BinTableHDU.from_columns(cols, name="TABLE_TYPED")
+    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(
+        out_path, overwrite=True
+    )
+    return ["id", "flags", "name", "cval"]
+
+
+def _write_ascii_file(*, out_path: Path, nrows: int, rng_seed: int) -> list[str]:
+    """ASCII table extension (TableHDU) for read/projection benchmarks."""
+    rng = np.random.default_rng(rng_seed)
+    ids = np.arange(nrows, dtype=np.int32)
+    flux = rng.normal(size=nrows).astype(np.float64)
+    labels = np.array([f"L{i:04d}"[:10] for i in range(nrows)], dtype="S10")
+    cols = astropy_fits.ColDefs(
+        [
+            astropy_fits.Column(name="id", format="I6", array=ids),
+            astropy_fits.Column(name="flux", format="F12.4", array=flux),
+            astropy_fits.Column(name="label", format="A10", array=labels),
+        ]
+    )
+    hdu = astropy_fits.TableHDU.from_columns(cols)
+    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), hdu]).writeto(
+        out_path, overwrite=True
+    )
+    return ["id", "flux", "label"]
+
+
 def _to_tform(dtype: str) -> str:
     mapping = {
         "f4": "E",
@@ -653,6 +697,46 @@ def _build_cases(temp_dir: Path, *, quick: bool = False) -> list[dict[str, Any]]
                 "variable": True,
                 "compressed": False,
                 "profile": "varlen",
+            }
+        )
+
+    for nrows in [10_000] if quick else [10_000, 100_000]:
+        path = temp_dir / f"table_typed_{nrows}.fits"
+        columns = _write_typed_file(out_path=path, nrows=nrows, rng_seed=seed)
+        seed += 1
+        cases.append(
+            {
+                "name": f"typed_{nrows}",
+                "schema_name": "typed",
+                "path": path,
+                "nrows": nrows,
+                "ncols": len(columns),
+                "columns": columns,
+                "schema": None,
+                "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+                "variable": False,
+                "compressed": False,
+                "profile": "typed",
+            }
+        )
+
+    for nrows in [1_000] if quick else [1_000, 10_000]:
+        path = temp_dir / f"table_ascii_{nrows}.fits"
+        columns = _write_ascii_file(out_path=path, nrows=nrows, rng_seed=seed)
+        seed += 1
+        cases.append(
+            {
+                "name": f"ascii_{nrows}",
+                "schema_name": "ascii",
+                "path": path,
+                "nrows": nrows,
+                "ncols": len(columns),
+                "columns": columns,
+                "schema": None,
+                "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+                "variable": False,
+                "compressed": False,
+                "profile": "ascii",
             }
         )
 

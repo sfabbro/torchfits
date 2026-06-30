@@ -31,7 +31,9 @@ def test_docs_reference_existing_local_files() -> None:
         "benchmarks/bench_fast.py",
         "benchmarks/bench_fits_io.py",
         "benchmarks/bench_fitstable_io.py",
+        "benchmarks/bench_gpu_transports.py",
         "benchmarks/bench_table.py",
+        "scripts/run_exhaustive_bench_and_patch_docs.sh",
     ]
 
     missing = [path for path in expected_paths if not (ROOT / path).exists()]
@@ -69,5 +71,27 @@ def test_public_docs_do_not_claim_torchfits_owns_sky_domain_features() -> None:
         for claim in forbidden_claims:
             if claim in text:
                 offenders.append(f"{path.relative_to(ROOT)} contains {claim!r}")
+
+    assert not offenders, "\n".join(offenders)
+
+
+def test_public_docs_do_not_reference_missing_root_cache_aliases() -> None:
+    """Cache tuning lives on torchfits.cache; root exposes I/O cache helpers only."""
+    docs = [
+        ROOT / "docs" / "api.md",
+        ROOT / "docs" / "install.md",
+    ]
+    forbidden_root_calls = [
+        "torchfits.configure_for_environment(",
+        "torchfits.get_cache_stats(",
+        "torchfits.clear_cache(",
+    ]
+
+    offenders: list[str] = []
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        for call in forbidden_root_calls:
+            if call in text:
+                offenders.append(f"{path.relative_to(ROOT)} references {call!r}")
 
     assert not offenders, "\n".join(offenders)

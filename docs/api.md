@@ -55,6 +55,9 @@ with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
     stamp = reader(0, 0, 256, 256)
 ```
 
+`read_tensor` options: `device`, `mmap`, `handle_cache`, `fp16`, `bf16`,
+`raw_scale`, `return_header`. Requires an explicit integer `hdu` (not `"auto"`).
+
 ### Table reads
 
 ```python
@@ -75,6 +78,7 @@ for chunk in torchfits.stream_table("cat.fits", hdu=1, chunk_rows=100_000):
 
 ```python
 torchfits.write("out.fits", image, header={"OBJECT": "M31"}, overwrite=True)
+torchfits.write_tensor("out.fits", tensor, header={"OBJECT": "M31"}, overwrite=True)
 torchfits.write("cat.fits", {"RA": ra, "DEC": dec}, overwrite=True)
 
 torchfits.insert_hdu(path, data, index=1, header=None, compress=False)
@@ -82,8 +86,9 @@ torchfits.replace_hdu(path, hdu, data, header=None, compress=False)
 torchfits.delete_hdu(path, hdu)
 ```
 
-`data` may be a tensor image, a `dict[str, Tensor | list]` table, or an
-`HDUList`.
+`write_tensor` accepts a single `torch.Tensor` image payload and optional
+`compress=True` (or a compression type string). `write` also accepts tensors,
+dict tables, or an `HDUList`.
 
 ### Checksums
 
@@ -142,6 +147,15 @@ torchfits.to_arrow(table_dict, decode_bytes=True, vla_policy="list")
 torchfits.to_pandas(table_dict, decode_bytes=True, vla_policy="object")
 ```
 
+Advanced table utilities (optional dependencies may apply):
+
+```python
+torchfits.table.schema(path, hdu=1)
+torchfits.table.scan_torch(path, hdu=1, batch_size=10000, device="cpu")
+torchfits.table.dataset(path, hdu=1, decode_bytes=True)
+torchfits.table.write_parquet("out.parquet", "catalog.fits", hdu=1)
+```
+
 ## Predicate Pushdown
 
 The `where=` parameter filters table rows before data reaches Python.
@@ -160,11 +174,19 @@ torchfits.read("cat.fits", hdu=1, where="MAG_G < 20 AND DEC > 0")
 torchfits.read_batch(file_paths, hdu=0, device="cpu")
 torchfits.get_batch_info(file_paths)
 
-torchfits.configure_for_environment()
-torchfits.get_cache_stats()
+# Root I/O cache helpers (file handles, metadata, C++ CFITSIO cache)
+torchfits.get_cache_performance()
 torchfits.clear_file_cache(data=True, handles=True, meta=True, cpp=True)
-torchfits.clear_cache()
+
+# Higher-level cache manager (auto-tuning, aggregate stats)
+torchfits.cache.configure_for_environment()
+torchfits.cache.get_cache_stats()
+torchfits.cache.clear_cache()
 ```
+
+The first I/O call also runs `torchfits.cache.configure_for_environment()` once
+at import time. Call it explicitly at startup if you want tuning before any
+reads.
 
 ## Deprecated aliases (0.5.0b2)
 
@@ -176,10 +198,9 @@ Still supported; prefer the canonical paths above:
 
 ## Limitations
 
-- VLA columns are read via buffered I/O; mmap is not supported for VLA.
-- Bit columns and complex columns are not supported for mmap reads or in-place
-  updates.
-- Scaled columns are not supported for mmap updates; use the buffered path.
+- VLA columns are read via buffered I/O; mmap reads and in-place updates are not
+  supported for VLA.
+- Scaled table columns are not supported for mmap updates; use the buffered path.
 - Non-CPU tensors are copied to host before FITS writes.
 - Compressed writes support tensor image payloads; dict HDU payloads for
   compressed writes must contain tensor image data.
