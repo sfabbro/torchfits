@@ -58,6 +58,15 @@ with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
 `read_tensor` options: `device`, `mmap`, `handle_cache`, `fp16`, `bf16`,
 `raw_scale`, `return_header`. Requires an explicit integer `hdu` (not `"auto"`).
 
+**GPU integer dtypes:** `read(..., device="cuda", scale_on_device=True)` (default) applies
+BSCALE/BZERO on the device. FITS signed-byte and unsigned-integer conventions keep narrow
+storage dtypes (int8, uint16, uint32) on H2D; generic scaled pixels still become
+`float32` for ML. For fitsio-matching native storage dtypes, use
+`read_tensor(..., raw_scale=True)`.
+
+**Training loops:** call `torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=…)`
+before `DataLoader` epochs to warm handle caches (see `examples/example_image_dataset.py`).
+
 ### Table reads
 
 ```python

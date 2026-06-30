@@ -64,12 +64,17 @@ def main() -> None:
         for device in devices:
             print(f"\n--- device={device} ---")
             dataset = FitsImageDataset(data_dir, device=device)
+            # Warm handle/file caches for repeated epoch training (see docs/benchmarks.md).
+            torchfits.cache.optimize_for_dataset(
+                dataset.files, avg_file_size_mb=(64 * 64 * 4) / (1024 * 1024)
+            )
             loader = DataLoader(
                 dataset,
                 batch_size=4,
                 shuffle=True,
                 num_workers=0,
-                pin_memory=(device == "cuda"),
+                # pin_memory only helps CPU tensors; __getitem__ already places on device.
+                pin_memory=False,
             )
             for i, (images, labels) in enumerate(loader):
                 print(

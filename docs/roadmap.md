@@ -58,62 +58,176 @@ choices, not work items to be closed:
 - Consider additional CFITSIO-backed capabilities only when they can be exposed
   through a small PyTorch-native API and covered by tests.
 
-## 0.6.0 — core module decomposition
+## 0.6.0 — maintainable core + ML-native FITS pipelines
 
-Engineering milestone after the 0.5.0 beta quick wins (shared `fits_schema`, where-read
-policy, table handle cache split). Goal: keep behavior stable while making the Python I/O
-layer maintainable — no file in the hot path should sprawl past ~1k lines without a
-compelling reason.
+**Vision:** 0.5.0 proved torchfits can beat astropy/fitsio on FITS I/O. 0.6.0 makes that
+speed *usable* in real training and inference loops: a maintainable Python/C++ core,
+first-class `torch.utils.data` integration, and header-aware preprocessing so users
+stop re-implementing BSCALE/BZERO/TSCAL/TZERO glue in every project.
 
-### Priority 1 — split `torchfits.table` into `_table/`
+0.6.0 is still **FITS I/O**, not sky-domain modelling. WCS solving, HEALPix, sphere
+geometry, and simulation pipelines remain out of scope. Datasets and normalization here
+mean **FITS bytes → correctly scaled tensors → DataLoader**, not astronomy application
+frameworks.
 
-`table.py` is still ~3.7k lines. Decompose into focused modules and keep
-`torchfits.table` as a thin re-export surface:
+### Track A — Python core decomposition *(from thermo-nuclear audit)*
 
-| Module | Owns |
+Goal: no hot-path module past ~1k lines; one schema parser; one table read pipeline.
+
+| Priority | Work | Exit criteria |
+|---|---|---|
+| A1 | Split `table.py` into `_table/` (`schema`, `arrow_convert`, `read`, `where`, `mutate`, `interop`) | Public `torchfits.table` unchanged; each file ≤ ~600 lines |
+| A2 | Refactor `read_dispatch.read_unified` → `ReadDeps` + strategy list | Dispatcher ≤ ~150 lines; no `recursive_read` closure |
+| A3 | Unify table read surfaces (Arrow + tensor share one C++ reader layer) | Documented in `docs/api.md`; zero duplicate TFORM walks outside `fits_schema` |
+| A4 | Replace `TableHDU.__init__` coercion soup with `fits_schema`-driven `_coerce_column` | Unknown column kinds fail loudly; no silent `continue` drops |
+| A5 | Header-only `table.schema()` fast path (TFORM → Arrow types, no row read) | `schema()` ≤1 header pass when `where=None` |
+
+**Presumptive blockers if deferred:** any new table feature landing in monolithic `table.py`;
+`read_dispatch.py` growing past 1.2k lines without strategy refactor.
+
+### Track B — C++ engine *(ambitious, high leverage)*
+
+Goal: one canonical read API per domain; worker-safe batching; less Python feature-probing.
+
+| Priority | Work | Why |
+|---|---|---|
+| B1 | **`read_table_chunk(path, hdu, cols, row_spec, mmap)`** — replaces the 7-deep Python fallback chain in `_read_cpp_numpy_table` | Deletes hundreds of lines of `hasattr(cpp, …)` spaghetti; single place to optimize |
+| B2 | **`read_images_batch(paths, hdu, …)`** — vectorized multi-file image decode with shared handle pool | Powers DataLoader workers + `read_batch` without per-item Python overhead |
+| B3 | **Consolidated scaling in C++** — apply BSCALE/BZERO (images) and TSCAL/TZERO (tables) in one layer with `scale_on_device` policy | Same semantics across `read`, `read_tensor`, table paths, and future datasets |
+| B4 | **Table pushdown v2** — extend `read_fits_table_filtered` for VLA-safe projections, `IN` lists, and compound predicates where mmap-safe | Closes gap where Python falls back to read-then-filter on large catalogs |
+| B5 | **Worker-local handle affinity** — optional `TORCHFITS_WORKER_HANDLE=1` so forked DataLoader workers don't fight a global LRU | Documented pattern for `num_workers > 0` without stale-handle bugs |
+| B6 | **Pinned host buffer pool** *(stretch)* — reuse pinned CPU staging for CUDA `read_tensor` | Cuts H2D alloc churn in tight training loops; benchmarked in `bench_ml_loader` |
+
+**Exit criteria:** one Python call site per table chunk read; `bench_ml_loader` rows merged
+into `docs/benchmarks.md`; no regression on upstream parity gates.
+
+### Track C — `torchfits.data`: datasets & dataloaders *(new public surface)*
+
+Goal: ship what every example currently hand-rolls — a thin, fast, documented data layer.
+
+Today: `examples/example_image_dataset.py` and `benchmarks/bench_ml_loader.py` define ad-hoc
+`Dataset` classes. `torchfits.table.dataset` wraps PyArrow only. Cache tuning exists
+(`optimize_for_dataset`) but isn't wired into loaders.
+
+Proposed module: **`torchfits.data`** (lazy-imported like `torchfits.table`).
+
+| Component | Behavior |
 |---|---|
-| `_table/cache.py` | C++ FITS file / TableReader LRU caches *(done in 0.5.0)* |
-| `_table/schema.py` | Thin wrappers over `fits_schema` for path-based metadata |
-| `_table/arrow_convert.py` | numpy/tensor/VLA/complex → Arrow conversion |
-| `_table/read.py` | `read`, `scan`, `_read_cpp_numpy_table`, batch assembly |
-| `_table/where.py` | where masks, C++ pushdown, `_filter_table_with_where` |
-| `_table/mutate.py` | insert/delete/update columns and rows, HDU rewrite |
-| `_table/interop.py` | pandas, polars, duckdb, parquet helpers |
+| `FitsImageDataset` | File list or glob; lazy `read_tensor`; optional label from header keys; `read_batch` collate path for inference |
+| `FitsImageIterableDataset` | Sharded file list for multi-worker; deterministic split by rank/world_size |
+| `FitsTableDataset` | Row-indexable catalog: projection + `where=` pushdown; columns → tensor dict per `__getitem__` |
+| `FitsTableIterableDataset` | Wraps `table.scan` / C++ chunk iterator; constant-memory epoch over 100M+ rows |
+| `FitsCutoutDataset` | `(path, x, y, w, h)` index table + `open_subset_reader` for patch training |
+| `fits_collate_fn` | Stack homogeneous tensors; explicit error on ragged/VLA unless `vla_policy=` set |
+| `DataLoader` helpers | `make_loader(dataset, *, pin_memory, prefetch, cache_policy=…)` applying `cache.optimize_for_dataset` |
 
-**Exit criteria:** each module ≤ ~600 lines; public `torchfits.table` API unchanged;
-existing table tests pass without modification.
+Design rules:
 
-### Priority 2 — tame `read_dispatch.read_unified`
+- **No hidden global state in workers** — each worker gets handle policy from env or explicit `worker_init_fn`.
+- **Device policy is explicit** — `device="cpu"` default; CUDA reads document host-decode + H2D (same honesty as benchmarks).
+- **Composable with Track D** — datasets accept optional `transform=` callable.
 
-`read_dispatch.py` crossed 1k lines via fast-path accretion. Refactor to:
+**Exit criteria:** replace `example_image_dataset.py` with `torchfits.data` imports;
+new tests for multi-worker smoke (spawn/fork), sharded iterable, table scan epoch;
+`docs/examples.md` + `docs/api.md` sections for data loading.
 
-- `ReadDeps` dataclass (replace 18 injected callbacks)
-- Explicit strategy list: batch paths → CPU fast → generic fast → fallback
-- Each strategy returns `NotApplicable` or a result; no nested `recursive_read` closure
+### Track D — preprocessing & normalization *(FITS-native transforms)*
 
-**Exit criteria:** `read_unified` ≤ ~150 lines; no behavior change in image/table/batch reads.
+Goal: header keywords become a typed transform pipeline, not copy-pasted arithmetic.
 
-### Priority 3 — unify table read surfaces
+| Priority | Work | Details |
+|---|---|---|
+| D1 | **`torchfits.transforms` module** | `Compose`, `FitsScaleImage` (BSCALE/BZERO), `FitsScaleColumns` (TSCAL/TZERO/TNULL), `CastDtype`, `Clamp`, `PerChannelStats` |
+| D2 | **Schema-aware table null handling** | Apply TNULL → NaN/mask consistently in tensor and Arrow paths via `fits_schema` |
+| D3 | **Unsigned integer policy object** | Single `UnsignedConvention` used by read, write, transforms (replaces scattered TZERO heuristics) |
+| D4 | **Recipe helpers** | `normalize_image(data, header)` and `denormalize_for_write(data, header)` round-trip for scaled integer images |
+| D5 | **Optional photometry hooks** *(not WCS)* | Read `BUNIT` / `TUNIT` / custom header keys into transform metadata; no unit conversion library required |
+| D6 | **Table column stats cache** | One-pass or streaming mean/std for normalization — backed by `scan` not full materialize |
 
-Today there are three paths to table bytes: `torchfits.table.read` (Arrow),
-`torchfits.read(..., mode="table")` (tensors), and `TableHDU` / `TableHDURef` (HDU workflow).
-Pick two canonical pipelines (Arrow + tensor) that share the same C++ reader layer.
+Explicit **non-goals** for Track D: PSF models, astrometric distortion, background
+estimation algorithms, or sky subtraction physics — those belong in downstream packages.
+torchfits supplies **correct, tested scale/null/dtype semantics** from FITS headers.
 
-**Exit criteria:** documented ownership boundary in `docs/api.md`; no duplicated schema
-walks outside `fits_schema`.
+**Exit criteria:** scaled-image and scaled-table upstream smokes pass through transform
+round-trip; docs show before/after for a typical ML preprocessing chain.
 
-### Priority 4 — C++ table read consolidation *(optional, high effort)*
+### Track E — evidence & developer experience
 
-Replace the seven-deep `_read_cpp_numpy_table` API fallback chain with one C++
-`read_table_chunk(...)` entry that picks mmap vs buffered vs row-ranges internally.
+| Item | Action |
+|---|---|
+| ML benchmarks | Promote `bench_ml_loader.py` from diagnostic → release gate subset |
+| GPU memory | Keep `bench_gpu_memory.py` as leak/regression guard for dataset + cache paths |
+| Replay fixtures | Add public-catalog replay entries in `benchmarks/replays/upstream_sources.json` for dataloader cases |
+| Migration guide | `docs/changelog.md` section: 0.5.x custom Dataset → 0.6 `torchfits.data` |
+| Agent/CI ergonomics | `pixi run release-gate` covers data module smoke once shipped |
 
-**Exit criteria:** one Python call site for table chunk reads; fallback chain deleted.
+### Suggested sequencing
+
+```mermaid
+flowchart LR
+  A1[A1 table split] --> A3[A3 unified read]
+  B1[B1 read_table_chunk] --> A3
+  B1 --> C2[C2 FitsTableDataset]
+  B2[B2 image batch C++] --> C1[C1 FitsImageDataset]
+  A5[A5 header schema] --> D1[D1 transforms]
+  B3[B3 C++ scaling] --> D1
+  C1 --> E1[E1 ML bench gate]
+  D1 --> E1
+```
+
+**Phase 1 (foundation):** A1, A2, B1, B3 — maintainability + one C++ read path + scaling clarity.  
+**Phase 2 (ML surface):** C1–C4, B2, B5 — datasets that win on `bench_ml_loader`.  
+**Phase 3 (polish):** D1–D4, B4, A4, A5 — transforms + pushdown + schema fast path.  
+**Phase 4 (evidence):** E + B6 if benchmarks justify pinned pools.
 
 ### Out of scope for 0.6.0
 
-- Full CFITSIO API parity
-- GPU FITS writes
-- Rewriting `TableHDU.__init__` type coercion (separate hardening pass)
+- Full CFITSIO C API exposure
+- GPU FITS writes or true disk→GPU bypass (GPUDirect/cuFile)
+- WCS, HEALPix, sphere geometry, simulation/training orchestration frameworks
+- Mandatory PyArrow/Polars/Pandas dependencies on the core package
+- Replacing Astropy/fitsio for metadata editing workflows unrelated to tensor I/O
+
+### 0.6.0 release gate *(extends 0.5.0)*
+
+In addition to the standard release gate:
+
+- [ ] `_table/` split complete; `table.py` is re-exports only (≤ ~200 lines)
+- [ ] `read_unified` strategy refactor merged; `read_dispatch.py` ≤ ~800 lines
+- [ ] C++ `read_table_chunk` is the sole Python table-chunk entry
+- [ ] `torchfits.data` documented with multi-worker test coverage
+- [ ] `torchfits.transforms` round-trip tests for scaled images and tables
+- [ ] `bench_ml_loader` median throughput documented vs fitsio baseline (same hardware)
+- [ ] No parity regression on existing upstream smoke gates
+
+### Legacy note — 0.5.0 quick wins *(done)*
+
+Shared `fits_schema`, where-read policy, `_table/cache`, non-recursive `table.read`,
+and cache invalidation decoupled from `io ↔ table` imports shipped in 0.5.0b3–b4.
+
+### 0.5.0 performance closure *(done in 0.5.0b4+)*
+
+High-priority benchmark gaps addressed before the 0.5.0 tag:
+
+| Item | Status | Notes |
+|---|---|---|
+| GPU unsigned uint16/uint32 without int64 CPU widen | **Done** | H2D narrow dtype; offset on device (`_apply_scale_on_device`) |
+| GPU signed-byte int8 without float32 promotion | **Done** | BZERO=-128 convention → int8 on device |
+| Honest integer GPU benchmark docs | **Done** | `docs/benchmarks.md` dtype-fair section; README ML + integer notes |
+| Dtype-fair GPU bench column | **Done** | `torchfits_dtype_fair_device` in `bench_gpu_transports.py` |
+| Training cache warm-up docs | **Done** | `optimize_for_dataset` in `example_image_dataset.py` |
+| ML loader diagnostic in release notes | **Done** | README + changelog cite `bench_ml_loader.py` CPU numbers |
+| Lab CUDA snapshot refresh | **Done** | `exhaustive_mmap_0.5.0b4_20260630_162835` — 3626 rows, **13 deficits** (was 22) |
+
+**Deferred to 0.6.0** (medium/low priority from perf triage):
+
+| Item | Track |
+|---|---|
+| MEF / multi-HDU handle pooling | B2, B5 |
+| Promote `bench_ml_loader` to release gate | E |
+| Marginal CUDA cases (hcompress, tiny int8, repeated cutouts <5%) | B3/B6 if profiling finds wins |
+| Pinned host buffer pool for CUDA H2D | B6 |
+| Table GPU transports | Out of scope |
 
 ## Release gate
 

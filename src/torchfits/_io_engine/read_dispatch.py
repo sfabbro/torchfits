@@ -87,6 +87,51 @@ def _unsigned_image_target(
     return None
 
 
+def _apply_unsigned_offset(
+    data: torch.Tensor,
+    dtype: torch.dtype,
+    offset: int,
+    *,
+    device: str | None = None,
+) -> torch.Tensor:
+    """Convert signed FITS storage to unsigned dtype with minimal widening."""
+    if device is not None and device != "cpu":
+        data = data.to(device=device)
+    if dtype == torch.uint16 and data.dtype == torch.int16:
+        return (data.to(torch.int32) + offset).to(torch.uint16)
+    if dtype == torch.uint32 and data.dtype == torch.int32:
+        return (data.to(torch.int64) + offset).to(torch.uint32)
+    return data.to(torch.int64).add_(offset).to(dtype=dtype)
+
+
+def _apply_scale_on_device(
+    data: torch.Tensor,
+    *,
+    scaled: bool,
+    bscale: float,
+    bzero: float,
+    device: str,
+) -> torch.Tensor:
+    """Apply BSCALE/BZERO on ``device`` while preserving narrow integer H2D when possible."""
+    if not scaled:
+        return data.to(device=device)
+
+    if data.dtype == torch.int16 and bscale == 1.0 and bzero == 32768.0:
+        return _apply_unsigned_offset(data, torch.uint16, 32768, device=device)
+    if data.dtype == torch.int32 and bscale == 1.0 and bzero == 2147483648.0:
+        return _apply_unsigned_offset(data, torch.uint32, 2147483648, device=device)
+    if data.dtype == torch.uint8 and bscale == 1.0 and bzero == -128.0:
+        data = data.to(device=device)
+        return (data.to(torch.int16) - 128).to(torch.int8)
+
+    data = data.to(device=device, dtype=torch.float32)
+    if bscale != 1.0:
+        data.mul_(bscale)
+    if bzero != 0.0:
+        data.add_(bzero)
+    return data
+
+
 def _read_unsigned_image_if_needed(
     *,
     cpp_module: Any,
@@ -116,7 +161,7 @@ def _read_unsigned_image_if_needed(
             return None
     except Exception:
         return None
-    return raw.to(torch.int64).add_(offset).to(dtype=dtype)
+    return _apply_unsigned_offset(raw, dtype, offset)
 
 
 def _try_raw_scale_post(
@@ -156,7 +201,7 @@ def _try_raw_scale_post(
             return data
     except Exception:
         return data
-    return raw.to(torch.int64).add_(offset).to(dtype=dtype)
+    return _apply_unsigned_offset(raw, dtype, offset)
 
 
 def read_unified(
@@ -1003,29 +1048,14 @@ def read_generic_fast_path(
                 data, scaled, bscale, bzero = cpp_module.read_full_raw_with_scale(
                     path, hdu, effective_mmap
                 )
-                if scaled:
-                    if data.dtype == torch.int16 and bscale == 1.0 and bzero == 32768.0:
-                        data = (
-                            data.to(torch.int64)
-                            .add_(32768)
-                            .to(device=device, dtype=torch.uint16)
-                        )
-                    elif (
-                        data.dtype == torch.int32
-                        and bscale == 1.0
-                        and bzero == 2147483648.0
-                    ):
-                        data = (
-                            data.to(torch.int64)
-                            .add_(2147483648)
-                            .to(device=device, dtype=torch.uint32)
-                        )
-                    else:
-                        data = data.to(device=device, dtype=torch.float32)
-                        if bscale != 1.0:
-                            data.mul_(bscale)
-                        if bzero != 0.0:
-                            data.add_(bzero)
+                if scaled or device != "cpu":
+                    data = _apply_scale_on_device(
+                        data,
+                        scaled=scaled,
+                        bscale=bscale,
+                        bzero=bzero,
+                        device=device,
+                    )
                 else:
                     data = data.to(device)
             else:

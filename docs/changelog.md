@@ -5,6 +5,38 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- GPU `scale_on_device` preserves narrow integer H2D for FITS signed-byte (int8) and
+  unsigned uint16/uint32 conventions instead of promoting through float32 or int64 on CPU.
+- CPU unsigned image reads use int32 widening for uint16 (not int64) where applicable.
+
+### Changed
+
+- GPU transport benchmarks add **`torchfits_dtype_fair_device`** (`read_tensor` +
+  `raw_scale=True`) for dtype-equivalent integer comparisons vs fitsio.
+- README and `docs/benchmarks.md` document integer GPU semantics, known deficits, and
+  `cache.optimize_for_dataset` for training loops.
+- `examples/example_image_dataset.py` calls `torchfits.cache.optimize_for_dataset` before
+  DataLoader epochs; `pin_memory=False` when tensors are read directly to CUDA.
+- `scripts/run_exhaustive_bench_and_patch_docs.sh` skips rebuild when `torchfits._C` already imports
+  (avoids flaky LTO link failures mid-benchmark).
+
+### Added
+
+- `tests/test_scale_on_device.py` — signed-byte, unsigned, and fitsio parity checks.
+- Release gate includes `test_scale_on_device.py`.
+
+### Performance notes
+
+- Local `bench_ml_loader.py` diagnostic (30×512² float32, CPU, 2 epochs): Rice-compressed
+  **1.12×** vs fitsio; uncompressed within ~4% (tune handle cache for your file count).
+- Lab exhaustive refresh (`exhaustive_mmap_0.5.0b4_20260630_162835`, H100 MIG): **3626 rows**,
+  **13 deficits** (down from 22). Integer CUDA gaps closed; remaining are marginal int8 (≤1.2×)
+  and cold `large_uint32_2d` CPU vs astropy (~1.5×).
+
 ## [0.5.0b4] - 2026-06-30
 
 ### Changed

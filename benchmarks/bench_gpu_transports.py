@@ -127,6 +127,11 @@ def run_gpu_transport_rows(
             def tf_specialized_read(p=path, h=hdu, um=use_mmap):
                 return torchfits.read_tensor(str(p), hdu=h, mmap=um, device=device)
 
+            def tf_dtype_fair_read(p=path, h=hdu, um=use_mmap):
+                return torchfits.read_tensor(
+                    str(p), hdu=h, mmap=um, device=device, raw_scale=True
+                )
+
             def fitsio_torch_read(p=path, h=hdu):
                 arr = fitsio.read(str(p), ext=h)
                 return torch.from_numpy(suite._ensure_native_endian_numpy(arr)).to(
@@ -152,6 +157,13 @@ def run_gpu_transport_rows(
                     "specialized",
                     "specialized",
                     tf_specialized_read,
+                ),
+                (
+                    "torchfits",
+                    "torchfits_dtype_fair_device",
+                    "specialized",
+                    "dtype_fair",
+                    tf_dtype_fair_read,
                 ),
             ]
 

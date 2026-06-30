@@ -66,19 +66,22 @@ def read(
 
     if scale_on_device and not raw_scale and _HAS_READ_FULL_RAW_WITH_SCALE:
         data, scaled, bscale, bzero = cpp.read_full_raw_with_scale(path, hdu, mmap)
-        if scaled:
-            data = data.to(device=target_device, dtype=torch.float32)
-            if bscale != 1.0:
-                data.mul_(bscale)
-            if bzero != 0.0:
-                data.add_(bzero)
+        if scaled or not is_cpu:
+            from torchfits._io_engine.read_dispatch import _apply_scale_on_device
 
+            data = _apply_scale_on_device(
+                data,
+                scaled=scaled,
+                bscale=bscale,
+                bzero=bzero,
+                device=device,
+            )
             if target_dtype is not None:
                 data = data.to(dtype=target_dtype)
             return data
 
-        if not is_cpu or target_dtype is not None:
-            data = data.to(device=target_device, dtype=target_dtype)
+        if target_dtype is not None:
+            data = data.to(dtype=target_dtype)
         return data
 
     if use_cache:

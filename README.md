@@ -57,17 +57,19 @@ Full history: [docs/changelog.md](docs/changelog.md). Engineering decomposition 
 
 ## Performance
 
-Median wall-clock from the lab exhaustive benchmark suite (`0.5.0b3` snapshot, H100 CUDA where noted). See [docs/benchmarks.md](docs/benchmarks.md) for methodology and reproducible commands.
+Median wall-clock from the lab exhaustive benchmark suite (`exhaustive_mmap_0.5.0b4_20260630_162835`, H100 CUDA). See [docs/benchmarks.md](docs/benchmarks.md) for methodology, deficit transparency, and reproducible commands.
 
 | Case | torchfits | astropy | Speedup |
 |---|---:|---:|---:|
-| Large float32 image read (16 MB, CPU) | 4.26 ms | 15.19 ms | **3.6×** |
-| Same read @ CUDA | 3.61 ms | 16.16 ms | **4.6×** |
-| Compressed Rice image (CPU) | 9.20 ms | 29.33 ms | **3.2×** |
-| 50× repeated 100×100 cutouts (CPU) | 5.53 ms | 80.93 ms | **15.5×** |
-| Table read (100k rows, 8 cols) | 93 μs | 6.33 ms | **68×** |
+| Large float32 image read (16 MB, CPU) | 4.89 ms | 15.66 ms | **3.3×** |
+| Same read @ CUDA | 3.26 ms | 15.46 ms | **4.7×** |
+| Compressed Rice image (CPU) | 9.22 ms | 28.70 ms | **3.1×** |
+| 50× repeated 100×100 cutouts (CPU) | 6.34 ms | 80.25 ms | **13.3×** |
+| Table read (100k rows, 8 cols) | 102 μs | 6.37 ms | **62×** |
 
-Tables and GPU transports are CPU-resident in all backends today; GPU rows measure host decode + H2D copy, not disk→GPU bypass.
+**ML DataLoader (local diagnostic, 30×512² float32, CPU, 2 epochs):** torchfits **1.12×** vs fitsio on Rice-compressed files; uncompressed within ~4% (handle-cache tuning matters — call `torchfits.cache.optimize_for_dataset` before training loops).
+
+**GPU integer reads:** Default `read(..., device="cuda")` applies BSCALE/BZERO on device and returns `float32` for generic scaled pixels — good for ML. For native integer dtypes (int8, uint16) matching fitsio, use `read_tensor(..., raw_scale=True)` or rely on the automatic signed-byte / unsigned-integer fast paths (see benchmarks doc). Tables remain CPU-resident in all backends; GPU rows measure host decode + H2D copy, not disk→GPU bypass.
 
 ## Install
 
