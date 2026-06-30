@@ -10,12 +10,13 @@ CFITSIO_VERSION="latest"
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") [--cfitsio-version <tag>]
+Usage: $(basename "$0") [--cfitsio-version <tag-or-versions-file>]
 
 Defaults to latest published release for each dependency.
 Examples:
   $(basename "$0")
   $(basename "$0") --cfitsio-version cfitsio-4.6.2
+  $(basename "$0") --cfitsio-version extern/VERSIONS.txt
 USAGE
 }
 
@@ -44,8 +45,35 @@ require_cmd() {
   fi
 }
 
+resolve_cfitsio_version() {
+  local spec="$1"
+
+  if [[ -f "${spec}" ]]; then
+    spec="$(cat "${spec}")"
+  fi
+
+  if [[ "${spec}" == *$'\n'* ]] || [[ "${spec}" == cfitsio_*=* ]]; then
+    local tag_line
+    tag_line="$(printf '%s\n' "${spec}" | grep -E '^cfitsio_tag=' | head -n1 || true)"
+    if [[ -n "${tag_line}" ]]; then
+      spec="${tag_line#cfitsio_tag=}"
+    else
+      spec="$(printf '%s\n' "${spec}" | grep -Ev '^cfitsio_repo=' | head -n1 | tr -d '[:space:]')"
+    fi
+  fi
+
+  if [[ -z "${spec}" ]]; then
+    echo "Failed to resolve CFITSIO version from: $1" >&2
+    exit 1
+  fi
+
+  echo "${spec}"
+}
+
 require_cmd curl
 require_cmd tar
+
+CFITSIO_VERSION="$(resolve_cfitsio_version "${CFITSIO_VERSION}")"
 
 latest_tag() {
   local repo="$1"

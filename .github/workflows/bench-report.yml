@@ -22,7 +22,7 @@ jobs:
           python-version: "3.13"
 
       - name: Vendor CFITSIO
-        run: bash extern/vendor.sh --cfitsio-version "$(cat extern/VERSIONS.txt)"
+        run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
 
       - name: Install
         run: |
