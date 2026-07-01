@@ -3343,6 +3343,7 @@ void bind_table(nb::module_& m) {
             nb::gil_scoped_acquire acquire;
             return reader.read_columns_mmap(column_names);
         } else {
+            torchfits::check_fits_filename_security(filename);
             fitsfile* fptr = nullptr;
             int status = 0;
             fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
@@ -3368,6 +3369,7 @@ void bind_table(nb::module_& m) {
             nb::gil_scoped_acquire acquire;
             return reader.read_columns_mmap(column_names, start_row, num_rows);
         } else {
+            torchfits::check_fits_filename_security(filename);
             fitsfile* fptr = nullptr;
             int status = 0;
             fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
@@ -3422,6 +3424,7 @@ void bind_table(nb::module_& m) {
             return nb::object(numpy_result);
         } else {
             nb::gil_scoped_release release;
+            torchfits::check_fits_filename_security(filename);
             fitsfile* fptr = nullptr;
             int status = 0;
             fits_open_file(&fptr, filename.c_str(), 0 /* READONLY */, &status);
