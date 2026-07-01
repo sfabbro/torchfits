@@ -100,7 +100,7 @@ pixi run test
 Upstream parity gates (require comparison libraries):
 
 ```bash
-pixi run fits-upstream-gate
+pixi run release-gate
 ```
 
 ## Benchmarks

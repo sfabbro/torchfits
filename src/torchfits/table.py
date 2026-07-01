@@ -6,7 +6,6 @@ from collections.abc import Iterable, Iterator, Mapping
 import itertools
 import os
 import logging
-import re
 from typing import Any, Optional, TYPE_CHECKING
 
 import torch
@@ -28,7 +27,7 @@ from ._table_engine import (
     should_skip_cpp_numpy_for_where,
     validate_table_backend,
 )
-from ._table_engine.backend_policy import TABLE_BACKENDS
+
 
 logger = logging.getLogger(__name__)
 

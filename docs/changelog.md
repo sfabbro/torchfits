@@ -160,8 +160,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Table mutations now invalidate FITS path caches via internal `io` helper (fixes `torchfits._invalidate_path_caches` AttributeError).
 
-## Unreleased
-
 ## Earlier releases
 
 Earlier 0.1.x through 0.3.x releases included broader experimental astronomy
@@ -174,6 +172,7 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
+[Unreleased]: https://github.com/astroai/torchfits/compare/v0.5.0b4...HEAD
 [0.5.0b4]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b4
 [0.5.0b3]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b3
 [0.5.0b2]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b2

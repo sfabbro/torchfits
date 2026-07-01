@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 import torch
 from torch import Tensor
 
-from .. import table
 from ..hdu import HDUList, Header, TableHDU, TableHDURef, TensorHDU
 from .caches import invalidate_path_caches as _invalidate_io_path_caches
 from .hdu_api import open_hdulist

@@ -91,7 +91,7 @@ pixi run bench-all      # exhaustive benchmarks
 | `pip install torchfits[dev]` | pytest, ruff, mypy, ipykernel | Development |
 | `pip install torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking |
 | `pip install torchfits[test]` | pytest, pytest-cov | Testing |
-| `pip install torchfits[examples]` | torchvision, requests, matplotlib | Running examples |
+| `pip install torchfits[examples]` | matplotlib | Running examples |
 
 ## Troubleshooting
 

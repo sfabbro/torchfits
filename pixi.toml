@@ -60,13 +60,16 @@ nanobind = ">=2.10.2"
 pytorch = ">=2.0,<2.11"
 numpy = ">=1.20"
 pre-commit = ">=3.5.0"
+pyarrow = ">=24.0.0,<25"
+polars = ">=1.42.1,<2"
+duckdb = ">=1.5.4,<2"
 
 [tasks]
 # Development tasks
 dev = "pip install -e . --no-build-isolation"
 build = "pixi build"
-test = "KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
-release-gate = "KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py -q"
+test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
+release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py -q"
 lint = "ruff check . && ruff format ."
 setup-hooks = "pre-commit install"
 pre-commit = "pre-commit run --all-files"
@@ -77,11 +80,11 @@ pre-commit = "pre-commit run --all-files"
 bench-install = "pip install -e . --no-build-isolation"
 bench-fits = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fits-only"
 bench-fitstable = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
-bench-fast = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv"
-bench-mps = "pixi run -e bench python benchmarks/bench_fast.py --device mps --output benchmarks_results/mps_fast_results.csv"
-bench-fast-stable = "pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3"
-bench-core = "pixi run -e bench python benchmarks/bench_fast.py"
-bench-table-arrow = "pixi run -e bench python benchmarks/bench_arrow_tables.py"
+bench-fast = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv"
+bench-mps = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_fast.py --device mps --output benchmark_results/mps_fast_results.csv"
+bench-fast-stable = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_fast.py --output benchmark_results/fast_results.csv --torch-threads 1 --compressed-repeats 3"
+bench-core = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_fast.py"
+bench-table-arrow = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_arrow_tables.py"
 
 # Comprehensive benchmarks (renamed from exhaustive)
 bench-all = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
@@ -89,7 +92,7 @@ bench-all-keep = "pixi run -e bench-all bench-install && pixi run -e bench-all p
 
 bench-all-force = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
 bench-exhaustive = "bash scripts/run_exhaustive_bench_and_patch_docs.sh"
-bench-cache = "pixi run -e bench python benchmarks/bench_cache.py"
+bench-cache = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_cache.py"
 
 # Render the bench-all CSV into the I/O Transport x Backend markdown section
 # of docs/benchmarks.md. Pass --csv after --, e.g.:

@@ -110,6 +110,9 @@ def main() -> None:
                 WHERE c.DEC > 0
                 """
             ).arrow()
+            # DuckDB ≥1.5 + PyArrow ≥24 may return a RecordBatchReader instead of Table.
+            if hasattr(joined, "read_all"):
+                joined = joined.read_all()
             print(f"DuckDB join (DEC > 0): {joined.num_rows} rows")
     finally:
         os.unlink(catalog_file.name)
