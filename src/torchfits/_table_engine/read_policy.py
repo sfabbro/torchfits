@@ -56,13 +56,9 @@ def choose_where_read_plan(
         env.get("TORCHFITS_TABLE_SCANNER_THRESHOLD", str(default_threshold))
     )
 
-    use_arrow_first = (
-        n_rows <= threshold or backend == "torch" or not cpp_pushdown_safe
-    )
+    use_arrow_first = n_rows <= threshold or backend == "torch" or not cpp_pushdown_safe
     strategy = (
-        WhereStrategy.ARROW_FILTER
-        if use_arrow_first
-        else WhereStrategy.CPP_PUSHDOWN
+        WhereStrategy.ARROW_FILTER if use_arrow_first else WhereStrategy.CPP_PUSHDOWN
     )
     unfiltered_backend = "cpp_numpy" if backend == "auto" else backend
 

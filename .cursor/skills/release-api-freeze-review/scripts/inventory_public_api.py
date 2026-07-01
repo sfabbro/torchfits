@@ -15,7 +15,9 @@ def load_all_from_init() -> set[str]:
     text = init.read_text(encoding="utf-8")
     names: set[str] = set()
     # Static list inside __all__ = tuple([...])
-    for match in re.finditer(r'"([a-zA-Z_][a-zA-Z0-9_]*)"', text.split("__all__")[1].split(")")[0]):
+    for match in re.finditer(
+        r'"([a-zA-Z_][a-zA-Z0-9_]*)"', text.split("__all__")[1].split(")")[0]
+    ):
         names.add(match.group(1))
     names.update({"table", "cache", "cpp"})
     return names

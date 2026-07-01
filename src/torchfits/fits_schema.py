@@ -114,8 +114,11 @@ def _iter_tfields_indexed(
                 continue
             tform = header.get(f"TFORM{i}")
             tdim = header.get(f"TDIM{i}")
-            yield i, str(name), str(tform) if tform is not None else "", (
-                str(tdim) if tdim is not None else None
+            yield (
+                i,
+                str(name),
+                str(tform) if tform is not None else "",
+                (str(tdim) if tdim is not None else None),
             )
         return
 
