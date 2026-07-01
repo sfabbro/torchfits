@@ -74,10 +74,13 @@ class Header(dict):
         self._cards: list[Card] = []
         if cards:
             if isinstance(cards, Header):
-                for card in cards.cards:
-                    self._append_card(card, update_mapping=True, bump=False)
+                dict.update(self, cards)
+                self._cards.extend(cards.cards)
             elif isinstance(cards, dict):
+                dict_update = []
+                new_cards = []
                 for k, v in cards.items():
+                    k_str = str(k)
                     if (
                         not isinstance(v, (str, bytes))
                         and isinstance(v, tuple)
@@ -87,14 +90,22 @@ class Header(dict):
                     else:
                         value = v
                         comment = ""
-                    self._set_card(str(k), value, str(comment), bump=False)
+                    new_cards.append(Card(k_str, value, str(comment)))
+                    dict_update.append((k_str, value))
+                dict.update(self, dict_update)
+                self._cards.extend(new_cards)
             elif isinstance(cards, (list, tuple)):
+                dict_update = []
+                new_cards = []
                 for card in cards:
                     try:
                         parsed = self._coerce_card(card)
+                        new_cards.append(parsed)
+                        dict_update.append((parsed.key, parsed.value))
                     except (TypeError, ValueError):
                         continue
-                    self._append_card(parsed, update_mapping=True, bump=False)
+                dict.update(self, dict_update)
+                self._cards.extend(new_cards)
 
     def __setitem__(self, key, value):
         if (
