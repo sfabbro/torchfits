@@ -2903,6 +2903,7 @@ torch::Tensor read_hdus_sequence_last(const std::string& path, const std::vector
 }
 
 torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
+    torchfits::check_fits_filename_security(path);
     fitsfile* fptr = nullptr;
     int status = 0;
     try {
@@ -3015,6 +3016,7 @@ torch::Tensor read_full_unmapped_raw(const std::string& path, int hdu_num) {
 }
 
 torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_mmap) {
+    torchfits::check_fits_filename_security(path);
     // True "no-cache" read path: open -> read -> close every call.
     // Unlike the cached paths, this avoids global cache locks and refcounting.
     fitsfile* fptr = nullptr;
