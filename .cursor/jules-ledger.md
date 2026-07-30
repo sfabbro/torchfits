@@ -15,3 +15,4 @@ Themes already covered by Jules (or integrated Jules PRs). Weekly Jules must
 | Deep review 1.0 triage (alias/spectral hard-remove, bench honesty) | main (pre-1.0 triage) | landed — do not reopen without new repro |
 
 When integrating a Jules PR, append a row here before closing the PR.
+| optimize Header.remove for huge HISTORY lists | #225 | landed |
