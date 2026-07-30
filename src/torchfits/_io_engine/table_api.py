@@ -72,7 +72,11 @@ def _thin_read_table_filtered(
     device: str,
     compile_predicates: Callable[[str], Any],
 ) -> dict[str, Any] | None:
-    """Fused project+predicate via cpp.read_fits_table_filtered."""
+    """Fused project+predicate via cpp.read_fits_table_filtered (gather path).
+
+    Prefer the project+mask path in :func:`read_table` for typical keep rates;
+    this remains as a fallback when the thin full-column read fails.
+    """
     import torchfits._C as cpp
 
     if not hasattr(cpp, "read_fits_table_filtered"):
@@ -131,39 +135,52 @@ def read_table(
     if where is not None and str(where).strip():
         from torchfits._table.read import _compile_where_to_simple_predicates
 
-        pushed = _thin_read_table_filtered(
-            path,
-            hdu=hdu,
-            columns=columns,
-            where=str(where),
-            device=device,
-            compile_predicates=_compile_where_to_simple_predicates,
-        )
-        if pushed is not None:
+        predicates = _compile_where_to_simple_predicates(str(where))
+        if predicates is None:
+            raise ValueError(f"Unsupported where expression for read_torch: {where!r}")
+
+        # Prefer project-all-needed-cols + torch mask over ``read_fits_table_filtered``.
+        # Filtered gather wins only when keep-rate is tiny *and* row assembly is
+        # heavy; for narrow/dense predicates (the Round-3 deficit cluster) mask
+        # is several× faster and also beats Astropy's numpy mask path.
+        pred_cols = [col for col, _op, _lit in predicates]
+        read_cols = list(columns) if columns is not None else []
+        for name in pred_cols:
+            if name not in read_cols:
+                read_cols.append(name)
+        try:
+            data = _thin_read_table_torch(
+                path,
+                hdu=hdu,
+                columns=read_cols or None,
+                start_row=1,
+                num_rows=-1,
+                device="cpu",
+                mmap=mmap,
+            )
+        except Exception:
+            data = None
+
+        if data is None:
+            pushed = _thin_read_table_filtered(
+                path,
+                hdu=hdu,
+                columns=columns,
+                where=str(where),
+                device=device,
+                compile_predicates=_compile_where_to_simple_predicates,
+            )
+            if pushed is None:
+                raise RuntimeError(
+                    f"Failed to apply where={where!r} on table HDU {hdu!r}"
+                )
             data = _apply_row_window(pushed, start_row, num_rows)
             if return_header:
                 import torchfits
 
                 return data, torchfits.read_header(path, hdu=hdu)
             return data
-        # Fall back: project predicate columns then apply a simple torch mask.
-        predicates = _compile_where_to_simple_predicates(str(where))
-        if predicates is None:
-            raise ValueError(f"Unsupported where expression for read_torch: {where!r}")
-        pred_cols = [col for col, _op, _lit in predicates]
-        read_cols = list(columns) if columns is not None else []
-        for name in pred_cols:
-            if name not in read_cols:
-                read_cols.append(name)
-        data = _thin_read_table_torch(
-            path,
-            hdu=hdu,
-            columns=read_cols or None,
-            start_row=1,
-            num_rows=-1,
-            device="cpu",
-            mmap=mmap,
-        )
+
         mask: torch.Tensor | None = None
         for col, op, lit in predicates:
             values = data[col]

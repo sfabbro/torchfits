@@ -27,11 +27,11 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
   Rice path is decompress-bound (`materialize` still ~2×). Revisit only with a
   new same-host repro that lags.
 - Narrow-table `read_full` ~1.06–1.15× behind fitsio (small; polish later)
-- **predicate_filter Round-3 investigation (done):** fused `where=` engages.
-  Significant deficits were `specialized` only (tensor vs astropy **numpy**);
-  `smart` already won. Dense `col > 0` (~50% keep) stresses gather; selective
-  tails favor it. Bench now has both ops: `predicate_filter` (dense) and
-  `predicate_filter_selective`. Optional later: C++ high-keep-rate fast path.
+- **predicate_filter Round-3 investigation:** fused `where=` used filtered
+  gather first; dense ``col > 0`` lagged Astropy numpy ~20–28%. Fixed by
+  preferring project+torch-mask in `read_table`/`read_torch` (lab: ~3× vs
+  Astropy on narrow 1e6). Selective gather path kept as fallback only.
+  Bench still has `predicate_filter` (dense) and `predicate_filter_selective`.
 
 ## Round 7 deferrals (safe post-1.0)
 

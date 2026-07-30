@@ -41,5 +41,5 @@
 - id: unified-cache-stubs
   desc: C++ configure/clear/invalidate_cached are no-ops after Option A; SharedReadMeta is the live shared cache. Do not revive get_or_open_cached.
 
-- id: header-delitem-history
-  desc: Header.__delitem__ routes through remove(..., remove_all=True) so HISTORY/COMMENT cards do not orphan after del.
+- id: where-prefer-mask
+  desc: read_torch/table where= prefers project+torch-mask over read_fits_table_filtered gather; filtered is fallback only (dense predicates).

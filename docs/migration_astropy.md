@@ -72,9 +72,9 @@ use `table.read_torch` for tensor columns.
 *Medians from Round-3 scorecard (`exhaustive_mps_20260719_143706`); see
 [Benchmarks](benchmarks.md) host scorecard. Absolute highlight times refresh
 with each soak — prefer `docs/benchmarks.md#performance-highlights` when
-numbers disagree. Narrow-table `predicate_filter` can still lag fitsio on some
-hosts; MegaCam `torchfits_cached` vs `fitsio_cached` was only ~6.5% behind on
-Round-3 medians (and led on a 2026-07-30 re-soak).*
+numbers disagree. MegaCam `torchfits_cached` and narrow `read_torch(where=)`
+dense predicates were re-checked 2026-07-30 (docs medians corrected; where=
+now prefers project+mask).*
 
 ## Key Behavioral Differences
 
