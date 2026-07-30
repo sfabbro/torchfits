@@ -174,9 +174,11 @@ class Header(dict[str, Any]):
             if ignore_missing:
                 return
             raise KeyError(key)
-        remove_indices = sorted(matches if remove_all else [matches[0]], reverse=True)
-        for idx in remove_indices:
-            del self._cards[idx]
+        # remove_all rebuilds once (O(N)); repeated del is O(N*K) for huge HISTORY.
+        if remove_all:
+            self._cards = [c for c in self._cards if c.key != key_s]
+        else:
+            del self._cards[matches[0]]
         self._rebuild_mapping_for_key(key_s)
         self._version += 1
 
