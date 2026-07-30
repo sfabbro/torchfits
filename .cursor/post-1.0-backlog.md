@@ -49,7 +49,7 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 
 ## Hygiene / structure
 
-- Header HISTORY/`remove` O(N²) for huge HISTORY lists
+- ~~Header HISTORY/`remove` O(N²) for huge HISTORY lists~~ — #225
 - Split `_table/read.py` mega-function strategies
 - Vestigial `UnifiedCache` shared-handle path cleanup (`get_or_open_cached`
   unused; all guards `cached=false`; shrink invalidate/clear to what remains)

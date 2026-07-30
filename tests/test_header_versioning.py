@@ -47,16 +47,40 @@ def test_fast_parse_header_cards_empty_comment_is_str():
     assert bitpix_cards and bitpix_cards[0].comment == ""
 
 
-def test_header_remove_versioning():
+def test_header_remove_all_history_preserves_other_cards():
+    h = Header()
+    h["SIMPLE"] = True
+    h.add_history("h1")
+    h.add_history("h2")
+    h.add_history("h3")
+    h["BITPIX"] = 16
+    v = h._version
+    h.remove("HISTORY", remove_all=True)
+    assert h._version == v + 1
+    assert [c.key for c in h.cards] == ["SIMPLE", "BITPIX"]
+    assert "HISTORY" not in h
+    assert h["SIMPLE"] is True
+    assert h["BITPIX"] == 16
+
+
+def test_header_remove_first_history_only():
     h = Header()
     h.add_history("h1")
     h.add_history("h2")
     h.add_history("h3")
     v = h._version
-    h.remove("HISTORY", remove_all=True)
-    assert h._version == v + 1
-
-    h.add_history("h4")
-    v = h._version
     h.remove("HISTORY", remove_all=False)
     assert h._version == v + 1
+    assert [c.value for c in h.cards if c.key == "HISTORY"] == ["h2", "h3"]
+
+
+def test_header_remove_all_many_history_is_linear():
+    """Smoke: many HISTORY cards must not take quadratic delete time."""
+    n = 20_000
+    h = Header()
+    for i in range(n):
+        h.add_history(f"h{i}")
+    h["OBJECT"] = "keep"
+    h.remove("HISTORY", remove_all=True)
+    assert [c.key for c in h.cards] == ["OBJECT"]
+    assert h["OBJECT"] == "keep"
