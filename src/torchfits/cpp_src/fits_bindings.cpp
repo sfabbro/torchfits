@@ -73,7 +73,6 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     }
     FitsHandleGuard guard;
     guard.fptr = fptr;
-    guard.cached = false;  // fits_close_file on exit
 
     int status = 0;
     const int target_hdu = hdu_num + 1;
@@ -337,7 +336,6 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
     }
     FitsHandleGuard guard;
     guard.fptr = fptr;
-    guard.cached = false;  // fits_close_file on exit
 
     int status = 0;
     fits_movnam_hdu(

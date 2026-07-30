@@ -28,7 +28,6 @@
 
 #include "torchfits_torch.h"
 #include "torch_compat.h"
-#include "cache.h"
 #include "security.h"
 #include "hardware.h"
 #include "fits_detail.h"
@@ -63,10 +62,8 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
     if (mode == 0) {
         // Private per-instance handle (CFITSIO §4 Option A): no shared CHDU.
         status = detail::open_fits_readonly(&fptr_, filename_);
-        use_cache_ = false;  // close() calls fits_close_file
     } else {
         fits_create_file(&fptr_, filename, &status);
-        use_cache_ = false;
     }
     if (status != 0 || !fptr_) throw std::runtime_error("Could not open FITS file: " + filename_);
     cached_ = false;
@@ -87,8 +84,8 @@ FITSFile::~FITSFile() { close(); }
 void FITSFile::close() {
     close_raw_fd();
     if (fptr_) {
-        if (use_cache_) release_cached(filename_);
-        else { int status = 0; fits_close_file(fptr_, &status); }
+        int status = 0;
+        fits_close_file(fptr_, &status);
         fptr_ = nullptr;
     }
 }

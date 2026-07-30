@@ -38,5 +38,8 @@
 - id: cfitsio-http-ssrf
   desc: guard_fits_path on I/O façades (_resolve_hdu_index, read_unified/batch, open/write/image/table); public http(s)/ftp still CFITSIO; private blocked. Case-fold sh:// in security.h.
 
+- id: unified-cache-stubs
+  desc: C++ configure/clear/invalidate_cached are no-ops after Option A; SharedReadMeta is the live shared cache. Do not revive get_or_open_cached.
+
 - id: header-delitem-history
   desc: Header.__delitem__ routes through remove(..., remove_all=True) so HISTORY/COMMENT cards do not orphan after del.

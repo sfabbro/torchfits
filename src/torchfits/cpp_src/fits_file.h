@@ -68,7 +68,6 @@ private:
     int raw_fd_ = -1;
     off_t raw_file_size_ = 0;
     bool raw_fd_ready_ = false;
-    bool use_cache_ = false;
     std::unordered_map<int, ScaleInfo> scale_cache_;
     std::unordered_map<int, bool> compressed_cache_;
     std::unordered_map<int, bool> compressed_nulls_cache_;

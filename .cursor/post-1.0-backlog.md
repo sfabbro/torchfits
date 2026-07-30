@@ -50,10 +50,10 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 ## Hygiene / structure
 
 - ~~Header HISTORY/`remove` O(N²) for huge HISTORY lists~~ — #225
+- ~~Vestigial `UnifiedCache` shared-handle path~~ — stubs; live state is SharedReadMeta
+- ~~`_table/cache.py` no-op close/invalidate stubs after Option A~~ — removed
 - Split `_table/read.py` mega-function strategies
-- Vestigial `UnifiedCache` shared-handle path cleanup (`get_or_open_cached`
-  unused; all guards `cached=false`; shrink invalidate/clear to what remains)
-- ~~`_table/cache.py` no-op close/invalidate stubs after Option A — delete or fold~~ — removed
+- Split `_io_engine/write_api.py` / `_table/mutation.py` coerce vs ops (audit defer)
 - Broader `except Exception: pass` audit (soft fallthroughs in strategy probes;
   Round-2 glm notes: batch `read_images_batch` silent fallthrough, NAXIS2→0,
   tnull fill swallow, `update_rows` mmap=auto swallow)

@@ -3,8 +3,8 @@
 Live hot-path I/O state (file/meta/header LRUs, invalidate) lives in
 ``torchfits._io_engine.caches``. This module owns env/policy
 (``CacheConfig`` / ``CacheManager``), on-disk cache roots, and aggregating
-``clear_cache`` / ``stats``. The C++ ``UnifiedCache`` shared-handle path is
-unused (Option A: private handles per call).
+``clear_cache`` / ``stats``. C++ ``configure_cache`` / handle-pool APIs are
+no-ops after Option A (private handles); live shared state is SharedReadMeta.
 """
 
 from __future__ import annotations
@@ -346,9 +346,7 @@ def clear_cache() -> None:
         )
 
 
-def clear() -> None:
-    """Clear all torchfits-managed caches."""
-    clear_cache()
+clear = clear_cache
 
 
 def stats() -> Dict[str, Any]:

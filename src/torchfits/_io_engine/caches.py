@@ -44,7 +44,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "hdu_types": False,
                 "stats": False,
                 "cpp": False,
-                "table_handles": False,
             }
         ),
         "fits_table_data": MappingProxyType(
@@ -55,7 +54,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "hdu_types": False,
                 "stats": False,
                 "cpp": False,
-                "table_handles": True,
             }
         ),
         "fits_header_metadata": MappingProxyType(
@@ -66,7 +64,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "hdu_types": True,
                 "stats": False,
                 "cpp": False,
-                "table_handles": False,
             }
         ),
         "fits_header_hdu_metadata": MappingProxyType(
@@ -77,7 +74,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "hdu_types": True,
                 "stats": False,
                 "cpp": False,
-                "table_handles": False,
             }
         ),
         "all": MappingProxyType(
@@ -88,7 +84,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
                 "hdu_types": True,
                 "stats": True,
                 "cpp": True,
-                "table_handles": True,
             }
         ),
     }

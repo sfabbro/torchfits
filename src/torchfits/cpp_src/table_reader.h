@@ -23,7 +23,6 @@
 #include "torchfits_torch.h"
 #include "torch_compat.h"
 #include "hardware.h"
-#include "cache.h"
 #include "fits_detail.h"
 #include "table_types.h"
 #include "security.h"
@@ -33,7 +32,7 @@ namespace nb = nanobind;
 namespace torchfits {
 class TableReader {
 public:
-    TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num), use_cache_(false), owns_fptr_(true) {
+    TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num), owns_fptr_(true) {
         torchfits::check_fits_filename_security(filename);
         target_hdu_ = hdu_num + 1;  // CFITSIO 1-based absolute HDU
         // Private per-instance handle (CFITSIO §4 Option A): never share one
@@ -61,7 +60,7 @@ public:
         }
     }
 
-    TableReader(fitsfile* fptr, int hdu_num = 1) : fptr_(fptr), hdu_num_(hdu_num), use_cache_(false), owns_fptr_(false) {
+    TableReader(fitsfile* fptr, int hdu_num = 1) : fptr_(fptr), hdu_num_(hdu_num), owns_fptr_(false) {
         int status = 0;
         target_hdu_ = hdu_num + 1;
         fits_movabs_hdu(fptr_, target_hdu_, nullptr, &status);
@@ -79,13 +78,9 @@ public:
     }
 
     ~TableReader() {
-        if (fptr_) {
-            if (owns_fptr_) {
-                int status = 0;
-                fits_close_file(fptr_, &status);
-            } else if (use_cache_) {
-                torchfits::release_cached(filename_);  // legacy path, unused
-            }
+        if (fptr_ && owns_fptr_) {
+            int status = 0;
+            fits_close_file(fptr_, &status);
         }
     }
 
@@ -2285,7 +2280,6 @@ private:
     std::string filename_;
     int hdu_num_;
     int target_hdu_ = 1;
-    bool use_cache_ = false;
     bool owns_fptr_ = false;
     long nrows_;
     int ncols_;

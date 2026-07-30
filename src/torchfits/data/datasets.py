@@ -110,6 +110,28 @@ def _pack_payload(
     return out
 
 
+def _load_image_payload(
+    path: str,
+    *,
+    hdus: list[Any],
+    ivar_hdus: list[Any] | None,
+    mask_hdus: list[Any] | None,
+    device: str,
+    mmap: bool | str,
+    add_channel_dim: bool,
+    transform: Callable[..., Any] | None,
+) -> torch.Tensor | dict[str, torch.Tensor]:
+    flux = _read_flux_stack(path, hdus, device=device, mmap=mmap)
+    if add_channel_dim and flux.ndim == 2:
+        flux = flux.unsqueeze(0)
+    ivar = _optional_companion(path, ivar_hdus, device=device, mmap=mmap)
+    mask = _optional_companion(path, mask_hdus, device=device, mmap=mmap)
+    payload = _pack_payload(flux, ivar, mask)
+    if transform is not None:
+        payload = transform(payload)
+    return payload
+
+
 class FitsTensorDataset(Dataset[Any]):
     """General N-D IMAGE HDU → tensor (any rank).
 
@@ -172,19 +194,16 @@ class FitsTensorDataset(Dataset[Any]):
         return len(self.files)
 
     def _load(self, path: str) -> torch.Tensor | dict[str, torch.Tensor]:
-        flux = _read_flux_stack(path, self.hdus, device=self.device, mmap=self.mmap)
-        if self.add_channel_dim and flux.ndim == 2:
-            flux = flux.unsqueeze(0)
-        ivar = _optional_companion(
-            path, self.ivar_hdus, device=self.device, mmap=self.mmap
+        return _load_image_payload(
+            path,
+            hdus=self.hdus,
+            ivar_hdus=self.ivar_hdus,
+            mask_hdus=self.mask_hdus,
+            device=self.device,
+            mmap=self.mmap,
+            add_channel_dim=self.add_channel_dim,
+            transform=self.transform,
         )
-        mask = _optional_companion(
-            path, self.mask_hdus, device=self.device, mmap=self.mmap
-        )
-        payload = _pack_payload(flux, ivar, mask)
-        if self.transform is not None:
-            payload = self.transform(payload)
-        return payload
 
     def __getitem__(self, idx: int) -> tuple[Any, torch.Tensor]:
         ahead = self.files[idx + 1 : idx + 3]
@@ -315,19 +334,16 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
             path = _local_read_path(
                 self.files[idx], prefetch_ahead=ahead, cache_dir=self.cache_dir
             )
-            flux = _read_flux_stack(path, self.hdus, device=self.device, mmap=self.mmap)
-            if self.add_channel_dim and flux.ndim == 2:
-                flux = flux.unsqueeze(0)
-            ivar = _optional_companion(
-                path, self.ivar_hdus, device=self.device, mmap=self.mmap
+            yield _load_image_payload(
+                path,
+                hdus=self.hdus,
+                ivar_hdus=self.ivar_hdus,
+                mask_hdus=self.mask_hdus,
+                device=self.device,
+                mmap=self.mmap,
+                add_channel_dim=self.add_channel_dim,
+                transform=self.transform,
             )
-            mask = _optional_companion(
-                path, self.mask_hdus, device=self.device, mmap=self.mmap
-            )
-            payload = _pack_payload(flux, ivar, mask)
-            if self.transform is not None:
-                payload = self.transform(payload)
-            yield payload
 
     def __repr__(self) -> str:
         return (

@@ -325,11 +325,9 @@ profiling or working around a specific bottleneck.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TORCHFITS_CFITSIO_CACHE_FILES` | `32` | CFITSIO open-file cache slots (set together with `_CACHE_MB`) |
-| `TORCHFITS_CFITSIO_CACHE_MB` | `256` | CFITSIO open-file cache size in MB |
+| `TORCHFITS_CFITSIO_CACHE_FILES` | `32` | Retained env for import-time `configure_cache` (no-op after Option A; private handles) |
+| `TORCHFITS_CFITSIO_CACHE_MB` | `256` | Retained with `_CACHE_FILES` (no-op handle-pool size) |
 | `TORCHFITS_TABLE_BUFFERED` | `1` | Enable buffered full-row table reads |
-| `TORCHFITS_CACHE_VALIDATE` | `1` | Enable stat()-based validation for residual UnifiedCache bookkeeping (`0` for pure throughput) |
-| `TORCHFITS_CACHE_VALIDATE_INTERVAL_MS` | `1000` | UnifiedCache validation interval |
 | `TORCHFITS_SHARED_META_VALIDATE` | `1` | Enable SharedReadMeta validation |
 | `TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS` | `1000` | SharedReadMeta validation interval |
 | `TORCHFITS_XOR_PARALLEL_MIN_BYTES` | `262144` | Threshold for parallel sign-bit XOR |

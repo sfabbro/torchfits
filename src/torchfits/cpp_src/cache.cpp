@@ -1,297 +1,34 @@
+/**
+ * CFITSIO handle-cache API (Option A: unused on hot paths).
+ *
+ * Shared fitsfile* pooling was removed: concurrent readers must not share a
+ * fitsfile* (single CHDU cursor). Live shared state is SharedReadMeta + raw fd
+ * (fits_detail.h). These entry points remain as stable no-ops / close helpers
+ * so existing bindings and invalidate call sites keep linking.
+ */
+
 #include "cache.h"
-#include "security.h"
-#include "torch_compat.h"
-#include "internal_utils.h"
-#include "fits_detail.h"
-#include <unordered_map>
-#include <list>
-#include <mutex>
-#include <string>
-#include <memory>
-#include <chrono>
-#include <sys/stat.h>
-#ifdef __linux__
-#include <sys/statfs.h>
-#endif
-#ifdef __APPLE__
-#include <sys/mount.h>
-#endif
+
+#include <stdexcept>
 
 namespace torchfits {
 
-namespace {
-using torchfits::internal::env_flag_default_true;
-using torchfits::internal::env_nonnegative_int;
-using torchfits::internal::monotonic_now_ns;
+void configure_cache(size_t /*max_files*/, size_t /*max_memory_mb*/) {}
 
-// Validate cached handles against filesystem state. This adds a stat() on cache hits.
-// Keep this enabled by default for correctness when files are modified externally;
-// users can explicitly disable it via TORCHFITS_CACHE_VALIDATE=0 for pure throughput.
-const bool kValidateCache = []() {
-    return env_flag_default_true("TORCHFITS_CACHE_VALIDATE");
-}();
+void clear_file_cache() {}
 
-// To avoid paying stat() on every tiny hot-loop read, validate at most once per
-// interval per path by default. Set TORCHFITS_CACHE_VALIDATE_INTERVAL_MS=0 for
-// strict per-access validation.
-const int64_t kValidateIntervalNs = []() {
-    // Balance stale-file detection with hot-path latency.
-    // A longer default interval reduces repeated stat() overhead in hot loops.
-    constexpr int64_t kDefaultMs = 1000;
-    return env_nonnegative_int("TORCHFITS_CACHE_VALIDATE_INTERVAL_MS", kDefaultMs) * 1000000LL;
-}();
-}  // namespace
+void invalidate_file_cache(const std::string& /*filepath*/) {}
 
-// Simplified cache entry
-struct CacheEntry {
-    fitsfile* fptr = nullptr;
-    std::list<std::string>::iterator lru_iter;
-    size_t refcount = 0;
-    bool has_stat = false;
-    off_t size = 0;
-    int64_t mtime_ns = 0;
-    ino_t inode = 0;
-    bool stale = false;
-    int64_t last_validate_ns = 0;
-};
+size_t get_cache_size() { return 0; }
 
-class UnifiedCache {
-public:
-    UnifiedCache(size_t max_files = 100, size_t max_memory_mb = 1024)
-        : max_files_(max_files), max_memory_mb_(max_memory_mb) {}
-
-    void configure(size_t max_files, size_t max_memory_mb) {
-        max_files_ = max_files;
-        max_memory_mb_ = max_memory_mb;
-    }
-
-    fitsfile* get_or_open(const std::string& filepath) {
-        check_fits_filename_security(filepath);
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        auto mtime_ns_from_stat = [&](const struct stat& st) -> int64_t {
-            return torchfits::internal::mtime_ns_from_stat(st);
-        };
-
-        auto read_stat = [&](bool* out_has_stat, off_t* out_size, int64_t* out_mtime_ns, ino_t* out_inode) {
-            *out_has_stat = false;
-            *out_size = 0;
-            *out_mtime_ns = 0;
-            *out_inode = 0;
-            if (has_cfitsio_extended_filename_syntax(filepath)) {
-                return;
-            }
-            struct stat st {};
-            if (stat(filepath.c_str(), &st) == 0) {
-                *out_has_stat = true;
-                *out_size = st.st_size;
-                *out_mtime_ns = mtime_ns_from_stat(st);
-                *out_inode = st.st_ino;
-            }
-        };
-
-        auto it = cache_.find(filepath);
-        if (it != cache_.end()) {
-            if (kValidateCache) {
-                const int64_t now_ns = monotonic_now_ns();
-                const bool should_validate =
-                    (kValidateIntervalNs <= 0 || it->second.last_validate_ns == 0 ||
-                     (now_ns - it->second.last_validate_ns) >= kValidateIntervalNs);
-                if (should_validate) {
-                    bool cur_has_stat = false;
-                    off_t cur_size = 0;
-                    int64_t cur_mtime_ns = 0;
-                    ino_t cur_inode = 0;
-                    read_stat(&cur_has_stat, &cur_size, &cur_mtime_ns, &cur_inode);
-                    it->second.last_validate_ns = now_ns;
-
-                    // If the underlying file changed and this cached handle isn't in use,
-                    // drop it so subsequent reads see the new file contents.
-                    if (cur_has_stat && it->second.has_stat &&
-                        (it->second.size != cur_size ||
-                         it->second.mtime_ns != cur_mtime_ns ||
-                         it->second.inode != cur_inode)) {
-                        it->second.stale = true;
-                    }
-                }
-            }
-            if (it->second.stale && it->second.refcount == 0) {
-                if (it->second.fptr) {
-                    int status = 0;
-                    fits_close_file(it->second.fptr, &status);
-                }
-                // Remove and fall through to re-open.
-                lru_list_.erase(it->second.lru_iter);
-                cache_.erase(it);
-            } else {
-            // Update LRU - move to front
-            lru_list_.erase(it->second.lru_iter);
-            lru_list_.push_front(filepath);
-            it->second.lru_iter = lru_list_.begin();
-            it->second.refcount += 1;
-            return it->second.fptr;
-            }
-        }
-
-        // Open new file
-        fitsfile* fptr = nullptr;
-        check_fits_filename_security(filepath);
-        if (detail::open_fits_readonly(&fptr, filepath) != 0) {
-            return nullptr;
-        }
-
-        // Add to cache
-        CacheEntry entry;
-        entry.fptr = fptr;
-        lru_list_.push_front(filepath);
-        entry.lru_iter = lru_list_.begin();
-        entry.refcount = 1;
-        if (kValidateCache) {
-            read_stat(&entry.has_stat, &entry.size, &entry.mtime_ns, &entry.inode);
-            entry.last_validate_ns = monotonic_now_ns();
-        }
-        entry.stale = false;
-        cache_[filepath] = entry;
-
-        // Simple LRU eviction by count only
-        if (cache_.size() > max_files_) {
-            evict_lru();
-        }
-
-        return fptr;
-    }
-
-    void release(const std::string& filepath) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = cache_.find(filepath);
-        if (it == cache_.end()) {
-            return;
-        }
-        if (it->second.refcount > 0) {
-            it->second.refcount -= 1;
-        }
-        // If the file changed while a handle was outstanding, close the cached handle
-        // as soon as it is no longer referenced, so future opens see fresh contents.
-        if (it->second.stale && it->second.refcount == 0) {
-            if (it->second.fptr) {
-                int status = 0;
-                fits_close_file(it->second.fptr, &status);
-            }
-            lru_list_.erase(it->second.lru_iter);
-            cache_.erase(it);
-            return;
-        }
-        if (cache_.size() > max_files_) {
-            evict_lru();
-        }
-    }
-
-    // Remove a path from the cache. If it's currently referenced, mark stale and
-    // it will be dropped when the last reference is released.
-    void invalidate(const std::string& filepath) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = cache_.find(filepath);
-        if (it == cache_.end()) {
-            return;
-        }
-        it->second.stale = true;
-        if (it->second.refcount == 0) {
-            if (it->second.fptr) {
-                int status = 0;
-                fits_close_file(it->second.fptr, &status);
-            }
-            lru_list_.erase(it->second.lru_iter);
-            cache_.erase(it);
-        }
-    }
-
-    void clear() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto it = cache_.begin(); it != cache_.end();) {
-            auto& entry = it->second;
-            if (entry.refcount != 0) {
-                // NOTE: retain borrowed handles until their owners release them;
-                // a generation-based cache is only needed if clear-heavy profiling warrants it.
-                entry.stale = true;
-                ++it;
-                continue;
-            }
-            if (entry.fptr) {
-                int status = 0;
-                fits_close_file(entry.fptr, &status);
-            }
-            lru_list_.erase(entry.lru_iter);
-            it = cache_.erase(it);
-        }
-    }
-
-    size_t size() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return cache_.size();
-    }
-
-private:
-    std::unordered_map<std::string, CacheEntry> cache_;
-    std::list<std::string> lru_list_;
-    mutable std::mutex mutex_;
-    size_t max_files_;
-    size_t max_memory_mb_;
-
-    void evict_lru() {
-        if (lru_list_.empty()) return;
-
-        // Evict the least-recently used entry that is not in use.
-        for (auto it_list = lru_list_.rbegin(); it_list != lru_list_.rend(); ++it_list) {
-            const std::string& path = *it_list;
-            auto it = cache_.find(path);
-            if (it == cache_.end()) {
-                continue;
-            }
-            if (it->second.refcount != 0) {
-                continue;
-            }
-            if (it->second.fptr) {
-                int status = 0;
-                fits_close_file(it->second.fptr, &status);
-            }
-            // erase from LRU list
-            lru_list_.erase(it->second.lru_iter);
-            cache_.erase(it);
-            break;
-        }
-    }
-};
-
-// Global cache instance
-static UnifiedCache global_cache;
-
-// C-style helpers for bindings
-void configure_cache(size_t max_files, size_t max_memory_mb) {
-    global_cache.configure(max_files, max_memory_mb);
+fitsfile* get_or_open_cached(const std::string& /*filepath*/) {
+    // Hot paths open private handles; do not resurrect shared-handle pooling.
+    throw std::runtime_error(
+        "get_or_open_cached is disabled (CFITSIO Option A: private handles only)");
 }
 
-void clear_file_cache() {
-    global_cache.clear();
-}
+void release_cached(const std::string& /*filepath*/) {}
 
-void invalidate_file_cache(const std::string& filepath) {
-    global_cache.invalidate(filepath);
-}
-
-size_t get_cache_size() {
-    return global_cache.size();
-}
-
-fitsfile* get_or_open_cached(const std::string& filepath) {
-    return global_cache.get_or_open(filepath);
-}
-
-void release_cached(const std::string& filepath) {
-    global_cache.release(filepath);
-}
-
-void invalidate_cached(const std::string& filepath) {
-    global_cache.invalidate(filepath);
-}
+void invalidate_cached(const std::string& /*filepath*/) {}
 
 }  // namespace torchfits
