@@ -328,13 +328,17 @@ def scan_polars(
     Yields:
         polars.DataFrame: One batch of rows as a Polars DataFrame.
     """
+    from .._io_engine.paths import guard_fits_path
+
+    # Fail closed on private URLs before the optional polars import.
+    guard_fits_path(path)
     try:
         import polars as pl
     except ImportError as exc:
         raise ImportError("polars is required for scan_polars conversion") from exc
 
     kwargs.setdefault("batch_size", batch_size)
-    # Call scan() before creating the generator so path guards run eagerly.
+    # Call scan() before creating the generator so remaining setup runs eagerly.
     batches = scan(path, **kwargs)
     return _scan_polars_iter(batches, rechunk=rechunk, pl=pl)
 
