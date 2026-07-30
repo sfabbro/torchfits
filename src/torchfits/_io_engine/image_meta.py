@@ -86,9 +86,6 @@ def get_image_meta(
     path: str, hdu: int, *, cpp_module: Any | None = None
 ) -> ImageMeta | None:
     """Fetch and cache compact FITS image metadata for policy decisions."""
-    from .paths import guard_fits_path
-
-    guard_fits_path(path)
     if cpp_module is None:
         import torchfits._C as _cpp
 

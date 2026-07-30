@@ -290,8 +290,6 @@ def get_header(
     """Get the header of a FITS file."""
     import torchfits._C as cpp
 
-    # Guard before cache/autodetect so private network URLs never reach CFITSIO.
-    guard_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     sig = path_signature(path)
     cache_key = (path, hdu_index)

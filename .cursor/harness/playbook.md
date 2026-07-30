@@ -36,7 +36,7 @@
   desc: setkey delete/rename must use CFITSIO fits_delete_key (+ binary copy for --out), never HDUList.write rewrite — rewrite decompresses CompImage and leaves stale Z* cards.
 
 - id: cfitsio-http-ssrf
-  desc: SSRF-check http/https/ftp via guard_fits_path/guard_cfitsio_remote_path before Core I/O; public URLs still open through CFITSIO network drivers (and Dataset/Range keep http_util). Case-fold sh:// in security.h.
+  desc: guard_fits_path on I/O façades (_resolve_hdu_index, read_unified/batch, open/write/image/table); public http(s)/ftp still CFITSIO; private blocked. Case-fold sh:// in security.h.
 
 - id: header-delitem-history
   desc: Header.__delitem__ routes through remove(..., remove_all=True) so HISTORY/COMMENT cards do not orphan after del.

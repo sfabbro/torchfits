@@ -25,6 +25,7 @@ from .._table_engine import (
     validate_table_backend,
 )
 from .._table.utils import _normalize_row_slice, _require_pyarrow
+from .._io_engine.paths import guard_fits_path
 from .._table.arrow_convert import (
     _chunk_to_record_batch,
     _pa_array,
@@ -1037,8 +1038,6 @@ def scan(
     apply_fits_nulls: bool = True,
     backend: str = "auto",
 ) -> Iterator[Any]:
-    from .._io_engine.paths import guard_fits_path
-
     guard_fits_path(path)
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
@@ -1155,8 +1154,6 @@ def read(
     apply_fits_nulls: bool = True,
     backend: str = "auto",
 ) -> Any:
-    from .._io_engine.paths import guard_fits_path
-
     guard_fits_path(path)
     backend = validate_table_backend(backend)
     pa = _require_pyarrow()
@@ -1239,8 +1236,6 @@ def read_torch(
     ``where`` uses C++ ``read_fits_table_filtered`` for simple numeric
     predicates (same dialect as ``table.read``).
     """
-    from .._io_engine.paths import guard_fits_path
-
     guard_fits_path(path)
     import torchfits
 
@@ -1626,8 +1621,6 @@ def scan_torch(
     non_blocking: bool = True,
     pin_memory: bool = False,
 ) -> Iterator[dict[str, Any]]:
-    from .._io_engine.paths import guard_fits_path
-
     guard_fits_path(path)
     import torchfits
 
