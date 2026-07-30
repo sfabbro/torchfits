@@ -1093,13 +1093,14 @@ Source: `benchmarks_results/exhaustive_mps_20260719_143706/ml_results.csv` (devi
 
 <!-- BENCH_MEGACAM_BEGIN -->
 Source: `docs/assets/bench/20260719_075555/megacam_results.csv` (160 OK rows).
+Median throughput over OK rows (earlier table values were copy-paste μs from unrelated suites).
 
 | Method | Median throughput |
 |---|---:|
-| `fitsio_cached` | 65.7 MB/s |
-| `torchfits_cached` | 55.2 MB/s |
-| `torchfits_materialize` | 150.2 MB/s |
-| `torchfits_naive` | 61.1 MB/s |
+| `fitsio_cached` | 52.7 MB/s |
+| `torchfits_cached` | 49.3 MB/s |
+| `torchfits_materialize` | 119.4 MB/s |
+| `torchfits_naive` | 50.6 MB/s |
 <!-- BENCH_MEGACAM_END -->
 
 
