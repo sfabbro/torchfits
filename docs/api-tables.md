@@ -82,8 +82,14 @@ torchfits.table.read_torch(
 
 **Returns:** `dict[str, torch.Tensor]`
 
+`cache_capacity`, `handle_cache_capacity`, and `fast_header` are accepted for
+compatibility but **ignored** (Option A: private CFITSIO handles; no per-path
+handle pool).
+
 Optional `where` uses the same simple numeric predicate dialect as
-`table.read` and pushes down via C++ `read_fits_table_filtered`.
+`table.read`. For `read_torch`, torchfits **projects the needed columns then
+applies a torch mask** (preferred). C++ `read_fits_table_filtered` gather is a
+fallback when the thin full-column read fails — not the default hot path.
 
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
@@ -196,8 +202,13 @@ torchfits.table.write(
 
 ## Predicate Pushdown
 
-The `where=` parameter filters rows before data reaches Python. Filtering
-happens in C++ for most table sizes.
+The `where=` parameter filters rows before materializing the full unfiltered
+result in Python. Strategy depends on the entry point:
+
+- **`table.read_torch`:** project needed columns, then **torch mask** (preferred);
+  C++ `read_fits_table_filtered` gather is fallback only.
+- **`table.read` / `table.scan` (Arrow):** C++ mmap-filtered pushdown when the
+  layout allows; otherwise Arrow/Python filtering after a wider read.
 
 !!! warning
     Filtered catalog reads: `torchfits.table.read()` or `torchfits.table.scan()`.

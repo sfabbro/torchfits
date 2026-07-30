@@ -340,6 +340,36 @@ def test_docs_examples_reference_existing_scripts() -> None:
         )
 
 
+def test_api_tables_documents_ignored_cache_kwargs() -> None:
+    """handle_cache_capacity must not look like an active knob without ignored/deprecated."""
+    tables_api = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
+    assert "handle_cache_capacity" in tables_api
+    # Signature lines may list the kwarg before the prose note; require an
+    # ignored/deprecated sentence that names the knob within a short span.
+    note = re.search(
+        r"handle_cache_capacity.{0,120}?(ignored|deprecated)"
+        r"|(ignored|deprecated).{0,120}?handle_cache_capacity",
+        tables_api,
+        flags=re.S | re.I,
+    )
+    assert note, "api-tables.md must mark handle_cache_capacity as ignored/deprecated"
+
+
+def test_api_tables_where_strategy_mentions_mask_or_project() -> None:
+    """where= strategy text must not silently regress to C++-only story."""
+    tables_api = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
+    where_section = re.search(
+        r"## Predicate Pushdown\n(.*?)(?=\n## |\Z)", tables_api, flags=re.S
+    )
+    assert where_section, "missing Predicate Pushdown section in api-tables.md"
+    body = where_section.group(1).lower()
+    assert "mask" in body or "project" in body, (
+        "api-tables Predicate Pushdown must mention mask/project strategy"
+    )
+    # read_torch path must not claim C++-only filtering for most sizes.
+    assert "filtering happens in c++ for most table sizes" not in body
+
+
 def test_sync_docs_examples_script_copies_tree() -> None:
     import subprocess
 

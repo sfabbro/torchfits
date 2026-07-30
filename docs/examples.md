@@ -236,6 +236,8 @@ Recipes: [CLI recipes](cli-recipes.md). Shell demo:
 | [`example_make_loader_vs_dataloader.py`](published-examples/example_make_loader_vs_dataloader.py) | `make_loader` vs plain `DataLoader` |
 | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | GZ1 labels + Legacy Survey FITS cutouts → Dataset → tiny CNN ([ML guide](examples-ml.md)) |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | MegaPipe mosaic cutouts + Lupton collage + timing ([ML guide](examples-ml.md)) |
+| [`example_image_dataset.py`](published-examples/example_image_dataset.py) | Minimal `FitsImageDataset` + `make_loader` ([ML guide](examples-ml.md)) |
+| [`example_data_catalogs.py`](published-examples/example_data_catalogs.py) | Table + cutout datasets ([ML guide](examples-ml.md)) |
 
 ### Figure generators
 
@@ -246,3 +248,11 @@ Recipes: [CLI recipes](cli-recipes.md). Shell demo:
 
 Samples cache under `~/.cache/torchfits/samples/`. CI sets
 `TORCHFITS_EXAMPLE_FAST=1` to skip downloads.
+
+### Out of gallery
+
+These live under `examples/` but are not part of the published gallery /
+`docs-contract` smoke set (CLI demos or specialized shapes):
+
+- `examples/desi_shaped_spectrum.py` — DESI-shaped spectrum demo ([API data](api-data.md))
+- `examples/cli/make_rgb_demo.py` — RGB collage fixture for CLI recipes ([CLI recipes](cli-recipes.md))

@@ -46,3 +46,6 @@
 
 - id: where-prefer-mask
   desc: read_torch/table where= prefers project+torch-mask over read_fits_table_filtered gather; filtered is fallback only (dense predicates).
+
+- id: bench-table-from-csv
+  desc: Published bench summary tables must be recomputed from the cited results CSV (check units); never paste μs/ms from unrelated suites as MB/s.

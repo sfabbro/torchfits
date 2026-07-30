@@ -445,12 +445,19 @@ result = torchfits.verify_checksums(path, hdu=0)
 
 ## Cache Utilities
 
-Two layers (do not merge in call sites — pick one intentionally):
+Two Python layers plus native SharedReadMeta (do not merge in call sites —
+pick one intentionally):
 
-| Layer | Entry points | Role |
-|---|---|---|
-| Root I/O / metadata caches | `get_cache_performance()`, `clear_file_cache(...)` | Python LRUs + SharedReadMeta clear used by `read` / `read_tensor` |
-| `torchfits.cache` manager | `cache.configure_for_environment()`, `cache.get_cache_stats()`, `cache.clear_cache()`, `cache.optimize_for_dataset(...)` | Higher-level training / Dataset policy (C++ handle-pool `configure_cache` is a no-op) |
+| Layer | Module | Entry points | Role |
+|---|---|---|---|
+| Disk / training policy | `torchfits.cache` | `configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(...)` | Env policy + on-disk roots; C++ handle-pool `configure_cache` is a no-op after Option A |
+| Root I/O / metadata LRUs | `_io_engine.caches` (via root/`io`) | `get_cache_performance()`, `clear_file_cache(...)` | Python LRUs + SharedReadMeta clear used by `read` / `read_tensor` |
+| SharedReadMeta | C++ | cleared via `clear_file_cache(..., cpp=True)` / path invalidate on write | Shared per-path metadata across private CFITSIO handles |
+
+Relationship (docs only — no merge planned): policy lives in `cache.py`;
+hot-path LRU state lives in `_io_engine/caches.py`; SharedReadMeta is the
+native shared-metadata map. Architecture notes:
+[Caching](architecture.md#caching).
 
 ```python
 # Root I/O cache

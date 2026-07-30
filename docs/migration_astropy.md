@@ -61,20 +61,22 @@ use `table.read_torch` for tensor columns.
 
 ## Performance notes
 
+Absolute times refresh with each scorecard soak. Prefer
+[Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
+as the live table. Snapshot below matches that highlights block
+(Round-3 published suite; torchfits vs astropy-via-torch medians):
+
 | Metric | astropy | torchfits |
 |--------|---------|-----------|
-| Large float32 image (16 MB, CPU) | 11.35 ms | 3.85 ms (**~3× faster**) |
-| Same read @ CUDA | 15.94 ms | 8.37 ms (**~1.9× faster**) |
-| Compressed Rice image (CPU) | 75.33 ms | 18.16 ms (**~4× faster**) |
-| 50× repeated 100×100 cutouts (CPU) | 269.20 ms | 13.60 ms (**~20× faster**) |
-| Table read (100k rows, 8 cols, mixed) | 98.48 ms | 5.65 ms (**~17× faster**) |
+| Large float32 image (16 MB, CPU) | 4.77 ms | 2.52 ms (**~1.9× faster**) |
+| Same read @ CUDA | 7.02 ms | 3.40 ms (**~2.1× faster**) |
+| Compressed Rice image (CPU) | 17.60 ms | 6.50 ms (**~2.7× faster**) |
+| 50× repeated 100×100 cutouts (CPU) | 86.01 ms | 0.79 ms (**~110× faster**) |
+| Table read (100k rows, 8 cols, mixed) | 31.85 ms | 2.20 ms (**~15× faster**) |
 
-*Medians from Round-3 scorecard (`exhaustive_mps_20260719_143706`); see
-[Benchmarks](benchmarks.md) host scorecard. Absolute highlight times refresh
-with each soak — prefer `docs/benchmarks.md#performance-highlights` when
-numbers disagree. MegaCam `torchfits_cached` and narrow `read_torch(where=)`
-dense predicates were re-checked 2026-07-30 (docs medians corrected; where=
-now prefers project+mask).*
+*MegaCam `torchfits_cached` and narrow `read_torch(where=)` dense predicates
+were re-checked 2026-07-30 (docs medians corrected; `where=` prefers
+project+mask).*
 
 ## Key Behavioral Differences
 

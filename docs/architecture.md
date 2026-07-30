@@ -100,7 +100,17 @@ Activated when `mmap=True` and the table layout permits it.
 
 ### Filtered read (predicate pushdown)
 
-`read_columns_mmap_filtered` implements row filtering entirely in C++:
+Two caller paths, do not conflate them:
+
+- **`table.read_torch(..., where=)`** (tensor columns): prefers **project
+  needed columns + torch mask**. C++ `read_fits_table_filtered` gather is only
+  a fallback when the thin full-column read fails.
+- **`table.read` / Arrow** (`where=`): may still use C++ mmap-filtered column
+  scans via `choose_where_read_plan` (`CPP_PUSHDOWN`) when the layout allows,
+  otherwise Arrow/Python filtering after a wider read.
+
+`read_columns_mmap_filtered` (C++ Arrow/mmap path) implements row filtering
+in-process:
 
 1. mmap the file
 2. Pre-byte-swap filter target values to match raw FITS bytes
@@ -109,13 +119,29 @@ Activated when `mmap=True` and the table layout permits it.
 5. For GT/LT/GE/LE: byte-swap per row then compare
 
 The Python layer (`where.py`) parses the SQL-like `where=` string into
-`(column, operator, value)` tuples, which the C++ function consumes.
+`(column, operator, value)` tuples for both paths.
 
 ---
 
 ## Caching
 
-Three tiers, all in-process:
+Three **native** tiers (in-process, CFITSIO/read path) plus two **Python**
+façades that must not be merged:
+
+| Layer | Module / home | Role |
+|---|---|---|
+| Disk / policy | `torchfits.cache` | Env policy (`CacheConfig` / `CacheManager`), on-disk remote+sample roots, training `optimize_for_dataset` |
+| Python I/O LRUs | `_io_engine.caches` | Path-keyed header/meta/data LRUs, HDUList registry, `clear_file_cache` / `invalidate_path_caches` |
+| SharedReadMeta (C++) | native extension | Per-path image/scale/HDU-name metadata shared across private `fitsfile*` opens (Option A: no cross-thread handle pool) |
+
+`torchfits.cache.clear_cache()` aggregates policy + Python LRU clear +
+SharedReadMeta invalidation. Root `clear_file_cache(...)` targets the I/O
+LRUs / SharedReadMeta only. Do **not** treat the two Python modules as one
+API — call sites pick policy (`cache.*`) or hot-path I/O clear
+(`clear_file_cache` / `_io_engine.caches`) intentionally. See
+[Cache Utilities](api-core-io.md#cache-utilities).
+
+Three native tiers, all in-process:
 
 ### L0 — Per-read `fitsfile*` (CFITSIO R2)
 
