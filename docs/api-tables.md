@@ -1,25 +1,23 @@
 # Table Reference
 
-FITS tables are **dataframes on disk** (columnar catalogs). The API namespace
-is `torchfits.table` because that is the FITS name; the object model is a
-columnar dataframe — filter, project, stream, then train or analyze.
+FITS tables are columnar catalogs. Read them as Arrow (`table.read`), as a
+column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 
 | Destination | Call | Returns |
 |---|---|---|
-| Dataframe via Arrow (default) | `table.read` / `table.read_arrow` | `pyarrow.Table` |
-| Dataframe columns as tensors | `table.read_torch` | `dict[str, torch.Tensor]` |
-| Native Polars dataframe | `table.read_polars` | Polars DataFrame-like |
+| Arrow table | `table.read` / `table.read_arrow` | `pyarrow.Table` |
+| Column → tensor map | `table.read_torch` | `dict[str, torch.Tensor]` |
+| Polars | `table.read_polars` | Polars DataFrame-like |
 
-Predicate pushdown, column projection, streaming, in-place mutations, and
-interop with Polars, DuckDB, Pandas, and PyArrow.
+Supports `where=` filters, column projection, streaming, mutations, and
+handoff to Polars, DuckDB, Pandas, and PyArrow.
 
 ---
 
 ## `table.read()`
 
-Read a FITS table as a portable dataframe (`pyarrow.Table`) with WHERE
-pushdown. Same role as a Pandas/Polars frame: named columns, row filters,
-handoff to SQL or ML. `table.read_arrow` is an explicit synonym.
+Read a FITS table as a `pyarrow.Table`, with optional `where=` and column
+projection. `table.read_arrow` is the same function under another name.
 
 ```python
 torchfits.table.read(
@@ -34,42 +32,32 @@ torchfits.table.read(
 |---|---|---|---|
 | `path` | `str` | *(required)* | FITS file path |
 | `hdu` | `int` or `str` | `1` | Table HDU index or EXTNAME |
-| `columns` | `list[str]` or `None` | `None` | Column projection (None = all) |
-| `row_slice` | `slice` or `tuple[int,int]` or `None` | `None` | Row range filter |
+| `columns` | `list[str]` or `None` | `None` | Columns to read (`None` = all) |
+| `row_slice` | `slice` or `tuple[int,int]` or `None` | `None` | Row range |
 | `rows` | `list[int]` or `None` | `None` | Specific row indices |
-| `where` | `str` or `None` | `None` | SQL-like predicate (pushed to C++) |
-| `batch_size` | `int` | `65536` | Internal read batch size |
+| `where` | `str` or `None` | `None` | SQL-like row filter |
+| `batch_size` | `int` | `65536` | Read batch size |
 | `mmap` | `bool` | `True` | Memory-mapped reads |
 | `decode_bytes` | `bool` | `True` | Decode byte-string columns |
 | `backend` | `str` | `"auto"` | `"auto"`, `"cpp"`, or `"torch"` |
 | `include_fits_metadata` | `bool` | `False` | Preserve FITS column metadata |
 
-**Returns:** `pyarrow.Table` (portable dataframe; convert with
-`table.to_polars` / `table.to_pandas` or use `table.read_polars` directly)
-
-!!! info "When to use"
-    Primary catalog / dataframe read. Use for column projection, `where=`
-    filters, or Arrow/Polars/DuckDB interop. For dataframe columns as tensors,
-    use `table.read_torch()`. `table.read_arrow(...)` is the same function.
+**Returns:** `pyarrow.Table`
 
 ```python
-# Filter and project — dataframe via Arrow
 df = torchfits.table.read(
     "catalog.fits", hdu=1,
     columns=["RA", "DEC", "MAG_G"],
     where="MAG_G < 20 AND DEC > 0",
 )
 print(df.num_rows, df.column_names)
-
-# Explicit synonym
-assert torchfits.table.read_arrow is torchfits.table.read
 ```
 
 ---
 
 ## `table.read_torch()`
 
-Read a FITS table as dataframe columns mapped to `torch.Tensor` values.
+Read selected columns as `torch.Tensor` values.
 
 ```python
 torchfits.table.read_torch(
@@ -83,13 +71,11 @@ torchfits.table.read_torch(
 **Returns:** `dict[str, torch.Tensor]`
 
 `cache_capacity`, `handle_cache_capacity`, and `fast_header` are accepted for
-compatibility but **ignored** (Option A: private CFITSIO handles; no per-path
-handle pool).
+compatibility but **ignored**.
 
-Optional `where` uses the same simple numeric predicate dialect as
-`table.read`. For `read_torch`, torchfits **projects the needed columns then
-applies a torch mask** (preferred). C++ `read_fits_table_filtered` gather is a
-fallback when the thin full-column read fails — not the default hot path.
+Optional `where` uses the same predicate dialect as `table.read`. With
+`read_torch`, torchfits reads the needed columns (project) and applies a
+torch **mask** so only matching rows remain.
 
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
@@ -98,7 +84,7 @@ bright = torchfits.table.read_torch(
 )
 ```
 
-For repeated column reads on one file, prefer
+For many column reads on one file, use
 `torchfits.open_table_reader(path, hdu=1)`.
 
 ---
@@ -202,17 +188,16 @@ torchfits.table.write(
 
 ## Predicate Pushdown
 
-The `where=` parameter filters rows before materializing the full unfiltered
-result in Python. Strategy depends on the entry point:
+Pass `where=` to keep only matching rows. How filtering runs depends on the
+call:
 
-- **`table.read_torch`:** project needed columns, then **torch mask** (preferred);
-  C++ `read_fits_table_filtered` gather is fallback only.
-- **`table.read` / `table.scan` (Arrow):** C++ mmap-filtered pushdown when the
-  layout allows; otherwise Arrow/Python filtering after a wider read.
+- **`table.read_torch`:** reads the projected columns, then applies a torch
+  **mask**.
+- **`table.read` / `table.scan`:** filters in C++ when the table layout
+  allows; otherwise filters after the Arrow read.
 
-!!! warning
-    Filtered catalog reads: `torchfits.table.read()` or `torchfits.table.scan()`.
-    Root `torchfits.read()` has no `where=` parameter.
+Use `torchfits.table.read()` or `torchfits.table.scan()` for filtered
+catalogs. Root `torchfits.read()` does not take `where=`.
 
 **Supported operators:**
 
@@ -237,10 +222,9 @@ result in Python. Strategy depends on the entry point:
 
 ### Environment Tuning
 
-Table reads open a **private** CFITSIO handle per call (no cross-thread handle
-LRU). Shared metadata (`SharedReadMeta`) and disk cache roots are controlled by
-the global `TORCHFITS_*` variables documented in `architecture.md` /
-`api-core-io.md`.
+Table reads open a private CFITSIO handle per call. Shared metadata and disk
+cache roots use the `TORCHFITS_*` variables in [Architecture](architecture.md)
+and [Core I/O](api-core-io.md).
 
 ---
 

@@ -100,14 +100,10 @@ Activated when `mmap=True` and the table layout permits it.
 
 ### Filtered read (predicate pushdown)
 
-Two caller paths, do not conflate them:
-
-- **`table.read_torch(..., where=)`** (tensor columns): prefers **project
-  needed columns + torch mask**. C++ `read_fits_table_filtered` gather is only
-  a fallback when the thin full-column read fails.
-- **`table.read` / Arrow** (`where=`): may still use C++ mmap-filtered column
-  scans via `choose_where_read_plan` (`CPP_PUSHDOWN`) when the layout allows,
-  otherwise Arrow/Python filtering after a wider read.
+- **`table.read_torch(..., where=)`:** reads the projected columns, then
+  applies a torch mask.
+- **`table.read` / Arrow (`where=`):** C++ mmap-filtered scans when the layout
+  allows; otherwise Arrow filtering after a wider read.
 
 `read_columns_mmap_filtered` (C++ Arrow/mmap path) implements row filtering
 in-process:
@@ -125,23 +121,19 @@ The Python layer (`where.py`) parses the SQL-like `where=` string into
 
 ## Caching
 
-Three **native** tiers (in-process, CFITSIO/read path) plus two **Python**
-façades that must not be merged:
+Caches sit in three places:
 
-| Layer | Module / home | Role |
+| Layer | Where | Role |
 |---|---|---|
-| Disk / policy | `torchfits.cache` | Env policy (`CacheConfig` / `CacheManager`), on-disk remote+sample roots, training `optimize_for_dataset` |
-| Python I/O LRUs | `_io_engine.caches` | Path-keyed header/meta/data LRUs, HDUList registry, `clear_file_cache` / `invalidate_path_caches` |
-| SharedReadMeta (C++) | native extension | Per-path image/scale/HDU-name metadata shared across private `fitsfile*` opens (Option A: no cross-thread handle pool) |
+| Disk / policy | `torchfits.cache` | Environment policy, on-disk remote and sample roots, `optimize_for_dataset` |
+| Python I/O metadata | engine caches (via `clear_file_cache`) | Path-keyed header / meta / data LRU |
+| Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
-`torchfits.cache.clear_cache()` aggregates policy + Python LRU clear +
-SharedReadMeta invalidation. Root `clear_file_cache(...)` targets the I/O
-LRUs / SharedReadMeta only. Do **not** treat the two Python modules as one
-API — call sites pick policy (`cache.*`) or hot-path I/O clear
-(`clear_file_cache` / `_io_engine.caches`) intentionally. See
+`torchfits.cache.clear_cache()` clears policy state and I/O metadata.
+`clear_file_cache(...)` clears the I/O metadata layers only. See
 [Cache Utilities](api-core-io.md#cache-utilities).
 
-Three native tiers, all in-process:
+Native in-process tiers:
 
 ### L0 — Per-read `fitsfile*` (CFITSIO R2)
 
@@ -352,7 +344,7 @@ profiling or working around a specific bottleneck.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TORCHFITS_CFITSIO_CACHE_FILES` | `32` | Retained env for import-time `configure_cache` (no-op after Option A; private handles) |
+| `TORCHFITS_CFITSIO_CACHE_FILES` | `32` | Retained for import-time `configure_cache` (no-op; private handles) |
 | `TORCHFITS_CFITSIO_CACHE_MB` | `256` | Retained with `_CACHE_FILES` (no-op handle-pool size) |
 | `TORCHFITS_TABLE_BUFFERED` | `1` | Enable buffered full-row table reads |
 | `TORCHFITS_SHARED_META_VALIDATE` | `1` | Enable SharedReadMeta validation |

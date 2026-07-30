@@ -1,17 +1,12 @@
 # API Reference
 
-`torchfits` covers FITS file I/O (IMAGE HDUs → tensors, tables → dataframes,
-headers, compression) and ML helpers (`torchfits.data`, `torchfits.transforms`).
-Sky-domain modelling is out of scope. Current line: **1.0.0rc4** (prerelease).
+FITS I/O for images (tensors), tables (Arrow / Polars / column tensors),
+headers, and compression. Datasets and transforms live under
+`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0rc4**
+(prerelease).
 
-For job-oriented patterns (which API for which task), start with
-[Python workflows](python-workflows.md). This page lists signatures, defaults,
-and edge cases.
-
-**FITS images → tensors. FITS tables → dataframes** (Arrow by default;
-Polars/Pandas one call away; tensor columns when you train). In code the
-namespace is `torchfits.table` because that is the FITS name; the object
-model is a columnar dataframe.
+Job-oriented patterns: [Python workflows](python-workflows.md). This page
+lists signatures, defaults, and edge cases.
 
 ---
 
@@ -20,20 +15,17 @@ model is a columnar dataframe.
 | Goal | Call | Returns | mmap default |
 |---|---|---|---|
 | Image / cube / spectrum | `read_tensor(path, hdu=0)` | `torch.Tensor` | `True` |
-| Catalog as dataframe (default) | `table.read(path, hdu=1, where=…)` | `pyarrow.Table` | `True` |
-| Dataframe columns as tensors | `table.read_torch(path, hdu=1)` | `dict[str, torch.Tensor]` | `True` |
-| Native Polars dataframe | `table.read_polars(path, hdu=1)` | Polars DataFrame-like | (via `table.read`) |
+| Catalog as Arrow | `table.read(path, hdu=1, where=…)` | `pyarrow.Table` | `True` |
+| Columns as tensors | `table.read_torch(path, hdu=1)` | `dict[str, torch.Tensor]` | `True` |
+| Polars | `table.read_polars(path, hdu=1)` | Polars DataFrame-like | (via `table.read`) |
 
-`table.read_arrow` is an exact synonym of `table.read` (destination-qualified
-spelling alongside `read_torch` / `read_polars`). Root `read_table` /
+`table.read_arrow` is a synonym of `table.read`. Root `read_table` /
 `stream_table` / `read_table_rows` / `get_header` / `get_batch_info` were
-**removed** in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
+removed in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
 
-**Caches.** Root I/O metadata caches are cleared via
-`clear_file_cache()` / `get_cache_performance()`. Training-oriented sizing and
-warm-up live under `torchfits.cache` (`configure_for_environment`,
-`optimize_for_dataset`, `clear_cache`). C++ shared-handle pooling is gone
-(Option A); `configure_cache` is a no-op. See [Core I/O → Cache Utilities](api-core-io.md#cache-utilities).
+**Caches.** Clear in-process I/O metadata with `clear_file_cache()` /
+`get_cache_performance()`. Disk roots and dataset sizing live under
+`torchfits.cache`. See [Core I/O → Cache Utilities](api-core-io.md#cache-utilities).
 
 ---
 
@@ -74,10 +66,10 @@ warm-up live under `torchfits.cache` (`configure_for_environment`,
 Destination-qualified spelling of `table.read` (same object): `table.read_arrow`.
 
 
-### ML Training
+### Datasets and loaders
 
-Prefer raw I/O until you need epochs/shuffle/workers — see
-[Data module](api-data.md) and [Transforms](api-transforms.md#when-to-use).
+Use raw I/O until you need shuffling, workers, or epochs — see
+[Data module](api-data.md) and [Transforms](api-transforms.md).
 
 | Goal | Entry point | Reference |
 |---|---|---|

@@ -13,16 +13,16 @@ import torch
 def test_read_cpp_table_chunk_defers_header_when_read_fails():
     """A numeric row-slice read that fails before any header consumer runs must
     not touch read_header (header is lazy + unsigned dtypes deferred)."""
-    from torchfits._table import read as read_mod
+    from torchfits._table import _read_scan as scan_mod
 
     fake_header = mock.Mock(name="read_header")
 
     def boom(*_a, **_k):
         raise RuntimeError("no reader")
 
-    with mock.patch.object(read_mod, "_acquire_cpp_reader", side_effect=boom):
+    with mock.patch.object(scan_mod, "_acquire_cpp_reader", side_effect=boom):
         with mock.patch("torchfits.read_header", fake_header, create=True):
-            result = read_mod._read_cpp_table_chunk(
+            result = scan_mod._read_cpp_table_chunk(
                 "/does/not/exist.fits",
                 1,
                 None,  # columns

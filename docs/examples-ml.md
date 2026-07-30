@@ -1,13 +1,12 @@
 # ML with FITS
 
-User Guide for `torchfits.data`: choose a Dataset, preprocess with
-`torchfits.transforms`, load with `make_loader`, train a small model.
-API details stay in the [Data module](api-data.md) reference. For a shorter
-“which Dataset?” overview, see [Python workflows → Training](python-workflows.md#training-loops).
+Datasets, transforms, and `make_loader` for multi-file FITS work.
+API details: [Data module](api-data.md). Overview:
+[Python workflows → Datasets](python-workflows.md#datasets-and-loaders).
 
-`make_loader` wraps `torch.utils.data.DataLoader` and can warm the handle
-cache when the dataset exposes `.files`. Use a plain `DataLoader` when you
-already own `collate_fn` / `persistent_workers`. See
+`make_loader` wraps `torch.utils.data.DataLoader` and can warm caches when
+the dataset exposes `.files`. Use a plain `DataLoader` when you already own
+`collate_fn` / `persistent_workers`. See
 [`example_make_loader_vs_dataloader.py`](published-examples/example_make_loader_vs_dataloader.py).
 
 ---

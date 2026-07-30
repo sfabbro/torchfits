@@ -69,11 +69,11 @@ def test_prefetch_error_surfaces_on_resolve(tmp_path, monkeypatch):
 
 
 def test_mutation_barrier_does_not_clear_global_cache():
-    from torchfits._table import mutation as mut
+    from torchfits._table import _mutation_coerce as coerce_mod
 
-    with mock.patch.object(mut, "_invalidate_path_caches") as inv:
+    with mock.patch.object(coerce_mod, "_invalidate_path_caches") as inv:
         with mock.patch("torchfits.cache.clear") as clear:
-            mut._mutation_cache_barrier("/tmp/a.fits")
+            coerce_mod._mutation_cache_barrier("/tmp/a.fits")
     inv.assert_called_once_with("/tmp/a.fits")
     clear.assert_not_called()
 

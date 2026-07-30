@@ -9,14 +9,14 @@ import torch
 
 from torchfits import io
 from torchfits._io_engine import _read_pipeline
-from torchfits._table import read as table_read
+from torchfits._table import _read_where as where_mod
 
 
 def test_torch_where_filter_skips_large_tables(tmp_path):
     """P0-1: large NAXIS2 must not materialize all rows via torch WHERE."""
     path = str(tmp_path / "large.fits")
     header = {
-        "NAXIS2": table_read._TORCH_WHERE_MAX_ROWS + 1,
+        "NAXIS2": where_mod._TORCH_WHERE_MAX_ROWS + 1,
         "TFIELDS": 1,
         "TTYPE1": "MAG",
         "TFORM1": "E",
@@ -24,20 +24,20 @@ def test_torch_where_filter_skips_large_tables(tmp_path):
 
     with (
         mock.patch.object(
-            table_read,
+            where_mod,
             "_compile_where_to_simple_predicates",
             return_value=[("MAG", "<", 50.0)],
         ),
         mock.patch("torchfits._C") as cpp,
     ):
-        cpp.read_nrows.return_value = table_read._TORCH_WHERE_MAX_ROWS + 1
+        cpp.read_nrows.return_value = where_mod._TORCH_WHERE_MAX_ROWS + 1
         cpp.read_fits_table.side_effect = AssertionError(
             "must not full-read large table"
         )
         reader = mock.Mock()
         reader.read_rows.side_effect = AssertionError("must not full-read large table")
-        with mock.patch.object(table_read, "_acquire_cpp_reader", return_value=reader):
-            result = table_read._try_torch_tensor_where_filter(
+        with mock.patch.object(where_mod, "_acquire_cpp_reader", return_value=reader):
+            result = where_mod._try_torch_tensor_where_filter(
                 pa=mock.Mock(),
                 path=path,
                 hdu=1,
@@ -69,21 +69,21 @@ def test_torch_where_filter_still_runs_for_small_tables(tmp_path):
 
     with (
         mock.patch.object(
-            table_read,
+            where_mod,
             "_compile_where_to_simple_predicates",
             return_value=[("MAG", "<", 50.0)],
         ),
         mock.patch.object(
-            table_read, "_can_use_mmap_row_path_for_full_read", return_value=False
+            where_mod, "_can_use_mmap_row_path_for_full_read", return_value=False
         ),
         mock.patch("torchfits._C") as cpp,
     ):
         reader = mock.Mock()
         reader.read_rows.return_value = {"MAG": mag}
-        with mock.patch.object(table_read, "_acquire_cpp_reader", return_value=reader):
+        with mock.patch.object(where_mod, "_acquire_cpp_reader", return_value=reader):
             import pyarrow as pa
 
-            result = table_read._try_torch_tensor_where_filter(
+            result = where_mod._try_torch_tensor_where_filter(
                 pa=pa,
                 path=path,
                 hdu=1,

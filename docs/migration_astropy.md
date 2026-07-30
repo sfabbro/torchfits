@@ -15,18 +15,15 @@ For runnable workflows, start with [Examples](examples.md).
 | Read image to GPU | `torch.from_numpy(astropy.io.fits.getdata(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
 | Read image + header | `hdul = astropy.io.fits.open(path); data = hdul[0].data; hdr = hdul[0].header` | `data, header = torchfits.read(path, hdu=0, return_header=True)` |
 
-## Reading a table (dataframe path)
-
-FITS tables are dataframes on disk. Prefer `torchfits.table.read` (Arrow);
-use `table.read_torch` for tensor columns.
+## Reading a table
 
 | Operation | astropy | torchfits |
 |-----------|---------|-----------|
-| Read all rows (dataframe via Arrow) | `astropy.io.fits.getdata(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
-| Read with WHERE | `t = astropy.io.fits.getdata(path, ext=1); mask = t['RA'] > 0; t[mask]` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
-| Read subset of columns | `astropy.io.fits.getdata(path, ext=1)[['RA','DEC']]` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
-| Dataframe columns as tensors | `t = astropy.io.fits.getdata(path, ext=1); {n: torch.from_numpy(t[n]) for n in t.names}` | `torchfits.table.read_torch(path, hdu=1)` |
-| Native Polars dataframe | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
+| Read all rows | `astropy.io.fits.getdata(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
+| Read with WHERE | `t = …; mask = t['RA'] > 0; t[mask]` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
+| Read subset of columns | `…[['RA','DEC']]` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
+| Columns as tensors | `torch.from_numpy(t[n])` per column | `torchfits.table.read_torch(path, hdu=1)` |
+| Polars | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
 
 ## Writing
 
@@ -61,10 +58,8 @@ use `table.read_torch` for tensor columns.
 
 ## Performance notes
 
-Absolute times refresh with each scorecard soak. Prefer
-[Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
-as the live table. Snapshot below matches that highlights block
-(Round-3 published suite; torchfits vs astropy-via-torch medians):
+See [Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
+for the live table. Snapshot (Round-3 published suite):
 
 | Metric | astropy | torchfits |
 |--------|---------|-----------|
@@ -74,24 +69,27 @@ as the live table. Snapshot below matches that highlights block
 | 50× repeated 100×100 cutouts (CPU) | 86.01 ms | 0.79 ms (**~110× faster**) |
 | Table read (100k rows, 8 cols, mixed) | 31.85 ms | 2.20 ms (**~15× faster**) |
 
-*MegaCam `torchfits_cached` and narrow `read_torch(where=)` dense predicates
-were re-checked 2026-07-30 (docs medians corrected; `where=` prefers
-project+mask).*
-
 ## Key Behavioral Differences
 
 ### 1. Data Scaling & Type Promotion
-* **Astropy**: Scaling (applying `BSCALE` and `BZERO` keywords) is applied on the CPU when the HDU data is initialized. Integer types (like `uint16` or `int32`) are promoted to double-precision `float64` in memory if the scaling yields floating-point numbers.
-* **torchfits**: Optional on-device scaling via `torchfits.read(..., scale_on_device=True)` (via `**kwargs` into the read pipeline). Raw integers transfer to GPU/MPS; `BSCALE`/`BZERO` apply in device registers, yielding `float32` instead of Astropy's default `float64`. `read_tensor` has no `scale_on_device` parameter — use `read()` or pass `raw_scale=True` on `read_tensor` for storage dtypes.
+* **Astropy**: Applies `BSCALE` / `BZERO` on the CPU when HDU data is loaded.
+  Integers may promote to `float64` when scaling yields floats.
+* **torchfits**: Optional on-device scaling via
+  `torchfits.read(..., scale_on_device=True)`. Raw integers transfer to
+  GPU/MPS; scaling yields `float32`. On `read_tensor`, pass `raw_scale=True`
+  for storage dtypes, or use `read()` for `scale_on_device`.
 
 ### 2. Table Representation
-* **Astropy**: Tables are represented as `astropy.table.Table` or `numpy.recarray`.
-* **torchfits**: FITS tables are dataframes on disk. Default path is
-  `torchfits.table.read` → `pyarrow.Table` (portable dataframe). Tensor columns
-  use `table.read_torch`. Native Polars uses
-  `table.read_polars`. VLAs become Arrow list columns.
+* **Astropy**: `astropy.table.Table` or `numpy.recarray`.
+* **torchfits**: `table.read` → `pyarrow.Table`; `table.read_torch` → column
+  tensors; `table.read_polars` → Polars. VLAs become Arrow list columns.
 
 ### 3. Thread-Safety & Multi-Processing
-* **Astropy**: HDU handles (`HDUList`) are not thread-safe. Opening the same file in multiple background threads can lead to file descriptor and read-pointer conflicts.
-* **torchfits**: Since 1.0.0rc2, concurrent reads open a **private** CFITSIO `fitsfile*` per call (CFITSIO R2). Shared metadata (`SharedReadMeta`) and the raw `fd` use `pread` and stay mutex-guarded; they do not share CHDU state across threads. For PyTorch `DataLoader` workers, use `torchfits.data` datasets with `make_loader`: map-style datasets read independently per worker; iterable datasets shard by `worker_id`. Call `torchfits.cache.optimize_for_dataset(paths)` when the dataset exposes a `files` list to set Python cache policy (C++ handle pooling is disabled).
+* **Astropy**: `HDUList` handles are not thread-safe across concurrent opens
+  of the same file.
+* **torchfits**: Concurrent reads open a private CFITSIO handle per call.
+  Shared metadata and the raw `fd` use `pread` under mutexes. For multi-worker
+  Datasets, use `torchfits.data` with `make_loader`, and
+  `torchfits.cache.optimize_for_dataset(paths)` when the dataset exposes
+  `files`.
 

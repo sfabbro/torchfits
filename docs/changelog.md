@@ -33,9 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI parallelism docs: `-j` (torch) vs `-J` (file workers).
 - `setkey --rename` / `--delete` remove keywords via CFITSIO delete (no
   decompressing rewrite); `--split hdu` rejects colliding stems.
-- `table.read_torch(..., where=)` prefers project + torch mask; C++
-  `read_fits_table_filtered` gather is fallback only (rc4 “fused C++” path
-  remains available when the thin column read fails).
+- `table.read_torch(..., where=)` reads projected columns and applies a torch
+  mask (C++ filtered gather remains available when that path fails).
 
 ### Fixed
 - Table int16 columns with `TSCAL`/`TZERO`: disable CFITSIO auto-scale on read

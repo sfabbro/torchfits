@@ -1,29 +1,25 @@
 # Examples
 
-Short worked examples with real outputs. Runnable scripts live in the repo
-`examples/` tree; docs builds copy them to
-[`published-examples/`](published-examples/README.md) for the site. For which
-API to pick before opening a script, see [Python workflows](python-workflows.md).
-Smoke suite:
+Short worked examples with real outputs. Scripts live in `examples/`; docs
+builds copy them to [`published-examples/`](published-examples/README.md).
+API choice: [Python workflows](python-workflows.md).
 
 ```bash
 pixi run python examples/test_examples.py
 ```
 
-| Layer | Use when |
+| Start with | When |
 |---|---|
-| `read_tensor` / `table.read` | One file, inspect, write |
-| `torchfits.transforms` | Reusable viz / model preprocess |
-| `Fits*Dataset` + `make_loader` | Many files/rows as a training loop |
+| `read_tensor` / `table.read` | One file |
+| `torchfits.transforms` | Stretches / normalize for display |
+| `Fits*Dataset` + `make_loader` | Many files or rows |
 
 ## Scope
 
-torchfits reads and writes FITS: IMAGE HDUs → tensors, table HDUs →
-dataframes (Arrow / Polars / tensor columns), plus `torchfits.data` for
-training loops. WCS reprojection, source detection, and photometry remain in
-Astropy / photutils / reproject. Several examples follow an Astropy or survey
-tutorial through FITS I/O, then return tensors or arrays for WCS math
-elsewhere.
+torchfits reads and writes FITS images and tables. WCS reprojection, source
+detection, and photometry stay in Astropy / photutils / reproject. Several
+examples follow an Astropy or survey tutorial through FITS I/O, then hand
+off arrays for WCS math elsewhere.
 
 ## Sample sources
 

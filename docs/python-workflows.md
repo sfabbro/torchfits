@@ -21,7 +21,7 @@ tables first, then use this page for torchfits-native patterns.
 | Huge catalog, stream | `table.scan` / `scan_polars` | [Tables](api-tables.md) |
 | Many cutouts from one mosaic | `open_subset_reader` | [Cutouts](#cutouts-and-mefs) |
 | Multi-extension file | `open` / `read_hdus` | [Images](#images-and-hdus) |
-| Train on many files / rows | `Fits*Dataset` + `make_loader` | [Training](#training-loops) |
+| Train on many files / rows | `Fits*Dataset` + `make_loader` | [Datasets](#datasets-and-loaders) |
 | Shell inspect / one-off | `torchfits` CLI | [CLI](cli.md) |
 
 ---
@@ -44,9 +44,9 @@ When several HDUs share a name, only the **first** match is returned — use a
 numeric index for the others.
 
 !!! tip "mmap and devices"
-    Keep `mmap=True` for large **local** images. Prefer `mmap=False` when many
-    DataLoader workers open the same files. `device="cuda"` / `"mps"` copies
-    to the accelerator after the CFITSIO host read (not GPUDirect).
+    Keep `mmap=True` for large local images. Prefer `mmap=False` when many
+    workers open the same files. `device="cuda"` / `"mps"` copies to the
+    accelerator after the host read.
 
 `torchfits.read` without `return_header` returns a tensor for IMAGE HDUs, or
 a `dict[str, Tensor]` for table HDUs. For catalogs as dataframes, prefer
@@ -58,11 +58,7 @@ More: [Core I/O](api-core-io.md) · [Examples](examples.md)
 
 ## Tables as dataframes
 
-FITS binary/ASCII tables are **columnar catalogs**. Default destination is
-Arrow; Polars and tensor columns are one call away.
-
 ```python
-# Dataframe via Arrow — WHERE/columns pushed down when possible
 df = torchfits.table.read(
     "catalog.fits",
     hdu=1,
@@ -71,12 +67,10 @@ df = torchfits.table.read(
 )
 print(df.num_rows)  # pyarrow.Table
 
-# Same projection as torch tensors (training / GPU)
 cols = torchfits.table.read_torch(
     "catalog.fits", hdu=1, columns=["RA", "DEC"]
 )
 
-# Constant-memory streaming
 for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
     process(batch)  # pyarrow.RecordBatch
 ```
@@ -132,10 +126,9 @@ More: [`read_subset`](api-core-io.md#read_subset) ·
 
 ---
 
-## Training loops
+## Datasets and loaders
 
-Use `torchfits.data` when you need a PyTorch `Dataset` / `DataLoader`, not for
-one-off file opens.
+`torchfits.data` builds PyTorch Datasets over many FITS files or rows.
 
 ```python
 from torchfits.data import FitsImageDataset, make_loader
@@ -144,7 +137,6 @@ ds = FitsImageDataset("observations/*.fits", label_key="CLASS")
 loader = make_loader(ds, batch_size=32, num_workers=4)
 
 for images, labels in loader:
-    # images: [B, C, H, W], labels: [B]
     ...
 ```
 
@@ -152,10 +144,10 @@ for images, labels in loader:
 |---------|-------------|------------|
 | `FitsImageDataset` | Many 2D images | `(tensor, label)` |
 | `FitsTableDataset` | Catalog in RAM | `(row_dict, label)` |
-| `FitsCutoutDataset` | Patches from a mosaic | tensor (no label) |
+| `FitsCutoutDataset` | Patches from a mosaic | tensor |
 | `FitsTableIterableDataset` | Huge catalog stream | `row_dict` |
 
-Walkthroughs (Galaxy Zoo, MegaPipe): [ML with FITS](examples-ml.md).
+Walkthroughs: [ML with FITS](examples-ml.md).
 Reference: [Data module](api-data.md) · [Transforms](api-transforms.md)
 
 ---
@@ -164,7 +156,7 @@ Reference: [Data module](api-data.md) · [Transforms](api-transforms.md)
 
 | Prefer | When |
 |--------|------|
-| In-process Python API | Pipelines, training, many reads in one process |
+| In-process Python API | Pipelines and many reads in one process |
 | `torchfits` CLI | Inspect, checksums, one-off cutouts, shell scripts |
 
 Each CLI invocation pays a PyTorch/extension import (~1 s on many laptops).

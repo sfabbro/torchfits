@@ -33,23 +33,22 @@ tuple if `return_header=True`.
     or ``read(..., mmap=True, fp16=False)``.
 
 !!! tip "When to mmap"
-    Mmap helps large **local** IMAGE HDUs and repeated cutouts. Prefer
-    `mmap=False` with multi-worker `DataLoader` on the same files if handle
-    contention appears; also prefer non-mmap on cold network filesystems and
-    for VLA / scaled tables. Dataset docs: [Data module](api-data.md).
+    Mmap helps large local IMAGE HDUs and repeated cutouts. Prefer
+    `mmap=False` when many workers open the same files, on cold network
+    filesystems, and for VLA / scaled tables. Dataset docs:
+    [Data module](api-data.md).
 
 !!! info "When to use"
-    Use `read()` for quick exploration. Default `hdu=0` (primary). Pass
-    `hdu=None` for first image/table autodetection. For explicit tensor reads,
-    prefer `read_tensor()`. For dataframe workflows (predicate pushdown
-    `where=`, Arrow/Polars), use `table.read()`. Root `read()` returns tensor
-    columns for table HDUs and has no `where=` parameter.
+    Use `read()` for quick exploration (`hdu=0` by default; `hdu=None`
+    autodetection). Prefer `read_tensor()` for images and `table.read()` for
+    catalogs with `where=` / Arrow. Root `read()` on a table HDU returns a
+    column → tensor dict and has no `where=` parameter.
 
 ```python
 # Image with header
 data, hdr = torchfits.read("image.fits", hdu=0, return_header=True)
 
-# Auto-detect table → tensor-column dict (not a pyarrow.Table)
+# Auto-detect table → column → tensor dict
 columns = torchfits.read("catalog.fits", hdu=1)
 ```
 
@@ -79,10 +78,8 @@ torchfits.read_tensor(path, hdu=0, device="cpu", mmap=True,
 **Returns:** `torch.Tensor` (or tuple if `return_header=True`).
 
 !!! info "When to use"
-    This is the primary function for reading FITS images as tensors. Use it
-    when you want a single tensor (1D spectra, 2D images, 3D cubes). For
-    multi-extension files, use `read_hdus()`. For cutouts, use
-    `read_subset()`.
+    Read an IMAGE HDU as a single tensor (spectrum, image, or cube). For
+    multi-extension files use `read_hdus()`; for cutouts use `read_subset()`.
 
 !!! tip "GPU reads"
     Pass `device="cuda"` or `device="mps"` to place the result on device.
@@ -160,9 +157,8 @@ with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
 ```
 
 !!! info "When to use"
-    Use `open_subset_reader` when you need many cutouts from the same large
-    file (e.g., training on patches from a mosaic). It avoids repeatedly
-    opening and closing the FITS handle.
+    Many cutouts from the same large mosaic without reopening the file each
+    time.
 
 ---
 
@@ -445,42 +441,32 @@ result = torchfits.verify_checksums(path, hdu=0)
 
 ## Cache Utilities
 
-Two Python layers plus native SharedReadMeta (do not merge in call sites —
-pick one intentionally):
+| Layer | Entry points | Role |
+|---|---|---|
+| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(...)` | Environment policy and on-disk roots (`configure_cache` is a no-op) |
+| I/O metadata | `get_cache_performance()`, `clear_file_cache(...)` | In-process header / meta / data caches used by `read` / `read_tensor` |
+| Shared metadata (C++) | cleared via `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
 
-| Layer | Module | Entry points | Role |
-|---|---|---|---|
-| Disk / training policy | `torchfits.cache` | `configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(...)` | Env policy + on-disk roots; C++ handle-pool `configure_cache` is a no-op after Option A |
-| Root I/O / metadata LRUs | `_io_engine.caches` (via root/`io`) | `get_cache_performance()`, `clear_file_cache(...)` | Python LRUs + SharedReadMeta clear used by `read` / `read_tensor` |
-| SharedReadMeta | C++ | cleared via `clear_file_cache(..., cpp=True)` / path invalidate on write | Shared per-path metadata across private CFITSIO handles |
-
-Relationship (docs only — no merge planned): policy lives in `cache.py`;
-hot-path LRU state lives in `_io_engine/caches.py`; SharedReadMeta is the
-native shared-metadata map. Architecture notes:
-[Caching](architecture.md#caching).
+Details: [Architecture → Caching](architecture.md#caching).
 
 ```python
-# Root I/O cache
 torchfits.get_cache_performance()
 torchfits.clear_file_cache(data=True, handles=True, meta=True, cpp=True)
 
-# Higher-level cache manager
 torchfits.cache.configure_for_environment()
 torchfits.cache.get_cache_stats()
 torchfits.cache.clear_cache()
 torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
 ```
 
-Advanced (import from `torchfits.io`, not re-exported at package root):
-`cache_subsystem_policy(name)` / `clear_cache_subsystem(name)` inspect or clear
-a named engine subsystem (`"all"` clears every subsystem). Prefer the root /
-`torchfits.cache` helpers above unless you are debugging cache splits.
+Advanced helpers on `torchfits.io`: `cache_subsystem_policy(name)` /
+`clear_cache_subsystem(name)` clear a named subsystem (`"all"` clears every
+subsystem).
 
-!!! tip "Training loops"
+!!! tip "Many-file datasets"
     Call `torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=...)`
-    before `DataLoader` epochs to set cache policy for the file set. When using
-    `make_loader(..., optimize_cache=True)` (the default), this happens
-    automatically. Per-call CFITSIO handles are not pooled across threads.
+    before multi-worker loops. `make_loader(..., optimize_cache=True)` does
+    this automatically. Each read uses a private CFITSIO handle.
 
 ### Disk cache directories
 
@@ -489,9 +475,7 @@ once per process: `TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE` /
 `TORCHFITS_SAMPLE_CACHE` — see the User-facing table in
 [Environment variables](architecture.md#environment-variables) for defaults.
 
-These roots are independent of `get_cache_performance` / `clear_file_cache`
-above, which govern the in-process handle and metadata caches, not files on
-disk. Dataset classes accept `cache_dir=` to override the remote root
-per-instance; see [Data module](api-data.md#cache-how-and-when) for the
-Dataset/`make_loader` cache-warming path and when it no-ops (table datasets,
-single-file reads).
+These roots are separate from `get_cache_performance` / `clear_file_cache`,
+which govern in-process metadata, not files on disk. Dataset classes accept
+`cache_dir=` to override the remote root; see
+[Data module](api-data.md#cache-how-and-when).

@@ -79,8 +79,8 @@ that Dataset only.
 
 **Handle/metadata cache:** `make_loader(ds, optimize_cache=True)` (default)
 calls `cache.optimize_for_dataset(ds.files, avg_file_size_mb=...)`, which
-updates Python cache policy for the file count (`configure_cache` is a no-op
-for C++ handles after Option A). This only fires when the
+updates Python cache policy for the file count (`configure_cache` is a
+no-op for C++ handles). This only fires when the
 dataset exposes a `files` list — every `Fits*Dataset` built on
 `FitsTensorDataset` (`FitsImageDataset`, `FitsCubeDataset`,
 `FitsSpectrumDataset`, `FitsTensorIterableDataset`, `FitsCutoutDataset`) has
