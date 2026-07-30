@@ -1038,7 +1038,40 @@ def scan(
     apply_fits_nulls: bool = True,
     backend: str = "auto",
 ) -> Iterator[Any]:
+    # Eager guard: a generator body would defer this until first next().
     guard_fits_path(path)
+    return _scan_iter(
+        path,
+        hdu=hdu,
+        columns=columns,
+        row_slice=row_slice,
+        where=where,
+        batch_size=batch_size,
+        mmap=mmap,
+        decode_bytes=decode_bytes,
+        encoding=encoding,
+        strip=strip,
+        include_fits_metadata=include_fits_metadata,
+        apply_fits_nulls=apply_fits_nulls,
+        backend=backend,
+    )
+
+
+def _scan_iter(
+    path: str,
+    hdu: int | str = 1,
+    columns: Optional[list[str]] = None,
+    row_slice: Optional[slice | tuple[int, int]] = None,
+    where: Optional[str] = None,
+    batch_size: int = 65536,
+    mmap: bool = True,
+    decode_bytes: bool = True,
+    encoding: str = "ascii",
+    strip: bool = True,
+    include_fits_metadata: bool = False,
+    apply_fits_nulls: bool = True,
+    backend: str = "auto",
+) -> Iterator[Any]:
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
 
@@ -1621,7 +1654,32 @@ def scan_torch(
     non_blocking: bool = True,
     pin_memory: bool = False,
 ) -> Iterator[dict[str, Any]]:
+    # Eager guard: a generator body would defer this until first next().
     guard_fits_path(path)
+    return _scan_torch_iter(
+        path,
+        hdu=hdu,
+        columns=columns,
+        row_slice=row_slice,
+        batch_size=batch_size,
+        mmap=mmap,
+        device=device,
+        non_blocking=non_blocking,
+        pin_memory=pin_memory,
+    )
+
+
+def _scan_torch_iter(
+    path: str,
+    hdu: int = 1,
+    columns: Optional[list[str]] = None,
+    row_slice: Optional[slice | tuple[int, int]] = None,
+    batch_size: int = 65536,
+    mmap: bool = True,
+    device: str = "cpu",
+    non_blocking: bool = True,
+    pin_memory: bool = False,
+) -> Iterator[dict[str, Any]]:
     import torchfits
 
     start_row, num_rows = _normalize_row_slice(row_slice)

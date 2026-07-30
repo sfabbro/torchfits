@@ -36,7 +36,7 @@
   desc: setkey delete/rename must use CFITSIO fits_delete_key (+ binary copy for --out), never HDUList.write rewrite — rewrite decompresses CompImage and leaves stale Z* cards.
 
 - id: cfitsio-http-ssrf
-  desc: guard_fits_path on I/O façades (_resolve_hdu_index, read_unified/batch, open/write/image/table); public http(s)/ftp still CFITSIO; private blocked. Case-fold sh:// in security.h.
+  desc: guard_fits_path on I/O façades + torchfits.cpp path APIs; public http(s)/ftp still CFITSIO; private blocked. CLI is_remote_path includes ftp. Case-fold sh:// in security.h.
 
 - id: unified-cache-stubs
   desc: C++ configure/clear/invalidate_cached are no-ops after Option A; SharedReadMeta is the live shared cache. Do not revive get_or_open_cached.

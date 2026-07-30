@@ -6,7 +6,11 @@ import os
 from dataclasses import dataclass
 from typing import Any, List, Optional, Type, Union
 
-from torchfits._io_engine.paths import cfitsio_base_path
+from torchfits._io_engine.paths import (
+    cfitsio_base_path,
+    guard_fits_path,
+    is_cfitsio_network_url,
+)
 
 from .header import Header
 from .tensor_hdu import TensorHDU
@@ -38,7 +42,13 @@ class HDUList:
         if mode not in ["r", "w", "rw"]:
             raise ValueError("Mode must be 'r', 'w', or 'rw'")
 
-        if mode == "r" and not os.path.exists(cfitsio_base_path(path)):
+        guard_fits_path(path)
+        # Network URLs are opened by CFITSIO; only local paths need exists().
+        if (
+            mode == "r"
+            and not is_cfitsio_network_url(path)
+            and not os.path.exists(cfitsio_base_path(path))
+        ):
             raise FileNotFoundError(f"FITS file not found: {path}")
 
         hdul = cls()

@@ -139,7 +139,10 @@ def get_cached_handle(path: str, handle_cache_capacity: int) -> tuple[Any, bool]
     """
     import torchfits._C as cpp
 
+    from .paths import guard_fits_path
+
     del handle_cache_capacity
+    guard_fits_path(path)
     return cpp.open_fits_file(path, "r"), False
 
 

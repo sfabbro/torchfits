@@ -1013,3 +1013,10 @@ def test_http_probe_blocks_internal_ssrf():
     result = _run_cli("probe", "http://169.254.169.254/")
     assert result.returncode == 3
     assert "access to internal or private networks is blocked" in result.stderr
+
+
+def test_cli_rejects_ftp_remote_paths():
+    """CLI local-file commands must reject ftp:// (not only http/https/vos)."""
+    result = _run_cli("info", "ftp://example.com/x.fits")
+    assert result.returncode == 3
+    assert "remote paths are not supported" in result.stderr

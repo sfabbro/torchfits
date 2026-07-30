@@ -70,10 +70,15 @@ def get_batch_info(file_paths: list[str]) -> dict[str, Any]:
     """Get information about a batch of FITS files.
 
     ``existing_files`` counts paths present on disk (``os.path.exists``); it does
-    not open or validate FITS structure.
+    not open or validate FITS structure. Network URLs are never counted as
+    existing (CFITSIO opens them separately). Private/loopback network URLs are
+    rejected before the exists scan.
     """
+    from .paths import guard_fits_path
+
     existing_files = 0
     for path in file_paths:
+        guard_fits_path(path)
         try:
             if os.path.exists(path):
                 existing_files += 1

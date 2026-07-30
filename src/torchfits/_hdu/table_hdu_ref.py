@@ -326,8 +326,10 @@ class TableHDURef:
     def _refresh_file_view(self) -> "TableHDURef":
         import torchfits._C as cpp
         from .._io_engine.caches import invalidate_path_caches
+        from .._io_engine.paths import guard_fits_path
 
         path, hdu = self._require_source()
+        guard_fits_path(path)
         # Fresh open after mutation/os.replace: drop Python LRUs and SharedReadMeta
         # (C++ handle-pool invalidate is a no-op after Option A).
         invalidate_path_caches(path)

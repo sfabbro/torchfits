@@ -525,7 +525,10 @@ class TableHDU:
 
         import os
 
-        if not os.path.exists(file_path):
+        from torchfits._io_engine.paths import guard_fits_path, is_cfitsio_network_url
+
+        guard_fits_path(file_path)
+        if not is_cfitsio_network_url(file_path) and not os.path.exists(file_path):
             raise FileNotFoundError(f"FITS file not found: {file_path}")
 
         try:

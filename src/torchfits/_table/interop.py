@@ -334,7 +334,15 @@ def scan_polars(
         raise ImportError("polars is required for scan_polars conversion") from exc
 
     kwargs.setdefault("batch_size", batch_size)
-    for batch in scan(path, **kwargs):
+    # Call scan() before creating the generator so path guards run eagerly.
+    batches = scan(path, **kwargs)
+    return _scan_polars_iter(batches, rechunk=rechunk, pl=pl)
+
+
+def _scan_polars_iter(
+    batches: Iterator[Any], *, rechunk: bool, pl: Any
+) -> Iterator[Any]:
+    for batch in batches:
         yield pl.from_arrow(batch, rechunk=rechunk)
 
 

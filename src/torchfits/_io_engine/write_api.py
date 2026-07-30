@@ -890,6 +890,7 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
     """Write an HDU sequence through the uncompressed C++ writer."""
     import torchfits._C as cpp
 
+    guard_fits_path(path)
     payload: List[Any] = []
     for idx, hdu in enumerate(hdus):  # noqa: B007
         if isinstance(hdu, TableHDURef):
@@ -936,6 +937,7 @@ def _write_hdus_with_optional_compression(
     path: str, hdus: List[Any], compress: Union[bool, str] = False
 ) -> None:
     """Rewrite HDUs, optionally using CFITSIO compressed-image writer."""
+    guard_fits_path(path)
     algorithm = _resolve_compression_algorithm(compress)
     if algorithm is None:
         _write_hdus_uncompressed(path, hdus, overwrite=True)

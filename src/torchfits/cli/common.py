@@ -19,7 +19,7 @@ EXIT_USAGE = 2
 EXIT_IO = 3
 EXIT_VERIFY_FAIL = 4
 
-_REMOTE_PREFIXES = ("http://", "https://", "vos://", "vos:", "vault:")
+_REMOTE_PREFIXES = ("http://", "https://", "ftp://", "vos://", "vos:", "vault:")
 _EMIT_FORMATS = ("text", "json", "jsonl")
 _SPLIT_MODES = ("file", "hdu")
 _JOBS_HELP = (

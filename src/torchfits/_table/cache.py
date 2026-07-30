@@ -12,6 +12,9 @@ from typing import Any
 
 def _acquire_cpp_handle(path: str, cpp: Any) -> Any:
     """Open a fresh, privately-owned CFITSIO handle. The caller must close it."""
+    from .._io_engine.paths import guard_fits_path
+
+    guard_fits_path(path)
     return cpp.open_fits_file(path, "r")
 
 
@@ -22,4 +25,7 @@ def _acquire_cpp_reader(path: str, hdu: int, cpp: Any) -> Any:
     closed when the reader is garbage-collected, so distinct HDU readers on
     distinct threads never touch the same underlying handle.
     """
+    from .._io_engine.paths import guard_fits_path
+
+    guard_fits_path(path)
     return cpp.TableReader(path, int(hdu))

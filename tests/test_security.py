@@ -122,6 +122,26 @@ def test_read_blocks_private_cfitsio_http_url():
         torchfits.read_subset("ftp://192.168.1.1/x.fits", 0, 0, 0, 1, 1)
     with pytest.raises(HttpBlockedError, match="private"):
         torchfits.open_subset_reader("!http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.HDUList.fromfile("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.TableHDU.from_fits("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.table.scan("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.table.scan_torch("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.HDUList([torchfits.TensorHDU(data=torch.zeros(2, 2))]).write(
+            "http://127.0.0.1:9/x.fits", overwrite=True
+        )
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.read_batch_info(["http://127.0.0.1:9/x.fits"])
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.table.scan_polars("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.cpp.open_fits_file("http://127.0.0.1:9/x.fits", "r")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.cpp.TableReader("http://127.0.0.1:9/x.fits", 1)
 
 
 def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):
