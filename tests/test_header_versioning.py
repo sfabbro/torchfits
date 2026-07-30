@@ -84,3 +84,14 @@ def test_header_remove_all_many_history_is_linear():
     h.remove("HISTORY", remove_all=True)
     assert [c.key for c in h.cards] == ["OBJECT"]
     assert h["OBJECT"] == "keep"
+
+
+def test_header_delitem_removes_all_history_cards():
+    h = Header()
+    h["SIMPLE"] = True
+    h.add_history("a")
+    h.add_history("b")
+    h.add_history("c")
+    del h["HISTORY"]
+    assert "HISTORY" not in h
+    assert [c.key for c in h.cards] == ["SIMPLE"]

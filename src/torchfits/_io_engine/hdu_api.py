@@ -19,7 +19,7 @@ from .caches import (
     path_signature,
     set_cached_hdu_type,
 )
-from .paths import cfitsio_base_path
+from .paths import cfitsio_base_path, guard_fits_path, is_cfitsio_network_url
 
 _log = logging.getLogger(__name__)
 
@@ -132,8 +132,14 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
 
 def open_hdulist(path: str, mode: str = "r") -> HDUList:
     """Open a FITS file for reading/writing."""
+    guard_fits_path(path)
     check_path = cfitsio_base_path(path)
-    if mode == "r" and not os.path.exists(check_path):
+    # Network URLs are opened by CFITSIO itself; only local paths need exists().
+    if (
+        mode == "r"
+        and not is_cfitsio_network_url(path)
+        and not os.path.exists(check_path)
+    ):
         raise FileNotFoundError(f"FITS file not found: {path}")
 
     try:

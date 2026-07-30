@@ -2,6 +2,21 @@
 
 from __future__ import annotations
 
+from torchfits.http_util import guard_cfitsio_remote_path, is_cfitsio_network_url
+
+__all__ = [
+    "cfitsio_base_path",
+    "guard_fits_path",
+    "has_cfitsio_filter",
+    "is_cfitsio_network_url",
+]
+
+
+def guard_fits_path(path: str) -> str:
+    """SSRF-check CFITSIO network URLs; return *path* unchanged for CFITSIO."""
+    guard_cfitsio_remote_path(path)
+    return path
+
 
 def cfitsio_base_path(path: str) -> str:
     """Return the on-disk path, stripping a CFITSIO ``[...]`` filter if present.

@@ -1,8 +1,10 @@
-"""
-Cloud/HPC optimized caching for torchfits.
+"""Cache policy façade and disk-root helpers for torchfits.
 
-This module provides intelligent caching strategies for different environments
-including local development, HPC clusters, and cloud platforms.
+Live hot-path I/O state (file/meta/header LRUs, invalidate) lives in
+``torchfits._io_engine.caches``. This module owns env/policy
+(``CacheConfig`` / ``CacheManager``), on-disk cache roots, and aggregating
+``clear_cache`` / ``stats``. The C++ ``UnifiedCache`` shared-handle path is
+unused (Option A: private handles per call).
 """
 
 from __future__ import annotations
@@ -330,7 +332,7 @@ def get_cache_stats() -> Dict[str, Any]:
 
 
 def clear_cache() -> None:
-    """Clear Python, C++ I/O, and table-handle caches."""
+    """Clear Python and C++ I/O caches."""
     get_cache_manager().clear()
     try:
         from ._io_engine.caches import clear_file_cache
@@ -339,16 +341,6 @@ def clear_cache() -> None:
     except Exception as exc:
         warnings.warn(
             f"clear_cache: I/O engine clear failed: {exc}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-    try:
-        from ._table.cache import _close_all_cached_handles
-
-        _close_all_cached_handles()
-    except Exception as exc:
-        warnings.warn(
-            f"clear_cache: table handle clear failed: {exc}",
             RuntimeWarning,
             stacklevel=2,
         )

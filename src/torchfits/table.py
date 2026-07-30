@@ -19,7 +19,6 @@ from ._table.interop import (
     write_ipc,
     write_parquet,
 )
-from ._table.cache import _close_all_cached_handles as clear_cache
 from ._table.mutation import (
     append_rows,
     delete_rows,
@@ -45,6 +44,14 @@ from ._table_engine import TABLE_BACKENDS
 
 # Explicit Arrow synonym of ``read`` (destination-qualified symmetry).
 read_arrow = read
+
+
+def clear_cache() -> None:
+    """Clear torchfits I/O caches (no per-table handle cache after Option A)."""
+    from .cache import clear_cache as _clear_all
+
+    _clear_all()
+
 
 __all__ = [
     "TABLE_BACKENDS",

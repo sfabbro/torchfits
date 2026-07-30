@@ -10,6 +10,7 @@ from torch import Tensor
 import torchfits._C as _cpp
 
 from ..hdu import Header
+from .paths import guard_fits_path
 
 
 def batch_to_device(
@@ -83,6 +84,7 @@ def read_image(
 ) -> Union[Tensor, Tuple[Tensor, Header]]:
     """Read image data through a direct low-level path."""
     validate_read_image_args(path, hdu, mmap, device)
+    guard_fits_path(path)
 
     if isinstance(hdu, str):
         if hasattr(_cpp, "resolve_hdu_name_cached"):

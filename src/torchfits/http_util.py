@@ -117,6 +117,43 @@ def build_http_opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(ValidatingRedirectHandler())
 
 
+_CFITSIO_NETWORK_SCHEMES = ("http://", "https://", "ftp://")
+
+
+def _strip_leading_cfitsio_bang(path: str) -> str:
+    """Strip CFITSIO forced-overwrite ``!`` prefixes (and interstitial whitespace)."""
+    s = path.lstrip()
+    while s.startswith("!"):
+        s = s[1:].lstrip()
+    return s
+
+
+def is_cfitsio_network_url(path: str) -> bool:
+    """True when *path* is an ``http``/``https``/``ftp`` CFITSIO filename."""
+    lowered = _strip_leading_cfitsio_bang(path).lower()
+    return any(lowered.startswith(scheme) for scheme in _CFITSIO_NETWORK_SCHEMES)
+
+
+def guard_cfitsio_remote_path(path: str) -> None:
+    """Block private/loopback CFITSIO network URLs; leave the path unchanged.
+
+    Public ``http``/``https``/``ftp`` URLs are allowed so CFITSIO can still open
+    them via its own network drivers (and so Python Range/fetch paths can keep
+    using the same URL shape). Private targets raise :class:`HttpBlockedError`
+    before CFITSIO runs. Local paths and ``vos:`` / ``vault:`` are untouched.
+    """
+    candidate = _strip_leading_cfitsio_bang(str(path))
+    lowered = candidate.lower()
+    if not any(lowered.startswith(scheme) for scheme in _CFITSIO_NETWORK_SCHEMES):
+        return
+    # Hostname checks ignore a trailing CFITSIO ``[...]`` section.
+    if is_internal_url(candidate):
+        raise HttpBlockedError(
+            f"{path}: access to internal or private networks is blocked "
+            "for security reasons"
+        )
+
+
 def http_request(
     url: str,
     *,

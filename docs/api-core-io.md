@@ -213,13 +213,16 @@ for chunk in torchfits.table.scan_torch(
 
 ## `read_batch()`
 
-Read the same HDU from multiple FITS files as a batched tensor.
+Read the same HDU from multiple FITS files.
 
 ```python
 torchfits.read_batch(file_paths, hdu=0, device="cpu", *, strict=False)
 ```
 
-**Returns:** `torch.Tensor` (stacked batch).
+**Returns:** `list[torch.Tensor]` — one tensor per successfully read file (not a
+stacked batch). With the default ``strict=False``, files that fail to read are
+skipped with a ``RuntimeWarning``; pass ``strict=True`` to raise on the first
+failure.
 
 ```python
 tensors = torchfits.read_batch(["img1.fits", "img2.fits"], hdu=0)

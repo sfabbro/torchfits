@@ -31,7 +31,7 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 
 ## Round 7 deferrals (safe post-1.0)
 
-- R7-HDU1 — `TensorHDU.to_tensor()` closed-handle guard
+- R7-HDU1 — ~~`TensorHDU.to_tensor()` closed-handle guard~~ — fixed
 - R7-HDU2 — `TableDataAccessor` squeeze on `(N,1)` (intentional FITS scalar shape)
 - R7-CPP1 — floating-point equality for unsigned TZERO (malformed files only)
 - R7-CPP2 — thread-local HDU cache stale after shared-meta invalidation
@@ -53,7 +53,7 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 - Split `_table/read.py` mega-function strategies
 - Vestigial `UnifiedCache` shared-handle path cleanup (`get_or_open_cached`
   unused; all guards `cached=false`; shrink invalidate/clear to what remains)
-- `_table/cache.py` no-op close/invalidate stubs after Option A — delete or fold
+- ~~`_table/cache.py` no-op close/invalidate stubs after Option A — delete or fold~~ — removed
 - Broader `except Exception: pass` audit (soft fallthroughs in strategy probes;
   Round-2 glm notes: batch `read_images_batch` silent fallthrough, NAXIS2→0,
   tnull fill swallow, `update_rows` mmap=auto swallow)

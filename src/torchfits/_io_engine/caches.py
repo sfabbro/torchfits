@@ -122,13 +122,6 @@ def clear_cache_subsystem(
         cpp=policy["cpp"],
         cpp_module=cpp_module,
     )
-    if policy["table_handles"]:
-        try:
-            from .._table.cache import _close_all_cached_handles
-
-            _close_all_cached_handles()
-        except Exception:
-            pass
 
 
 def path_signature(path: str) -> tuple[int, int, int] | None:
@@ -335,10 +328,6 @@ def invalidate_path_caches(path: str) -> None:
         if isinstance(key, tuple) and key and key[0] == path
     ]:
         auto_hdu_cache.pop(key, None)
-
-    from .._table.cache import _invalidate_caches_for_path
-
-    _invalidate_caches_for_path(path)
 
 
 def get_cache_performance() -> dict[str, Any]:

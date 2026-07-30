@@ -14,8 +14,8 @@ def _total_rows_from_header(header: Header) -> int:
         if isinstance(total_rows, str):
             return int(float(total_rows))
         return int(total_rows)
-    except Exception:
-        return 0
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid NAXIS2 value: {total_rows!r}") from exc
 
 
 def stream_table(
@@ -40,7 +40,7 @@ def stream_table(
     if chunk_rows <= 0:
         raise ValueError("batch_size must be > 0")
     if not os.path.exists(file_path):
-        return
+        raise FileNotFoundError(file_path)
 
     col_list = columns if columns else []
 

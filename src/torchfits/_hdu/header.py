@@ -63,13 +63,9 @@ class Header(dict[str, Any]):
         self._version += 1
 
     def __delitem__(self, key: str) -> None:
-        key_s = str(key)
-        super().__delitem__(key)
-        for idx, card in enumerate(self._cards):
-            if card.key == key_s:
-                del self._cards[idx]
-                break
-        self._version += 1
+        # HISTORY/COMMENT (and any duplicated key) must clear all cards; a single
+        # del left orphans in .cards after #225's remove_all fast path.
+        self.remove(str(key), remove_all=True)
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         other = dict(*args, **kwargs)

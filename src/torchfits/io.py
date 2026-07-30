@@ -408,7 +408,11 @@ def read_batch(
     *,
     strict: bool = False,
 ) -> Any:
-    """Read the same HDU from multiple FITS files as a batched tensor."""
+    """Read the same HDU from multiple FITS files.
+
+    Returns a ``list`` of tensors (one per successfully read file). With
+    ``strict=False`` (default), failures are skipped with a warning.
+    """
     return _read_batch_impl(
         read_func=read,
         read_exc_types=_READ_EXC_TYPES,

@@ -2,17 +2,12 @@
 
 Sharing a single ``fitsfile*`` across threads corrupts CFITSIO's internal
 position state, so every read opens a fresh, privately-owned handle. There is
-deliberately no cross-thread handle/reader cache here; the LRUs that used to
-live in this module defeated Option A by handing one handle to concurrent
-readers.
+deliberately no cross-thread handle/reader cache here.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 def _acquire_cpp_handle(path: str, cpp: Any) -> Any:
@@ -28,11 +23,3 @@ def _acquire_cpp_reader(path: str, hdu: int, cpp: Any) -> Any:
     distinct threads never touch the same underlying handle.
     """
     return cpp.TableReader(path, int(hdu))
-
-
-def _close_all_cached_handles() -> None:
-    """No-op: table reads open a private CFITSIO handle per call (Option A)."""
-
-
-def _invalidate_caches_for_path(path: str) -> None:  # noqa: ARG001
-    """No-op: no cross-thread table-handle cache to invalidate."""

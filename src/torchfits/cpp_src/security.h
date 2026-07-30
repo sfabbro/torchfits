@@ -41,9 +41,18 @@ inline void check_fits_filename_security(const std::string& filename) {
                     throw std::runtime_error("Security Error: Filenames starting with '|' are not allowed to prevent command execution.");
                 }
 
-                // Check for sh:// prefix
-                if (filename.compare(start_idx, 5, "sh://") == 0) {
-                    throw std::runtime_error("Security Error: Filenames starting with 'sh://' are not allowed to prevent command execution.");
+                // Check for sh:// prefix (case-insensitive; CFITSIO may fold schemes).
+                if (start_idx + 5 <= filename.size()) {
+                    bool is_sh = true;
+                    const char sh[] = {'s', 'h', ':', '/', '/'};
+                    for (size_t i = 0; i < 5; ++i) {
+                        char c = filename[start_idx + i];
+                        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                        if (c != sh[i]) { is_sh = false; break; }
+                    }
+                    if (is_sh) {
+                        throw std::runtime_error("Security Error: Filenames starting with 'sh://' are not allowed to prevent command execution.");
+                    }
                 }
             }
 

@@ -270,19 +270,13 @@ def read_unified(
     if not path:
         raise ValueError("Path must be a non-empty string")
 
-    if use_cache is not None and not isinstance(use_cache, bool):
-        raise ValueError("use_cache must be bool when provided")
-    if use_cache is True:
-        if cache_capacity <= 0:
-            cache_capacity = 10
-        handle_cache_capacity = 0
-    elif use_cache is False:
-        cache_capacity = 0
-        handle_cache_capacity = 0
+    from .paths import guard_fits_path
 
     if isinstance(path, (list, tuple)):
         if any(not isinstance(item_path, str) or not item_path for item_path in path):
             raise ValueError("Path must be a string or list of strings")
+        for item_path in path:
+            guard_fits_path(item_path)
         return _read_batch_paths(
             cpp_module=cpp_module,
             path=path,
@@ -311,6 +305,20 @@ def read_unified(
             logger=logger,
             strict=bool(kwargs.get("strict", False)),
         )
+
+    if not isinstance(path, str):
+        raise ValueError("Path must be a string or list of strings")
+    guard_fits_path(path)
+
+    if use_cache is not None and not isinstance(use_cache, bool):
+        raise ValueError("use_cache must be bool when provided")
+    if use_cache is True:
+        if cache_capacity <= 0:
+            cache_capacity = 10
+        handle_cache_capacity = 0
+    elif use_cache is False:
+        cache_capacity = 0
+        handle_cache_capacity = 0
 
     # Fixed: pass hdu then device (matches function signature order)
     force_image, force_table = _validate_single_path_params(

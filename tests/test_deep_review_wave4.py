@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from unittest import mock
 
+import pytest
 import torch
 
 
@@ -80,6 +81,20 @@ def test_stream_table_skips_header_when_total_rows_given(tmp_path):
     chunks = list(stream_table(header_fn, str(f), total_rows=0))
     assert chunks == []
     header_fn.assert_not_called()
+
+
+def test_stream_table_missing_path_raises():
+    from torchfits._io_engine.table_streaming import stream_table
+
+    with pytest.raises(FileNotFoundError):
+        list(stream_table(lambda *_: None, "/no/such/torchfits_stream.fits"))
+
+
+def test_default_table_column_rejects_bad_tnull():
+    from torchfits._table.mutation import _default_table_column_values
+
+    with pytest.raises(ValueError, match="TNULL"):
+        _default_table_column_values("QUAL", "I", 3, tnull="not-an-int")
 
 
 # --- P2-6: for_environment is memoised but stays correct under mocking ------

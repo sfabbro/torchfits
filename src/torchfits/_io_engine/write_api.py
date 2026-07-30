@@ -15,6 +15,7 @@ from torch import Tensor
 from ..hdu import HDUList, Header, TableHDU, TableHDURef, TensorHDU
 from .caches import invalidate_path_caches as _invalidate_io_path_caches
 from .hdu_api import open_hdulist
+from .paths import guard_fits_path
 from .quantize import (
     parse_image_quantize_spec,
     parse_table_quantize_spec,
@@ -254,6 +255,7 @@ def write(
     the CFITSIO writer runs (in-memory input tensors are not modified).
     """
     path = os.fspath(path)
+    guard_fits_path(path)
     path_exists = os.path.exists(path)
     if not overwrite and path_exists:
         raise FileExistsError(

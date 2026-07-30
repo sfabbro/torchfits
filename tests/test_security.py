@@ -102,3 +102,34 @@ def test_valid_filenames_allowed():
         pass
     except Exception:
         pass
+
+
+def test_read_blocks_private_cfitsio_http_url():
+    """Core read must SSRF-block private http URLs before CFITSIO opens them."""
+    from torchfits.http_util import HttpBlockedError
+
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.read("http://127.0.0.1:9/x.fits")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.read("https://10.0.0.1/x.fits[1]")
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.read("!ftp://192.168.1.1/x.fits")
+
+
+def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):
+    """Public network URLs pass the guard unchanged (CFITSIO still opens them)."""
+    from torchfits import http_util
+    from torchfits._io_engine.paths import guard_fits_path
+
+    monkeypatch.setattr(http_util, "is_internal_url", lambda _url: False)
+    assert (
+        guard_fits_path("http://example.com/public.fits[1:10,1:10]")
+        == "http://example.com/public.fits[1:10,1:10]"
+    )
+
+
+def test_security_rejects_uppercase_sh_scheme():
+    with pytest.raises(RuntimeError, match="Security Error"):
+        torchfits.read("SH://echo pwned")
+    with pytest.raises(RuntimeError, match="Security Error"):
+        torchfits.read("! Sh://id")

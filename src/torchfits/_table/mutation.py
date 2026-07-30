@@ -189,8 +189,10 @@ def _default_table_column_values(
         try:
             fill: Any = np.asarray(tnull, dtype=dtype).item()
             return np.full(shape, fill, dtype=dtype)
-        except Exception:
-            pass
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"cannot coerce TNULL={tnull!r} for column {name!r} dtype {dtype}"
+            ) from exc
     return np.zeros(shape, dtype=dtype)
 
 
