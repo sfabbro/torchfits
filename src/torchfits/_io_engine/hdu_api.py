@@ -159,6 +159,7 @@ def _resolve_hdu_index(
     """Resolve ``hdu`` to a 0-based index (supports ``None`` / ``\"auto\"`` / EXTNAME)."""
     import torchfits._C as cpp
 
+    guard_fits_path(path)
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
         return int(autodetect_hdu(path, 16))
     if isinstance(hdu, int):
@@ -248,6 +249,7 @@ def read_num_hdus(path: str) -> int:
     """Return number of HDUs in the file (one open; no header dump)."""
     import torchfits._C as cpp
 
+    guard_fits_path(path)
     return int(cpp.read_num_hdus(path))
 
 
@@ -288,6 +290,8 @@ def get_header(
     """Get the header of a FITS file."""
     import torchfits._C as cpp
 
+    # Guard before cache/autodetect so private network URLs never reach CFITSIO.
+    guard_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     sig = path_signature(path)
     cache_key = (path, hdu_index)

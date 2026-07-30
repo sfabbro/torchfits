@@ -29,6 +29,12 @@ def read_batch(
     if device not in ["cpu", "cuda", "mps"] and not device.startswith("cuda:"):
         raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
 
+    from .paths import guard_fits_path
+
+    # Fail closed before the C++ batch open so private URLs never hit CFITSIO.
+    for path in file_paths:
+        guard_fits_path(path)
+
     try:
         if isinstance(hdu, int) and hdu >= 0:
             import torchfits._C as cpp

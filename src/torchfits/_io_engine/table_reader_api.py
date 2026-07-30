@@ -23,9 +23,11 @@ class TableReaderHandle:
 
     def __init__(self, path: str, hdu: int | str = 1):
         import torchfits._C as cpp
+        from .paths import guard_fits_path
 
         if not isinstance(path, str):
             raise ValueError("path must be a string")
+        guard_fits_path(path)
         if not isinstance(hdu, (int, str)):
             raise ValueError("hdu must be an integer or string")
         if isinstance(hdu, str):
