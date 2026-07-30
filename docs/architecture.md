@@ -127,8 +127,9 @@ table / subset / HDU-name resolution opens a private handle (`fits_open_diskfile
 `fitsfile*` pointers was removed for correctness under multi-worker DataLoaders
 and multi-HDU concurrent reads.
 
-`UnifiedCache` / `get_or_open_cached` remain available for invalidate/clear
-bookkeeping but are **not** on the concurrent read hot path.
+Invalidate/clear entry points on the old handle-pool API are **no-ops**; live
+shared state is cleared via SharedReadMeta (`clear_shared_read_meta_cache` /
+per-path invalidate on write). `get_or_open_cached` raises if called.
 
 ### L1 — SharedReadMeta
 

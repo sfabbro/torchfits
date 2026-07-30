@@ -90,6 +90,18 @@ def test_stream_table_missing_path_raises():
         list(stream_table(lambda *_: None, "/no/such/torchfits_stream.fits"))
 
 
+def test_stream_table_accepts_cfitsio_extended_local_path(tmp_path):
+    from torchfits._io_engine.table_streaming import stream_table
+
+    f = tmp_path / "t.fits"
+    f.write_bytes(b"\x00")
+    header_fn = mock.Mock(side_effect=AssertionError("header should not be read"))
+    # Extended section must not make exists() fail before CFITSIO opens.
+    chunks = list(stream_table(header_fn, f"{f}[1]", total_rows=0))
+    assert chunks == []
+    header_fn.assert_not_called()
+
+
 def test_default_table_column_rejects_bad_tnull():
     from torchfits._table.mutation import _default_table_column_values
 

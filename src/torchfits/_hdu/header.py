@@ -92,31 +92,20 @@ class Header(dict[str, Any]):
         if not args:
             raise TypeError("pop expected at least 1 argument")
         key = str(args[0])
-        res = super().pop(*args)
-        for idx, card in enumerate(self._cards):
-            if card.key == key:
-                del self._cards[idx]
-                break
-        self._version += 1
+        if key not in self:
+            if len(args) > 1:
+                return args[1]
+            raise KeyError(key)
+        res = self[key]
+        self.remove(key, remove_all=True)
         return res
 
     def popitem(self) -> tuple[str, Any]:
         key, value = super().popitem()
         key_s = str(key)
-        # Prefer the card whose value matches the mapping entry we just popped
-        # (insert() can leave duplicate keys; first-key linear search is wrong).
-        match_idx: int | None = None
-        for idx, card in enumerate(self._cards):
-            if card.key == key_s and card.value == value:
-                match_idx = idx
-                break
-        if match_idx is None:
-            for idx, card in enumerate(self._cards):
-                if card.key == key_s:
-                    match_idx = idx
-                    break
-        if match_idx is not None:
-            del self._cards[match_idx]
+        # Mapping entry is gone; drop every card for that key (HISTORY/COMMENT
+        # and any insert()-created duplicates).
+        self._cards = [c for c in self._cards if c.key != key_s]
         self._version += 1
         return key_s, value
 

@@ -62,7 +62,6 @@ private:
     std::string filename_;
     int mode_;
     fitsfile* fptr_ = nullptr;
-    bool cached_ = false;
     int start_hdu_ = 1;
     int current_hdu_ = 1;
     int raw_fd_ = -1;

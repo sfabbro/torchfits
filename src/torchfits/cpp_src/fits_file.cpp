@@ -66,7 +66,6 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
         fits_create_file(&fptr_, filename, &status);
     }
     if (status != 0 || !fptr_) throw std::runtime_error("Could not open FITS file: " + filename_);
-    cached_ = false;
     if (mode == 0) shared_meta_ = detail::get_shared_meta_for_path(filename_);
     const bool has_extension = has_cfitsio_extended_filename_syntax(filename_);
     if (!has_extension) {

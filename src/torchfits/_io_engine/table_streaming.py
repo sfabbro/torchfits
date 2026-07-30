@@ -36,11 +36,15 @@ def stream_table(
     header to skip the redundant ``get_header_func`` read at stream start.
     """
     import torchfits._C as cpp
+    from .paths import cfitsio_base_path, is_cfitsio_network_url
 
     if chunk_rows <= 0:
         raise ValueError("batch_size must be > 0")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(file_path)
+    # Network URLs are opened by CFITSIO; local paths may use ``file.fits[HDU]``.
+    if not is_cfitsio_network_url(file_path):
+        check_path = cfitsio_base_path(file_path)
+        if not os.path.exists(check_path):
+            raise FileNotFoundError(file_path)
 
     col_list = columns if columns else []
 

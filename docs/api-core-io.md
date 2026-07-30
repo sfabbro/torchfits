@@ -449,8 +449,8 @@ Two layers (do not merge in call sites — pick one intentionally):
 
 | Layer | Entry points | Role |
 |---|---|---|
-| Root I/O / CFITSIO handle caches | `get_cache_performance()`, `clear_file_cache(...)` | In-process read-path caches used by `read` / `read_tensor` |
-| `torchfits.cache` manager | `cache.configure_for_environment()`, `cache.get_cache_stats()`, `cache.clear_cache()`, `cache.optimize_for_dataset(...)` | Higher-level training / Dataset warming |
+| Root I/O / metadata caches | `get_cache_performance()`, `clear_file_cache(...)` | Python LRUs + SharedReadMeta clear used by `read` / `read_tensor` |
+| `torchfits.cache` manager | `cache.configure_for_environment()`, `cache.get_cache_stats()`, `cache.clear_cache()`, `cache.optimize_for_dataset(...)` | Higher-level training / Dataset policy (C++ handle-pool `configure_cache` is a no-op) |
 
 ```python
 # Root I/O cache
@@ -471,9 +471,9 @@ a named engine subsystem (`"all"` clears every subsystem). Prefer the root /
 
 !!! tip "Training loops"
     Call `torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=...)`
-    before `DataLoader` epochs to warm handle caches. When using
+    before `DataLoader` epochs to set cache policy for the file set. When using
     `make_loader(..., optimize_cache=True)` (the default), this happens
-    automatically.
+    automatically. Per-call CFITSIO handles are not pooled across threads.
 
 ### Disk cache directories
 

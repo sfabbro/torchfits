@@ -79,7 +79,8 @@ that Dataset only.
 
 **Handle/metadata cache:** `make_loader(ds, optimize_cache=True)` (default)
 calls `cache.optimize_for_dataset(ds.files, avg_file_size_mb=...)`, which
-sizes the C++ handle cache for the file count. This only fires when the
+updates Python cache policy for the file count (`configure_cache` is a no-op
+for C++ handles after Option A). This only fires when the
 dataset exposes a `files` list — every `Fits*Dataset` built on
 `FitsTensorDataset` (`FitsImageDataset`, `FitsCubeDataset`,
 `FitsSpectrumDataset`, `FitsTensorIterableDataset`, `FitsCutoutDataset`) has
@@ -90,8 +91,8 @@ is then a documented no-op, not an error.
 ```python
 from torchfits import cache
 
-cache.get_cache_stats()   # hit rate, cpp cache size, config
-cache.clear_cache()       # drop Python + C++ I/O + table-handle caches
+cache.get_cache_stats()   # hit rate, config (cpp handle pool size is always 0)
+cache.clear_cache()       # drop Python I/O LRUs + SharedReadMeta
 ```
 
 **When *not* to warm:** a single local file read (`read_tensor`, one-off
@@ -390,7 +391,7 @@ loader = make_loader(
     batch_size=32,
     num_workers=4,
     pin_memory=True,       # faster CPU → GPU transfer
-    optimize_cache=True,   # warm handle caches before iteration
+    optimize_cache=True,   # set cache policy for the file set (no C++ handle pool)
     shuffle=True,          # default for map-style; False for iterable
 )
 ```

@@ -34,7 +34,9 @@ def read_subset(
 ) -> Tensor:
     """Read a rectangular subset of an image HDU."""
     import torchfits._C as cpp
+    from .paths import guard_fits_path
 
+    guard_fits_path(path)
     is_http_url, is_vos_path, resolve_local_path = _remote_helpers()
     if is_http_url(path):
         try:
@@ -68,9 +70,11 @@ class SubsetReader:
 
     def __init__(self, path: str, hdu: int | str = 0, device: str = "cpu"):
         import torchfits._C as cpp
+        from .paths import guard_fits_path
 
         if not isinstance(path, str):
             raise ValueError("path must be a string")
+        guard_fits_path(path)
         if path.lower().endswith(".bz2"):
             raise ValueError(
                 "CFITSIO does not support .bz2 compression natively. Please decompress the file first."

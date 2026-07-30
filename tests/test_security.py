@@ -118,6 +118,10 @@ def test_read_blocks_private_cfitsio_http_url():
         torchfits.read_header("http://127.0.0.1:9/x.fits")
     with pytest.raises(HttpBlockedError, match="private"):
         torchfits.read_batch(["http://127.0.0.1:9/x.fits"])
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.read_subset("ftp://192.168.1.1/x.fits", 0, 0, 0, 1, 1)
+    with pytest.raises(HttpBlockedError, match="private"):
+        torchfits.open_subset_reader("!http://127.0.0.1:9/x.fits")
 
 
 def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):

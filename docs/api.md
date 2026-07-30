@@ -29,10 +29,11 @@ spelling alongside `read_torch` / `read_polars`). Root `read_table` /
 `stream_table` / `read_table_rows` / `get_header` / `get_batch_info` were
 **removed** in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
 
-**Caches.** Root I/O / CFITSIO handle caches are cleared via
+**Caches.** Root I/O metadata caches are cleared via
 `clear_file_cache()` / `get_cache_performance()`. Training-oriented sizing and
 warm-up live under `torchfits.cache` (`configure_for_environment`,
-`optimize_for_dataset`, `clear_cache`). See [Core I/O → Cache Utilities](api-core-io.md#cache-utilities).
+`optimize_for_dataset`, `clear_cache`). C++ shared-handle pooling is gone
+(Option A); `configure_cache` is a no-op. See [Core I/O → Cache Utilities](api-core-io.md#cache-utilities).
 
 ---
 

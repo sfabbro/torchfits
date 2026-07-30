@@ -17,6 +17,9 @@ def _validate_hdu(hdu: int) -> int:
 
 def write_checksums(path: str, hdu: int = 0) -> None:
     """Compute and write DATASUM/CHECKSUM keywords for an HDU (CFITSIO)."""
+    from .paths import guard_fits_path
+
+    guard_fits_path(path)
     cpp.write_hdu_checksums(str(path), _validate_hdu(hdu))
 
 
@@ -31,6 +34,9 @@ def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
     Returns a dict with ``datastatus``, ``hdustatus``, ``ok``, and
     ``status`` (``"ok"``, ``"no_checksums"``, or ``"fail"``).
     """
+    from .paths import guard_fits_path
+
+    guard_fits_path(path)
     datastatus, hdustatus = cpp.verify_hdu_checksums(str(path), _validate_hdu(hdu))
     data_i = int(datastatus)
     hdu_i = int(hdustatus)

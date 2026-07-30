@@ -325,14 +325,15 @@ class TableHDURef:
 
     def _refresh_file_view(self) -> "TableHDURef":
         import torchfits._C as cpp
+        from .._io_engine.caches import invalidate_path_caches
 
         path, hdu = self._require_source()
-        # Force a completely fresh read: clear all C++ file caches
-        # to ensure we don't get a stale handle pointing to an
-        # unlinked inode after os.replace (macOS CFITSIO quirk).
-        cpp.invalidate_file_cache(path)
-        cpp.clear_file_cache()
-        # Open a fresh handle and read directly.
+        # Fresh open after mutation/os.replace: drop Python LRUs and SharedReadMeta
+        # (C++ handle-pool invalidate is a no-op after Option A).
+        invalidate_path_caches(path)
+        clear_meta = getattr(cpp, "clear_shared_read_meta_cache", None)
+        if clear_meta is not None:
+            clear_meta()
         handle = cpp.open_fits_file(path, "r")
         try:
             header = Header(cpp.read_header(handle, hdu))

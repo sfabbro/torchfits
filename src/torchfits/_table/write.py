@@ -33,6 +33,9 @@ def write(
     ``TSCAL``/``TZERO``. Pass ``{\"col\": \"robust\"}`` (or per-column option
     dicts) to select columns. Default keeps native float ``TFORM``.
     """
+    from .._io_engine.paths import guard_fits_path
+
+    guard_fits_path(path)
     if not isinstance(data, dict) or not data:
         raise ValueError("data must be a non-empty dictionary")
     table_kind = str(table_type).lower().strip()
@@ -273,7 +276,9 @@ def _resolve_table_hdu_index_and_columns(
     ``read.py``.
     """
     import torchfits._C as cpp
+    from .._io_engine.paths import guard_fits_path
 
+    guard_fits_path(path)
     handle = cpp.open_fits_file(path, "r")
     try:
         num_hdus = int(cpp.get_num_hdus(handle))

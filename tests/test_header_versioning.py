@@ -95,3 +95,13 @@ def test_header_delitem_removes_all_history_cards():
     del h["HISTORY"]
     assert "HISTORY" not in h
     assert [c.key for c in h.cards] == ["SIMPLE"]
+
+
+def test_header_pop_removes_all_history_cards():
+    h = Header()
+    h.add_history("a")
+    h.add_history("b")
+    h.add_history("c")
+    assert h.pop("HISTORY") == "c"
+    assert "HISTORY" not in h
+    assert list(h.cards) == []
