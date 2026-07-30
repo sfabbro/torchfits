@@ -177,7 +177,9 @@ class Header(dict[str, Any]):
         if remove_all and len(matches) > 1:
             self._cards = [c for c in self._cards if c.key != key_s]
         else:
-            remove_indices = sorted(matches if remove_all else [matches[0]], reverse=True)
+            remove_indices = sorted(
+                matches if remove_all else [matches[0]], reverse=True
+            )
             for idx in remove_indices:
                 del self._cards[idx]
         self._rebuild_mapping_for_key(key_s)

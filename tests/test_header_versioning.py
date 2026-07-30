@@ -46,6 +46,7 @@ def test_fast_parse_header_cards_empty_comment_is_str():
     bitpix_cards = [c for c in h.cards if c.key == "BITPIX"]
     assert bitpix_cards and bitpix_cards[0].comment == ""
 
+
 def test_header_remove_versioning():
     h = Header()
     h.add_history("h1")
