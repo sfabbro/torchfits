@@ -12,12 +12,14 @@ from .._table.utils import _normalize_row_slice, _require_pyarrow
 from .._table.arrow_convert import _chunk_to_record_batch
 from .._table_engine import validate_table_backend
 from .._table.write import _resolve_table_hdu_index_and_columns
+from .._where import parse_where_expression, where_columns_from_ast
 from ._read_schema import (
     _build_fits_metadata,
     _can_use_mmap_row_path_for_full_read,
     _can_use_torch_table_path_for_full_read,
     _column_tforms_for_decode,
     _empty_table_with_schema,
+    _row_slice_from_start_num,
     _unsigned_column_dtypes,
 )
 
@@ -327,8 +329,6 @@ def _read_cpp_table_chunk(
         )
 
     if where is not None:
-        from ._read_where import _resolve_rows_from_where_cpp
-
         where_rows = _resolve_rows_from_where_cpp(
             path=path,
             hdu=hdu,
@@ -592,3 +592,53 @@ def _scan_torch_iter(
             else:
                 moved[key] = value
         yield moved
+
+
+def _resolve_rows_from_where_cpp(
+    path: str,
+    hdu: int,
+    where: str,
+    start_row: int,
+    num_rows: int,
+    mmap: bool,
+    apply_fits_nulls: bool,
+) -> Optional[list[int]]:
+    """Resolve WHERE predicate to a sorted list of 0-based row indices via C++ chunk read."""
+    where_ast = parse_where_expression(where)
+    where_columns = where_columns_from_ast(where_ast)
+    predicate_table = _read_cpp_table_chunk(
+        path=path,
+        hdu=hdu,
+        columns=where_columns,
+        row_slice=_row_slice_from_start_num(start_row, num_rows),
+        rows=None,
+        where=None,
+        mmap=mmap,
+        decode_bytes=True,
+        encoding="utf-8",
+        strip=True,
+        include_fits_metadata=False,
+        apply_fits_nulls=apply_fits_nulls,
+    )
+    if predicate_table is None:
+        return None
+    if predicate_table.num_rows == 0:
+        return []
+
+    # Lazy import: _where_mask_for_table lives in _read_where, which imports
+    # _read_table_unfiltered from this module lazily.
+    from ._read_where import _where_mask_for_table
+
+    import pyarrow.compute as _pc
+
+    pc: Any = _pc
+
+    mask = _where_mask_for_table(predicate_table, where, parsed_ast=where_ast)
+    if len(mask) == 0 or pc.sum(mask).as_py() == 0:
+        return []
+
+    base_row0 = start_row - 1
+    selected = pc.indices_nonzero(mask).to_numpy()
+    if selected.size == 0:
+        return []
+    return (selected + base_row0).tolist()  # type: ignore[no-any-return]

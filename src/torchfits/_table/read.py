@@ -42,7 +42,6 @@ from ._read_schema import (  # noqa: F401
 from ._read_where import (  # noqa: F401
     _TORCH_WHERE_MAX_ROWS,
     _filter_table_with_where,
-    _resolve_rows_from_where_cpp,
     _torch_cmp_mask,
     _try_cpp_where_pushdown,
     _try_torch_tensor_where_filter,
@@ -50,6 +49,7 @@ from ._read_where import (  # noqa: F401
 from ._read_scan import (  # noqa: F401
     _iter_chunks_cpp_table,
     _read_table_unfiltered,
+    _resolve_rows_from_where_cpp,
 )
 
 

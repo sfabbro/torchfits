@@ -12,11 +12,11 @@ from torch import Tensor
 from ..hdu import HDUList, Header, TensorHDU
 from .paths import guard_fits_path
 from ._hdu_rewrite import (
-    _TableHDUWriteProxy,
     _write_hdus_uncompressed,
     _write_hdus_with_optional_compression,
 )
 from ._write_helpers import (
+    _TableHDUWriteProxy,
     _apply_image_quantize,
     _can_use_cpp_table_writer,
     _coerce_compressed_hdu_item,

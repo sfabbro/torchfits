@@ -506,6 +506,17 @@ def _resolve_compression_algorithm(compress: Union[bool, str]) -> Optional[str]:
     raise TypeError("compress must be bool or compression algorithm string")
 
 
+class _TableHDUWriteProxy:
+    """Small table-HDU proxy for internal writer paths."""
+
+    def __init__(self, raw_data: Dict[str, Any], header: Header):
+        prepared, schema, _ = _prepare_unsigned_table_data_for_write(dict(raw_data))
+        self._raw_data = _normalize_cpp_table_data(prepared)
+        scale_cards = _table_schema_scale_header_cards(schema)
+        self.header = _merge_fits_write_header(header, scale_cards)
+        self._schema = schema
+
+
 def _coerce_compressed_hdu_item(item: Any) -> Any:
     """Normalize compressed-write inputs to TensorHDU/TableHDU objects."""
     if isinstance(item, (TensorHDU, TableHDU)):
@@ -539,8 +550,6 @@ def _coerce_compressed_hdu_item(item: Any) -> Any:
                 data=img,
                 header=_merge_fits_write_header(item.get("header", {}), img_header),
             )
-        from ._hdu_rewrite import _TableHDUWriteProxy
-
         return _TableHDUWriteProxy(item, Header())
     raise NotImplementedError(
         f"Unsupported HDU payload for compressed write: {type(item)}"

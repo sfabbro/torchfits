@@ -28,10 +28,9 @@ from ._read_schema import (
     _can_use_mmap_row_path_for_full_read,
     _column_tforms_for_decode,
     _empty_table_with_schema,
-    _row_slice_from_start_num,
     schema,
 )
-from ._read_scan import _read_cpp_table_chunk, _read_table_unfiltered
+
 
 logger = logging.getLogger(__name__)
 
@@ -549,6 +548,9 @@ def _read_table_with_where(
                     seen.add(name)
             read_columns = merged
 
+    # Lazy import: _read_scan depends on _read_where at call time only.
+    from ._read_scan import _read_table_unfiltered  # noqa: F811
+
     base = _read_table_unfiltered(
         path=path,
         hdu=hdu,
@@ -569,47 +571,3 @@ def _read_table_with_where(
         keep = [name for name in filtered.column_names if name not in set(drop_after)]
         return filtered.select(keep)
     return filtered
-
-
-def _resolve_rows_from_where_cpp(
-    path: str,
-    hdu: int,
-    where: str,
-    start_row: int,
-    num_rows: int,
-    mmap: bool,
-    apply_fits_nulls: bool,
-) -> Optional[list[int]]:
-    where_ast = parse_where_expression(where)
-    where_columns = where_columns_from_ast(where_ast)
-    predicate_table = _read_cpp_table_chunk(
-        path=path,
-        hdu=hdu,
-        columns=where_columns,
-        row_slice=_row_slice_from_start_num(start_row, num_rows),
-        rows=None,
-        where=None,
-        mmap=mmap,
-        decode_bytes=True,
-        encoding="utf-8",
-        strip=True,
-        include_fits_metadata=False,
-        apply_fits_nulls=apply_fits_nulls,
-    )
-    if predicate_table is None:
-        return None
-    if predicate_table.num_rows == 0:
-        return []
-    import pyarrow.compute as _pc
-
-    pc: Any = _pc
-
-    mask = _where_mask_for_table(predicate_table, where, parsed_ast=where_ast)
-    if len(mask) == 0 or pc.sum(mask).as_py() == 0:
-        return []
-
-    base_row0 = start_row - 1
-    selected = pc.indices_nonzero(mask).to_numpy()
-    if selected.size == 0:
-        return []
-    return (selected + base_row0).tolist()  # type: ignore[no-any-return]

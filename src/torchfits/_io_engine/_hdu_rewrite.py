@@ -24,17 +24,6 @@ from ._write_helpers import (
 )
 
 
-class _TableHDUWriteProxy:
-    """Small table-HDU proxy for internal writer paths."""
-
-    def __init__(self, raw_data: Dict[str, Any], header: Header):
-        prepared, schema, _ = _prepare_unsigned_table_data_for_write(dict(raw_data))
-        self._raw_data = _normalize_cpp_table_data(prepared)
-        scale_cards = _table_schema_scale_header_cards(schema)
-        self.header = _merge_fits_write_header(header, scale_cards)
-        self._schema = schema
-
-
 def _detach_hdus_for_rewrite(path: str) -> List[Any]:
     """Materialize file-backed HDUs so rewrite paths never hold stale handles."""
     with open_hdulist(path) as hdul:
@@ -149,6 +138,31 @@ class _TableWriteProxy:
         self._schema = schema
 
 
+def _prepare_table_hdu_for_payload(hdu: Any) -> Optional[_TableWriteProxy]:
+    """Normalize a table HDU into a ``_TableWriteProxy`` for the C++ writer.
+
+    Materializes ``TableHDURef`` to CPU; handles ``TableHDU`` and any
+    object with ``_raw_data`` + ``header`` attributes. Returns ``None``
+    when *hdu* is not a table HDU (the caller must treat it as an image).
+    """
+    if isinstance(hdu, TableHDURef):
+        hdu = hdu.materialize(device="cpu")
+
+    if isinstance(hdu, TableHDU) or (
+        hasattr(hdu, "_raw_data") and hasattr(hdu, "header")
+    ):
+        raw_data = dict(getattr(hdu, "_raw_data", {}))
+        raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
+        scale_cards = _table_schema_scale_header_cards(schema)
+        header = _merge_fits_write_header(
+            _sanitize_table_header_for_write(hdu.header), scale_cards
+        )
+        raw_data = _normalize_cpp_table_data(raw_data)
+        return _TableWriteProxy(raw_data, header, schema)
+
+    return None
+
+
 def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> None:
     """Write an HDU sequence through the uncompressed C++ writer."""
     import torchfits._C as cpp
@@ -156,29 +170,9 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
     guard_fits_path(path)
     payload: List[Any] = []
     for idx, hdu in enumerate(hdus):  # noqa: B007
-        if isinstance(hdu, TableHDURef):
-            hdu = hdu.materialize(device="cpu")
-
-        if isinstance(hdu, TableHDU):
-            raw_data = dict(getattr(hdu, "_raw_data", {}))
-            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
-            scale_cards = _table_schema_scale_header_cards(schema)
-            header = _merge_fits_write_header(
-                _sanitize_table_header_for_write(hdu.header), scale_cards
-            )
-            raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(_TableWriteProxy(raw_data, header, schema))
-            continue
-
-        if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
-            raw_data = dict(getattr(hdu, "_raw_data", {}))
-            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
-            scale_cards = _table_schema_scale_header_cards(schema)
-            tbl_header = _merge_fits_write_header(
-                _sanitize_table_header_for_write(hdu.header), scale_cards
-            )
-            raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(_TableWriteProxy(raw_data, tbl_header, schema))
+        table_proxy = _prepare_table_hdu_for_payload(hdu)
+        if table_proxy is not None:
+            payload.append(table_proxy)
             continue
 
         if not isinstance(hdu, TensorHDU):
@@ -210,29 +204,9 @@ def _write_hdus_with_optional_compression(
 
     payload: list[Any] = []
     for idx, hdu in enumerate(hdus):  # noqa: B007
-        if isinstance(hdu, TableHDURef):
-            hdu = hdu.materialize(device="cpu")
-
-        if isinstance(hdu, TableHDU):
-            raw_data = dict(getattr(hdu, "_raw_data", {}))
-            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
-            scale_cards = _table_schema_scale_header_cards(schema)
-            header = _merge_fits_write_header(
-                _sanitize_table_header_for_write(hdu.header), scale_cards
-            )
-            raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(_TableWriteProxy(raw_data, header, schema))
-            continue
-
-        if hasattr(hdu, "_raw_data") and hasattr(hdu, "header"):
-            raw_data = dict(getattr(hdu, "_raw_data", {}))
-            raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
-            scale_cards = _table_schema_scale_header_cards(schema)
-            tbl_header = _merge_fits_write_header(
-                _sanitize_table_header_for_write(hdu.header), scale_cards
-            )
-            raw_data = _normalize_cpp_table_data(raw_data)
-            payload.append(_TableWriteProxy(raw_data, tbl_header, schema))
+        table_proxy = _prepare_table_hdu_for_payload(hdu)
+        if table_proxy is not None:
+            payload.append(table_proxy)
             continue
 
         if not isinstance(hdu, TensorHDU):
