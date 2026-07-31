@@ -25,6 +25,9 @@ For runnable workflows, start with [Examples](examples.md).
 | Columns as tensors | `torch.from_numpy(t[n])` per column | `torchfits.table.read_torch(path, hdu=1)` |
 | Polars | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
 
+`table.read_torch(..., where=)` accepts only simple compare / `BETWEEN` /
+`AND`. For `OR` / `IN` / `IS NULL`, use `table.read(..., where=...)`.
+
 ## Writing
 
 | Operation | astropy | torchfits |

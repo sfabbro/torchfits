@@ -98,12 +98,15 @@ then does parallel byte-swapping on the mmap region. Uses
 `posix_madvise(POSIX_MADV_SEQUENTIAL)`. Creates tensor copies (not views).
 Activated when `mmap=True` and the table layout permits it.
 
-### Filtered read (predicate pushdown)
+### Filtered read (`where=`)
 
-- **`table.read_torch(..., where=)`:** reads the projected columns, then
-  applies a torch mask.
-- **`table.read` / Arrow (`where=`):** C++ mmap-filtered scans when the layout
-  allows; otherwise Arrow filtering after a wider read.
+- **`table.read_torch(..., where=)`:** simple compare / `BETWEEN` / `AND` only.
+  Reads projected columns, then applies a torch mask. Unsupported expressions
+  raise `ValueError`.
+- **`table.read` / `table.scan` (`where=`):** full dialect. C++ mmap-filtered
+  scans when `choose_where_read_plan` selects pushdown (readable header, no
+  VLA in the projection, and `backend="cpp"` or `backend="auto"` with
+  `mmap=True`); otherwise Arrow filtering after a wider read.
 
 `read_columns_mmap_filtered` (C++ Arrow/mmap path) implements row filtering
 in-process:
@@ -265,24 +268,20 @@ contention on hot image metadata.
 `fits_get_hduaddrll` — data offset for raw fd reads,
 `fits_set_bscale`, `fits_free_memory`
 
-### Not used: `fits_iterate_data` / CFITSIO `where` / `select_rows`
+### CFITSIO iterators and row selectors
 
 CFITSIO's iterator (`fits_iterate_data`) streams chunks into a C callback for
 whole-image / whole-table scans. torchfits needs **random-access** cutouts
-(`fits_read_subset`), full-plane tensors for PyTorch, and Arrow/table pushdown
-with our own chunking (`table.scan`). The iterator does not replace those
-paths and would add a callback ABI without helping DataLoader or subset
-readers — so it is neither wrapped nor benchmarked. Prefer extending
-`fits_read_subset` / open-once `SubsetReader` (and cfitsio-direct `cutout_rep`)
-for cutout work, and our table scanners for catalogs. For **uncompressed 2D**
-images, `SubsetReader` maps the data segment once and copies cutouts with
-endian swap (CFITSIO remains the fallback for compressed / scaled / nD).
+(`fits_read_subset`), full-plane tensors for PyTorch, and Arrow/table filters
+with its own chunking (`table.scan`). Prefer extending `fits_read_subset` /
+open-once `SubsetReader` for cutout work, and the table scanners for catalogs.
+For **uncompressed 2D** images, `SubsetReader` maps the data segment once and
+copies cutouts with endian swap (CFITSIO remains the path for compressed /
+scaled / nD).
 
-Likewise, `fits_calculator` / `fits_select_rows` / `fits_find_first_row` are
-unused on purpose: torchfits implements its own `where=` grammar and
-predicate pushdown (`TableFilter`, mmap-filtered column reads, Arrow
-`pc` ops) so projection + compact gather land directly in tensors/Arrow
-buffers instead of writing a filtered copy HDU.
+`fits_calculator` / `fits_select_rows` / `fits_find_first_row` are unused:
+torchfits implements its own `where=` grammar and filtering so projection +
+gather land directly in tensors/Arrow buffers.
 
 Vendored CFITSIO is pinned in `extern/VERSIONS.txt` (currently **4.6.4**).
 

@@ -148,19 +148,18 @@ accept:
 
 ### `cutout`
 
-Same job, two syntaxes (do not combine them):
+Two syntaxes (pick one per invocation):
 
-- **CFITSIO image section** on the path (1-based inclusive) — what most
-  `imcopy` / CFITSIO users already type:
+- **CFITSIO image section** on the path (1-based inclusive) — familiar from
+  `imcopy` / CFITSIO:
   `torchfits cutout 'img.fits[10:100,20:200]' out.fits`
-- **`--box x1,y1,x2,y2`** — torchfits 0-based half-open (same coords as
-  `read_subset`):
+- **`--box x1,y1,x2,y2`** — 0-based half-open (same as `read_subset`):
   `torchfits cutout img.fits -o out.fits --box 9,19,100,200`
 
-Supported/smoke-tested: image pixel sections via path (cutout CLI /
-`read_tensor`). Not certified: path HDU selectors (`file.fits[1]` /
-`[EVENTS]` via `open`), binspec/histogram filenames, stacking
-section+`--box`, or using path filters instead of `table.read(..., where=)`.
+Smoke-tested: image pixel sections via path (`cutout` CLI / `read_tensor`).
+Out of scope for this command: path HDU selectors (`file.fits[1]`),
+binspec/histogram filenames, stacking a section with `--box`, and path
+filters for catalogs (use `table.read(..., where=)`).
 
 ### `verify`
 

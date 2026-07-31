@@ -1,106 +1,82 @@
 # Data Module
 
-`torchfits.data` provides PyTorch `Dataset` / `IterableDataset` classes for
-FITS images and tables, plus `make_loader` — a thin factory around
-`torch.utils.data.DataLoader` with torchfits cache warm-up defaults.
+PyTorch `Dataset` / `IterableDataset` classes over FITS images and tables,
+plus `make_loader` (a `DataLoader` factory with torchfits cache defaults).
 
-**Not training?** Stay on [Core I/O](api-core-io.md) (`read_tensor`) or
-[Tables](api-tables.md) (`table.read`). Datasets exist for multi-sample epochs,
-shuffle, and worker parallelism — not for one-off reads.
+For a single file, use [Core I/O](api-core-io.md) or [Tables](api-tables.md).
+Use Datasets when you need shuffle, workers, or many samples per epoch.
 
-**Layering:** `read_tensor` / `table.read` → optional
-[`transforms`](api-transforms.md) → `Fits*Dataset` → `make_loader` → training
-loop. Pass a transform into the dataset when every sample needs the same
-preprocess; call transforms yourself when exploring a single file.
+Typical stack: `read_tensor` / `table.read` → optional
+[`transforms`](api-transforms.md) → `Fits*Dataset` → `make_loader`.
 
 ---
 
 ## Choosing a Dataset
 
-| Your data | Catalog size | Use | Why |
-|---|---|---|---|
-| General N-D IMAGE (any rank) | Any | `FitsTensorDataset` (map) | Umbrella / escape hatch; multi-HDU flux channels |
-| General N-D IMAGE, many workers | Any | `FitsTensorIterableDataset` | Deterministic sharding |
-| 2D images / multi-band | Any | `FitsImageDataset` | Peer; multi-band HDUs → `[C,H,W]` |
-| 3D+ cubes | Any | `FitsCubeDataset` | Peer; optional `slice_index` |
-| 1D / multi-arm spectra | Any | `FitsSpectrumDataset` | Peer; `layout=` dict/stack/concat; DESI `row=` |
-| One table HDU | Fits in RAM | `FitsTableDataset` | Row-indexed `(dict[str, Tensor], label)` with predicate pushdown |
-| One table HDU | Too large for RAM | `FitsTableIterableDataset` | Constant-memory streaming via `table.scan` |
-| Fixed `(path, hdu, x, y, size)` cutouts | Any | `FitsCutoutDataset` | Patch training from a mosaic |
-| One-off inspect / write / Arrow analysis | — | Core I/O / Tables | No Dataset needed |
+| Your data | Catalog size | Use |
+|---|---|---|
+| General N-D IMAGE (any rank) | Any | `FitsTensorDataset` (map) |
+| General N-D IMAGE, many workers | Any | `FitsTensorIterableDataset` |
+| 2D images / multi-band | Any | `FitsImageDataset` |
+| 3D+ cubes | Any | `FitsCubeDataset` |
+| 1D / multi-arm spectra | Any | `FitsSpectrumDataset` |
+| One table HDU | Fits in RAM | `FitsTableDataset` |
+| One table HDU | Too large for RAM | `FitsTableIterableDataset` |
+| Fixed `(path, hdu, x, y, size)` cutouts | Any | `FitsCutoutDataset` |
 
-**Channel semantics:** flux bands / arms / CCDs stack as tensor channels.
-IVAR and mask are always **companion** tensors (or dict fields) — never mixed
-into flux channels. Pass `ivar_hdu=` / `mask_hdu=` (or table `ivar_column=`).
+**Channels:** flux bands / arms / CCDs stack as tensor channels. IVAR and
+mask are companion tensors (or dict fields) — pass `ivar_hdu=` / `mask_hdu=`
+(or table `ivar_column=`).
 
-**Dataset `transform=` signature:** each dataset calls `transform(payload)`
-with one positional argument — the full payload (a `Tensor`, or a
-`{"flux", "ivar"?, "mask"?}` dict when `ivar_hdu=` / `mask_hdu=` are set).
-There is no separate `mask=` kwarg at the Dataset boundary, even though
-`FITSTransform.forward(x, mask=None)` accepts one when you call a transform
-directly on a tensor. Write custom transforms to branch on dict vs tensor
-input if they need mask-aware Dataset wiring — see
+**`transform=`:** each dataset calls `transform(payload)` with one argument
+(the tensor, or a `{"flux", "ivar"?, "mask"?}` dict when companions are set).
+There is no separate `mask=` kwarg at the Dataset boundary. Custom transforms
+should branch on dict vs tensor if they need mask-aware wiring — see
 [custom transforms](api-transforms.md#writing-a-custom-transform).
 
 !!! tip "When to mmap"
     Good for large local IMAGE HDUs and repeated cutouts. Prefer
-    `mmap=False` with multi-worker DataLoader on the same files if handle
-    contention appears; also prefer non-mmap on cold network FS and VLA /
-    scaled tables.
+    `mmap=False` when many workers open the same files, on cold network
+    filesystems, and for VLA / scaled tables.
 
-!!! tip "Disk cache (remotes + samples only)"
-    Dataset HTTP(S)/vos prefetch and example samples write under
+!!! tip "Disk cache (remotes + samples)"
+    HTTP(S)/vos prefetch and example samples write under
     `TORCHFITS_CACHE_DIR` (default `$XDG_CACHE_HOME/torchfits` or
-    `~/.cache/torchfits`). Subdirs: `remote/`, `samples/`. Override with
-    `TORCHFITS_REMOTE_CACHE` / `TORCHFITS_SAMPLE_CACHE`, or pass
-    `cache_dir=` into Datasets / rely on `make_loader` prefetch. Point the
-    root at scratch on shared HPC homes — no silent writes elsewhere under
-    `$HOME`. HTTP auth: `TORCHFITS_HTTP_AUTHORIZATION` or
-    `TORCHFITS_HTTP_TOKEN`. Uncompressed 2D HTTP cutouts (`read_subset` /
-    `FitsCutoutDataset`) use Range GETs when possible; compressed and vos
-    paths cache the full file first.
+    `~/.cache/torchfits`), with `remote/` and `samples/` subdirs. Override
+    with `TORCHFITS_REMOTE_CACHE` / `TORCHFITS_SAMPLE_CACHE`, or pass
+    `cache_dir=` on a Dataset. HTTP auth: `TORCHFITS_HTTP_AUTHORIZATION` or
+    `TORCHFITS_HTTP_TOKEN`. Uncompressed 2D HTTP cutouts use Range GETs when
+    possible; compressed and vos paths cache the full file first.
 
 ---
 
 ## Cache: how and when
 
-Two independent caches exist: the **disk cache** (remote downloads, example
-samples) and the **in-process handle/metadata cache** (`torchfits.cache`).
-Dataset training loops touch both; a single-file `read_tensor` call touches
-neither.
+| Cache | What it stores | How to clear / size |
+|---|---|---|
+| Disk | Remote downloads, example samples | `TORCHFITS_*_CACHE` env / `cache_dir=` |
+| Policy + I/O metadata | Env policy (`torchfits.cache`) and in-process LRUs | `cache.clear_cache()`, `clear_file_cache(...)` |
 
-**Disk cache roots:** `TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE` /
-`TORCHFITS_SAMPLE_CACHE` — see the User-facing table in
-[Environment variables](architecture.md#environment-variables) for defaults.
+A single-file `read_tensor` does not need warm-up.
 
-Datasets accept `cache_dir=` to override the remote materialization
-directory per-instance, taking priority over the environment variables for
-that Dataset only.
-
-**Handle/metadata cache:** `make_loader(ds, optimize_cache=True)` (default)
-calls `cache.optimize_for_dataset(ds.files, avg_file_size_mb=...)`, which
-updates Python cache policy for the file count (`configure_cache` is a
-no-op for C++ handles). This only fires when the
-dataset exposes a `files` list — every `Fits*Dataset` built on
-`FitsTensorDataset` (`FitsImageDataset`, `FitsCubeDataset`,
-`FitsSpectrumDataset`, `FitsTensorIterableDataset`, `FitsCutoutDataset`) has
-one. `FitsTableDataset` / `FitsTableIterableDataset` read one file through
-CFITSIO's own buffered path and do not expose `files`; `optimize_cache=True`
-is then a documented no-op, not an error.
+**`make_loader(ds, optimize_cache=True)`** (default) calls
+`cache.optimize_for_dataset(ds.files, avg_file_size_mb=...)` when the dataset
+exposes a `files` list (`FitsImageDataset`, `FitsCubeDataset`,
+`FitsSpectrumDataset`, `FitsTensorIterableDataset`, `FitsCutoutDataset`, and
+other `FitsTensorDataset` peers). For remote URLs it also starts prefetch into
+the disk cache, except `FitsCutoutDataset` (Range cutouts — no full-file
+prefetch). Table datasets read one file and do not expose `files`;
+`optimize_cache=True` is then a no-op.
 
 ```python
 from torchfits import cache
 
-cache.get_cache_stats()   # hit rate, config (cpp handle pool size is always 0)
-cache.clear_cache()       # drop Python I/O LRUs + SharedReadMeta
+cache.get_cache_stats()
+cache.clear_cache()
 ```
 
-**When *not* to warm:** a single local file read (`read_tensor`, one-off
-`table.read`) opens and closes one handle — there is nothing to warm and
-`optimize_for_dataset` / `configure_for_environment` add overhead without
-benefit. Warm-up pays off once a loader iterates many files (remote
-prefetch, multi-worker `DataLoader`, repeated cutouts from a mosaic via
-`open_subset_reader`).
+Warm-up helps when a loader iterates many files (remote prefetch, multi-worker
+reads, or repeated mosaic cutouts via `open_subset_reader`).
 
 ---
 
@@ -378,10 +354,8 @@ that pairs `read_subset` calls with labels.
 
 ## `make_loader()`
 
-Thin factory: `torch.utils.data.DataLoader(dataset, ...)` plus an optional
-call to `cache.optimize_for_dataset` before the loader is returned. Any
-`Dataset` — torchfits or plain PyTorch — works with either path; the two
-produce identical batches when `optimize_cache=False`.
+Builds a `torch.utils.data.DataLoader` and, when `optimize_cache=True`,
+calls `cache.optimize_for_dataset` if the dataset exposes `files`.
 
 ```python
 from torchfits.data import make_loader
@@ -390,26 +364,14 @@ loader = make_loader(
     ds,
     batch_size=32,
     num_workers=4,
-    pin_memory=True,       # faster CPU → GPU transfer
-    optimize_cache=True,   # set cache policy for the file set (no C++ handle pool)
-    shuffle=True,          # default for map-style; False for iterable
+    pin_memory=True,
+    optimize_cache=True,
+    shuffle=True,  # default for map-style; False for iterable
 )
 ```
 
-**Build `DataLoader` yourself** when any of these apply:
-
-- You already have a `collate_fn`, `sampler`, or `batch_sampler` that
-  `make_loader`'s keyword surface doesn't expose directly (pass through
-  `**loader_kwargs`, but a hand-built call is clearer once you're combining
-  several).
-- Your dataset has no `files` attribute — `optimize_cache=True` is then a
-  silent no-op (see [Cache: how and when](#cache-how-and-when)); skip the
-  torchfits wrapper and set `optimize_cache=False` or call `DataLoader`
-  directly.
-- You manage handle-cache warm-up elsewhere (e.g. once per training run
-  rather than per loader construction).
-
-Side-by-side runnable comparison:
+Use a plain `DataLoader` when you already own `collate_fn` / samplers, or
+when the dataset has no `files` list (`optimize_cache` would no-op). See
 `examples/example_make_loader_vs_dataloader.py`.
 
 | Parameter | Type | Default | Description |
@@ -421,10 +383,9 @@ Side-by-side runnable comparison:
 | `pin_memory` | `bool` | `False` | Pin for GPU transfers |
 | `prefetch_factor` | `int` | `2` | Prefetch per worker |
 | `drop_last` | `bool` | `False` | Drop incomplete batches |
-| `optimize_cache` | `bool` | `True` | Call `cache.optimize_for_dataset` |
+| `optimize_cache` | `bool` | `True` | Call `cache.optimize_for_dataset` (+ remote prefetch when applicable) |
 | `avg_file_size_mb` | `float` | `10.0` | For cache sizing |
-| `collate_fn` | `callable` | `fits_collate_fn` | Batch collation |
-| `**loader_kwargs` | | | Passed to `DataLoader` |
+| `**loader_kwargs` | | | Passed to `DataLoader` (`collate_fn` defaults to `fits_collate_fn`) |
 
 **Returns:** `torch.utils.data.DataLoader`
 

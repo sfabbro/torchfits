@@ -359,15 +359,33 @@ def test_api_tables_where_strategy_mentions_mask_or_project() -> None:
     """where= strategy text must not silently regress to C++-only story."""
     tables_api = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
     where_section = re.search(
-        r"## Predicate Pushdown\n(.*?)(?=\n## |\Z)", tables_api, flags=re.S
+        r"## (?:Predicate Pushdown|Row filters \(``where=``\)|Row filters \(`where=`\))\n(.*?)(?=\n## |\Z)",
+        tables_api,
+        flags=re.S,
     )
-    assert where_section, "missing Predicate Pushdown section in api-tables.md"
+    assert where_section, "missing where= section in api-tables.md"
     body = where_section.group(1).lower()
     assert "mask" in body or "project" in body, (
-        "api-tables Predicate Pushdown must mention mask/project strategy"
+        "api-tables where= section must mention mask/project strategy"
     )
-    # read_torch path must not claim C++-only filtering for most sizes.
     assert "filtering happens in c++ for most table sizes" not in body
+    # read_torch dialect is narrower than table.read — docs must say so.
+    assert "simple" in body and ("or" in body or "in" in body), (
+        "api-tables must document that read_torch where= is a simple dialect"
+    )
+
+
+def test_api_tables_read_torch_where_not_full_dialect() -> None:
+    """Guard against claiming read_torch accepts the full where= dialect."""
+    tables_api = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
+    rt = re.search(
+        r"## `table\.read_torch\(\)`\n(.*?)(?=\n## |\Z)", tables_api, flags=re.S
+    )
+    assert rt, "missing table.read_torch section"
+    body = rt.group(1).lower()
+    assert "same predicate dialect" not in body
+    assert "same simple numeric predicate dialect" not in body
+    assert "simple" in body or "valueerror" in body
 
 
 def test_sync_docs_examples_script_copies_tree() -> None:

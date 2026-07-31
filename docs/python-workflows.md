@@ -70,6 +70,7 @@ print(df.num_rows)  # pyarrow.Table
 cols = torchfits.table.read_torch(
     "catalog.fits", hdu=1, columns=["RA", "DEC"]
 )
+# where= on read_torch: simple compare / BETWEEN / AND only
 
 for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
     process(batch)  # pyarrow.RecordBatch
@@ -79,10 +80,11 @@ for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
     - `torchfits.table.read` → **Arrow** (`pyarrow.Table`)
     - `torchfits.table.read_torch` / root `read` on a table HDU → **`dict[str, Tensor]`**
 
-    Pick one shape per code path. Do not assume `table.read` returns tensors.
+    Pick one shape per code path: `table.read` returns Arrow; `read_torch` /
+root `read` on a table return column tensors.
 
-For tables that do not fit in RAM, use `scan` / `scan_polars`. Avoid
-materializing the full table only to call `.lazy()` afterward.
+For catalogs larger than RAM, use `scan` / `scan_polars`. Building a full
+table only to call `.lazy()` loads everything first.
 
 More: [Tables](api-tables.md) · [Astropy migration](migration_astropy.md)
 

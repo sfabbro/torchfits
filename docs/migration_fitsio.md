@@ -1,10 +1,9 @@
 # Migration from fitsio to torchfits
 
-Side-by-side replacements for common **FITS I/O** tasks. fitsio remains the
-right tool for some metadata workflows; torchfits targets tensor pipelines and
-PyTorch training. See [Benchmarks](benchmarks.md#performance-deficits) for cases
-where fitsio still wins on narrow table predicates. For torchfits-native job
-patterns, see [Python workflows](python-workflows.md).
+Side-by-side replacements for common FITS I/O. See
+[Benchmarks](benchmarks.md#performance-deficits) for cases where fitsio still
+wins, and [Python workflows](python-workflows.md) for torchfits-native
+patterns.
 
 ## Reading an image
 
@@ -16,19 +15,19 @@ patterns, see [Python workflows](python-workflows.md).
 | Read image to GPU | `torch.from_numpy(fitsio.read(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
 | Read header | `fitsio.read_header(path)` | `torchfits.read_header(path, hdu=0)` |
 
-## Reading a table (dataframe path)
-
-FITS tables are dataframes on disk. Prefer `torchfits.table.read` (Arrow);
-use `table.read_torch` for tensor columns. Namespace stays `table` (FITS name).
+## Reading a table
 
 | Operation | fitsio | torchfits |
 |-----------|--------|-----------|
-| Read all rows (dataframe via Arrow) | `fitsio.read(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
+| Read all rows | `fitsio.read(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
 | Read with WHERE | `fitsio.FITS(path)[1].where("RA > 0")` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
-| Read subset of columns | `fitsio.read(path, ext=1, columns=['RA','DEC'])` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
-| Dataframe columns as tensors | `{n: torch.from_numpy(fitsio.read(path, ext=1, columns=n)) for n in names}` | `torchfits.table.read_torch(path, hdu=1)` |
-| Stream tensor chunks | `for row in fitsio.FITS(path)[1]: ...` | `for chunk in torchfits.table.scan_torch(path, hdu=1, batch_size=10000): ...` |
-| Native Polars dataframe | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
+| Subset of columns | `fitsio.read(path, ext=1, columns=['RA','DEC'])` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
+| Columns as tensors | per-column `fitsio.read` + `torch.from_numpy` | `torchfits.table.read_torch(path, hdu=1)` |
+| Stream tensor chunks | iterate fitsio rows | `torchfits.table.scan_torch(path, hdu=1, batch_size=10000)` |
+| Polars | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
+
+`table.read_torch(..., where=)` accepts only simple compare / `BETWEEN` /
+`AND`. For `OR` / `IN` / `IS NULL`, use `table.read(..., where=...)`.
 
 ## Writing
 

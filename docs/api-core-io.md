@@ -356,22 +356,26 @@ counts, dims, and a handful of cards.
 
 ## `open_table_reader()`
 
-Reusable table handle (open once, many column/row reads). `hdu` accepts an
-integer index or EXTNAME string (default `1`, the usual table location).
+Open one table HDU once; call `read_torch` repeatedly without reopening.
 
 ```python
 torchfits.open_table_reader(path, hdu=1)
 ```
+
+**Returns:** context manager yielding a handle with:
+
+- `num_rows()` → `int`
+- `read_torch(columns=None, start_row=1, num_rows=-1, device="cpu")` →
+  `dict[str, torch.Tensor]`
+
+No `where=` on the handle — use `table.read_torch(..., where=...)` for
+filtered reads (each call opens the file).
 
 ```python
 with torchfits.open_table_reader("catalog.fits", hdu=1) as reader:
     n = reader.num_rows()
     cols = reader.read_torch(columns=["RA", "DEC"])
 ```
-
-Mirrors `open_subset_reader` for images. There is no handle-based
-filtered/`where=` read; for cold filtered reads use
-`table.read_torch(..., where=...)`, which reopens the file per call.
 
 ---
 
@@ -443,15 +447,15 @@ result = torchfits.verify_checksums(path, hdu=0)
 
 | Layer | Entry points | Role |
 |---|---|---|
-| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(...)` | Environment policy and on-disk roots (`configure_cache` is a no-op) |
-| I/O metadata | `get_cache_performance()`, `clear_file_cache(...)` | In-process header / meta / data caches used by `read` / `read_tensor` |
-| Shared metadata (C++) | cleared via `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
-
-Details: [Architecture → Caching](architecture.md#caching).
+| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(paths, avg_file_size_mb=10.0)` | Environment policy and on-disk roots |
+| I/O metadata | `get_cache_performance()`, `clear_file_cache(...)` | In-process header / meta / data caches |
+| Shared metadata (C++) | `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
 
 ```python
+torchfits.clear_file_cache(
+    data=True, handles=True, meta=True, hdu_types=True, stats=True, cpp=True
+)
 torchfits.get_cache_performance()
-torchfits.clear_file_cache(data=True, handles=True, meta=True, cpp=True)
 
 torchfits.cache.configure_for_environment()
 torchfits.cache.get_cache_stats()
@@ -459,9 +463,12 @@ torchfits.cache.clear_cache()
 torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
 ```
 
+`clear_file_cache` keyword-only flags (all default `True`): `data`, `handles`,
+`meta`, `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the
+extension module used for the C++ clear.
+
 Advanced helpers on `torchfits.io`: `cache_subsystem_policy(name)` /
-`clear_cache_subsystem(name)` clear a named subsystem (`"all"` clears every
-subsystem).
+`clear_cache_subsystem(name)` (`"all"` clears every subsystem).
 
 !!! tip "Many-file datasets"
     Call `torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=...)`
@@ -470,12 +477,9 @@ subsystem).
 
 ### Disk cache directories
 
-Remote prefetch and example samples live under a base directory resolved
-once per process: `TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE` /
-`TORCHFITS_SAMPLE_CACHE` — see the User-facing table in
-[Environment variables](architecture.md#environment-variables) for defaults.
-
-These roots are separate from `get_cache_performance` / `clear_file_cache`,
-which govern in-process metadata, not files on disk. Dataset classes accept
+Remote downloads and example samples use
+`TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE` / `TORCHFITS_SAMPLE_CACHE`
+([Environment variables](architecture.md#environment-variables)). Those roots
+are separate from `clear_file_cache` / `get_cache_performance`. Datasets accept
 `cache_dir=` to override the remote root; see
 [Data module](api-data.md#cache-how-and-when).

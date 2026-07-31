@@ -35,12 +35,15 @@ torchfits.table.read(
 | `columns` | `list[str]` or `None` | `None` | Columns to read (`None` = all) |
 | `row_slice` | `slice` or `tuple[int,int]` or `None` | `None` | Row range |
 | `rows` | `list[int]` or `None` | `None` | Specific row indices |
-| `where` | `str` or `None` | `None` | SQL-like row filter |
+| `where` | `str` or `None` | `None` | SQL-like row filter (full dialect) |
 | `batch_size` | `int` | `65536` | Read batch size |
 | `mmap` | `bool` | `True` | Memory-mapped reads |
 | `decode_bytes` | `bool` | `True` | Decode byte-string columns |
+| `encoding` | `str` | `"ascii"` | Byte decoding encoding |
+| `strip` | `bool` | `True` | Strip trailing spaces on strings |
+| `include_fits_metadata` | `bool` | `False` | Attach FITS column metadata on the Arrow schema |
+| `apply_fits_nulls` | `bool` | `True` | Honor `TNULL` as nulls |
 | `backend` | `str` | `"auto"` | `"auto"`, `"cpp"`, or `"torch"` |
-| `include_fits_metadata` | `bool` | `False` | Preserve FITS column metadata |
 
 **Returns:** `pyarrow.Table`
 
@@ -57,7 +60,8 @@ print(df.num_rows, df.column_names)
 
 ## `table.read_torch()`
 
-Read selected columns as `torch.Tensor` values.
+Read selected columns as `torch.Tensor` values
+(`dict[str, torch.Tensor]`).
 
 ```python
 torchfits.table.read_torch(
@@ -68,14 +72,29 @@ torchfits.table.read_torch(
 )
 ```
 
-**Returns:** `dict[str, torch.Tensor]`
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str` | *(required)* | FITS file path |
+| `hdu` | `int` or `str` | `1` | Table HDU index or EXTNAME |
+| `columns` | `list[str]` or `None` | `None` | Columns to return (`None` = all) |
+| `start_row` | `int` | `1` | 1-based first row |
+| `num_rows` | `int` | `-1` | Row count (`-1` = through end) |
+| `device` | `str` | `"cpu"` | `"cpu"`, `"cuda"`, `"mps"` |
+| `mmap` | `bool` or `str` | `"auto"` | `True` / `False` / `"auto"` (`"auto"` → mmap on) |
+| `cache_capacity` | `int` | `10` | Accepted, **ignored** |
+| `handle_cache_capacity` | `int` | `16` | Accepted, **ignored** |
+| `fast_header` | `bool` | `True` | Accepted, **ignored** |
+| `return_header` | `bool` | `False` | Also return the HDU `Header` |
+| `where` | `str` or `None` | `None` | Simple numeric filter (see below) |
 
-`cache_capacity`, `handle_cache_capacity`, and `fast_header` are accepted for
-compatibility but **ignored**.
+**Returns:** `dict[str, torch.Tensor]`, or `(dict, Header)` when
+`return_header=True`.
 
-Optional `where` uses the same predicate dialect as `table.read`. With
-`read_torch`, torchfits reads the needed columns (project) and applies a
-torch **mask** so only matching rows remain.
+`where=` on `read_torch` accepts only **simple** predicates: comparisons
+(`=`, `!=`, `<`, `<=`, `>`, `>=`), `BETWEEN`, and `AND` of those. Expressions
+with `OR`, `IN`, `IS NULL`, or `NOT` raise `ValueError` — use
+`table.read(..., where=...)` for the full dialect. Matching rows are kept by
+reading the needed columns and applying a torch mask.
 
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
@@ -84,8 +103,8 @@ bright = torchfits.table.read_torch(
 )
 ```
 
-For many column reads on one file, use
-`torchfits.open_table_reader(path, hdu=1)`.
+For many unfiltered column reads on one file, use
+`torchfits.open_table_reader(path, hdu=1)` (no `where=` on the handle).
 
 ---
 
@@ -119,7 +138,8 @@ for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
 
 ## `table.scan_torch()`
 
-Stream dataframe rows as tensor-column chunks.
+Stream row chunks as `dict[str, torch.Tensor]`. No `where=` — filter with
+`table.scan(..., where=...)` or mask batches yourself.
 
 ```python
 torchfits.table.scan_torch(
@@ -132,7 +152,6 @@ torchfits.table.scan_torch(
 
 ```python
 for batch in torchfits.table.scan_torch("survey.fits", hdu=1, batch_size=10000):
-    # batch: dict[str, torch.Tensor]
     process(batch)
 ```
 
@@ -186,20 +205,18 @@ torchfits.table.write(
 
 ---
 
-## Predicate Pushdown
+## Row filters (`where=`)
 
-Pass `where=` to keep only matching rows. How filtering runs depends on the
-call:
+Pass `where=` to keep matching rows.
 
-- **`table.read_torch`:** reads the projected columns, then applies a torch
-  **mask**.
-- **`table.read` / `table.scan`:** filters in C++ when the table layout
-  allows; otherwise filters after the Arrow read.
+| Call | Dialect | How it filters |
+|---|---|---|
+| `table.read` / `table.scan` | Full (see operators below) | C++ mmap scan when safe (`backend="auto"` + `mmap=True`, no VLA in the projection); otherwise read then Arrow filter |
+| `table.read_torch` | Simple only: compare / `BETWEEN` / `AND` | Read projected columns, then torch mask. `OR` / `IN` / `IS NULL` / `NOT` raise `ValueError` |
 
-Use `torchfits.table.read()` or `torchfits.table.scan()` for filtered
-catalogs. Root `torchfits.read()` does not take `where=`.
+Root `torchfits.read()` has no `where=` parameter.
 
-**Supported operators:**
+**Operators on `table.read` / `table.scan`:**
 
 | Operator | Example |
 |---|---|
@@ -212,19 +229,17 @@ catalogs. Root `torchfits.read()` does not take `where=`.
 | `BETWEEN ... AND ...` | `where="MAG_G BETWEEN 15 AND 20"` |
 | `IS NULL` / `IS NOT NULL` | `where="DEC IS NOT NULL"` |
 
-### Backend Selection
+### `backend=` on `table.read` / `table.scan`
 
-| Backend | Behavior |
+| Value | Behavior |
 |---|---|
-| `"auto"` (default) | C++ pushdown when (a) no VLA columns in projection and (b) `backend="cpp"` or (`backend="auto"` and `mmap=True`); Arrow filter otherwise |
-| `"cpp"` | C++ row reads as torch tensors, converted to Arrow |
-| `"torch"` | `table.scan_torch` chunked path |
+| `"auto"` (default) | With `where=` and `mmap=True`, C++ pushdown when the header is readable and the projection has no VLA columns; otherwise Arrow filter. With `mmap=False`, buffered read then filter. |
+| `"cpp"` | Prefer C++ column / pushdown paths when safe |
+| `"torch"` | Chunked path via `table.scan_torch` |
 
-### Environment Tuning
-
-Table reads open a private CFITSIO handle per call. Shared metadata and disk
-cache roots use the `TORCHFITS_*` variables in [Architecture](architecture.md)
-and [Core I/O](api-core-io.md).
+Table reads open a private CFITSIO handle per call. Disk cache roots and
+shared metadata use the `TORCHFITS_*` variables in
+[Architecture](architecture.md) and [Core I/O](api-core-io.md).
 
 ---
 
@@ -246,24 +261,30 @@ Additional public names: `parse_where_literal`, `tokenize_where_expression`,
 
 ---
 
-## In-Place Table Mutation
+## Table mutation
+
+Rewrite helpers on an existing table HDU:
 
 ```python
-# Row operations
 torchfits.table.append_rows(path, rows, hdu=1)
 torchfits.table.insert_rows(path, rows, row=0, hdu=1)
-torchfits.table.update_rows(path, rows, row_slice, hdu=1)
+torchfits.table.update_rows(path, rows, row_slice, hdu=1, mmap="auto")
 torchfits.table.delete_rows(path, row_slice, hdu=1)
 
-# Column operations
-torchfits.table.insert_column(path, name, values, hdu=1, index=None)
-torchfits.table.replace_column(path, name, values, hdu=1)
+torchfits.table.insert_column(
+    path, name, values, hdu=1, index=None,
+    format=None, unit=None, dim=None, tnull=None, tscal=None, tzero=None,
+)
+torchfits.table.replace_column(
+    path, name, values, hdu=1,
+    format=None, unit=None, dim=None, tnull=None, tscal=None, tzero=None,
+)
 torchfits.table.rename_columns(path, {"old_name": "new_name"}, hdu=1)
 torchfits.table.drop_columns(path, ["col_a", "col_b"], hdu=1)
 ```
 
-`insert_column` and `replace_column` accept optional `format`, `unit`,
-`dim`, `tnull`, `tscal`, `tzero` metadata kwargs.
+`row_slice` is a `slice` or `(start, stop)` tuple (0-based Python style for
+update/delete). `insert_rows` requires keyword `row=` (0-based insert index).
 
 ---
 
@@ -322,11 +343,21 @@ pandas_df = torchfits.to_pandas(table_dict, decode_bytes=True)
 
 ## Schema
 
-Infer the Arrow schema from FITS TFORM header cards without reading any data.
+Infer an Arrow schema from FITS `TFORM` / `TTYPE` cards (no data read when
+`where=None`).
+
+```python
+torchfits.table.schema(
+    path, hdu=1, columns=None, where=None, decode_bytes=True,
+    encoding="ascii", strip=True, include_fits_metadata=False,
+    apply_fits_nulls=False, backend="auto",
+)
+```
+
+**Returns:** `pyarrow.Schema`
 
 ```python
 schema = torchfits.table.schema("catalog.fits", hdu=1)
-# schema: pyarrow.Schema
 ```
 
 ---
