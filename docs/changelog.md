@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI docs, `write()` payload types corrected (no top-level ndarray),
   CLI-recipe transform kwargs documented, architecture freshness rc4.
 - CI/scripts: `check-torch-pins` resolves the `[cpu]` / `[cuda]` extra pins
-  against the PyTorch indexes on the wheel ABI lane (CI lint job + `ci-local`).
+  against the PyTorch indexes on the wheel ABI lane, run as the first step of
+  both CI jobs and the wheel-build workflow so lane drift fails fast (CI lint
+  job, build_wheels tests + wheel jobs, `ci-local`).
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).

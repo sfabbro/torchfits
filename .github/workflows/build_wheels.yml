@@ -22,6 +22,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      # Fail fast before vendoring / installing / building: the [cpu]/[cuda]
+      # extra pins must stay on the torch 2.10 wheel lane this workflow builds
+      # against (constraints-wheel.txt; CIBW_BEFORE_BUILD below).
+      - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
+        run: |
+          python -m pip install -q --upgrade pip
+          python scripts/check_torch_extra_pins.py
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
       - name: Install toolchain + test deps
@@ -31,8 +38,6 @@ jobs:
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow
       - name: Install torchfits
         run: pip install -e . --no-build-isolation
-      - name: Torch flavor extras resolve on PyTorch indexes
-        run: python scripts/check_torch_extra_pins.py
       - name: Run tests
         run: pytest tests/ -q --maxfail=1
 
@@ -77,6 +82,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # Fail fast before cibuildwheel spins up the build matrix: the
+      # [cpu]/[cuda] extra pins must stay on the torch 2.10 wheel lane this
+      # workflow builds against (constraints-wheel.txt; CIBW_BEFORE_BUILD).
+      - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
+        run: |
+          python -m pip install -q --upgrade pip
+          python scripts/check_torch_extra_pins.py
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
       - uses: actions/upload-artifact@v4
