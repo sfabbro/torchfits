@@ -16,6 +16,7 @@ mkdir -p "$LOG_DIR"
 echo "=== torchfits exhaustive benchmark run: ${RUN_ID} ===" | tee "$LOG_FILE"
 echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG_FILE"
 
+pixi run -e bench-gpu gpu-bootstrap >>"$LOG_FILE" 2>&1
 # Rebuild only when the CUDA extension is missing (avoids flaky LTO rebuilds mid-run).
 if ! pixi run -e bench-gpu python -c "import torchfits._C" >>"$LOG_FILE" 2>&1; then
   bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt >>"$LOG_FILE" 2>&1
