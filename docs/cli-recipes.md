@@ -71,15 +71,17 @@ torchfits copy "$HH" /tmp/hh_copy.fits
 
 ## Stretch via transform
 
-Default constructors only (no kwargs on the CLI):
+Default constructors, or pass kwargs via `--name Class:key=val,...` (see
+[CLI guide](cli.md)):
 
 ```bash
 torchfits transform "$HH" --name LogStretch --out /tmp/hh_log.fits
 torchfits transform "$HH" --name SqrtStretch --out /tmp/hh_sqrt.fits
 torchfits transform "$HH" --name ZScaleNormalize --out /tmp/hh_z.fits
+torchfits transform "$HH" --name PercentileClipNormalize:lower_pct=1.0,upper_pct=99.0 --out /tmp/hh_pct.fits
 ```
 
-For parameterized pipelines, use the Python API
+For multi-step parameterized pipelines, use the Python API
 ([Python workflows](python-workflows.md),
 [Transform gallery](examples-transforms.md)).
 

@@ -3,7 +3,8 @@
 Latest PyPI tag is **1.0.0rc4** (prerelease). SemVer **1.0.0** waits for
 post-rc soak — treat rc wheels as API-stable, not a final stamp.
 
-torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10**.
+torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10** (published wheels
+require **2.10.x** — see below).
 
 - **PyPI wheels** are ABI-matched to **PyTorch 2.10.x** (Linux x86_64, macOS
   arm64). No system CFITSIO — CFITSIO is vendored into the wheel.
@@ -12,13 +13,29 @@ torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10**.
 
 ## Quick install (wheels)
 
-```bash
-# 1. Install matching PyTorch (pick one accelerator story — see below)
-pip install "torch>=2.10,<2.11"
+torchfits wheels are ABI-matched to **PyTorch 2.10.x**. Every recipe below
+therefore pins `torch>=2.10,<2.11` — a bare `pip install torchfits` may pull a
+newer PyTorch and fail the ABI check at import (see
+[Troubleshooting](#troubleshooting)).
 
-# 2. Install torchfits
-pip install torchfits
+### One line: full version (CUDA + CPU) — the default
+
+```bash
+pip install torchfits "torch>=2.10,<2.11"
 ```
+
+This installs the default PyTorch build from PyPI, which **bundles the CUDA
+runtime** on Linux x86_64 (CUDA 12.x; on other platforms the default is CPU /
+MPS). It works whether or not the machine has an NVIDIA GPU:
+
+- **With a GPU** (NVIDIA driver installed): `device="cuda"` reads work out of
+  the box — `torch.cuda.is_available()` is `True`.
+- **Without a GPU**: torch falls back to CPU. `torch.cuda.is_available()` is
+  `False`, the CUDA libraries are never invoked, and every torchfits API
+  (`read_tensor(device="cpu")`, tables, cutouts, the CLI) works unchanged.
+
+torchfits itself ships no CUDA artifact — its C++ extension has no `.cu`
+kernels. Installing the CUDA-enabled torch is what unlocks `device="cuda"`.
 
 This also installs the `torchfits` CLI (`torchfits --help`). See the
 [CLI guide](cli.md).
@@ -26,41 +43,74 @@ This also installs the `torchfits` CLI (`torchfits --help`). See the
 **Next steps:** [Quick start](quickstart.md), [Python workflows](python-workflows.md),
 [Examples](examples.md), [API reference](api.md)
 
-### CPU-only (no CUDA libraries)
+### One line: CPU-only (thin, no CUDA libraries)
 
-Prefer this when you do not need NVIDIA GPUs. The **CPU** PyTorch wheel is much
-thinner — it does **not** pull the CUDA runtime / cuDNN stack into the env:
+Prefer this when you never touch NVIDIA GPUs. The **CPU** PyTorch wheel is much
+thinner — it does **not** pull the CUDA runtime / cuDNN stack into the env.
 
-```bash
-pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
-pip install torchfits
-```
-
-torchfits itself has no CUDA build artifact. You still get tensors (on `cpu`),
-Arrow tables, cutouts, and the full CLI. Skip `device="cuda"` / CUDA checks.
-
-### GPU / accelerator
-
-PyTorch provides CPU, CUDA, and MPS via different wheel indexes — choose one,
-then install torchfits:
+Self-contained one-liner (no config needed):
 
 ```bash
-# CUDA (pick the current CUDA build from pytorch.org; example: cu128)
-pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cu128
-
-# Apple Silicon MPS — default macOS torch wheel includes MPS
-pip install "torch>=2.10,<2.11"
+pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-Then:
+Or, with the CPU index configured once (`export
+PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu`, or `pip config set
+global.extra-index-url https://download.pytorch.org/whl/cpu` — the latter is
+user-global; the env var is per-shell and a project-level `pip.conf` also
+works), the deterministic extras form works:
 
 ```bash
-pip install torchfits
+pip install 'torchfits[cpu]'   # Linux: torch 2.10.0+cpu; macOS: no-op (MPS is the default)
 ```
 
-torchfits reads FITS on the CPU and places the resulting tensor on the
-requested device (`device="cuda"` / `device="mps"`). No GPU-specific build of
-torchfits is required.
+!!! note
+    zsh (the default macOS shell) treats `[cpu]` as a glob — always quote the
+    extra (`'torchfits[cpu]'`) to be safe.
+
+torchfits itself has no CUDA build artifact either way. You still get tensors
+(on `cpu`), Arrow tables, cutouts, and the full CLI. Skip `device="cuda"` /
+CUDA checks.
+
+### One line: a specific CUDA build
+
+Point pip at the CUDA toolkit you need (cu118 / cu121 / cu124 / cu126 / cu128
+/ … — see <https://pytorch.org/get-started/locally/> for the current matrix):
+
+```bash
+pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cu128
+```
+
+With the index configured once (`PIP_EXTRA_INDEX_URL` or `pip config set
+global.extra-index-url https://download.pytorch.org/whl/cu128`):
+
+```bash
+pip install 'torchfits[cuda]'   # Linux: torch 2.10.0+cu128; macOS: no-op (MPS is the default)
+```
+
+These CUDA builds also run on machines **without** a GPU — see above.
+
+### Why the `--extra-index-url` recipes “just work”
+
+PyTorch’s own wheels use PEP 440 **local versions** (`2.10.0+cpu`,
+`2.10.0+cu128`), which sort *above* the plain PyPI build (`2.10.0+cpu >
+2.10.0`). When the PyTorch index is visible, pip therefore automatically
+prefers its build for the pinned `torch>=2.10,<2.11` range — no need to choose
+one index or the other: torchfits comes from PyPI, torch comes from the extra
+index, in the same command. With `PIP_EXTRA_INDEX_URL` (or `pip.conf`
+`extra-index-url`) set once, even a plain `pip install torchfits
+"torch>=2.10,<2.11"` picks your flavor up automatically.
+
+The `torchfits[cpu]` / `torchfits[cuda]` extras **cannot embed index URLs**, so
+they resolve only when the matching PyTorch index is reachable (the one-time
+setting above). Keep exactly one PyTorch index configured at a time. uv works
+the same way: `uv pip install torchfits "torch>=2.10,<2.11"
+--extra-index-url https://download.pytorch.org/whl/cpu` (or `UV_EXTRA_INDEX_URL`).
+
+Apple Silicon: the default macOS torch wheel includes **MPS**, so the default
+recipe is all you need; there is no macOS `+cu128` **or `+cpu`** build — both
+`[cpu]` / `[cuda]` extras are Linux-only no-ops there (the exact `+local` pins
+have no macOS wheel to resolve).
 
 At import, torchfits calls `cache.configure_for_environment()` once so mmap /
 prefetch defaults match CPU vs CUDA vs MPS.
@@ -71,10 +121,11 @@ prefetch defaults match CPU vs CUDA vs MPS.
 for the full list. This is separate from the in-memory handle/
 `configure_for_environment` path.
 
-!!! tip "Verify accelerator"
+!!! tip "Verify what you got"
     ```python
     import torch
-    print(torch.cuda.is_available(), getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+    print(torch.__version__, torch.version.cuda)   # "2.10.0" "12.8"; None means no CUDA (CPU / MPS build)
+    print(torch.cuda.is_available())               # False on GPU-less machines is expected
     ```
 
 ---
@@ -194,6 +245,13 @@ pixi run bench-all      # exhaustive benchmarks
 | `torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking |
 | `torchfits[test]` | pytest, pytest-cov | Testing |
 | `torchfits[examples]` | matplotlib | Running examples |
+| `torchfits[cpu]` | `torch==2.10.0+cpu` (Linux; needs the PyTorch **CPU** index configured) | Thin CPU-only torch |
+| `torchfits[cuda]` | `torch==2.10.0+cu128` (Linux; needs the **cu128** index configured) | CUDA-enabled torch |
+
+The `[cpu]` / `[cuda]` extras are the flavors from
+[Quick install](#quick-install-wheels): they pin an exact torch build from a
+PyTorch index, so that index must be reachable via `PIP_EXTRA_INDEX_URL` or
+`pip.conf` first.
 
 Notebooks: `_repr_html_` works with any Jupyter kernel — **ipykernel is not**
 a torchfits dependency.
@@ -227,7 +285,15 @@ Ensure `curl` or `wget` are available. Behind a proxy? Set `HTTPS_PROXY`.
 **`ImportError: ... ABI mismatch` / symbol not found**
 
 The extension was built for a different torch major.minor than the one
-imported. Rebuild against the active torch:
+imported. This usually happens after a bare `pip install torchfits` pulled a
+newer torch (e.g. 2.13) than the wheel was built against (2.10). First try
+pinning the wheel lane and reimporting:
+
+```bash
+pip install "torch>=2.10,<2.11"
+```
+
+Only rebuild if you actually need a different torch minor:
 
 ```bash
 pip install -e . --no-build-isolation --force-reinstall

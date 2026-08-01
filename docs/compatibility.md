@@ -21,6 +21,11 @@ Optional: Polars / Pandas / DuckDB via env; astropy / fitsio for test / bench on
   CMake, Ninja, C++17 compiler, NumPy), then build from source with
   `pip install --no-build-isolation .`. The extension embeds the torch
   major.minor it was built with and refuses to import under a different minor.
+- **CUDA / CPU-only installs:** install recipes pin `torch>=2.10,<2.11` (the
+  wheel ABI lane). `torchfits[cpu]` / `torchfits[cuda]` extras and the
+  `--extra-index-url` one-liners select the PyTorch build (see
+  [Install](install.md)); CUDA builds also run on GPU-less machines via CPU
+  fallback.
 
 ## Downstream guidance
 

@@ -417,3 +417,181 @@ def test_zensical_config_targets_existing_docs() -> None:
     assert f'Documentation = "{site_url.rstrip("/")}/"' in pyproject, (
         "pyproject.toml Documentation URL must match zensical site_url"
     )
+
+
+def test_documented_api_members_exist() -> None:
+    """Every symbol named in the API docs must exist on the live package."""
+    import torchfits
+    import torchfits.cache as cache
+    import torchfits.data as data
+    import torchfits.table as table
+    import torchfits.transforms as transforms
+    import torchfits.where as where
+
+    expected = {
+        torchfits: [
+            "read",
+            "write",
+            "open",
+            "read_header",
+            "read_colnames",
+            "read_extname",
+            "read_hdu_type",
+            "read_keys",
+            "read_nrows",
+            "read_num_hdus",
+            "read_shape",
+            "read_table_info",
+            "read_tensor",
+            "read_hdus",
+            "read_subset",
+            "open_subset_reader",
+            "open_table_reader",
+            "read_batch",
+            "read_batch_info",
+            "get_cache_performance",
+            "clear_file_cache",
+            "verify_checksums",
+            "insert_hdu",
+            "replace_hdu",
+            "delete_hdu",
+            "write_checksums",
+            "write_tensor",
+            "to_pandas",
+            "to_arrow",
+            "to_polars",
+            "Header",
+            "Card",
+            "HDUList",
+            "TensorHDU",
+            "TableHDU",
+            "TableHDURef",
+        ],
+        table: [
+            "read",
+            "read_arrow",
+            "read_torch",
+            "scan",
+            "scan_torch",
+            "read_polars",
+            "scan_polars",
+            "to_polars",
+            "to_duckdb",
+            "duckdb_query",
+            "reader",
+            "write",
+            "append_rows",
+            "insert_rows",
+            "update_rows",
+            "delete_rows",
+            "insert_column",
+            "replace_column",
+            "rename_columns",
+            "drop_columns",
+            "schema",
+            "dataset",
+            "scanner",
+            "write_parquet",
+            "clear_cache",
+            "TABLE_BACKENDS",
+        ],
+        data: [
+            "FitsTensorDataset",
+            "FitsTensorIterableDataset",
+            "FitsImageDataset",
+            "FitsImageIterableDataset",
+            "FitsCubeDataset",
+            "FitsSpectrumDataset",
+            "FitsTableDataset",
+            "FitsTableIterableDataset",
+            "FitsCutoutDataset",
+            "make_loader",
+            "fits_collate_fn",
+        ],
+        cache: [
+            "configure_for_environment",
+            "get_cache_stats",
+            "clear_cache",
+            "optimize_for_dataset",
+        ],
+        where: [
+            "evaluate_where",
+            "parse_where_expression",
+            "parse_where_literal",
+            "tokenize_where_expression",
+            "normalize_where_syntax",
+            "where_columns_from_ast",
+        ],
+        transforms: [
+            "ArcsinhStretch",
+            "LogStretch",
+            "SqrtStretch",
+            "ZScaleNormalize",
+            "RobustNormalize",
+            "BackgroundSubtract",
+            "PercentileClipNormalize",
+            "MinMaxNormalize",
+            "GlobalScalarNorm",
+            "SigmaClip",
+            "AsymmetricSigmaClip",
+            "FITSHeaderScale",
+            "FITSScaleColumns",
+            "TNullToNan",
+            "FITSHeaderNormalize",
+            "Compose",
+            "FITSTransform",
+            "AsModule",
+            "as_module",
+            "lupton_rgb",
+            "safe_arcsinh",
+            "safe_log",
+            "estimate_background",
+            "zscale_limits",
+        ],
+    }
+    missing = [
+        f"{mod.__name__}.{name}"
+        for mod, names in expected.items()
+        for name in names
+        if not hasattr(mod, name)
+    ]
+    assert not missing, f"docs reference missing API members: {missing}"
+
+
+def test_cli_docs_subcommands_match_parser() -> None:
+    """Commands documented in cli.md / cli-recipes.md must match the parser."""
+    import argparse
+    import re
+
+    from torchfits.cli.main import build_parser
+
+    parser = build_parser()
+    sub_names: set[str] = set()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            sub_names = set(action.choices)
+    assert sub_names, "CLI parser exposes no subcommands"
+
+    cli_docs = (ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+    recipes = (ROOT / "docs" / "cli-recipes.md").read_text(encoding="utf-8")
+    text = cli_docs + "\n" + recipes
+    # Inline code spans `torchfits <cmd> …`; the trailing (?![-a-z0-9_]) stops
+    # `torchfits write_checksums(...)` from capturing `write`.
+    documented = set(re.findall(r"`torchfits\s+([a-z][a-z0-9-]*)(?![a-z0-9_-])", text))
+    # cli.md's subcommand tables list torchfits commands in the first column;
+    # compound cells like `compress` / `decompress` carry multiple commands.
+    # cli-recipes.md's Familiar-tool map lists *classic* tools first (imstat,
+    # imcopy, …), so restrict the row parsing to cli.md. Flag rows (`-e`) and
+    # exit-code rows (digits) start with non-letters and are skipped by [a-z].
+    for line in cli_docs.splitlines():
+        if line.lstrip().startswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if cells:
+                documented.update(re.findall(r"`([a-z][a-z0-9-]*)`", cells[0]))
+
+    unknown = documented - sub_names
+    assert not unknown, f"docs reference unknown CLI subcommands: {sorted(unknown)}"
+    undocumented = sub_names - documented
+    assert not undocumented, (
+        f"CLI subcommands missing from docs: {sorted(undocumented)}"
+    )

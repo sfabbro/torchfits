@@ -31,6 +31,8 @@ jobs:
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow
       - name: Install torchfits
         run: pip install -e . --no-build-isolation
+      - name: Torch flavor extras resolve on PyTorch indexes
+        run: python scripts/check_torch_extra_pins.py
       - name: Run tests
         run: pytest tests/ -q --maxfail=1
 

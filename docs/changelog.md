@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `setkey --delete` / `@list` via CFITSIO `fits_delete_key` (keeps compression).
 - Docs: CPU-only (no CUDA libs) install recipe; “not only for ML” blurb;
   roadmap **2.0** native engine / GPU-direct (drop CFITSIO).
+- Packaging: `torchfits[cpu]` / `torchfits[cuda]` extras (both **Linux-only**
+  — macOS no-ops, MPS ships in the default wheel) plus one-line CUDA/CPU
+  install recipes (PyPI's default torch already bundles CUDA on Linux
+  x86_64; CUDA builds also run on GPU-less machines via CPU fallback).
+- Docs: full docs↔code sync audit — one-line pinned installs in quickstart /
+  CLI docs, `write()` payload types corrected (no top-level ndarray),
+  CLI-recipe transform kwargs documented, architecture freshness rc4.
+- CI/scripts: `check-torch-pins` resolves the `[cpu]` / `[cuda]` extra pins
+  against the PyTorch indexes on the wheel ABI lane (CI lint job + `ci-local`).
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).
@@ -924,7 +933,6 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.7.0]: https://github.com/astroai/torchfits/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/astroai/torchfits/releases/tag/v0.6.0
 [0.6.0b1]: https://github.com/astroai/torchfits/releases/tag/v0.6.0b1
-[0.5.0b4]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b4
 [0.5.0b3]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b3
 [0.5.0b2]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b2
 [0.5.0b1]: https://github.com/astroai/torchfits/releases/tag/v0.5.0b1

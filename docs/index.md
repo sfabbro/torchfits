@@ -11,7 +11,7 @@ title: FITS I/O for tensors and tables
 <li markdown>
 [Install](install.md)
 
-Wheels, CPU-only (no CUDA libs), GPU / accelerator notes.
+One-line installs: default CUDA+CPU, CPU-only, or pinned CUDA builds.
 </li>
 <li markdown>
 [Quick start](quickstart.md)

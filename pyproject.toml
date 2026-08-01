@@ -35,6 +35,11 @@ requires-python = ">=3.10"
 # These are automatically managed by pixi for conda packages
 # but needed here for PyPI compatibility
 dependencies = [
+    # PyPI's default torch (>=2.10) bundles the CUDA runtime on Linux x86_64
+    # and still runs on GPU-less machines via CPU fallback. Published wheels
+    # are ABI-matched to the 2.10 lane, so install recipes pin
+    # torch>=2.10,<2.11 (see docs/install.md); source builds may use any
+    # >=2.10 minor.
     "torch>=2.10",
     "numpy>=1.20.0",  # Core numerical operations
     "pyarrow>=5.0",   # Table I/O (Arrow interchange)
@@ -75,6 +80,21 @@ test = [
 ]
 examples = [
     "matplotlib>=3.0",
+]
+
+# Torch build flavors — pick one. Extras cannot embed index URLs, so [cpu] /
+# [cuda] resolve only when the matching download.pytorch.org index is
+# reachable (PIP_EXTRA_INDEX_URL or pip.conf extra-index-url; see
+# docs/install.md). Exact pins track the published-wheel ABI lane (2.10.x).
+cpu = [
+    # Thin CPU-only PyTorch: no CUDA runtime / cuDNN stack. Linux only —
+    # macOS has no +cpu wheel; MPS ships inside the default macOS build.
+    "torch==2.10.0+cpu; sys_platform == 'linux'",
+]
+cuda = [
+    # CUDA-enabled PyTorch (CUDA 12.8). Linux only — macOS has no +cu128
+    # wheels; MPS ships inside the default macOS torch build.
+    "torch==2.10.0+cu128; sys_platform == 'linux'",
 ]
 
 # Configuration for the scikit-build-core build system.

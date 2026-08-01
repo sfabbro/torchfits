@@ -12,7 +12,10 @@ Confirm the version triplet matches in:
 
 For native wheels, also confirm the PyTorch minor-version range is identical in
 the build-system, project runtime, and Pixi build/host/run dependencies
-(wheels stay on the **2.10** ABI lane unless a new lane is intentionally cut).
+(wheels stay on the **2.10** ABI lane unless a new lane is intentionally cut),
+and that the `[cpu]` / `[cuda]` extra pins in `pyproject.toml` match the newest
+2.10.x build on the PyTorch indexes (`https://download.pytorch.org/whl/cpu`
+and `/cu128`).
 
 ## 2. Changelog
 
@@ -29,7 +32,9 @@ pixi run release-gate
 
 All must pass. `release-gate` runs upstream parity smoke tests, docs integrity
 checks, the docs contract (`docs-contract` + `docs-links`), and the runnable
-example scripts.
+example scripts. `ci-local` and the CI lint job also run `check-torch-pins`,
+which resolves the `[cpu]` / `[cuda]` extra pins against the PyTorch indexes
+on the wheel ABI lane.
 
 ## 4. Public-API freeze (SemVer 1.0 / breaking cuts)
 
@@ -91,7 +96,8 @@ comparison target is listed in `docs/parity.md`.
 - [ ] README and docs do not claim torchfits ownership of WCS, sphere geometry,
       HEALPix, or sky-domain simulation.
 - [ ] Install docs still document CPU-only (no CUDA libs) and GPU torch index
-      recipes.
+      recipes, and the `[cpu]` / `[cuda]` extra pins track the current 2.10.x
+      wheel lane.
 
 ## 8. Local artifact check (optional)
 

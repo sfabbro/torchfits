@@ -393,7 +393,7 @@ torchfits.write(path, data, header=None, overwrite=False, compress=False,
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str` or `PathLike` | *(required)* | Output path |
-| `data` | `Tensor` or `ndarray` or `dict` or `HDUList` | *(required)* | Data to write |
+| `data` | `Tensor` or `dict` or `HDUList` | *(required)* | Data to write (top-level numpy arrays are not an accepted payload — wrap in a tensor or dict) |
 | `header` | `dict` or `Header` or `None` | `None` | FITS header key-value pairs |
 | `overwrite` | `bool` | `False` | Overwrite existing file |
 | `compress` | `bool` or `str` | `False` | `True`, `"gzip"`, `"rice"`, etc. |

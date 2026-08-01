@@ -1,7 +1,7 @@
 # torchfits CLI
 
-After `pip install torchfits`, the `torchfits` command inspects and transforms
-FITS files from the shell. It wraps the same C++ engine as the Python API.
+After `pip install torchfits "torch>=2.10,<2.11"`, the `torchfits` command
+inspects and transforms FITS files from the shell. It wraps the same C++ engine as the Python API.
 
 **Every flag is on `torchfits <cmd> --help`.** This page is a tour, not an
 exhaustive flag list.
@@ -35,7 +35,7 @@ pipelines and one-shot inspection.
 ## Install and help
 
 ```bash
-pip install torchfits
+pip install torchfits "torch>=2.10,<2.11"
 torchfits --help
 torchfits info --help
 torchfits convert --help

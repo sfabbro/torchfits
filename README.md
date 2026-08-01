@@ -17,13 +17,29 @@ Docs: [stable](https://astroai.github.io/torchfits/) (latest `v*` tag) ·
 
 ## Install
 
+One line for the full version (CUDA + CPU — works with or without a GPU):
+
 ```bash
-pip install torchfits
+pip install torchfits "torch>=2.10,<2.11"
 ```
 
-Requires **Python 3.10+** and **PyTorch ≥ 2.10**. Pre-built wheels for Linux
-x86_64 and macOS arm64 (CFITSIO is vendored). For a thin **CPU-only** install
-(no CUDA libraries), use the PyTorch CPU wheel index — see
+Requires **Python 3.10+** and **PyTorch 2.10.x** (wheels are ABI-matched; the
+pin keeps pip on the matching minor). Pre-built wheels for Linux x86_64 and
+macOS arm64 (CFITSIO is vendored).
+
+Choose a PyTorch flavor in one line:
+
+| You want | Command |
+|---|---|
+| Default (CUDA + CPU) | `pip install torchfits "torch>=2.10,<2.11"` |
+| CPU-only (thin) | `pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu` |
+| CUDA build (e.g. cu128) | `pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cu128` |
+
+`torchfits[cpu]` / `torchfits[cuda]` extras provide the same flavors after a
+one-time index setting (`PIP_EXTRA_INDEX_URL` / `pip.conf`). Both extras are
+**Linux-only** — on macOS they are no-ops (MPS ships inside the default wheel;
+there is no `+cpu` / `+cu128` macOS build). In zsh, quote the extra
+(`pip install 'torchfits[cpu]'`). Details:
 [Install](https://astroai.github.io/torchfits/install/).
 
 ## At a glance

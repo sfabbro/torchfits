@@ -11,6 +11,8 @@ echo "=== ci_local: lint ==="
 pixi run ruff check .
 pixi run ruff format --check .
 python3 scripts/check_duplicate_cpp.py
+# Resolves the [cpu]/[cuda] extra pins against download.pytorch.org (needs network).
+pixi run check-torch-pins
 
 echo "=== ci_local: docs contract ==="
 PYTHONPATH=src pixi run pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q

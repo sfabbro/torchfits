@@ -6,7 +6,7 @@ Get up and running with torchfits in minutes. Current PyPI line is **1.0.0rc4**
 ## Install
 
 ```bash
-pip install torchfits
+pip install torchfits "torch>=2.10,<2.11"
 ```
 
 Pre-built wheels for Linux x86_64 and macOS arm64. No system CFITSIO needed — it's
