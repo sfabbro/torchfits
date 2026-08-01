@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/scripts: `check-torch-pins` resolves the `[cpu]` / `[cuda]` extra pins
   against the PyTorch indexes on the wheel ABI lane, run as the first step of
   both CI jobs and the wheel-build workflow so lane drift fails fast (CI lint
-  job, build_wheels tests + wheel jobs, `ci-local`).
+  job, build_wheels tests + wheel jobs, `ci-local`). macOS passes vacuously
+  (both flavor pins are Linux-only); unit tests cover the lane guard, the
+  marker-skip path, and the missing-extras failure.
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).

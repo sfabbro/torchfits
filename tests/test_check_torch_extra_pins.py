@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,3 +95,81 @@ def test_check_doc_drift_passes_for_real_pins() -> None:
         # doc-drift contract is vacuous — skip rather than fail macOS CI.
         pytest.skip("no torch flavor pins resolve on this platform")
     assert pins.check_doc_drift(lane, real_pins) == []
+
+
+def test_real_extras_marker_skip_across_platforms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real pyproject pins resolve on Linux and skip everywhere else."""
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert len(list(pins.iter_torch_pins(text))) == 2
+    for platform in ("darwin", "win32"):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert list(pins.iter_torch_pins(text)) == []
+
+
+def test_main_fails_when_pin_off_wheel_lane(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The lane guard itself: an off-lane pin must fail the check."""
+    monkeypatch.setattr(
+        pins, "iter_torch_pins", lambda _text: [_pin("cuda", "2.11.0+cu128")]
+    )
+    monkeypatch.setattr(pins, "check_doc_drift", lambda _lane, _pins: [])
+    assert pins.main() == 1
+    out = capsys.readouterr().out
+    assert "outside the wheel ABI lane" in out
+    assert "2.11.0" in out
+
+
+def test_main_succeeds_for_real_pins_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end guard (real lane + real pyproject) with a fake pip dry-run."""
+    monkeypatch.setattr(
+        pins,
+        "resolve",
+        lambda _spec, _index: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    assert pins.main() == 0
+
+
+def test_main_fails_when_pin_resolution_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    if not list(pins.iter_torch_pins(text)):
+        pytest.skip("no torch flavor pins resolve on this platform")
+    monkeypatch.setattr(
+        pins,
+        "resolve",
+        lambda _spec, _index: subprocess.CompletedProcess([], 1, "", "boom"),
+    )
+    assert pins.main() == 1
+
+
+def test_main_vacuous_pass_when_all_pins_marker_skipped(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """macOS-like: every pin is Linux-marked, so the guard passes vacuously."""
+    monkeypatch.setattr(pins, "iter_torch_pins", lambda _text: [])
+    monkeypatch.setattr(
+        pins,
+        "_iter_torch_entries",
+        lambda _text: [("cpu", "torch==2.10.0+cpu; sys_platform == 'linux'")],
+    )
+    assert pins.main() == 0
+    out = capsys.readouterr().out
+    assert "skipped by platform markers" in out
+
+
+def test_main_fails_when_no_torch_extras_at_all(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Removing the extras entirely must fail the guard, not pass silently."""
+    monkeypatch.setattr(pins, "iter_torch_pins", lambda _text: [])
+    monkeypatch.setattr(pins, "_iter_torch_entries", lambda _text: [])
+    assert pins.main() == 1
+    out = capsys.readouterr().out
+    assert "no torch flavor extras" in out

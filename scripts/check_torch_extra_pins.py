@@ -19,7 +19,9 @@ For every torch pin in every extra, this script:
    https://download.pytorch.org/whl/cuXXX) and fails if pip cannot.
 
 Pins whose marker is not active on the current platform (the ``cuda`` extra
-is Linux-only) are skipped, matching the extras' own semantics.
+is Linux-only) are skipped, matching the extras' own semantics; if every pin
+is skipped, the check passes vacuously (e.g. macOS, which has no ``+cpu`` /
+``+cu128`` wheels).
 
 This script also guards against install-docs drift: every extra's index URL
 must appear in the docs/install.md / README.md one-liners, and the documented
@@ -120,35 +122,41 @@ def check_doc_drift(
     return failures
 
 
-def iter_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
-    """Yield (extra, entry, Version) for active torch pins in the extras."""
+def _iter_torch_entries(pyproject_text: str) -> Iterator[tuple[str, str]]:
+    """Yield (extra, entry) for every torch requirement in the extras."""
     data = tomllib.loads(pyproject_text)
     extras = data["project"].get("optional-dependencies", {})
     for extra, entries in extras.items():
         for entry in entries:
             req = Requirement(entry)
-            if req.name.lower() != "torch":
-                continue
-            if req.marker is not None and not req.marker.evaluate():
-                print(
-                    f"[skip] {extra}: {entry} (marker not active on this platform)",
-                    flush=True,
-                )
-                continue
-            match = re.fullmatch(r"==\s*(?P<version>[^;,\s]+)", str(req.specifier))
-            if match is None:
-                raise SystemExit(
-                    f"{extra}: {entry} — torch pins must be exact (==) so the "
-                    "build flavor resolves deterministically"
-                )
-            version = Version(match.group("version"))
-            if not version.local:
-                raise SystemExit(
-                    f"{extra}: {entry} — torch pins must carry a +local segment "
-                    "(e.g. +cpu / +cu128) so they resolve from the PyTorch "
-                    "index, not PyPI"
-                )
-            yield extra, entry, version
+            if req.name.lower() == "torch":
+                yield extra, entry
+
+
+def iter_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
+    """Yield (extra, entry, Version) for active torch pins in the extras."""
+    for extra, entry in _iter_torch_entries(pyproject_text):
+        req = Requirement(entry)
+        if req.marker is not None and not req.marker.evaluate():
+            print(
+                f"[skip] {extra}: {entry} (marker not active on this platform)",
+                flush=True,
+            )
+            continue
+        match = re.fullmatch(r"==\s*(?P<version>[^;,\s]+)", str(req.specifier))
+        if match is None:
+            raise SystemExit(
+                f"{extra}: {entry} — torch pins must be exact (==) so the "
+                "build flavor resolves deterministically"
+            )
+        version = Version(match.group("version"))
+        if not version.local:
+            raise SystemExit(
+                f"{extra}: {entry} — torch pins must carry a +local segment "
+                "(e.g. +cpu / +cu128) so they resolve from the PyTorch "
+                "index, not PyPI"
+            )
+        yield extra, entry, version
 
 
 def resolve(specifier: str, index: str) -> subprocess.CompletedProcess[str]:
@@ -181,8 +189,13 @@ def main() -> int:
     pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     pins = list(iter_torch_pins(pyproject_text))
     if not pins:
-        print("no torch flavor extras found in pyproject.toml", flush=True)
-        return 1
+        if not list(_iter_torch_entries(pyproject_text)):
+            print("no torch flavor extras found in pyproject.toml", flush=True)
+            return 1
+        # Every torch flavor pin was marker-skipped (e.g. macOS: both extras
+        # are Linux-only). Vacuous pass — the extras can never resolve there.
+        print("all torch flavor pins skipped by platform markers — OK", flush=True)
+        return 0
 
     failed = False
     for extra, entry, version in pins:
