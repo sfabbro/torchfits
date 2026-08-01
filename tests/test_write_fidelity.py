@@ -545,6 +545,173 @@ def test_where_on_numeric_column_matches_full_read_mask(tmp_path):
     assert torch.equal(got["V"], full["V"][mask])
 
 
+def test_compressed_uint16_roundtrip_exact(tmp_path):
+    """Pseudo-unsigned uint16 through the compressed writer is lossless."""
+    rng = np.random.default_rng(3)
+    data = torch.as_tensor(rng.integers(0, 65536, size=(37, 41), dtype=np.uint16))
+    path = str(tmp_path / "c_u16.fits")
+    torchfits.write(path, data, overwrite=True, compress=True)
+
+    out = torchfits.read(path, hdu=1)
+    assert out.dtype == torch.uint16
+    assert torch.equal(out, data)
+
+    from astropy.io import fits
+
+    np.testing.assert_array_equal(fits.getdata(path), data.numpy())
+
+
+@pytest.mark.parametrize("algo", ["RICE_1", "GZIP_1"])
+def test_compressed_int64_rejected_not_silently_lossy(tmp_path, algo):
+    """64-bit integer compression is outside CFITSIO's algorithm support
+    (astropy's RICE_1 silently narrows to 32 bits; gzip is limited to
+    smaller tiles). Writing must raise instead of corrupting."""
+    data = torch.arange(64, dtype=torch.int64).reshape(8, 8)
+    path = str(tmp_path / f"c64_{algo}.fits")
+    with pytest.raises(RuntimeError):
+        torchfits.write(path, data, overwrite=True, compress=algo)
+
+
+def test_compressed_uint32_roundtrip_exact(tmp_path):
+    """Pseudo-unsigned uint32 through the compressed writer is lossless."""
+    rng = np.random.default_rng(4)
+    data = torch.as_tensor(rng.integers(0, 2**31, size=(13, 17), dtype=np.uint32))
+    path = str(tmp_path / "c_u32.fits")
+    torchfits.write(path, data, overwrite=True, compress=True)
+
+    out = torchfits.read(path, hdu=1)
+    assert out.dtype == torch.uint32
+    assert torch.equal(out, data)
+
+    from astropy.io import fits
+
+    np.testing.assert_array_equal(fits.getdata(path), data.numpy())
+
+
+# ---------------------------------------------------------------------------
+# Mutations: insert / rename / drop keep data exact
+# ---------------------------------------------------------------------------
+
+
+def test_insert_rows_fidelity_mid_table(tmp_path):
+    """insert_rows keeps row order and values exactly as astropy reads them."""
+    table = {
+        "ID": np.array([1, 2, 4, 5], dtype=np.int32),
+        "VAL": np.array([0.1, 0.2, 0.4, 0.5], dtype=np.float64),
+    }
+    path = str(tmp_path / "ins.fits")
+    torchfits.table.write(path, table, overwrite=True)
+    torchfits.table.insert_rows(
+        path,
+        {"ID": np.array([3], dtype=np.int32), "VAL": np.array([0.3])},
+        row=2,
+        hdu=1,
+    )
+
+    from astropy.io import fits
+
+    with fits.open(path) as hdul:
+        astro_id = np.asarray(hdul[1].data["ID"]).astype(np.int32)
+        astro_val = np.asarray(hdul[1].data["VAL"]).astype(np.float64)
+    assert np.array_equal(astro_id, np.array([1, 2, 3, 4, 5], dtype=np.int32))
+    assert np.allclose(astro_val, np.array([0.1, 0.2, 0.3, 0.4, 0.5]))
+
+    for mmap in (True, False):
+        out = torchfits.read(path, hdu=1, mmap=mmap)
+        assert torch.equal(out["ID"].squeeze(-1), torch.as_tensor(astro_id))
+        assert torch.equal(out["VAL"].squeeze(-1), torch.as_tensor(astro_val))
+
+
+def test_rename_and_drop_columns_fidelity(tmp_path):
+    """rename/drop keep the remaining data byte-identical (astropy oracle)."""
+    table = {
+        "A": np.array([1, 2, 3], dtype=np.int32),
+        "B": np.array([0.5, 1.5, 2.5], dtype=np.float64),
+        "C": np.array([True, False, True], dtype=np.bool_),
+    }
+    path = str(tmp_path / "rd.fits")
+    torchfits.table.write(path, table, overwrite=True)
+    torchfits.table.rename_columns(path, {"A": "ALPHA"}, hdu=1)
+    torchfits.table.drop_columns(path, ["C"], hdu=1)
+
+    from astropy.io import fits
+
+    with fits.open(path) as hdul:
+        assert list(hdul[1].data.names) == ["ALPHA", "B"]
+        astro_a = np.asarray(hdul[1].data["ALPHA"]).astype(np.int32)
+        astro_b = np.asarray(hdul[1].data["B"]).astype(np.float64)
+    assert np.array_equal(astro_a, np.array([1, 2, 3], dtype=np.int32))
+    assert np.allclose(astro_b, np.array([0.5, 1.5, 2.5]))
+
+    for mmap in (True, False):
+        out = torchfits.read(path, hdu=1, mmap=mmap)
+        assert torch.equal(out["ALPHA"].squeeze(-1), torch.as_tensor(astro_a))
+        assert torch.equal(out["B"].squeeze(-1), torch.as_tensor(astro_b))
+
+
+def test_ascii_table_logical_column_is_rejected(tmp_path):
+    """ASCII tables have no logical format (A/I/F/E/D only); writing bools
+    must raise a clear error instead of producing an unreadable TFORM."""
+    path = str(tmp_path / "ascii_bool.fits")
+    with pytest.raises(RuntimeError, match="logical"):
+        torchfits.table.write(
+            path,
+            {"FLAG": np.array([True, False], dtype=np.bool_)},
+            table_type="ascii",
+            overwrite=True,
+        )
+
+
+def test_table_tnull_values_roundtrip_raw(tmp_path):
+    """TNULL-marker columns round-trip the stored value exactly through both
+    read paths (no masking), matching astropy's raw read."""
+    from astropy.io import fits
+
+    col = fits.Column(
+        name="A", format="J", array=np.array([0, 5, 3, 0], dtype=np.int32), null=0
+    )
+    fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns([col])]).writeto(
+        str(tmp_path / "tnull.fits"), overwrite=True
+    )
+    path = str(tmp_path / "tnull.fits")
+
+    astro = np.asarray(fits.getdata(path, 1)["A"]).astype(np.int32)
+    assert np.array_equal(astro, np.array([0, 5, 3, 0], dtype=np.int32))
+    for mmap in (True, False):
+        out = torchfits.read(path, hdu=1, mmap=mmap)
+        assert torch.equal(out["A"].squeeze(-1), torch.as_tensor(astro))
+
+
+# ---------------------------------------------------------------------------
+# Variable-length array columns: both read paths + astropy oracle
+# ---------------------------------------------------------------------------
+
+
+def test_vla_column_roundtrip_fidelity(tmp_path):
+    """VLA columns come back with the exact row lengths and values on both
+    read paths (astropy oracle for the heap)."""
+    from astropy.table import Table
+
+    vla = np.array(
+        [np.array([1, 2], dtype=np.int32), np.array([3], dtype=np.int32)],
+        dtype=object,
+    )
+    path = str(tmp_path / "vla.fits")
+    Table({"VLA": vla}).write(path, format="fits", overwrite=True)
+
+    from astropy.io import fits
+
+    with fits.open(path) as hdul:
+        astro = [
+            np.asarray(row, dtype=np.int32).tolist() for row in hdul[1].data["VLA"]
+        ]
+    assert astro == [[1, 2], [3]]
+
+    arrow = torchfits.table.read(path, hdu=1)
+    got = arrow.column("VLA").to_pylist()
+    assert got == [[1, 2], [3]]
+
+
 # ---------------------------------------------------------------------------
 # Chunked read path (large images)
 # ---------------------------------------------------------------------------

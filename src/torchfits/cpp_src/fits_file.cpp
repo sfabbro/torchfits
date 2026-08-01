@@ -784,6 +784,15 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
         if (status != 0) throw std::runtime_error("Failed to set compression type");
         std::vector<long> tilesize(naxis, 1);
         tilesize[0] = naxes[0];
+        if (compression_type == HCOMPRESS_1) {
+            // HCOMPRESS requires 2D tiles; use 16-row bands like fpack's
+            // default so output tiles match the reference CLI.
+            if (naxis < 2)
+                throw std::runtime_error(
+                    "HCOMPRESS compression requires a 2D or higher-dimensional image");
+            tilesize[0] = naxes[0];
+            tilesize[1] = naxes[1] < 16 ? naxes[1] : 16;
+        }
         fits_set_tile_dim(fptr_, naxis, tilesize.data(), &status);
         if (status != 0) throw std::runtime_error("Failed to set tile dimensions");
         int bitpix = FLOAT_IMG, datatype = TFLOAT;

@@ -1,0 +1,78 @@
+--- a/imcompress.c	2026-08-01 18:44:22.905767683 +0000
++++ b/imcompress.c	2026-08-01 19:28:25.010720725 +0000
+@@ -6,6 +6,9 @@
+ # include <time.h>
+ # include <limits.h>
+ # include "fitsio2.h"
++#if HAVE_BZIP2
++# include "bzlib.h"
++#endif
+ 
+ #define NULL_VALUE -2147483647 /* value used to represent undefined pixels */
+ #define ZERO_VALUE -2147483646 /* value used to represent zero-valued pixels */
+@@ -2052,6 +2064,7 @@
+         /* =========================================================================== */
+         } else if ( (outfptr->Fptr)->compress_type == BZIP2_1) {
+ 
++#if HAVE_BZIP2
+ #if BYTESWAPPED
+ 	   if (intlength == 2)
+                ffswap2((short *) idata, tilelen); 
+@@ -2063,10 +2076,8 @@
+ 	   
+            /* call bzip2 with blocksize = 900K, verbosity = 0, and default workfactor */
+ 
+-/*  bzip2 is not supported in the public release.  This is only for test purposes.
+            if (BZ2_bzBuffToBuffCompress( (char *) cbuf, &bzlen,
+ 	         (char *) idata, (unsigned int) (tilelen * intlength), 9, 0, 0) ) 
+-*/
+ 	   {
+                    free(cbuf);
+                    ffpmsg("bzip2 compression error");
+@@ -2076,6 +2087,11 @@
+ 	    /* Write the compressed byte stream. */
+             ffpclb(outfptr, (outfptr->Fptr)->cn_compressed, row, 1,
+                      bzlen, (unsigned char *) cbuf, status);
++#else
++            free(cbuf);
++            ffpmsg("bzip2 compression is not supported in this build");
++            return(*status = DATA_COMPRESSION_ERR);
++#endif
+ 
+         /* =========================================================================== */
+         }  else if ( (outfptr->Fptr)->compress_type == HCOMPRESS_1)     {
+@@ -6435,17 +6451,17 @@
+     /* ************************************************************* */
+     } else if ((infptr->Fptr)->compress_type == BZIP2_1) {
+ 
+-/*  BZIP2 is not supported in the public release; this is only for test purposes 
+-
+-        if (BZ2_bzBuffToBuffDecompress ((char *) idata, &idatalen, 
++#if HAVE_BZIP2
++        unsigned int bzlen = (unsigned int) idatalen;
++        if (BZ2_bzBuffToBuffDecompress ((char *) idata, &bzlen, 
+ 		(char *)cbuf, (unsigned int) nelemll, 0, 0) )
+-*/
+         {
+             ffpmsg("bzip2 decompression error");
+             free(idata);
+             free (cbuf);
+             return (*status = DATA_DECOMPRESSION_ERR);
+         }
++        idatalen = bzlen;
+ 
+         if ((infptr->Fptr)->zbitpix == BYTE_IMG) {
+ 	     tiledatatype = TBYTE;
+@@ -6460,6 +6476,12 @@
+             ffswap4(idata, tilelen);
+ #endif
+ 	}
++#else
++        ffpmsg("bzip2 decompression is not supported in this build");
++        free(idata);
++        free (cbuf);
++        return (*status = DATA_DECOMPRESSION_ERR);
++#endif
+ 
+     /* ************************************************************* */
+     } else {

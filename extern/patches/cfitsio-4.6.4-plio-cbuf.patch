@@ -1,0 +1,18 @@
+--- a/imcompress.c	2026-08-01 18:36:17.730103661 +0000
++++ b/imcompress.c	2026-08-01 18:36:17.730103661 +0000
+@@ -1476,6 +1476,15 @@
+         else
+             return( (int) (nx * 4.4 + 26));   /* will be compressing 32-bit int array */
+     }
++    else if (comptype == PLIO_1)
++    {
++        /* Worst case PLIO line list: 3 shorts per pixel (a 2-word delta
++           followed by an np run word, since the np==1 flag path is only
++           reachable after a zero run) plus an 8-word header.  cfitsio
++           4.6.4 sized this as nx * sizeof(int), overflowing the cbuf for
++           incompressible data and corrupting the heap. */
++        return( (int) (nx * sizeof(short) * 3 + 32));
++    }
+     else
+         return(nx * sizeof(int));
+ }

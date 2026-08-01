@@ -413,6 +413,22 @@ else()
         set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
         set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
 
+        # Enable BZIP2_1 image compression.  Upstream CFITSIO ships it
+        # disabled; the compressed image codec lives in imcompress.c and is
+        # re-enabled by the vendored patch.  Requires libbz2: use the pixi /
+        # conda environment when present, otherwise fall back to the system.
+        option(TORCHFITS_USE_BZIP2 "Build vendored CFITSIO with BZIP2_1 support" ON)
+        if(TORCHFITS_USE_BZIP2)
+            if(DEFINED ENV{CONDA_PREFIX} AND EXISTS "$ENV{CONDA_PREFIX}/include/bzlib.h")
+                set(USE_BZIP2 ON CACHE BOOL "Enable bzip2 support" FORCE)
+                set(BZIP2_INCLUDE_DIR "$ENV{CONDA_PREFIX}/include" CACHE FILEPATH "bzip2 include dir" FORCE)
+                set(BZIP2_LIBRARY "$ENV{CONDA_PREFIX}/lib/libbz2.a" CACHE FILEPATH "bzip2 library" FORCE)
+            else()
+                message(STATUS "TORCHFITS_USE_BZIP2 is ON but bzlib.h was not found in the conda environment; leaving CFITSIO bzip2 support disabled")
+                set(USE_BZIP2 OFF CACHE BOOL "Enable bzip2 support" FORCE)
+            endif()
+        endif()
+
         # Force position-independent code for static library to be linked into shared library
         set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 

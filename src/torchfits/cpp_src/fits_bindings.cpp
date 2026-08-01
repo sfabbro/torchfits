@@ -960,7 +960,13 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     };
 
     auto ascii_tform = [](const nb::dlpack::dtype& dt, long width_hint) -> std::string {
-        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) return "L1";
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
+            // CFITSIO's ASCII_TBL rejects 'L'; ASCII tables have no logical
+            // format (only A/I/F/E/D), so fail loudly instead of writing an
+            // unreadable TFORM.
+            throw std::runtime_error(
+                "ASCII table writing does not support logical (bool) columns");
+        }
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) return "I3";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8) return "I4";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) return "I6";
@@ -1791,6 +1797,8 @@ void bind_fits(nb::module_& m) {
                       comptype = HCOMPRESS_1;
                   } else if (a == "P" || a == "PLIO" || a == "PLIO_1") {
                       comptype = PLIO_1;
+                  } else if (a == "B" || a == "BZIP2" || a == "BZIP2_1") {
+                      comptype = BZIP2_1;
                   } else if (a == "NONE") {
                       comptype = 0;
                   } else {

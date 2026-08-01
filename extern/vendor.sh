@@ -134,6 +134,19 @@ fi
 mkdir -p "${EXTERN_DIR}"
 fetch_and_extract "${CFITSIO_REPO}" "${CFITSIO_VERSION}" "${EXTERN_DIR}/cfitsio"
 
+# Apply any patches for this exact vendored version.  Patch file names are
+# "<tag>-<name>.patch"; a patch whose <tag> does not match the vendored
+# version is skipped so stale patches never get applied.
+PATCH_DIR="${EXTERN_DIR}/patches"
+if [[ -d "${PATCH_DIR}" ]]; then
+  require_cmd patch
+  for p in "${PATCH_DIR}"/"${CFITSIO_VERSION}"-*.patch; do
+    [[ -f "${p}" ]] || continue
+    echo "Applying patch ${p} to ${EXTERN_DIR}/cfitsio"
+    ( cd "${EXTERN_DIR}/cfitsio" && patch -p1 < "${p}" )
+  done
+fi
+
 cat > "${EXTERN_DIR}/VERSIONS.txt" <<VERSIONS
 cfitsio_repo=${CFITSIO_REPO}
 cfitsio_tag=${CFITSIO_VERSION}
