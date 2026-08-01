@@ -73,9 +73,11 @@ def test_iter_torch_pins_rejects_range_pin() -> None:
 
 
 def test_documented_claims_cover_extras_and_lane() -> None:
-    indexes, lane_specs = pins.documented_claims()
+    indexes, lane_specs, exact_pins = pins.documented_claims()
     assert "https://download.pytorch.org/whl/cpu" in indexes
     assert "https://download.pytorch.org/whl/cu128" in indexes
+    assert "torch==2.10.0+cpu" in exact_pins
+    assert "torch==2.10.0+cu128" in exact_pins
     lane = pins.load_wheel_lane()
     assert any(SpecifierSet(s) == lane for s in lane_specs)
 
@@ -84,6 +86,13 @@ def test_check_doc_drift_reports_undocumented_index() -> None:
     lane = pins.load_wheel_lane()
     fails = pins.check_doc_drift(lane, [_pin("cuda", "2.10.0+cu999")])
     assert any("cu999" in f for f in fails)
+
+
+def test_check_doc_drift_reports_undocumented_exact_pin() -> None:
+    """Docs may document the index but show a stale exact pin — must fail."""
+    lane = pins.load_wheel_lane()
+    fails = pins.check_doc_drift(lane, [_pin("cpu", "2.10.1+cpu")])
+    assert any("torch==2.10.1+cpu" in f for f in fails)
 
 
 def test_check_doc_drift_passes_for_real_pins() -> None:

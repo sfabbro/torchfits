@@ -33,8 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the PyTorch indexes on the wheel ABI lane, run as the first step of
   both CI jobs and the wheel-build workflow so lane drift fails fast (CI lint
   job, build_wheels tests + wheel jobs, `ci-local`). macOS passes vacuously
-  (both flavor pins are Linux-only); unit tests cover the lane guard, the
-  marker-skip path, and the missing-extras failure.
+  (both flavor pins are Linux-only); the doc-drift guard now also requires
+  every extra's exact pin string (e.g. `torch==2.10.0+cpu`) to appear in
+  install.md / README; unit tests cover the lane guard, the marker-skip
+  path, the missing-extras failure, and the exact-pin doc-drift check.
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).

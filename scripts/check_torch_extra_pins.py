@@ -24,8 +24,9 @@ is skipped, the check passes vacuously (e.g. macOS, which has no ``+cpu`` /
 ``+cu128`` wheels).
 
 This script also guards against install-docs drift: every extra's index URL
-must appear in the docs/install.md / README.md one-liners, and the documented
-wheel-lane pin must match ``constraints-wheel.txt``.
+and exact pin string must appear in the docs/install.md / README.md
+one-liners, and the documented wheel-lane pin must match
+``constraints-wheel.txt``.
 
 Exit code is non-zero when any pin fails. Run via ``pixi run check-torch-pins``
 (also wired into the CI lint job and scripts/ci_local.sh).
@@ -82,19 +83,22 @@ _DOC_INDEX_RE = re.compile(
     r"--extra-index-url\s+(https://download\.pytorch\.org/whl/[a-zA-Z0-9]+)"
 )
 _DOC_LANE_RE = re.compile(r"torch(>=2\.\d+,<2\.\d+)")
+_DOC_PIN_RE = re.compile(r"torch==\d+\.\d+\.\d+\+[a-zA-Z0-9]+")
 
 
-def documented_claims() -> tuple[set[str], list[str]]:
-    """Index URLs and lane pins that the install docs / README one-liners use."""
+def documented_claims() -> tuple[set[str], list[str], set[str]]:
+    """Index URLs, lane pins, and exact torch pins the docs / README use."""
     indexes: set[str] = set()
     lane_specs: list[str] = []
+    exact_pins: set[str] = set()
     for path in DOC_FILES:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
         indexes.update(_DOC_INDEX_RE.findall(text))
         lane_specs.extend(_DOC_LANE_RE.findall(text))
-    return indexes, lane_specs
+        exact_pins.update(_DOC_PIN_RE.findall(text))
+    return indexes, lane_specs, exact_pins
 
 
 def check_doc_drift(
@@ -102,14 +106,20 @@ def check_doc_drift(
 ) -> list[str]:
     """Failures when documented one-liners drift from the extras / wheel lane."""
     failures: list[str] = []
-    doc_indexes, lane_specs = documented_claims()
+    doc_indexes, lane_specs, doc_pins = documented_claims()
     doc_locals = {url.rsplit("/", 1)[-1] for url in doc_indexes}
-    for extra, _entry, version in pins:
+    for extra, entry, version in pins:
         local = "".join(version.local)
         if local not in doc_locals:
             failures.append(
                 f"[FAIL] {extra}: install docs never document "
                 f"--extra-index-url https://download.pytorch.org/whl/{local}"
+            )
+        bare_pin = entry.split(";", 1)[0].strip()
+        if bare_pin not in doc_pins:
+            failures.append(
+                f"[FAIL] {extra}: install docs/README never show the exact pin "
+                f"{bare_pin} (extras pin {entry})"
             )
     if not lane_specs:
         failures.append("[FAIL] install docs/README contain no torch wheel-lane pin")
