@@ -17,6 +17,7 @@
 namespace torchfits {
 namespace detail {
 struct SharedReadMeta;
+struct RawFdHolder;
 }
 
 class FITSFile {
@@ -111,6 +112,9 @@ private:
     size_t map_len_ = 0;
     off_t map_page_offset_ = 0;
     const uint8_t* pixel_base_ = nullptr;
+    // Refcounted fd keeps the backing file descriptor alive while mapped and
+    // guards against invalidation closing it mid-mmap.
+    std::shared_ptr<detail::RawFdHolder> raw_fd_holder_;
 };
 
 } // namespace torchfits

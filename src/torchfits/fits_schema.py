@@ -11,6 +11,8 @@ import torch
 
 _TFORM_RE = re.compile(r"^\s*(\d+)?\s*([A-Za-z])")
 _TFORM_VLA_RE = re.compile(r"^\s*(\d+)?\s*([PQ])\s*([A-Za-z])")
+# ASCII-table string fields use the code-first "Aw" form (e.g. TFORM='A6').
+_TFORM_AW_RE = re.compile(r"^[A-Za-z]\s*(\d+)")
 
 _UNSIGNED_TZERO_TARGETS: dict[tuple[str, float], torch.dtype] = {
     ("I", 32768.0): torch.uint16,
@@ -74,6 +76,10 @@ def parse_tform(tform: str) -> TformInfo:
     if m:
         repeat = int(m.group(1)) if m.group(1) else 1
         code = m.group(2).upper()
+        if repeat == 1 and code == "A":
+            aw = _TFORM_AW_RE.match(text)
+            if aw:
+                repeat = int(aw.group(1))
         return TformInfo(tform=text, repeat=repeat, vla=False, code=code)
 
     return TformInfo(tform=text, repeat=1, vla=False, code=None)

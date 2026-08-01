@@ -153,7 +153,11 @@ inline ScaleDetectionResult detect_scale_info_fast(fitsfile* fptr, int bitpix) {
     int equiv_type = bitpix;
     fits_get_img_equivtype(fptr, &equiv_type, &equiv_status);
     if (equiv_status == 0) {
-        if (equiv_type == bitpix) return out;
+        // CFITSIO has no unsigned 64-bit convention: fits_get_img_equivtype
+        // reports TLONGLONG for BITPIX=64 regardless of BZERO, so the shortcut
+        // would hide a uint64 convention (BZERO=2^63). Always read BSCALE/BZERO
+        // for LONGLONG_IMG.
+        if (equiv_type == bitpix && bitpix != LONGLONG_IMG) return out;
         if (bitpix == BYTE_IMG && equiv_type == SBYTE_IMG) {
             out.scaled = true; out.bscale = 1.0; out.bzero = -128.0;
             return out;
@@ -198,6 +202,20 @@ struct ResolvedFITSMeta {
 // ---------------------------------------------------------------------------
 // Shared read metadata cache
 // ---------------------------------------------------------------------------
+// Refcounted raw file descriptor. Readers borrow a shared_ptr for the
+// duration of a pread/mmap so an invalidation (file replaced/truncated) can
+// reset meta->raw_fd without closing an fd that is still in flight — the fd is
+// only closed when the last holder releases it.
+struct RawFdHolder {
+    int fd = -1;
+    explicit RawFdHolder(int f = -1) : fd(f) {}
+    ~RawFdHolder() {
+        if (fd != -1) ::close(fd);
+    }
+    RawFdHolder(const RawFdHolder&) = delete;
+    RawFdHolder& operator=(const RawFdHolder&) = delete;
+};
+
 struct SharedReadMeta {
     uint64_t uid = 0;
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache;
@@ -210,15 +228,11 @@ struct SharedReadMeta {
     int64_t mtime_ns = 0;
     ino_t inode = 0;
     int64_t last_stat_check_ns = 0;
-    int raw_fd = -1;
+    std::shared_ptr<RawFdHolder> raw_fd;
     // Absolute CFITSIO HDU the shared fptr is currently on (-1 = unknown).
     // Lets one-shot FITSFile wrappers skip redundant fits_movabs_hdu.
     int current_fits_hdu = -1;
     std::mutex mutex;
-
-    ~SharedReadMeta() {
-        if (raw_fd != -1) { ::close(raw_fd); raw_fd = -1; }
-    }
 };
 
 inline std::mutex g_shared_meta_mutex;
@@ -262,7 +276,10 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
         int64_t cur_mtime_ns = torchfits::internal::mtime_ns_from_stat(st);
         if (!meta->has_stat || meta->size != st.st_size ||
             meta->mtime_ns != cur_mtime_ns || meta->inode != st.st_ino) {
-            if (meta->raw_fd != -1) { ::close(meta->raw_fd); meta->raw_fd = -1; }
+            // Drop the current fd. In-flight readers hold their own shared_ptr,
+            // so the close is deferred until they release it — a pread/mmap can
+            // never race a close of the same fd.
+            meta->raw_fd.reset();
             meta->image_info_cache.clear();
             meta->compressed_cache.clear();
             meta->compressed_nulls_cache.clear();
@@ -296,11 +313,13 @@ inline int open_fits_readonly(fitsfile** fptr, const std::string& path) {
     return status;
 }
 
-inline int get_shared_raw_fd(const std::shared_ptr<SharedReadMeta>& meta, const std::string& filename) {
-    if (!meta || has_cfitsio_extended_filename_syntax(filename)) return -1;
+inline std::shared_ptr<RawFdHolder> get_shared_raw_fd(
+    const std::shared_ptr<SharedReadMeta>& meta, const std::string& filename) {
+    if (!meta || has_cfitsio_extended_filename_syntax(filename)) return nullptr;
     std::lock_guard<std::mutex> lock(meta->mutex);
-    if (meta->raw_fd != -1) return meta->raw_fd;
-    meta->raw_fd = open_readonly_fd(filename);
+    if (!meta->raw_fd) {
+        meta->raw_fd = std::make_shared<RawFdHolder>(open_readonly_fd(filename));
+    }
     return meta->raw_fd;
 }
 
@@ -366,8 +385,10 @@ inline size_t datatype_elem_size(int datatype) {
     switch (datatype) {
         case TBYTE:
         case TSBYTE:    return sizeof(uint8_t);
-        case TSHORT:    return sizeof(uint16_t);
-        case TINT:      return sizeof(uint32_t);
+        case TSHORT:
+        case TUSHORT:   return sizeof(uint16_t);
+        case TINT:
+        case TUINT:     return sizeof(uint32_t);
         case TLONGLONG: return sizeof(uint64_t);
         case TFLOAT:    return sizeof(float);
         case TDOUBLE:   return sizeof(double);

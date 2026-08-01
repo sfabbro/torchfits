@@ -59,6 +59,9 @@ void clear_shared_read_meta_cache() {
 // read_full_cached — fast path using cached CFITSIO handle + SharedReadMeta
 // ---------------------------------------------------------------------------
 torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mmap) {
+    // Every other entry point enforces the filename security policy; keep this
+    // cached fast path consistent (blocks '|' and 'sh://' command execution).
+    check_fits_filename_security(path);
     if (has_cfitsio_extended_filename_syntax(path)) {
         FITSFile file(path.c_str(), 0);
         return file.read_tensor(hdu_num, use_mmap);
@@ -274,7 +277,10 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     resolved.compressed = compressed;
     resolved.compressed_nulls = get_compressed_nulls();
 
-    const int fd = d::get_shared_raw_fd(meta, path);
+    // Hold the refcounted fd for the duration of the canonical read so an
+    // invalidation cannot close it underneath pread/mmap.
+    auto fd_holder = d::get_shared_raw_fd(meta, path);
+    const int fd = fd_holder ? fd_holder->fd : -1;
     return d::read_tensor_canonical(fptr, path, resolved, use_mmap, fd, /*use_chunking=*/true);
 }
 
@@ -285,6 +291,8 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
     if (hdu_name.empty()) {
         throw std::runtime_error("HDU name cannot be empty");
     }
+    // Keep the filename security policy consistent with every other entry point.
+    check_fits_filename_security(path);
     auto normalize_hdu_name = [](const std::string& s) -> std::string {
         size_t i = 0;
         size_t j = s.size();
@@ -367,7 +375,7 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
 // open_and_read_headers — batch header read, returns (FITSFile*, vector<HDUInfo>)
 // ---------------------------------------------------------------------------
 std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::string& path, int mode) {
-    auto* file = new FITSFile(path.c_str(), mode);
+    auto file = std::unique_ptr<FITSFile>(new FITSFile(path.c_str(), mode));
     std::vector<HDUInfo> hdus;
 
     int num_hdus = file->get_num_hdus();
@@ -381,7 +389,7 @@ std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::stri
         hdus.push_back(info);
     }
 
-    return {file, hdus};
+    return {file.release(), hdus};
 }
 
 // ---------------------------------------------------------------------------
@@ -792,9 +800,13 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
             }
         }
 
-        const int fd = (resolved.compressed || !shared_meta)
-                           ? -1
-                           : d::get_shared_raw_fd(shared_meta, path);
+        // Hold the refcounted fd for the duration of the canonical read so an
+        // invalidation cannot close it underneath pread/mmap.
+        std::shared_ptr<d::RawFdHolder> fd_holder;
+        if (!resolved.compressed && shared_meta) {
+            fd_holder = d::get_shared_raw_fd(shared_meta, path);
+        }
+        const int fd = fd_holder ? fd_holder->fd : -1;
         auto tensor = d::read_tensor_canonical(
             fptr, path, resolved, resolved.compressed ? false : use_mmap, fd,
             /*use_chunking=*/false);
@@ -934,6 +946,9 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     auto dtype_to_code = [](const nb::dlpack::dtype& dt) -> std::pair<std::string, int> {
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) return {"L", TLOGICAL};
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) return {"B", TBYTE};
+        // Int8 maps to TBYTE (FITS signed-byte storage, bit-identical with
+        // the unsigned interpretation) — same convention as append/update_rows.
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8) return {"B", TBYTE};
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) return {"I", TSHORT};
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) return {"J", TINT};
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Float && dt.bits == 32) return {"E", TFLOAT};
@@ -947,6 +962,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     auto ascii_tform = [](const nb::dlpack::dtype& dt, long width_hint) -> std::string {
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) return "L1";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) return "I3";
+        if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8) return "I4";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) return "I6";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 32) return "I11";
         if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 64) return "I20";
@@ -1148,7 +1164,13 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                     col.width = info.repeat;
                 }
             } else if (is_ascii) {
-                col.tform = ascii_tform(nb::dlpack::dtype{(uint8_t)nb::dlpack::dtype_code::UInt, 8, 1}, max_len);
+                // ASCII string columns use "Aw" with the character width
+                // (CFITSIO's ASCII_TBL parser requires the code letter first).
+                long width = max_len;
+                if (width <= 0) {
+                    width = 1;
+                }
+                col.tform = "A" + std::to_string(width);
             } else {
                 col.tform = std::to_string(max_len) + "A";
             }
@@ -1562,8 +1584,10 @@ void bind_fits(nb::module_& m) {
                 status = 0;
                 fits_get_hduaddrll(fptr, &headstart, &data_offset, &dataend, &status);
                 if (status == 0 && data_offset > 0) {
-                    size_t nelem = 1;
-                    for (size_t d : shape) nelem *= d;
+                    // Checked product: a NAXIS product overflow must not silently
+                    // truncate the pread/mmap to a smaller byte count.
+                    const LONGLONG nelem_ll = d::checked_nelements_product(shape);
+                    const size_t nelem = static_cast<size_t>(nelem_ll);
                     const size_t nbytes = nelem;
                     const int fd = d::open_readonly_fd(filename);
                     if (fd != -1) {
@@ -1790,6 +1814,8 @@ void bind_fits(nb::module_& m) {
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for checksum writing");
         }
+        FitsHandleGuard guard;
+        guard.fptr = fptr;
         auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
             int status = 0;
             fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
@@ -1799,9 +1825,7 @@ void bind_fits(nb::module_& m) {
         };
         move_to_hdu(fptr, hdu_num);
         ffpcks(fptr, &status);
-        int close_status = 0;
-        fits_close_file(fptr, &close_status);
-        if (status != 0 || close_status != 0) {
+        if (status != 0) {
             throw std::runtime_error("Failed to write FITS checksums");
         }
     }, nb::arg("path"), nb::arg("hdu_num") = 0);
@@ -1814,6 +1838,8 @@ void bind_fits(nb::module_& m) {
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for checksum verification");
         }
+        FitsHandleGuard guard;
+        guard.fptr = fptr;
         int datastatus = -1;
         int hdustatus = -1;
         auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
@@ -1825,9 +1851,7 @@ void bind_fits(nb::module_& m) {
         };
         move_to_hdu(fptr, hdu_num);
         ffvcks(fptr, &datastatus, &hdustatus, &status);
-        int close_status = 0;
-        fits_close_file(fptr, &close_status);
-        if (status != 0 || close_status != 0) {
+        if (status != 0) {
             throw std::runtime_error("Failed to verify FITS checksums");
         }
         return nb::make_tuple(datastatus, hdustatus);
@@ -1841,6 +1865,8 @@ void bind_fits(nb::module_& m) {
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for header-card writing");
         }
+        FitsHandleGuard guard;
+        guard.fptr = fptr;
         auto move_to_hdu = [](fitsfile* fptr, int hdu_num) {
             int status = 0;
             fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
@@ -1934,9 +1960,7 @@ void bind_fits(nb::module_& m) {
             }
         }
 
-        int close_status = 0;
-        fits_close_file(fptr, &close_status);
-        if (status != 0 || close_status != 0) {
+        if (status != 0) {
             throw std::runtime_error("Failed to write FITS header cards");
         }
     }, nb::arg("path"), nb::arg("hdu_num"), nb::arg("cards"));
@@ -1949,10 +1973,10 @@ void bind_fits(nb::module_& m) {
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for header-key deletion");
         }
+        FitsHandleGuard guard;
+        guard.fptr = fptr;
         fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
         if (status != 0) {
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
             throw std::runtime_error("Could not move to HDU for header-key deletion");
         }
         std::string sanitized = d::sanitize_fits_key(key);
@@ -1964,14 +1988,10 @@ void bind_fits(nb::module_& m) {
             key_upper == "PCOUNT" || key_upper == "GCOUNT" || key_upper == "TFIELDS" ||
             key_upper == "THEAP" || key_upper == "DATASUM" || key_upper == "CHECKSUM" ||
             key_upper.rfind("NAXIS", 0) == 0) {
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
             throw std::runtime_error("Refusing to delete structural FITS keyword: " + sanitized);
         }
         fits_delete_key(fptr, sanitized.c_str(), &status);
-        int close_status = 0;
-        fits_close_file(fptr, &close_status);
-        if (status != 0 || close_status != 0) {
+        if (status != 0) {
             throw std::runtime_error("Failed to delete FITS header keyword: " + sanitized);
         }
     }, nb::arg("path"), nb::arg("hdu_num"), nb::arg("key"));
@@ -2061,19 +2081,17 @@ void bind_fits(nb::module_& m) {
         });
 
     m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::list {
-        try {
-            nb::gil_scoped_release release;
-            FITSFile file(filename.c_str(), 0);
-            auto header = file.get_header(hdu_num);
-            nb::gil_scoped_acquire acquire;
-            nb::list result;
-            for (const auto& item : header) {
-                result.append(nb::make_tuple(std::get<0>(item), std::get<1>(item), std::get<2>(item)));
-            }
-            return result;
-        } catch (const std::exception& e) {
-            return nb::list();
+        // Let open/parse failures propagate: silently returning an empty list
+        // turned a broken read into a seemingly-valid empty header.
+        nb::gil_scoped_release release;
+        FITSFile file(filename.c_str(), 0);
+        auto header = file.get_header(hdu_num);
+        nb::gil_scoped_acquire acquire;
+        nb::list result;
+        for (const auto& item : header) {
+            result.append(nb::make_tuple(std::get<0>(item), std::get<1>(item), std::get<2>(item)));
         }
+        return result;
     });
 
     // Skinny metadata: open → move HDU → structural/key query. No full header dump.

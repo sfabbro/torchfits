@@ -172,6 +172,7 @@ public:
                 switch (abs_type) {
                     case TLOGICAL: col.torch_type = torch::kBool; break;
                     case TBYTE: col.torch_type = torch::kUInt8; break;
+                    case TSBYTE: col.torch_type = torch::kInt8; break;
                     case TSHORT: col.torch_type = torch::kInt16; break;
                     case TINT: col.torch_type = torch::kInt32; break;
                     case TLONG: col.torch_type = torch::kInt32; break;
@@ -197,9 +198,15 @@ public:
                         col.width = 1;
                         break;
                     case TBYTE:
-                    case TSBYTE:
                         col.type = FITSColumnType::BYTE;
                         col.torch_type = torch::kUInt8;
+                        col.width = 1;
+                        break;
+                    case TSBYTE:
+                        // Signed bytes must stay signed: kUInt8 would turn
+                        // 128..255 into -128..-1 on every read path.
+                        col.type = FITSColumnType::BYTE;
+                        col.torch_type = torch::kInt8;
                         col.width = 1;
                         break;
                     case TBIT:
@@ -232,7 +239,13 @@ public:
                              // For binary tables, repeat_long is often the string length,
                              // but some FITS writers may populate width_long instead.
                              if (repeat_long > 1) {
-                                 col.repeat = (int)repeat_long;
+            // repeat_long comes from TFORMn and must fit int: truncation would
+            // corrupt cell sizes/offsets for absurd TFORM repeats.
+            if (repeat_long > 0x7fffffffL) {
+                throw std::runtime_error(
+                    "Column repeat exceeds supported range for column " + std::string(ttype));
+            }
+            col.repeat = (int)repeat_long;
                              } else if (width_long > 0) {
                                  col.repeat = (int)width_long;
                              }
@@ -412,7 +425,9 @@ public:
             std::cerr << "Invalid start row: " << start_row << ", nrows: " << nrows_ << std::endl;
             throw std::runtime_error("Invalid start row");
         }
-        if (start_row + num_rows - 1 > nrows_) {
+        // Reordered comparison: start_row + num_rows - 1 can overflow long for
+        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
+        if (num_rows > nrows_ - start_row + 1) {
             num_rows = nrows_ - start_row + 1;
         }
 
@@ -601,12 +616,12 @@ public:
                          fits_read_col(fptr_, TBYTE, col_idx + 1, start_row, firstelem, nelements,
                                       nullptr, tensor.data_ptr(), nullptr, &status);
 
-                         // Convert 'T'/'F' to 1/0
-                         // The tensor is kBool, so its data_ptr is bool*.
-                         // We read into it as uint8_t* (char), then convert.
+                         // Convert logical byte to 1/0. CFITSIO converts logical
+                         // columns to the integer values 1/0 when read as TBYTE;
+                         // raw bytes may also be 'T'/'F' or '1'/'0'.
                          uint8_t* data = (uint8_t*)tensor.data_ptr();
                          for (long i = 0; i < nelements; i++) {
-                             data[i] = (data[i] == 'T') ? 1 : 0;
+                             data[i] = (data[i] == 'T' || data[i] == '1' || data[i] == 1) ? 1 : 0;
                          }
                     } else {
                         #ifdef DEBUG_TABLE
@@ -754,7 +769,9 @@ public:
         if (start_row < 1 || start_row > nrows_) {
             throw std::runtime_error("Invalid start row");
         }
-        if (start_row + num_rows - 1 > nrows_) {
+        // Reordered comparison: start_row + num_rows - 1 can overflow long for
+        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
+        if (num_rows > nrows_ - start_row + 1) {
             num_rows = nrows_ - start_row + 1;
         }
 
@@ -778,6 +795,12 @@ public:
         for (int col_idx : col_indices) {
             ensure_column_scale(col_idx);
             const auto& col = columns_[col_idx];
+            if (is_ascii_) {
+                // ASCII tables store numeric fields as text; the mmap layout
+                // (binary cells, byte-swap) does not apply. Route to the
+                // buffered path, which uses fits_read_col and handles ASCII.
+                throw std::runtime_error("ASCII tables are not supported for mmap reads");
+            }
             if (col.type == FITSColumnType::VARIABLE) {
                 throw std::runtime_error("VLA columns not supported for mmap");
             }
@@ -867,7 +890,7 @@ public:
                     case FITSColumnType::INT: dtype = torch::kInt32; break;
                     case FITSColumnType::SHORT: dtype = torch::kInt16; break;
                     case FITSColumnType::LONG: dtype = torch::kInt64; break;
-                    case FITSColumnType::BYTE: dtype = torch::kUInt8; break;
+                    case FITSColumnType::BYTE: dtype = col.torch_type; break;  // kUInt8, or kInt8 for TSBYTE
                     case FITSColumnType::BIT: dtype = torch::kBool; break;
                     case FITSColumnType::LOGICAL: dtype = torch::kBool; break;
                     case FITSColumnType::STRING: dtype = torch::kUInt8; break;
@@ -986,7 +1009,7 @@ public:
                             const char* in = (const char*)(col_ptr + i * row_width_bytes_);
                             bool* row_out = out + i * repeat; // repeat is usually 1 for logical
                             for (long j = 0; j < repeat; j++) {
-                                row_out[j] = (in[j] == 'T');
+                                row_out[j] = (in[j] == 'T' || in[j] == '1' || in[j] == 1);
                             }
                         }
                     });
@@ -1001,9 +1024,9 @@ public:
                 result[col.name.c_str()] = tensor_to_python(tensor);
 
             } catch (const std::exception& e) {
-                 #ifdef DEBUG_TABLE
-                 fprintf(stderr, "Failed to mmap column %s: %s\n", col.name.c_str(), e.what());
-                 #endif
+                // Never swallow: a failed column must surface as an error, not
+                // as a silently missing column in the result dict.
+                throw std::runtime_error("Failed to mmap column " + col.name + ": " + e.what());
             }
         }
 
@@ -1021,6 +1044,11 @@ public:
             // Or just throw error -> filters shouldn't be empty here if called correctly.
             // But for robustness:
              throw std::runtime_error("Filters cannot be empty in read_columns_mmap_filtered");
+        }
+        if (is_ascii_) {
+            // ASCII tables store numeric fields as text; the mmap layout does
+            // not apply. Route to the buffered/mask paths instead.
+            throw std::runtime_error("ASCII tables are not supported for mmap filtered reads");
         }
 
         // Map file
@@ -1050,6 +1078,7 @@ public:
             const TableFilter* filter;
             const ColumnInfo* col_info;
             size_t offset;
+            int col_idx = -1;
             // Cached types for fast switch
             bool is_float = false;
             bool is_double = false;
@@ -1062,7 +1091,8 @@ public:
         std::vector<FilterContext> ctxs;
         for (const auto& f : filters) {
             bool found = false;
-            for (const auto& c : columns_) {
+            for (int ci = 0; ci < static_cast<int>(columns_.size()); ++ci) {
+                const auto& c = columns_[ci];
                 if (c.name == f.col_name) {
                     FilterContext ctx;
                     ctx.filter = &f;
@@ -1076,6 +1106,23 @@ public:
                     else if (c.type == FITSColumnType::SHORT) ctx.is_short = true;
                     else if (c.type == FITSColumnType::BYTE) ctx.is_byte = true;
 
+                    // Resolve TSCAL/TZERO so the scaled/unsigned state is
+                    // accurate, then reject what the raw-byte scan cannot do.
+                    ensure_column_scale(ci);
+                    if (c.scaled) {
+                        throw std::runtime_error(
+                            "Filtering on scaled columns is not supported for mmap filtered reads: " +
+                            c.name);
+                    }
+                    if (!ctx.is_float && !ctx.is_double && !ctx.is_int &&
+                        !ctx.is_long && !ctx.is_short && !ctx.is_byte) {
+                        // LOGICAL/STRING/BIT/VLA predicates would silently match
+                        // nothing — fail loudly instead of returning empty data.
+                        throw std::runtime_error(
+                            "Filtering on column type is not supported: " + c.name);
+                    }
+
+                    ctx.col_idx = ci;
                     ctxs.push_back(ctx);
                     found = true;
                     break;
@@ -1386,6 +1433,18 @@ public:
              }
         }
 
+        // Resolve TSCAL/TZERO for gathered columns: the unsigned-int post-pass
+        // below relies on unsigned_offset being populated, and scaled (non-
+        // unsigned) columns cannot be gathered from raw storage bytes.
+        for (int col_idx : out_col_indices) {
+            ensure_column_scale(col_idx);
+            const auto& col = columns_[col_idx];
+            if (col.scaled && !col.is_unsigned_int) {
+                throw std::runtime_error(
+                    "Scaled columns not supported for mmap filtered reads: " + col.name);
+            }
+        }
+
         for (int col_idx : out_col_indices) {
             const auto& col = columns_[col_idx];
             if (col.type == FITSColumnType::VARIABLE) continue; // Skip VLA for now
@@ -1399,7 +1458,8 @@ public:
                 shape.push_back(col.repeat);
             }
 
-            auto options = torch::TensorOptions().dtype(col.torch_type);
+            auto options = torch::TensorOptions().dtype(
+                col.type == FITSColumnType::BIT ? torch::kBool : col.torch_type);
             torch::Tensor out_tensor = torch::empty(shape, options);
 
             if (num_valid == 0) {
@@ -1413,8 +1473,52 @@ public:
             else if (col.type == FITSColumnType::SHORT) item_size = 2;
             else item_size = 1;
 
-            size_t cell_size = item_size * ( (col.type == FITSColumnType::STRING) ? (is_ascii_ ? col.width : col.repeat) : std::max(1, col.repeat));
+            // Cell size in storage bytes. BIT columns are bit-packed, so the
+            // repeat (bit count) must not be used as a byte count — that would
+            // over-read into adjacent columns / past EOF.
+            size_t cell_size = 0;
+            if (col.type == FITSColumnType::STRING) {
+                cell_size = static_cast<size_t>(is_ascii_ ? col.width : col.repeat);
+            } else if (col.type == FITSColumnType::BIT) {
+                cell_size = (static_cast<size_t>(col.repeat) + 7) / 8;
+            } else {
+                cell_size = static_cast<size_t>(item_size) * static_cast<size_t>(std::max(1, col.repeat));
+            }
             uint8_t* out_ptr = (uint8_t*)out_tensor.data_ptr();
+
+            // LOGICAL: storage is ASCII 'T'/'F' — raw memcpy into a bool tensor
+            // would decode both as true (both nonzero).
+            if (col.type == FITSColumnType::LOGICAL) {
+                bool* out_bool = static_cast<bool*>(out_tensor.data_ptr());
+                at::parallel_for(0, num_valid, 2048, [&](long start, long end) {
+                    for (long k = start; k < end; k++) {
+                        const uint8_t* src =
+                            data_ptr + valid_indices[k] * row_width_bytes_ + col.byte_offset;
+                        out_bool[k] = (src[0] == 'T' || src[0] == '1' || src[0] == 1);
+                    }
+                });
+                result[col.name] = out_tensor;
+                continue;
+            }
+
+            // BIT: unpack MSB-first bits into bools (mirrors read_columns_mmap).
+            if (col.type == FITSColumnType::BIT) {
+                bool* out_bool = static_cast<bool*>(out_tensor.data_ptr());
+                const long repeat = std::max(1L, (long)col.repeat);
+                at::parallel_for(0, num_valid, 2048, [&](long start, long end) {
+                    for (long k = start; k < end; k++) {
+                        const uint8_t* row_in =
+                            data_ptr + valid_indices[k] * row_width_bytes_ + col.byte_offset;
+                        bool* row_out = out_bool + k * repeat;
+                        for (long j = 0; j < repeat; j++) {
+                            const uint8_t packed = row_in[j / 8];
+                            row_out[j] = ((packed >> (7 - (j % 8))) & 0x1U) != 0;
+                        }
+                    }
+                });
+                result[col.name] = out_tensor;
+                continue;
+            }
 
             // Parallel gathering with contiguous block detection.
             // Each thread processes a disjoint range of valid_indices and writes
@@ -1492,6 +1596,11 @@ public:
             return;
         }
         ensure_table_hdu();
+        if (is_ascii_) {
+            // Writing binary cells into ASCII text fields would corrupt the
+            // table; update_rows (fits_write_col) handles ASCII tables.
+            throw std::runtime_error("ASCII tables are not supported for mmap updates");
+        }
         if (start_row < 1 || start_row > nrows_) {
             throw std::runtime_error("Invalid start row");
         }
@@ -1622,18 +1731,30 @@ public:
 
                     switch (col->type) {
                         case FITSColumnType::BYTE: {
-                            if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8)) {
+                            const bool is_sbyte = col->fits_typecode == TSBYTE;
+                            if (is_sbyte) {
+                                if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8)) {
+                                    munmap(map_ptr, sb.st_size);
+                                    close(fd);
+                                    throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+                                }
+                            } else if (!(dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8)) {
                                 munmap(map_ptr, sb.st_size);
                                 close(fd);
                                 throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
                             }
+                            // Byte-for-byte identical bit pattern for signed/unsigned 8-bit.
                             *dest = src_u8[idx];
                             break;
                         }
                         case FITSColumnType::LOGICAL: {
                             bool val = false;
                             if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                                val = src_bool[idx];
+                                // Read via tensor.stride() to handle DLPack strided views.
+                                long byte_offset = (ndim == 2)
+                                    ? i * tensor.stride(0) + j * tensor.stride(1)
+                                    : i * tensor.stride(0) + j;
+                                val = src_bool[byte_offset];
                             } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
                                 // Read via tensor.stride() to handle DLPack strided views.
                                 long byte_offset = (ndim == 2)
@@ -1712,7 +1833,11 @@ public:
                             // Extract a bool from a packed BIT column (MSB-first).
                             bool val = false;
                             if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                                val = src_bool[idx];
+                                // Read via tensor.stride() to handle DLPack strided views.
+                                long byte_offset = (ndim == 2)
+                                    ? i * tensor.stride(0) + j * tensor.stride(1)
+                                    : i * tensor.stride(0) + j;
+                                val = src_bool[byte_offset];
                             } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
                                 // Read via tensor.stride() to handle DLPack strided views.
                                 long byte_offset = (ndim == 2)
@@ -2198,7 +2323,7 @@ public:
                      const uint8_t* src_cell = buffer + i * row_stride + col_offset;
                      for (int j = 0; j < repeat; j++) {
                          const uint8_t v = src_cell[j];
-                         out[i * repeat + j] = (v == 'T' || v == '1');
+                         out[i * repeat + j] = (v == 'T' || v == '1' || v == 1);
                      }
                  }
              });

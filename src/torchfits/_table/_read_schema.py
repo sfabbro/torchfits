@@ -204,6 +204,10 @@ def _can_use_full_read_path(
             header = torchfits.read_header(path, hdu)
         except (OSError, ValueError):
             return False
+    if str(header.get("XTENSION", "")).strip().upper() == "TABLE":
+        # ASCII tables store cells as fixed-width text with no binary row
+        # layout; the raw/mmap row path cannot decode them, so reject it.
+        return False
     try:
         tf_count = int(header.get("TFIELDS", 0))
     except (TypeError, ValueError):

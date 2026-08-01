@@ -54,17 +54,25 @@ def stream_table(
         yield result
         return
 
+    header = None
     if total_rows is None:
-        total_rows = _total_rows_from_header(get_header_func(file_path, hdu))
+        header = get_header_func(file_path, hdu)
+        total_rows = _total_rows_from_header(header)
     if total_rows == 0:
         return
 
     if num_rows != -1:
         total_rows = min(total_rows, start_row + num_rows - 1)
 
+    # ASCII tables (XTENSION=TABLE) have no binary row layout and cannot be
+    # read through the mmap row path; route them through the CFITSIO reader.
+    ascii_table = header is not None and (
+        str(header.get("XTENSION", "")).strip().upper() == "TABLE"
+    )
+
     row = start_row
     emitted = 0
-    if mmap and hasattr(cpp, "read_fits_table_rows"):
+    if mmap and not ascii_table and hasattr(cpp, "read_fits_table_rows"):
         while row <= total_rows:
             remaining = total_rows - row + 1
             size = min(chunk_rows, remaining)

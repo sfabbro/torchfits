@@ -327,6 +327,12 @@ def get_header(
                     handle.close()
                 except Exception as exc:
                     _log.debug("get_header: handle close failed: %s", exc)
-        return Header(cpp.read_header_dict(path, hdu_index))
+        try:
+            return Header(cpp.read_header_dict(path, hdu_index))
+        except RuntimeError as exc:
+            # read_header_dict propagates open/parse failures; surface them as
+            # OSError so unreadable files match the documented read_header
+            # contract that capability probes rely on.
+            raise OSError(str(exc)) from exc
 
     return _read_header(path, hdu_index)

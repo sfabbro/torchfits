@@ -488,7 +488,9 @@ if(TORCH_PYTHON_LIBRARY)
     target_link_libraries(_C PRIVATE ${TORCH_PYTHON_LIBRARY})
     message(STATUS "Found libtorch_python: ${TORCH_PYTHON_LIBRARY}")
 else()
-    message(WARNING "libtorch_python not found in ${TORCH_ROOT}/lib - tensor returns will use slower DLPack path")
+    # torch_compat.h calls THPVariable_Wrap unconditionally, so a missing
+    # libtorch_python is a link-time failure, not a fallback to DLPack.
+    message(WARNING "libtorch_python not found in ${TORCH_ROOT}/lib - torch tensor conversion may fail to link")
 endif()
 
 if(TARGET cfitsio)

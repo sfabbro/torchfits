@@ -17,7 +17,7 @@ MMapHandle::MMapHandle(void* ptr, size_t size, int fd, bool owner)
     : ptr(ptr), size(size), fd(fd), owner(owner) {}
 
 MMapHandle::MMapHandle(const std::string& filename, bool writable) {
-    fd = open(filename.c_str(), O_RDONLY);
+    fd = open(filename.c_str(), (writable ? O_RDWR : O_RDONLY) | O_CLOEXEC);
     if (fd == -1) {
         throw std::runtime_error("Failed to open file descriptor: " + filename);
     }
@@ -28,6 +28,14 @@ MMapHandle::MMapHandle(const std::string& filename, bool writable) {
         throw std::runtime_error("Failed to stat file: " + filename);
     }
     size = st.st_size;
+
+    if (size == 0) {
+        // mmap of a zero-length file fails with EINVAL; represent it as an
+        // empty (non-mapped) handle instead of throwing.
+        ptr = nullptr;
+        owner = true;
+        return;
+    }
 
     int prot = PROT_READ | (writable ? PROT_WRITE : 0);
     ptr = mmap(nullptr, size, prot, MAP_PRIVATE, fd, 0);

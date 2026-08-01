@@ -436,8 +436,9 @@ def _prepare_unsigned_table_data_for_write(
         converted = _unsigned_table_storage_for_fits_write(value)
         if converted is None:
             out[col_name] = value
-            if schema is not None and col_name not in prepared_schema:
-                prepared_schema[col_name] = {}
+            # Register every column in the synthesized schema: the C++ writer
+            # requires schema size == data size when a schema is present.
+            prepared_schema.setdefault(col_name, {})
             continue
 
         raw, code, bzero = converted

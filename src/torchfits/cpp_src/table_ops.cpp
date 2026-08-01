@@ -96,50 +96,6 @@ void rollback_inserted_rows(fitsfile* fptr, long start_row, long num_rows) {
 
 }  // namespace
 
-void* open_table_reader(const char* filename, int hdu_num) {
-    try {
-        return new torchfits::TableReader(filename, hdu_num);
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void* open_table_reader_from_handle(uintptr_t handle, int hdu_num) {
-    try {
-        // Cast to fitsfile pointer directly since we can't include FITSFile here
-        auto* fptr = reinterpret_cast<fitsfile*>(handle);
-        return new torchfits::TableReader(fptr, hdu_num);
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void close_table_reader(void* reader_handle) {
-    if (reader_handle) {
-        delete static_cast<torchfits::TableReader*>(reader_handle);
-    }
-}
-
-int read_table_columns(void* reader_handle, const char** column_names, int num_columns,
-                      long start_row, long num_rows, nb::dict* result_dict) {
-    if (!reader_handle) return -1;
-
-    try {
-        auto* reader = static_cast<torchfits::TableReader*>(reader_handle);
-
-        std::vector<std::string> cols;
-        for (int i = 0; i < num_columns; i++) {
-            cols.push_back(std::string(column_names[i]));
-        }
-
-        auto result = reader->read_columns(cols, start_row, num_rows);
-        *result_dict = nb::cast<nb::dict>(nb::cast(result));
-        return 0;
-    } catch (...) {
-        return -1;
-    }
-}
-
 
 
 void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict header, bool overwrite, nb::object schema_obj, const std::string& table_type) {
@@ -340,7 +296,11 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
                 throw std::runtime_error("append_rows column length mismatch for " + col_name);
             }
 
-            long width_chars = repeat > 0 ? repeat : 1;
+            // ASCII tables report repeat=1 with the field width in `width`
+            // (binary tables report repeat=string-length, width=1), so a
+            // `repeat > 0 ? repeat : 1` fallback truncates ASCII strings to
+            // a single character.
+            long width_chars = repeat > 1 ? repeat : width;
             std::vector<std::string> padded;
             padded.reserve(values.size());
             for (const auto& v : values) {
@@ -386,6 +346,16 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
             throw std::runtime_error("append_rows column length mismatch for " + col_name);
         }
 
+        // The 2D payload width must match the column repeat: writing a
+        // different element count per row interleaves cells and corrupts
+        // every following row.
+        if (repeat > 0 && repeat_vals != repeat) {
+            rollback_inserted_rows(fptr, start_row, num_rows);
+            throw std::runtime_error(
+                "append_rows repeat mismatch for " + col_name + ": column repeat=" +
+                std::to_string(repeat) + " payload width=" + std::to_string(repeat_vals));
+        }
+
         long nelements = num_rows * repeat_vals;
         std::vector<uint8_t> contig_buf;
         void* data_ptr = ensure_c_contiguous_ndarray(tensor, nelements, contig_buf);
@@ -402,6 +372,10 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
             }
             data_ptr = logical_buffer.data();
         } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+            fits_type = TBYTE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8) {
+            // FITS TBYTE storage is signed bytes (bit-identical with unsigned
+            // interpretation), so Int8 payloads map to TBYTE.
             fits_type = TBYTE;
         } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
             fits_type = TSHORT;
@@ -688,7 +662,7 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                         "update_rows column length mismatch for " + col_name
                     );
                 }
-                long width_chars_str = repeat > 0 ? repeat : 1;
+                long width_chars_str = repeat > 1 ? repeat : width;
                 if (user_repeat_str > width_chars_str) {
                     fits_close_file(fptr, &status);
                     throw std::runtime_error(
@@ -731,7 +705,11 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                 throw std::runtime_error("update_rows column length mismatch for " + col_name);
             }
 
-            long width_chars = repeat > 0 ? repeat : 1;
+            // ASCII tables report repeat=1 with the field width in `width`
+            // (binary tables report repeat=string-length, width=1), so a
+            // `repeat > 0 ? repeat : 1` fallback truncates ASCII strings to
+            // a single character.
+            long width_chars = repeat > 1 ? repeat : width;
             std::vector<std::string> padded;
             padded.reserve(values.size());
             for (const auto& v : values) {
@@ -863,6 +841,16 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
             throw std::runtime_error("update_rows column length mismatch for " + col_name);
         }
 
+        // The 2D payload width must match the column repeat: writing a
+        // different element count per row interleaves cells and corrupts
+        // every following row.
+        if (repeat > 0 && repeat_vals != repeat) {
+            fits_close_file(fptr, &status);
+            throw std::runtime_error(
+                "update_rows repeat mismatch for " + col_name + ": column repeat=" +
+                std::to_string(repeat) + " payload width=" + std::to_string(repeat_vals));
+        }
+
         long nelements = num_rows * repeat_vals;
         std::vector<uint8_t> contig_buf;
         void* data_ptr = ensure_c_contiguous_ndarray(tensor, nelements, contig_buf);
@@ -879,6 +867,10 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
             }
             data_ptr = logical_buffer.data();
         } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
+            fits_type = TBYTE;
+        } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 8) {
+            // FITS TBYTE storage is signed bytes (bit-identical with unsigned
+            // interpretation), so Int8 payloads map to TBYTE.
             fits_type = TBYTE;
         } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Int && dt.bits == 16) {
             fits_type = TSHORT;

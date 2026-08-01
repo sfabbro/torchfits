@@ -65,7 +65,16 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
     } else {
         fits_create_file(&fptr_, filename, &status);
     }
-    if (status != 0 || !fptr_) throw std::runtime_error("Could not open FITS file: " + filename_);
+    if (status != 0 || !fptr_) {
+        // CFITSIO may leave a partially-initialized handle on failure; close it
+        // to avoid leaking the underlying file.
+        if (fptr_) {
+            int close_status = 0;
+            fits_close_file(fptr_, &close_status);
+            fptr_ = nullptr;
+        }
+        throw std::runtime_error("Could not open FITS file: " + filename_);
+    }
     if (mode == 0) shared_meta_ = detail::get_shared_meta_for_path(filename_);
     const bool has_extension = has_cfitsio_extended_filename_syntax(filename_);
     if (!has_extension) {
@@ -260,7 +269,13 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
     meta.compressed = is_compressed_image_cached(hdu_num);
     meta.compressed_nulls = meta.compressed ? has_compressed_nulls_cached(hdu_num) : false;
 
-    const int fd = meta.compressed ? -1 : detail::get_shared_raw_fd(shared_meta_, filename_);
+    // Hold the refcounted fd for the duration of the canonical read so an
+    // invalidation cannot close it underneath pread/mmap.
+    std::shared_ptr<detail::RawFdHolder> fd_holder;
+    if (!meta.compressed && shared_meta_) {
+        fd_holder = detail::get_shared_raw_fd(shared_meta_, filename_);
+    }
+    const int fd = fd_holder ? fd_holder->fd : -1;
     return detail::read_tensor_canonical(fptr_, filename_, meta, use_mmap, fd, /*use_chunking=*/false);
 }
 
@@ -335,20 +350,27 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
                         // pread failed mid-loop: mmap only the page-aligned range
                         // covering [data_offset, data_offset+nbytes), not the whole
                         // file — a whole-file map can OOM on huge files with a small HDU.
-                        static const long kPageSize = sysconf(_SC_PAGESIZE);
-                        const off_t page_mask = kPageSize > 0 ? static_cast<off_t>(kPageSize - 1) : 0;
-                        const off_t map_page_offset = static_cast<off_t>(data_offset) & ~page_mask;
-                        const size_t map_len = nbytes + static_cast<size_t>(
-                            static_cast<off_t>(data_offset) - map_page_offset);
-                        void* map_ptr = mmap(nullptr, map_len, PROT_READ, MAP_SHARED,
-                                             raw_fd_, map_page_offset);
-                        if (map_ptr != MAP_FAILED) {
-                            const uint8_t* src = static_cast<const uint8_t*>(map_ptr) +
-                                (static_cast<off_t>(data_offset) - map_page_offset);
-                            std::memcpy(tensor.data_ptr(), src, nbytes);
-                            munmap(map_ptr, map_len);
-                            return tensor;
+                        // Re-stat first: the file may have been truncated since the
+                        // handle opened; mapping beyond EOF SIGBUSes on first touch.
+                        struct stat fresh_sb {};
+                        if (fstat(raw_fd_, &fresh_sb) == 0 &&
+                            static_cast<size_t>(fresh_sb.st_size) >= end_off) {
+                            static const long kPageSize = sysconf(_SC_PAGESIZE);
+                            const off_t page_mask = kPageSize > 0 ? static_cast<off_t>(kPageSize - 1) : 0;
+                            const off_t map_page_offset = static_cast<off_t>(data_offset) & ~page_mask;
+                            const size_t map_len = nbytes + static_cast<size_t>(
+                                static_cast<off_t>(data_offset) - map_page_offset);
+                            void* map_ptr = mmap(nullptr, map_len, PROT_READ, MAP_SHARED,
+                                                 raw_fd_, map_page_offset);
+                            if (map_ptr != MAP_FAILED) {
+                                const uint8_t* src = static_cast<const uint8_t*>(map_ptr) +
+                                    (static_cast<off_t>(data_offset) - map_page_offset);
+                                std::memcpy(tensor.data_ptr(), src, nbytes);
+                                munmap(map_ptr, map_len);
+                                return tensor;
+                            }
                         }
+                        // Fall through to the CFITSIO path, which reports a clean error.
                     }
                 }
             } else { status = 0; }
@@ -514,7 +536,18 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
     bool scaled = scale_info.scaled;
     torch::ScalarType dtype;
     int datatype;
-    if (scaled) { dtype = torch::kFloat32; datatype = TFLOAT; }
+    // Mirror the dtype conventions of read_tensor_canonical: BZERO=32768 /
+    // 2^31 / -128 are unsigned/signed integer conventions, not float scale.
+    const bool signed_byte_scaled =
+        scaled && bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0;
+    const bool unsigned_short =
+        scaled && bitpix == SHORT_IMG && scale_info.bscale == 1.0 && scale_info.bzero == 32768.0;
+    const bool unsigned_long =
+        scaled && bitpix == LONG_IMG && scale_info.bscale == 1.0 && scale_info.bzero == 2147483648.0;
+    if (signed_byte_scaled) { dtype = torch::kInt8;  datatype = TSBYTE; }
+    else if (unsigned_short) { dtype = torch::kUInt16; datatype = TUSHORT; }
+    else if (unsigned_long) { dtype = torch::kUInt32; datatype = TUINT; }
+    else if (scaled) { dtype = torch::kFloat32; datatype = TFLOAT; }
     else {
         switch (bitpix) {
             case BYTE_IMG:     dtype = torch::kUInt8;  datatype = TBYTE;      break;
@@ -895,21 +928,34 @@ bool SubsetReader::ensure_data_mmap() {
     if (pixel_base_ != nullptr) return true;
     if (!raw_fast_ok_ || elem_bytes_ == 0 || data_offset_ <= 0) return false;
     auto meta = detail::get_shared_meta_for_path(filename_);
-    const int fd = detail::get_shared_raw_fd(meta, filename_);
-    if (fd < 0) return false;
+    raw_fd_holder_ = detail::get_shared_raw_fd(meta, filename_);
+    if (!raw_fd_holder_ || raw_fd_holder_->fd < 0) return false;
 
     const size_t nbytes =
         static_cast<size_t>(naxes_[0]) * static_cast<size_t>(naxes_[1]) * elem_bytes_;
     if (nbytes == 0) return false;
 
+    // Never map beyond the actual file: header-claimed sizes on truncated or
+    // corrupt files would SIGBUS on first touch. Fall back to fits_read_subset.
+    struct stat sb {};
+    if (fstat(raw_fd_holder_->fd, &sb) != 0) {
+        raw_fd_holder_.reset();
+        return false;
+    }
     static const long kPageSize = sysconf(_SC_PAGESIZE);
     const off_t page_mask = kPageSize > 0 ? static_cast<off_t>(kPageSize - 1) : 0;
     map_page_offset_ = static_cast<off_t>(data_offset_) & ~page_mask;
     map_len_ = nbytes + static_cast<size_t>(static_cast<off_t>(data_offset_) - map_page_offset_);
-    map_ptr_ = mmap(nullptr, map_len_, PROT_READ, MAP_SHARED, fd, map_page_offset_);
+    const size_t map_end = static_cast<size_t>(map_page_offset_) + map_len_;
+    if (static_cast<size_t>(sb.st_size) < map_end) {
+        raw_fd_holder_.reset();
+        return false;
+    }
+    map_ptr_ = mmap(nullptr, map_len_, PROT_READ, MAP_SHARED, raw_fd_holder_->fd, map_page_offset_);
     if (map_ptr_ == MAP_FAILED) {
         map_ptr_ = nullptr;
         map_len_ = 0;
+        raw_fd_holder_.reset();
         return false;
     }
 #if defined(MADV_RANDOM) && defined(MADV_WILLNEED)

@@ -20,14 +20,34 @@ fitsfile* get_or_open_cached(const std::string& filepath);
 void release_cached(const std::string& filepath);
 void invalidate_cached(const std::string& filepath);
 
-// RAII close for a privately owned fitsfile*.
+// RAII close for a privately owned fitsfile*. Move-only: a copied guard would
+// close the same handle twice.
 struct FitsHandleGuard {
     fitsfile* fptr = nullptr;
 
-    ~FitsHandleGuard() {
+    FitsHandleGuard() = default;
+    FitsHandleGuard(const FitsHandleGuard&) = delete;
+    FitsHandleGuard& operator=(const FitsHandleGuard&) = delete;
+
+    FitsHandleGuard(FitsHandleGuard&& other) noexcept : fptr(other.fptr) {
+        other.fptr = nullptr;
+    }
+    FitsHandleGuard& operator=(FitsHandleGuard&& other) noexcept {
+        if (this != &other) {
+            release();
+            fptr = other.fptr;
+            other.fptr = nullptr;
+        }
+        return *this;
+    }
+
+    ~FitsHandleGuard() { release(); }
+
+    void release() {
         if (!fptr) return;
         int status = 0;
         fits_close_file(fptr, &status);
+        fptr = nullptr;
     }
 };
 

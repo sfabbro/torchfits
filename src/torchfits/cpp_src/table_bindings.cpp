@@ -212,12 +212,12 @@ void bind_table(nb::module_& m) {
             if (status != 0 || !fptr) {
                 throw std::runtime_error("Could not open FITS file");
             }
+            torchfits::FitsHandleGuard guard;
+            guard.fptr = fptr;
             torchfits::TableReader reader(fptr, hdu_num);
             auto result_map = reader.read_columns(column_names, 1, -1, true);
             nb::gil_scoped_acquire acquire;
             nb::object out = nb::object(table_result_to_python(result_map, false));
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
             return out;
         }
     }, nb::arg("filename"), nb::arg("hdu_num") = 1, nb::arg("column_names") = std::vector<std::string>(), nb::arg("mmap") = false);
@@ -238,12 +238,12 @@ void bind_table(nb::module_& m) {
             if (status != 0 || !fptr) {
                 throw std::runtime_error("Could not open FITS file");
             }
+            torchfits::FitsHandleGuard guard;
+            guard.fptr = fptr;
             torchfits::TableReader reader(fptr, hdu_num);
             auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
             nb::gil_scoped_acquire acquire;
-            nb::object out = nb::object(table_result_to_python(result_map, false));
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
+            nb::object out = table_result_to_python(result_map, true);
             return out;
         }
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
