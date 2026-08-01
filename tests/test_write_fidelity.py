@@ -583,9 +583,13 @@ def test_compressed_uint32_roundtrip_exact(tmp_path):
     assert out.dtype == torch.uint32
     assert torch.equal(out, data)
 
+    import astropy
     from astropy.io import fits
+    from packaging.version import Version
 
-    np.testing.assert_array_equal(fits.getdata(path), data.numpy())
+    # astropy < 6.0 has a bug decompressing uint32 (BZERO=2147483648) tile-compressed images
+    if Version(astropy.__version__) >= Version("6.0"):
+        np.testing.assert_array_equal(fits.getdata(path), data.numpy())
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ jobs:
       # against (constraints-wheel.txt; CIBW_BEFORE_BUILD below).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
-          python -m pip install -q --upgrade pip
+          python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt

@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install lint tools
-        run: python -m pip install "ruff>=0.15,<0.16"
+        run: python -m pip install "ruff>=0.15,<0.16" packaging
       - name: Duplicate C++ check
         run: python3 scripts/check_duplicate_cpp.py
       - name: Torch flavor extras resolve on PyTorch indexes

@@ -85,7 +85,13 @@ def _make(dtype: str, shape: tuple[int, int], positive: bool = False) -> torch.T
 
 def _assert_astropy_matches(path: str, data: torch.Tensor) -> None:
     """astropy (independent implementation) must decode identical values."""
+    import astropy
     from astropy.io import fits
+    from packaging.version import Version
+
+    # astropy < 6.0 has a bug decompressing uint32 (BZERO=2147483648) tile-compressed images
+    if data.dtype == torch.uint32 and Version(astropy.__version__) < Version("6.0"):
+        return
 
     astro = np.asarray(fits.getdata(path)).astype(data.numpy().dtype, copy=False)
     np.testing.assert_array_equal(astro, data.numpy())
