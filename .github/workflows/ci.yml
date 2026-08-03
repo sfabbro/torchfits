@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install lint tools
-        run: python -m pip install "ruff>=0.15,<0.16" packaging
+        run: python -m pip install "ruff>=0.16.1,<0.17" packaging
       - name: Duplicate C++ check
         run: python3 scripts/check_duplicate_cpp.py
       - name: Torch flavor extras resolve on PyTorch indexes
@@ -45,12 +45,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
       - name: Build and install
         run: pip install -e . --no-build-isolation
@@ -66,12 +68,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
       - name: Install
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
           pip install -e . --no-build-isolation
       - name: bench_cpp_backend
@@ -85,19 +89,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
           pip install -e . --no-build-isolation
       - name: Docs integrity
         run: pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q
       - name: Zensical build
         run: |
-          pip install "zensical>=0.0.50,<0.0.51"
+          pip install "zensical>=0.0.52,<0.0.53"
           bash scripts/sync_docs_examples.sh
           zensical build --clean
 
@@ -109,14 +115,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
       - name: Install
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil tomli
-          pip install "pyarrow>=24,<25" "polars>=1.42.1,<2" "duckdb>=1.5.4,<2" "mypy==2.1.0"
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install "pyarrow>=25,<26" "polars>=1.43.2,<2" "duckdb>=1.5.5,<2" "mypy==2.3.0"
           pip install -e . --no-build-isolation
       - name: Mypy type check
         run: mypy src/torchfits

@@ -38,9 +38,7 @@ from torchfits.transforms import (
 
 # labels from GZ1 FITS; paths from Legacy Survey fits-cutout downloads.
 # The example prepends NanToZero for off-footprint NaNs before this Compose.
-pipeline = Compose(
-    [BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()]
-)
+pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
 dataset = FitsImageDataset(paths, hdu=0, labels=labels, transform=pipeline)
 loader = make_loader(dataset, batch_size=16, num_workers=0, optimize_cache=False)
 

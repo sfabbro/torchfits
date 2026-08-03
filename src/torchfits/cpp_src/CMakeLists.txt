@@ -534,5 +534,52 @@ target_compile_features(_C PRIVATE cxx_std_17)
 
 
 # Install the compiled module
-# For scikit-build-core, install to the package directory
-install(TARGETS _C DESTINATION torchfits)
+if(SKBUILD)
+    # scikit-build-core (wheels): install to the package directory
+    install(TARGETS _C DESTINATION torchfits)
+else()
+    # Bare-cmake installs (conda packages via pixi-build-cmake / rattler-build)
+    # skip scikit-build-core, so mirror its wheel layout: the compiled
+    # extension and the pure-Python package land in the active Python's
+    # site-packages.
+    set(_TORCHFITS_PYEXE "")
+    if(EXISTS "${CMAKE_INSTALL_PREFIX}/bin/python")
+        set(_TORCHFITS_PYEXE "${CMAKE_INSTALL_PREFIX}/bin/python")
+    elseif(NANOBIND_PYTHON_EXECUTABLE)
+        set(_TORCHFITS_PYEXE "${NANOBIND_PYTHON_EXECUTABLE}")
+    endif()
+    if(_TORCHFITS_PYEXE)
+        execute_process(
+            COMMAND "${_TORCHFITS_PYEXE}" -c
+                    "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+            OUTPUT_VARIABLE _TORCHFITS_PURELIB
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(_TORCHFITS_PURELIB)
+            install(TARGETS _C DESTINATION "${_TORCHFITS_PURELIB}/torchfits")
+            get_filename_component(_TORCHFITS_PKG_DIR
+                "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+            install(
+                DIRECTORY "${_TORCHFITS_PKG_DIR}"
+                DESTINATION "${_TORCHFITS_PURELIB}"
+                FILES_MATCHING
+                PATTERN "*.py"
+                PATTERN "py.typed"
+                PATTERN "cpp_src" EXCLUDE
+            )
+            # Console script (wheels get it from scikit-build-core entry
+            # points; bare-cmake conda installs need it written out).
+            get_filename_component(_TORCHFITS_BINDIR
+                "${_TORCHFITS_PURELIB}/../../../bin" ABSOLUTE)
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/torchfits-cli"
+                "#!/bin/sh\nexec \"${_TORCHFITS_BINDIR}/python\" -c 'from torchfits.cli.main import main; main()' \"\$@\"\n")
+            install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/torchfits-cli"
+                DESTINATION "${_TORCHFITS_BINDIR}" RENAME torchfits)
+            message(STATUS "torchfits: bare-cmake install into ${_TORCHFITS_PURELIB}")
+        else()
+            message(WARNING "torchfits: could not locate site-packages; extension only")
+        endif()
+    else()
+        message(WARNING "torchfits: no Python executable found; extension only")
+    endif()
+endif()

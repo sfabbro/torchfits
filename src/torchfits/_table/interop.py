@@ -84,7 +84,7 @@ def write_parquet(
             table = data_iter
         else:
             table = pa.Table.from_batches(list(data_iter))
-        pq.write_table(  # type: ignore[no-untyped-call]
+        pq.write_table(
             table, where, compression=compression, row_group_size=row_group_size
         )
         return
@@ -98,20 +98,20 @@ def write_parquet(
                 except StopIteration:
                     break
                 if writer is None:
-                    writer = pq.ParquetWriter(  # type: ignore[no-untyped-call]
+                    writer = pq.ParquetWriter(
                         where, batch.schema, compression=compression
                     )
-                writer.write_batch(batch, row_group_size=row_group_size)  # type: ignore[no-untyped-call]
+                writer.write_batch(batch, row_group_size=row_group_size)
         else:
             for batch in data_iter:
                 if writer is None:
-                    writer = pq.ParquetWriter(  # type: ignore[no-untyped-call]
+                    writer = pq.ParquetWriter(
                         where, batch.schema, compression=compression
                     )
-                writer.write_batch(batch, row_group_size=row_group_size)  # type: ignore[no-untyped-call]
+                writer.write_batch(batch, row_group_size=row_group_size)
     finally:
         if writer is not None:
-            writer.close()  # type: ignore[no-untyped-call]
+            writer.close()
 
 
 def write_csv(
@@ -135,14 +135,14 @@ def write_csv(
     except ImportError as exc:
         raise ImportError("pyarrow.csv is required for CSV/TSV export") from exc
 
-    write_options = pacsv.WriteOptions(delimiter=delimiter)  # type: ignore[attr-defined]
+    write_options = pacsv.WriteOptions(delimiter=delimiter)
 
     if isinstance(data, str):
         data = reader(data, **kwargs) if stream else read(data, **kwargs)
 
     if not stream:
         table = _materialize_arrow_table(data, **kwargs)
-        pacsv.write_csv(table, where, write_options=write_options)  # type: ignore[attr-defined]
+        pacsv.write_csv(table, where, write_options=write_options)
         return
 
     data_iter: Any = data
@@ -155,14 +155,14 @@ def write_csv(
                 except StopIteration:
                     break
                 if writer is None:
-                    writer = pacsv.CSVWriter(  # type: ignore[attr-defined]
+                    writer = pacsv.CSVWriter(
                         where, batch.schema, write_options=write_options
                     )
                 writer.write(batch)
         else:
             for batch in data_iter:
                 if writer is None:
-                    writer = pacsv.CSVWriter(  # type: ignore[attr-defined]
+                    writer = pacsv.CSVWriter(
                         where, batch.schema, write_options=write_options
                     )
                 writer.write(batch)
@@ -200,10 +200,10 @@ def write_ipc(
 
     if not stream:
         table = _materialize_arrow_table(data, **kwargs)
-        feather.write_feather(table, where, compression=compression)  # type: ignore[no-untyped-call]
+        feather.write_feather(table, where, compression=compression)
         return
 
-    write_options = ipc.IpcWriteOptions(compression=compression)  # type: ignore[attr-defined]
+    write_options = ipc.IpcWriteOptions(compression=compression)
 
     data_iter: Any = data
     writer = None
@@ -215,12 +215,12 @@ def write_ipc(
                 except StopIteration:
                     break
                 if writer is None:
-                    writer = ipc.new_file(where, batch.schema, options=write_options)  # type: ignore[no-untyped-call]
+                    writer = ipc.new_file(where, batch.schema, options=write_options)
                 writer.write_batch(batch)
         else:
             for batch in data_iter:
                 if writer is None:
-                    writer = ipc.new_file(where, batch.schema, options=write_options)  # type: ignore[no-untyped-call]
+                    writer = ipc.new_file(where, batch.schema, options=write_options)
                 writer.write_batch(batch)
     finally:
         if writer is not None:

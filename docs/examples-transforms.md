@@ -38,9 +38,7 @@ from torchfits.transforms import (
 )
 
 tensor = torchfits.read_tensor("horsehead.fits", hdu=0)
-pipeline = Compose(
-    [BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()]
-)
+pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
 out = pipeline(tensor)
 ```
 

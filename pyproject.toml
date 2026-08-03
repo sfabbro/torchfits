@@ -2,8 +2,8 @@
 # Compatible with both pip and pixi-build cmake backend
 # When using pixi-build, these are automatically provided but we keep them for pip compatibility
 requires = [
-    "scikit-build-core>=0.11.6",
-    "nanobind>=2.10.2",
+    "scikit-build-core>=1.0.3",
+    "nanobind>=2.13.0",
     "torch>=2.10",
     "numpy>=1.20.0"
 ]
@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "1.0.0rc4"
+version = "1.0.0"
 description = "FITS I/O for PyTorch with native tensor reads, datasets, and transforms"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Astronomy",
 ]
@@ -35,12 +36,11 @@ requires-python = ">=3.10"
 # These are automatically managed by pixi for conda packages
 # but needed here for PyPI compatibility
 dependencies = [
-    # PyPI's default torch (>=2.10) bundles the CUDA runtime on Linux x86_64
-    # and still runs on GPU-less machines via CPU fallback. Published wheels
-    # are ABI-matched to the 2.10 lane, so install recipes pin
-    # torch>=2.10,<2.11 (see docs/install.md); source builds may use any
-    # >=2.10 minor.
-    "torch>=2.10",
+    # Published wheels are ABI-matched to the 2.13 lane (PyTorch has no
+    # stable C++ ABI across minors). The lane pin keeps pip on the matching
+    # minor; other torch minors ship as separate torchfits releases, one per
+    # lane (scripts/torch_lanes.json, docs/install.md).
+    "torch>=2.13,<2.14",
     "numpy>=1.20.0",  # Core numerical operations
     "pyarrow>=5.0",   # Table I/O (Arrow interchange)
 ]
@@ -58,43 +58,44 @@ Repository = "https://github.com/astroai/torchfits"
 [project.optional-dependencies]
 
 dev = [
-    "pytest>=6.0",
-    "pytest-cov>=2.0",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
     "ruff>=0.1.0",
-    "mypy>=1.0",
-    "astropy>=5.0",
-    "fitsio>=1.1",
+    "mypy>=2.3.0",
+    "astropy>=8.0",
+    "fitsio>=1.4.0",
     "pandas>=1.0",
-    "matplotlib>=3.0",
+    "matplotlib>=3.11",
     "tomli>=2.0; python_version < '3.11'",
 ]
 bench = [
-    "astropy>=5.0",
-    "fitsio>=1.1",
+    "astropy>=8.0",
+    "fitsio>=1.4.0",
     "pandas>=1.0",
-    "matplotlib>=3.0",
+    "matplotlib>=3.11",
 ]
 test = [
-    "pytest>=6.0",
-    "pytest-cov>=2.0",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
 ]
 examples = [
-    "matplotlib>=3.0",
+    "matplotlib>=3.11",
 ]
 
 # Torch build flavors — pick one. Extras cannot embed index URLs, so [cpu] /
 # [cuda] resolve only when the matching download.pytorch.org index is
 # reachable (PIP_EXTRA_INDEX_URL or pip.conf extra-index-url; see
-# docs/install.md). Exact pins track the published-wheel ABI lane (2.10.x).
+# docs/install.md). Exact pins track the 2.13 ABI lane (see
+# scripts/torch_lanes.json).
 cpu = [
     # Thin CPU-only PyTorch: no CUDA runtime / cuDNN stack. Linux only —
     # macOS has no +cpu wheel; MPS ships inside the default macOS build.
-    "torch==2.10.0+cpu; sys_platform == 'linux'",
+    "torch==2.13.0+cpu; sys_platform == 'linux'",
 ]
 cuda = [
-    # CUDA-enabled PyTorch (CUDA 12.8). Linux only — macOS has no +cu128
-    # wheels; MPS ships inside the default macOS torch build.
-    "torch==2.10.0+cu128; sys_platform == 'linux'",
+    # CUDA-enabled PyTorch (cu129). Linux only — macOS has no
+    # +cu129 wheels; MPS ships inside the default macOS torch build.
+    "torch==2.13.0+cu129; sys_platform == 'linux'",
 ]
 
 # Configuration for the scikit-build-core build system.
@@ -149,6 +150,12 @@ markers = [
 
 [tool.mypy]
 strict = true
+
+[tool.ruff.lint]
+# Keep the lint policy stable across ruff releases: ruff 0.16 expanded the
+# default rule set (bandit S1xx, bugbear B, naming N, comprehensions C4, ...).
+# Pin the classic default select so new ruff versions never churn the tree.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 "benchmarks/**/*.py" = ["E402"]

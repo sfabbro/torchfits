@@ -8,6 +8,13 @@ ABI lane: a pin whose public version falls outside ``constraints-wheel.txt``
 (or that no longer carries a ``+local`` segment) would install a wheel that
 fails the extension's ABI check at import.
 
+The wheel lane itself is defined by ``scripts/torch_lanes.json`` (the release
+train: one torchfits version per supported torch minor) and rendered into
+``constraints-wheel.txt`` / ``pyproject.toml`` / ``pixi.toml`` by
+``scripts/release_lane.py``. This script also verifies that rendered state has
+not drifted from the lane map (version -> lane, lane -> ``[cpu]`` /
+``[cuda]`` pins, constraints specifier).
+
 For every torch pin in every extra, this script:
 
 1. checks the public version satisfies the wheel-lane constraint from
@@ -34,6 +41,7 @@ Exit code is non-zero when any pin fails. Run via ``pixi run check-torch-pins``
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -52,6 +60,54 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parents[1]
 
 INDEX_PREFIX = "https://download.pytorch.org/whl/"
+
+
+def load_lane_map() -> dict[str, dict[str, object]]:
+    """The release-train lane map (torch minor -> torchfits version + flavors)."""
+    path = ROOT / "scripts" / "torch_lanes.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def lane_for_version(version: str) -> str:
+    lanes = load_lane_map()
+    for lane, spec in lanes.items():
+        if spec["torchfits_version"] == version:
+            return lane
+    raise SystemExit(
+        f"pyproject version {version!r} is not a torchfits release-lane version "
+        f"(torch_lanes.json: {', '.join(lanes)})"
+    )
+
+
+def check_lane_map_consistency(lane: SpecifierSet) -> list[str]:
+    """Failures when the rendered lane state drifted from torch_lanes.json."""
+    failures: list[str] = []
+    pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    data = tomllib.loads(pyproject_text)
+    version = str(data["project"]["version"])
+    try:
+        map_lane = lane_for_version(version)
+    except SystemExit as exc:
+        failures.append(f"[FAIL] {exc}")
+        return failures
+    spec = load_lane_map()[map_lane]
+    major, minor = (int(p) for p in map_lane.split("."))
+    expected_spec = SpecifierSet(f">={map_lane},<{major}.{minor + 1}")
+    if lane != expected_spec:
+        failures.append(
+            f"[FAIL] constraints-wheel.txt pins torch{lane} but the lane map "
+            f"({version}) requires {expected_spec}"
+        )
+    cpu_expected = f"torch=={map_lane}.0+cpu; sys_platform == 'linux'"
+    cuda_expected = f"torch=={map_lane}.0+{spec['cu_default']}; sys_platform == 'linux'"
+    for extra, entry in _iter_torch_entries(pyproject_text):
+        expected = cpu_expected if extra == "cpu" else cuda_expected
+        if entry != expected:
+            failures.append(
+                f"[FAIL] {extra} extra pins {entry!r} but the lane map "
+                f"({version}, torch {map_lane}) requires {expected!r}"
+            )
+    return failures
 
 
 def load_wheel_lane() -> SpecifierSet:
@@ -197,6 +253,12 @@ def resolve(specifier: str, index: str) -> subprocess.CompletedProcess[str]:
 def main() -> int:
     lane = load_wheel_lane()
     pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    failed = False
+    for line in check_lane_map_consistency(lane):
+        print(line, flush=True)
+        failed = True
+
     pins = list(iter_torch_pins(pyproject_text))
     if not pins:
         if not list(_iter_torch_entries(pyproject_text)):

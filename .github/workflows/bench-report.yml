@@ -19,13 +19,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
+
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
 
       - name: Install
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow pandas
           pip install -e . --no-build-isolation
 

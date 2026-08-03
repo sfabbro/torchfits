@@ -10,7 +10,7 @@ case "$(uname)" in
         ;;
 esac
 
-INDEX="${TORCHFITS_TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
+INDEX="${TORCHFITS_TORCH_INDEX:-https://download.pytorch.org/whl/cu129}"
 
 # Avoid writing into ~/.local on CANFAR (/arc/home) — concurrent sessions
 # corrupt shared user-site packages mid-uninstall.
@@ -18,8 +18,9 @@ export PYTHONNOUSERSITE=1
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-${TMPDIR:-/tmp}/torchfits-pip-cache}"
 mkdir -p "${PIP_CACHE_DIR}"
 
-# Match package pin torch>=2.10,<2.11 (cu128 index otherwise installs latest 2.11).
-TORCH_SPEC="${TORCHFITS_TORCH_SPEC:-torch>=2.10,<2.11}"
+# Match the current wheel lane (torch_lanes.json); the index otherwise
+# installs the latest torch minor, which fails the extension ABI check.
+TORCH_SPEC="${TORCHFITS_TORCH_SPEC:-torch>=2.13,<2.14}"
 
 python -m pip install \
     --no-cache-dir \

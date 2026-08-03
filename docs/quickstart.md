@@ -1,16 +1,16 @@
 # Quick Start
 
-Get up and running with torchfits in minutes. Current PyPI line is **1.0.0rc4**
-(prerelease); see [Changelog](changelog.md) for release notes.
+Get up and running with torchfits in minutes. Current PyPI line is **1.0.0**
+(built for the PyTorch 2.13 lane); see [Changelog](changelog.md) for release notes.
 
 ## Install
 
 ```bash
-pip install torchfits "torch>=2.10,<2.11"
+pip install torchfits "torch>=2.13,<2.14"
 ```
 
 Pre-built wheels for Linux x86_64 and macOS arm64. No system CFITSIO needed — it's
-vendored. Requires Python 3.10+ and **PyTorch 2.10** (ABI-matched wheels). For
+vendored. Requires Python 3.10+ and **PyTorch 2.13** (ABI-matched wheels). For
 other torch minors or CUDA/MPS install details, see [Installation](install.md).
 
 ## Shell tools
@@ -124,8 +124,8 @@ torchfits.table.write("catalog_out.fits", table_dict, overwrite=True)
 
 ```python
 with torchfits.open("multi_ext.fits") as hdul:
-    img = hdul[0].data       # image tensor
-    tbl = hdul[1].data       # table accessor
+    img = hdul[0].data  # image tensor
+    tbl = hdul[1].data  # table accessor
     filtered = hdul[1].filter("FLUX > 100")
 ```
 

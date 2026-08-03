@@ -124,7 +124,7 @@ def _decode_uint8_matrix_to_arrow(
         try:
             import pyarrow.compute as pc
 
-            return pc.cast(_pa_array(pa, byte_view), pa.string())  # type: ignore[no-untyped-call]
+            return pc.cast(_pa_array(pa, byte_view), pa.string())
         except Exception:
             pass
     if strip:

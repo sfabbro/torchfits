@@ -2,20 +2,39 @@
 
 Maintainer runbook for cutting a release.
 
+## 0. Release lane
+
+Each torchfits release targets **one PyTorch minor** (the wheel "lane"),
+because PyTorch has no stable C++ ABI across minors. Lanes live in
+`scripts/torch_lanes.json` (single source of truth):
+
+| PyTorch lane | torchfits release |
+|---|---|
+| 2.13.x | 1.0.0 (current) |
+
+The repo tracks the current lane. A new lane is added to the map only when a
+real backport release is cut, with that release's actual version.
+
 ## 1. Version sync
 
-Confirm the version triplet matches in:
+Apply the lane everywhere in one step:
 
-- `pyproject.toml` (`version = "X.Y.Z"`)
+```bash
+python scripts/release_lane.py --lane <X.Y> --apply
+pixi run check-lane
+```
+
+`--apply` rewrites the version + torch pin in:
+
+- `pyproject.toml` (`version`, `[cpu]` / `[cuda]` extra pins)
+- `constraints-wheel.txt` (wheel ABI lane)
 - `pixi.toml`
+- `packaging/conda/recipe.yaml` (torch_pin)
 - `src/torchfits/__init__.py` (`__version__`)
 
-For native wheels, also confirm the PyTorch minor-version range is identical in
-the build-system, project runtime, and Pixi build/host/run dependencies
-(wheels stay on the **2.10** ABI lane unless a new lane is intentionally cut),
-and that the `[cpu]` / `[cuda]` extra pins in `pyproject.toml` match the newest
-2.10.x build on the PyTorch indexes (`https://download.pytorch.org/whl/cpu`
-and `/cu128`).
+`check-lane` fails unless all five agree with `scripts/torch_lanes.json`.
+Update the compatibility / install docs (README.md, `docs/install.md`,
+`docs/compatibility.md`) when the current-lane numbers change.
 
 ## 2. Changelog
 
@@ -30,11 +49,10 @@ pixi run ci-local
 pixi run release-gate
 ```
 
-All must pass. `release-gate` runs upstream parity smoke tests, docs integrity
-checks, the docs contract (`docs-contract` + `docs-links`), and the runnable
-example scripts. `ci-local` and the CI lint job also run `check-torch-pins`,
-which resolves the `[cpu]` / `[cuda]` extra pins against the PyTorch indexes
-on the wheel ABI lane.
+All must pass. `preflight-push` includes `check-lane` (all five lane files
+agree). `ci-local` and the CI lint job also run `check-torch-pins`, which
+resolves the `[cpu]` / `[cuda]` extra pins against the PyTorch indexes on the
+wheel ABI lane.
 
 ## 4. Public-API freeze (SemVer 1.0 / breaking cuts)
 
@@ -96,10 +114,29 @@ comparison target is listed in `docs/parity.md`.
 - [ ] README and docs do not claim torchfits ownership of WCS, sphere geometry,
       HEALPix, or sky-domain simulation.
 - [ ] Install docs still document CPU-only (no CUDA libs) and GPU torch index
-      recipes, and the `[cpu]` / `[cuda]` extra pins track the current 2.10.x
-      wheel lane.
+      recipes, and the `[cpu]` / `[cuda]` extra pins track the current wheel
+      lane (`pixi run check-torch-pins` enforces this).
 
 ## 8. Local artifact check (optional)
+
+Wheel matrix (lanes × Python, built in tar copies so the working tree stays
+clean):
+
+```bash
+bash scripts/build_wheels_local.sh --lanes <list> --pythons "3.10 3.11 3.12 3.13 3.14" dist-local
+bash scripts/verify_wheel_matrix.sh --jobs 4 dist-local
+```
+
+Conda package (bare-cmake build via pixi; verify in a fresh env):
+
+```bash
+pixi run build
+# verify: import + torchfits --help in a fresh pixi env
+```
+
+CANFAR CUDA tier (optional, soft-fail): see
+`scripts/verify_wheel_cuda_canfar.sh` (`TORCHFITS_WHEEL_URL` for unpublished
+wheels). Or a plain smoke of the published artifact:
 
 ```bash
 bash scripts/clean_install_smoke.sh
@@ -107,8 +144,6 @@ bash scripts/clean_install_smoke.sh
 pip wheel . --no-deps --no-build-isolation -w dist
 twine check dist/*
 ```
-
-Smoke-test the wheel in a fresh virtualenv (the script does this).
 
 ## 9. Tag and push
 
@@ -137,8 +172,10 @@ they are the product. Put evidence in the changelog / docs site.
 
 Publishing triggers `.github/workflows/build_wheels.yml`, which:
 
-1. Runs tests.
-2. Builds wheels on Linux and macOS plus sdist.
+1. Runs tests (each job resolves the lane's torch pin via
+   `release_lane.py --print-pins`).
+2. Builds wheels on Linux and macOS plus sdist (cp310–cp314, torch pinned to
+   the lane).
 3. Uploads to [PyPI](https://pypi.org/project/torchfits/) via trusted publishing.
 
 ## 11. Post-release verification

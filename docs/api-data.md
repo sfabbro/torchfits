@@ -91,12 +91,12 @@ from torchfits.data import FitsTensorDataset, make_loader
 ds = FitsTensorDataset(
     "observations/*.fits",
     hdu=0,
-    label_key="CLASS",        # header keyword → int label
-    transform=None,            # optional callable
+    label_key="CLASS",  # header keyword → int label
+    transform=None,  # optional callable
     device="cpu",
     mmap=True,
-    add_channel_dim=False,     # Tensor default: leave rank alone
-    cache_dir=None,            # optional remote materialization dir
+    add_channel_dim=False,  # Tensor default: leave rank alone
+    cache_dir=None,  # optional remote materialization dir
 )
 loader = make_loader(ds, batch_size=32, num_workers=4)
 ```
@@ -169,7 +169,9 @@ DESI-style 2D `[nspec, nwave]` via `row=`. Multi-arm (MOS B/R/Z) uses `layout=`:
 from torchfits.data import FitsSpectrumDataset
 
 ds = FitsSpectrumDataset(
-    "spectra/*.fits", hdu=["B", "R", "Z"], layout="dict",
+    "spectra/*.fits",
+    hdu=["B", "R", "Z"],
+    layout="dict",
 )
 ```
 
@@ -243,7 +245,7 @@ ds = FitsTableDataset(
     "catalog.fits",
     hdu=1,
     columns=["RA", "DEC", "MAG_G"],
-    where="MAG_G < 20",        # predicate pushdown at load time
+    where="MAG_G < 20",  # predicate pushdown at load time
     labels=[0, 1, 0, 1, ...],  # optional per-row labels (default 0)
     transform=None,
 )
@@ -324,7 +326,7 @@ Map-style dataset for fixed cutout windows from one or more FITS images.
 from torchfits.data import FitsCutoutDataset
 
 cutouts = [
-    ("mosaic.fits", 0, 100, 200, 164),   # (path, hdu, x, y, size)
+    ("mosaic.fits", 0, 100, 200, 164),  # (path, hdu, x, y, size)
     ("mosaic.fits", 0, 300, 400, 164),
 ]
 ds = FitsCutoutDataset(cutouts, transform=None, device="cpu")

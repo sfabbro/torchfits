@@ -67,9 +67,7 @@ df = torchfits.table.read(
 )
 print(df.num_rows)  # pyarrow.Table
 
-cols = torchfits.table.read_torch(
-    "catalog.fits", hdu=1, columns=["RA", "DEC"]
-)
+cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
 # where= on read_torch: simple compare / BETWEEN / AND only
 
 for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
@@ -99,9 +97,7 @@ Do not mix the two coordinate systems on one call.
 
 ```python
 # One stamp
-stamp = torchfits.read_subset(
-    "mosaic.fits", hdu=0, x1=100, y1=100, x2=200, y2=200
-)
+stamp = torchfits.read_subset("mosaic.fits", hdu=0, x1=100, y1=100, x2=200, y2=200)
 
 # Many stamps from one open (preferred for large mosaics)
 with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:

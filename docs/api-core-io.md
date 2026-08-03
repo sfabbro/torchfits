@@ -10,8 +10,16 @@ multi-extension files, checksums, and caching.
 Unified FITS reader. Auto-detects image or table HDUs.
 
 ```python
-torchfits.read(path, hdu=0, device="cpu", mmap="auto", mode="auto",
-               options=None, return_header=False, **kwargs)
+torchfits.read(
+    path,
+    hdu=0,
+    device="cpu",
+    mmap="auto",
+    mode="auto",
+    options=None,
+    return_header=False,
+    **kwargs,
+)
 ```
 
 | Parameter | Type | Default | Description |
@@ -59,9 +67,17 @@ columns = torchfits.read("catalog.fits", hdu=1)
 Read any N-dimensional FITS array directly as a PyTorch Tensor.
 
 ```python
-torchfits.read_tensor(path, hdu=0, device="cpu", mmap=True,
-                      fp16=False, bf16=False, raw_scale=False,
-                      return_header=False, fallback_get_header=None)
+torchfits.read_tensor(
+    path,
+    hdu=0,
+    device="cpu",
+    mmap=True,
+    fp16=False,
+    bf16=False,
+    raw_scale=False,
+    return_header=False,
+    fallback_get_header=None,
+)
 ```
 
 | Parameter | Type | Default | Description |
@@ -199,9 +215,7 @@ Root aliases `read_table` / `read_table_rows` / `stream_table` were removed in
 
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
-for chunk in torchfits.table.scan_torch(
-    "survey.fits", hdu=1, batch_size=100_000
-):
+for chunk in torchfits.table.scan_torch("survey.fits", hdu=1, batch_size=100_000):
     process(chunk)
 ```
 
@@ -250,10 +264,10 @@ torchfits.open(path, mode="r")
 
 ```python
 with torchfits.open("mef.fits") as hdul:
-    primary = hdul[0]          # TensorHDU
-    sci = hdul["SCI"]          # TensorHDU by EXTNAME
-    data = sci.data            # DataView (lazy)
-    header = sci.header        # Header (dict-like)
+    primary = hdul[0]  # TensorHDU
+    sci = hdul["SCI"]  # TensorHDU by EXTNAME
+    data = sci.data  # DataView (lazy)
+    header = sci.header  # Header (dict-like)
 ```
 
 Paths may include a CFITSIO **image section** (`file.fits[10:100,20:200]`);
@@ -337,9 +351,9 @@ torchfits.read_shape(path, hdu=0)
 `read_hdu_type()` / `read_num_hdus()` / `read_extname()`
 
 ```python
-torchfits.read_hdu_type(path, hdu=0)   # "IMAGE" / "BINARY_TABLE" / ...
+torchfits.read_hdu_type(path, hdu=0)  # "IMAGE" / "BINARY_TABLE" / ...
 torchfits.read_num_hdus(path)
-torchfits.read_extname(path, hdu=1)    # EXTNAME or None
+torchfits.read_extname(path, hdu=1)  # EXTNAME or None
 ```
 
 ## Skinny colnames / table info
@@ -386,8 +400,7 @@ with torchfits.open_table_reader("catalog.fits", hdu=1) as reader:
 Write a tensor, numpy array, dict table, or HDUList to FITS.
 
 ```python
-torchfits.write(path, data, header=None, overwrite=False, compress=False,
-                quantize=None)
+torchfits.write(path, data, header=None, overwrite=False, compress=False, quantize=None)
 ```
 
 | Parameter | Type | Default | Description |
@@ -412,8 +425,9 @@ torchfits.write(path, data, header=None, overwrite=False, compress=False,
 Write a single PyTorch Tensor to a FITS image extension.
 
 ```python
-torchfits.write_tensor(path, tensor, header=None, overwrite=False, compress=False,
-                       quantize=None)
+torchfits.write_tensor(
+    path, tensor, header=None, overwrite=False, compress=False, quantize=None
+)
 ```
 
 ```python

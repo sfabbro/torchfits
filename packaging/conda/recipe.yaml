@@ -1,0 +1,84 @@
+# torchfits conda recipe (rattler-build format).
+#
+# Lane pins (version, pytorch range) are rendered from
+# scripts/torch_lanes.json by scripts/release_lane.py --apply, so the recipe
+# always tracks the same torch ABI lane as the wheels.
+#
+# The build links the conda-forge CFITSIO and the lane-pinned conda-forge
+# PyTorch via bare CMake (pixi-build-cmake backend on pixi.toml); the CMake
+# install rules mirror the scikit-build-core wheel layout (site-packages +
+# console script).
+#
+# Not yet upstreamed. Local verification:
+#   pixi run build   (or: rattler-build build -r packaging/conda)
+# then install the resulting .conda into a fresh env pinned to the same
+# pytorch lane and run tests/test_release_smoke.py.
+schema_version: 1
+
+context:
+  version: "1.0.0"
+  torch_pin: ">=2.13,<2.14"
+
+package:
+  name: torchfits
+  version: ${{ version }}
+
+source:
+  path: ../../
+
+build:
+  number: 0
+  script:
+    - cmake -G Ninja ${CMAKE_ARGS} -DCMAKE_BUILD_TYPE=Release \
+        -DTORCHFITS_USE_VENDORED_CFITSIO=OFF \
+        -DTORCHFITS_NIOBUF=80 \
+        -DTORCHFITS_MINDIRECT=8640 \
+        -B $SRC_DIR/../build \
+        -S $SRC_DIR/src/torchfits/cpp_src
+    - cmake --build $SRC_DIR/../build --target install
+
+requirements:
+  build:
+    - ${{ compiler("cxx") }}
+    - cmake >=3.21
+    - ninja
+    - python >=3.10
+    - pytorch ${{ torch_pin }}
+    - nanobind >=2.13.0
+  host:
+    - python >=3.10
+    - pytorch ${{ torch_pin }}
+    - nanobind >=2.13.0
+    - cfitsio >=4.6.3,<4.6.5
+    - zlib >=1.2.13
+  run:
+    - python >=3.10
+    - pytorch ${{ torch_pin }}
+    - cfitsio >=4.6.3,<4.6.5
+    - zlib >=1.2.13
+    - numpy >=1.20
+    - pyarrow >=5.0
+
+tests:
+  - python:
+      imports:
+        - torchfits
+  - script:
+      - torchfits --help
+
+about:
+  homepage: https://github.com/astroai/torchfits
+  repository: https://github.com/astroai/torchfits
+  documentation: https://astroai.github.io/torchfits/
+  license: MIT
+  license_file: LICENSE
+  summary: FITS I/O for PyTorch with native tensor reads, datasets, and transforms
+  description: |
+    torchfits provides FITS I/O for PyTorch with native tensor reads,
+    datasets, and transforms, built on CFITSIO and the PyTorch C++ API.
+    Wheels and the conda package are ABI-matched to a single PyTorch minor
+    (the "lane"); one torchfits release ships per torch minor.
+
+extra:
+  recipe-maintainers:
+    - sfabbro

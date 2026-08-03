@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -21,10 +22,17 @@ def _pin(extra: str, spec: str) -> tuple[str, str, Version]:
 
 
 def test_wheel_lane_matches_constraints_file() -> None:
+    lanes = json.loads(
+        (ROOT / "scripts" / "torch_lanes.json").read_text(encoding="utf-8")
+    )
+    current = max(lanes)
+    major, minor = map(int, current.split("."))
     lane = pins.load_wheel_lane()
-    assert lane.contains("2.10.0")
-    assert not lane.contains("2.11.0")
-    assert not lane.contains("2.13.0")
+    assert lane.contains(f"{current}.0")
+    assert not lane.contains(f"{major}.{minor + 1}.0")
+    for older in lanes:
+        if older != current:
+            assert not lane.contains(f"{older}.0")
 
 
 def test_index_for_local_mapping() -> None:
@@ -74,10 +82,15 @@ def test_iter_torch_pins_rejects_range_pin() -> None:
 
 def test_documented_claims_cover_extras_and_lane() -> None:
     indexes, lane_specs, exact_pins = pins.documented_claims()
-    assert "https://download.pytorch.org/whl/cpu" in indexes
-    assert "https://download.pytorch.org/whl/cu128" in indexes
-    assert "torch==2.10.0+cpu" in exact_pins
-    assert "torch==2.10.0+cu128" in exact_pins
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    real_pins = list(pins.iter_torch_pins(text))
+    if not real_pins:
+        # Both flavor pins are Linux-marked; on macOS nothing resolves and the
+        # doc-drift contract is vacuous — skip rather than fail macOS CI.
+        pytest.skip("no torch flavor pins resolve on this platform")
+    for _extra, _entry, version in real_pins:
+        assert f"https://download.pytorch.org/whl/{version.local}" in indexes
+        assert f"torch=={version}" in exact_pins
     lane = pins.load_wheel_lane()
     assert any(SpecifierSet(s) == lane for s in lane_specs)
 

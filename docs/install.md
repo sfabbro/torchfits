@@ -1,27 +1,37 @@
 # Installation
 
-Latest PyPI tag is **1.0.0rc4** (prerelease). SemVer **1.0.0** waits for
-post-rc soak — treat rc wheels as API-stable, not a final stamp.
+torchfits **1.0.0** is built against **PyTorch 2.13.x** — the wheel ABI lane
+the release ships for. The wheel's metadata pins that range
+(`torch>=2.13,<2.14`), so the install command needs no torch restriction: pip
+installs or upgrades torch for you.
 
-torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10** (published wheels
-require **2.10.x** — see below).
+torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10**: if you already have
+torch 2.13.x (any flavor — CPU or CUDA), it is left untouched; an older minor
+is upgraded to 2.13.x automatically (the torch C++ ABI is per-minor, so
+torchfits must load against its lane). Pin explicitly only when you must keep
+a specific torch minor.
 
-- **PyPI wheels** are ABI-matched to **PyTorch 2.10.x** (Linux x86_64, macOS
+- **PyPI wheels** are ABI-matched to **PyTorch 2.13.x** (Linux x86_64, macOS
   arm64). No system CFITSIO — CFITSIO is vendored into the wheel.
 - **Other torch minors (≥ 2.10):** build from source against the torch already
   installed (see [From source](#from-source) and [Compatibility](compatibility.md)).
 
 ## Quick install (wheels)
 
-torchfits wheels are ABI-matched to **PyTorch 2.10.x**. Every recipe below
-therefore pins `torch>=2.10,<2.11` — a bare `pip install torchfits` may pull a
-newer PyTorch and fail the ABI check at import (see
-[Troubleshooting](#troubleshooting)).
+torchfits wheels are ABI-matched to **PyTorch 2.13.x**, and the wheel metadata
+pins that range — so the default install is one bare command:
+
+```bash
+pip install torchfits
+```
+
+The recipes below show the pin explicitly; that form only matters when you
+must keep a specific torch minor (pip would otherwise upgrade an older one).
 
 ### One line: full version (CUDA + CPU) — the default
 
 ```bash
-pip install torchfits "torch>=2.10,<2.11"
+pip install torchfits "torch>=2.13,<2.14"
 ```
 
 This installs the default PyTorch build from PyPI, which **bundles the CUDA
@@ -51,7 +61,7 @@ thinner — it does **not** pull the CUDA runtime / cuDNN stack into the env.
 Self-contained one-liner (no config needed):
 
 ```bash
-pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu
+pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 Or, with the CPU index configured once (`export
@@ -61,7 +71,7 @@ user-global; the env var is per-shell and a project-level `pip.conf` also
 works), the deterministic extras form works:
 
 ```bash
-pip install 'torchfits[cpu]'   # Linux: torch 2.10.0+cpu; macOS: no-op (MPS is the default)
+pip install 'torchfits[cpu]'   # Linux: torch 2.13.0+cpu; macOS: no-op (MPS is the default)
 ```
 
 !!! note
@@ -75,40 +85,41 @@ CUDA checks.
 ### One line: a specific CUDA build
 
 Point pip at the CUDA toolkit you need (cu118 / cu121 / cu124 / cu126 / cu128
-/ … — see <https://pytorch.org/get-started/locally/> for the current matrix):
+/ **cu129** / … — see <https://pytorch.org/get-started/locally/> for the
+current matrix; this lane's extras pin cu129):
 
 ```bash
-pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cu128
+pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cu129
 ```
 
 With the index configured once (`PIP_EXTRA_INDEX_URL` or `pip config set
-global.extra-index-url https://download.pytorch.org/whl/cu128`):
+global.extra-index-url https://download.pytorch.org/whl/cu129`):
 
 ```bash
-pip install 'torchfits[cuda]'   # Linux: torch 2.10.0+cu128; macOS: no-op (MPS is the default)
+pip install 'torchfits[cuda]'   # Linux: torch 2.13.0+cu129; macOS: no-op (MPS is the default)
 ```
 
 These CUDA builds also run on machines **without** a GPU — see above.
 
 ### Why the `--extra-index-url` recipes “just work”
 
-PyTorch’s own wheels use PEP 440 **local versions** (`2.10.0+cpu`,
-`2.10.0+cu128`), which sort *above* the plain PyPI build (`2.10.0+cpu >
-2.10.0`). When the PyTorch index is visible, pip therefore automatically
-prefers its build for the pinned `torch>=2.10,<2.11` range — no need to choose
+PyTorch’s own wheels use PEP 440 **local versions** (`2.13.0+cpu`,
+`2.13.0+cu129`), which sort *above* the plain PyPI build (`2.13.0+cpu >
+2.13.0`). When the PyTorch index is visible, pip therefore automatically
+prefers its build for the pinned `torch>=2.13,<2.14` range — no need to choose
 one index or the other: torchfits comes from PyPI, torch comes from the extra
 index, in the same command. With `PIP_EXTRA_INDEX_URL` (or `pip.conf`
 `extra-index-url`) set once, even a plain `pip install torchfits
-"torch>=2.10,<2.11"` picks your flavor up automatically.
+"torch>=2.13,<2.14"` picks your flavor up automatically.
 
 The `torchfits[cpu]` / `torchfits[cuda]` extras **cannot embed index URLs**, so
 they resolve only when the matching PyTorch index is reachable (the one-time
 setting above). Keep exactly one PyTorch index configured at a time. uv works
-the same way: `uv pip install torchfits "torch>=2.10,<2.11"
+the same way: `uv pip install torchfits "torch>=2.13,<2.14"
 --extra-index-url https://download.pytorch.org/whl/cpu` (or `UV_EXTRA_INDEX_URL`).
 
 Apple Silicon: the default macOS torch wheel includes **MPS**, so the default
-recipe is all you need; there is no macOS `+cu128` **or `+cpu`** build — both
+recipe is all you need; there is no macOS `+cu129` **or `+cpu`** build — both
 `[cpu]` / `[cuda]` extras are Linux-only no-ops there (the exact `+local` pins
 have no macOS wheel to resolve).
 
@@ -124,15 +135,18 @@ for the full list. This is separate from the in-memory handle/
 !!! tip "Verify what you got"
     ```python
     import torch
-    print(torch.__version__, torch.version.cuda)   # "2.10.0" "12.8"; None means no CUDA (CPU / MPS build)
-    print(torch.cuda.is_available())               # False on GPU-less machines is expected
+
+    print(
+        torch.__version__, torch.version.cuda
+    )  # "2.13.0" "12.9"; None means no CUDA (CPU / MPS build)
+    print(torch.cuda.is_available())  # False on GPU-less machines is expected
     ```
 
 ---
 
 ## From source
 
-Use this when you need torchfits against a **non-2.10** torch (≥ 2.10), or when
+Use this when you need torchfits against a **non-2.13** torch (≥ 2.10), or when
 contributing.
 
 ### Prerequisites
@@ -173,7 +187,7 @@ cd torchfits
 ./extern/vendor.sh      # download vendored CFITSIO sources
 
 # Install the torch minor you want first, then build against it
-pip install "torch>=2.10"   # wheels are 2.10; for 2.11+ rebuild from source
+pip install "torch>=2.10"   # wheels are 2.13; for other minors rebuild from source
 pip install --no-build-isolation -e .
 ```
 
@@ -212,6 +226,7 @@ pip install -e . --no-build-isolation --config-settings=cmake.args="-DTORCHFITS_
 
 ```python
 import torchfits
+
 print(torchfits.__version__)
 _ = torchfits.read_tensor  # extension loaded
 ```
@@ -226,7 +241,7 @@ torchfits info --help
 ## Development setup (pixi)
 
 The project uses [pixi](https://pixi.sh/) for reproducible environments
-(dev pixi stays on the 2.10 ABI lane for wheel parity):
+(dev pixi stays on the 2.13 ABI lane for wheel parity):
 
 ```bash
 pixi install
@@ -245,8 +260,8 @@ pixi run bench-all      # exhaustive benchmarks
 | `torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking |
 | `torchfits[test]` | pytest, pytest-cov | Testing |
 | `torchfits[examples]` | matplotlib | Running examples |
-| `torchfits[cpu]` | `torch==2.10.0+cpu` (Linux; needs the PyTorch **CPU** index configured) | Thin CPU-only torch |
-| `torchfits[cuda]` | `torch==2.10.0+cu128` (Linux; needs the **cu128** index configured) | CUDA-enabled torch |
+| `torchfits[cpu]` | `torch==2.13.0+cpu` (Linux; needs the PyTorch **CPU** index configured) | Thin CPU-only torch |
+| `torchfits[cuda]` | `torch==2.13.0+cu129` (Linux; needs the **cu129** index configured) | CUDA-enabled torch |
 
 The `[cpu]` / `[cuda]` extras are the flavors from
 [Quick install](#quick-install-wheels): they pin an exact torch build from a
@@ -286,12 +301,15 @@ Ensure `curl` or `wget` are available. Behind a proxy? Set `HTTPS_PROXY`.
 
 The extension was built for a different torch major.minor than the one
 imported. This usually happens after a bare `pip install torchfits` pulled a
-newer torch (e.g. 2.13) than the wheel was built against (2.10). First try
-pinning the wheel lane and reimporting:
+newer torch than the wheel lane. First try pinning the wheel lane and
+reimporting:
 
 ```bash
-pip install "torch>=2.10,<2.11"
+pip install "torch>=2.13,<2.14"
 ```
+
+If you are on an older lane, install the matching torchfits release for it
+(e.g. `pip install torchfits==1.0.0` together with that lane's torch pin).
 
 Only rebuild if you actually need a different torch minor:
 

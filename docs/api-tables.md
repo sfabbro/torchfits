@@ -21,9 +21,19 @@ projection. `table.read_arrow` is the same function under another name.
 
 ```python
 torchfits.table.read(
-    path, hdu=1, columns=None, row_slice=None, rows=None, where=None,
-    batch_size=65536, mmap=True, decode_bytes=True, encoding="ascii",
-    strip=True, include_fits_metadata=False, apply_fits_nulls=True,
+    path,
+    hdu=1,
+    columns=None,
+    row_slice=None,
+    rows=None,
+    where=None,
+    batch_size=65536,
+    mmap=True,
+    decode_bytes=True,
+    encoding="ascii",
+    strip=True,
+    include_fits_metadata=False,
+    apply_fits_nulls=True,
     backend="auto",
 )
 ```
@@ -49,7 +59,8 @@ torchfits.table.read(
 
 ```python
 df = torchfits.table.read(
-    "catalog.fits", hdu=1,
+    "catalog.fits",
+    hdu=1,
     columns=["RA", "DEC", "MAG_G"],
     where="MAG_G < 20 AND DEC > 0",
 )
@@ -65,9 +76,17 @@ Read selected columns as `torch.Tensor` values
 
 ```python
 torchfits.table.read_torch(
-    path, hdu=1, columns=None, start_row=1, num_rows=-1,
-    device="cpu", mmap="auto", cache_capacity=10,
-    handle_cache_capacity=16, fast_header=True, return_header=False,
+    path,
+    hdu=1,
+    columns=None,
+    start_row=1,
+    num_rows=-1,
+    device="cpu",
+    mmap="auto",
+    cache_capacity=10,
+    handle_cache_capacity=16,
+    fast_header=True,
+    return_header=False,
     where=None,
 )
 ```
@@ -115,9 +134,18 @@ materializing the entire table.
 
 ```python
 torchfits.table.scan(
-    path, hdu=1, columns=None, row_slice=None, where=None,
-    batch_size=65536, mmap=True, decode_bytes=True, encoding="ascii",
-    strip=True, include_fits_metadata=False, apply_fits_nulls=True,
+    path,
+    hdu=1,
+    columns=None,
+    row_slice=None,
+    where=None,
+    batch_size=65536,
+    mmap=True,
+    decode_bytes=True,
+    encoding="ascii",
+    strip=True,
+    include_fits_metadata=False,
+    apply_fits_nulls=True,
     backend="auto",
 )
 ```
@@ -143,8 +171,15 @@ Stream row chunks as `dict[str, torch.Tensor]`. No `where=` — filter with
 
 ```python
 torchfits.table.scan_torch(
-    path, hdu=1, columns=None, row_slice=None, batch_size=65536,
-    mmap=True, device="cpu", non_blocking=True, pin_memory=False,
+    path,
+    hdu=1,
+    columns=None,
+    row_slice=None,
+    batch_size=65536,
+    mmap=True,
+    device="cpu",
+    non_blocking=True,
+    pin_memory=False,
 )
 ```
 
@@ -163,9 +198,18 @@ Open a FITS table as a `pyarrow.RecordBatchReader` for streaming.
 
 ```python
 torchfits.table.reader(
-    path, hdu=1, columns=None, row_slice=None, where=None,
-    batch_size=65536, mmap=True, decode_bytes=True, encoding="ascii",
-    strip=True, include_fits_metadata=True, apply_fits_nulls=True,
+    path,
+    hdu=1,
+    columns=None,
+    row_slice=None,
+    where=None,
+    batch_size=65536,
+    mmap=True,
+    decode_bytes=True,
+    encoding="ascii",
+    strip=True,
+    include_fits_metadata=True,
+    apply_fits_nulls=True,
     backend="auto",
 )
 ```
@@ -272,12 +316,29 @@ torchfits.table.update_rows(path, rows, row_slice, hdu=1, mmap="auto")
 torchfits.table.delete_rows(path, row_slice, hdu=1)
 
 torchfits.table.insert_column(
-    path, name, values, hdu=1, index=None,
-    format=None, unit=None, dim=None, tnull=None, tscal=None, tzero=None,
+    path,
+    name,
+    values,
+    hdu=1,
+    index=None,
+    format=None,
+    unit=None,
+    dim=None,
+    tnull=None,
+    tscal=None,
+    tzero=None,
 )
 torchfits.table.replace_column(
-    path, name, values, hdu=1,
-    format=None, unit=None, dim=None, tnull=None, tscal=None, tzero=None,
+    path,
+    name,
+    values,
+    hdu=1,
+    format=None,
+    unit=None,
+    dim=None,
+    tnull=None,
+    tscal=None,
+    tzero=None,
 )
 torchfits.table.rename_columns(path, {"old_name": "new_name"}, hdu=1)
 torchfits.table.drop_columns(path, ["col_a", "col_b"], hdu=1)
@@ -348,9 +409,16 @@ Infer an Arrow schema from FITS `TFORM` / `TTYPE` cards (no data read when
 
 ```python
 torchfits.table.schema(
-    path, hdu=1, columns=None, where=None, decode_bytes=True,
-    encoding="ascii", strip=True, include_fits_metadata=False,
-    apply_fits_nulls=False, backend="auto",
+    path,
+    hdu=1,
+    columns=None,
+    where=None,
+    decode_bytes=True,
+    encoding="ascii",
+    strip=True,
+    include_fits_metadata=False,
+    apply_fits_nulls=False,
+    backend="auto",
 )
 ```
 

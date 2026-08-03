@@ -30,7 +30,12 @@ All transforms implement the `FITSTransform` callable protocol
 when `num_workers > 0`.
 
 ```python
-from torchfits.transforms import ArcsinhStretch, BackgroundSubtract, Compose, ZScaleNormalize
+from torchfits.transforms import (
+    ArcsinhStretch,
+    BackgroundSubtract,
+    Compose,
+    ZScaleNormalize,
+)
 
 pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
 normalized = pipeline(image)
@@ -353,11 +358,13 @@ Auto-normalize from BITPIX/BSCALE/BZERO. Integer types mapped to [0, 1].
 Chain transforms; `inverse()` unwinds in reverse order.
 
 ```python
-pipeline = Compose([
-    BackgroundSubtract(),
-    ArcsinhStretch(a=0.1),
-    ZScaleNormalize(),
-])
+pipeline = Compose(
+    [
+        BackgroundSubtract(),
+        ArcsinhStretch(a=0.1),
+        ZScaleNormalize(),
+    ]
+)
 normalized = pipeline(image)
 original = pipeline.inverse(normalized)
 ```
@@ -474,12 +481,24 @@ Import transform classes from `torchfits.transforms` (namespace-only since
 
 ```python
 from torchfits.transforms import (
-    ArcsinhStretch, AsModule, BackgroundSubtract, Compose, ZScaleNormalize,
-    RobustNormalize, MinMaxNormalize, PercentileClipNormalize,
-    LogStretch, SqrtStretch, GlobalScalarNorm,
-    AsymmetricSigmaClip, SigmaClip,
-    FITSScaleColumns, TNullToNan, FITSHeaderNormalize,
-    as_module, lupton_rgb,
+    ArcsinhStretch,
+    AsModule,
+    BackgroundSubtract,
+    Compose,
+    ZScaleNormalize,
+    RobustNormalize,
+    MinMaxNormalize,
+    PercentileClipNormalize,
+    LogStretch,
+    SqrtStretch,
+    GlobalScalarNorm,
+    AsymmetricSigmaClip,
+    SigmaClip,
+    FITSScaleColumns,
+    TNullToNan,
+    FITSHeaderNormalize,
+    as_module,
+    lupton_rgb,
 )
 ```
 See `examples/example_transforms.py` (image pipeline) and

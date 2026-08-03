@@ -286,8 +286,8 @@ def dataset(
     if isinstance(data, str):
         # In older pyarrow versions, ds.dataset() does not accept RecordBatchReader directly.
         # We read all batches into a Table first.
-        return ds.dataset(reader(data, **kwargs).read_all())  # type: ignore[no-untyped-call]
-    return ds.dataset(data)  # type: ignore[no-untyped-call]
+        return ds.dataset(reader(data, **kwargs).read_all())
+    return ds.dataset(data)
 
 
 def scanner(
@@ -311,7 +311,7 @@ def scanner(
 
     if isinstance(data, str):
         rdr = reader(data, **kwargs)
-        return ds.Scanner.from_batches(  # type: ignore[attr-defined]
+        return ds.Scanner.from_batches(
             rdr,
             columns=columns,
             filter=filter,
@@ -321,7 +321,7 @@ def scanner(
     elif hasattr(data, "scanner"):
         dset = data
     else:
-        dset = ds.dataset(data)  # type: ignore[no-untyped-call]
+        dset = ds.dataset(data)
     return dset.scanner(
         columns=columns, filter=filter, batch_size=batch_size, use_threads=use_threads
     )

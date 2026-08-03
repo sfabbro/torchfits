@@ -22,9 +22,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      # The wheel ABI lane is whatever the committed tree tracks (a release
+      # train: one torchfits release per torch minor, see torch_lanes.json).
+      # Resolve it once, then pin torch everywhere below to that lane.
+      - name: Resolve torch ABI lane
+        run: |
+          PINS="$(python scripts/release_lane.py --print-pins)"
+          echo "$PINS"
+          echo "TORCH_PIN=$(echo "$PINS" | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       # Fail fast before vendoring / installing / building: the [cpu]/[cuda]
-      # extra pins must stay on the torch 2.10 wheel lane this workflow builds
-      # against (constraints-wheel.txt; CIBW_BEFORE_BUILD below).
+      # extra pins must stay on the torch lane this workflow builds against
+      # (constraints-wheel.txt; CIBW_BEFORE_BUILD below).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
           python -m pip install -q --upgrade pip packaging
@@ -34,7 +42,7 @@ jobs:
       - name: Install toolchain + test deps
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install "torch>=2.10,<2.11" --index-url https://download.pytorch.org/whl/cpu
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow
       - name: Install torchfits
         run: pip install -e . --no-build-isolation
@@ -50,21 +58,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15]
     env:
-      CIBW_BUILD: cp310-* cp311-* cp312-* cp313-*
+      CIBW_BUILD: cp310-* cp311-* cp312-* cp313-* cp314-*
       CIBW_SKIP: pp* *-musllinux_* *-manylinux_i686 *-win32
       CIBW_ARCHS_LINUX: x86_64
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
       # ponytail: macOS x86_64 hits nanobind LTO + libtorch link failures on GHA; arm64 is primary.
       CIBW_ARCHS_MACOS: arm64
       CIBW_TEST_REQUIRES: numpy pyarrow pytest
-      # Build against the same 2.10 ABI we test and document. Isolated builds
-      # would otherwise resolve torch>=2.10 to 2.13+ and fail release smoke.
+      # Build against the same torch ABI lane we test and document (resolved
+      # from torch_lanes.json in the "Resolve torch ABI lane" step). Isolated
+      # builds would otherwise resolve torch>=2.x to a newer minor and fail
+      # the release smoke / ABI check.
       CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
       CIBW_BEFORE_BUILD: |
         python -m pip install -U pip
-        python -m pip install "scikit-build-core>=0.11.6" "nanobind>=2.10.2" "numpy>=1.20.0" "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu
+        python -m pip install "scikit-build-core>=1.0.3" "nanobind>=2.13.0" "numpy>=1.20.0" "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
       CIBW_TEST_COMMAND: |
-        pip install "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu
+        pip install "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
         TORCH_LIB="$(python -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')"
         if [ "$(uname)" = "Darwin" ]; then
           export DYLD_FALLBACK_LIBRARY_PATH="$TORCH_LIB${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
@@ -85,9 +95,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: |
+          PINS="$(python scripts/release_lane.py --print-pins)"
+          echo "$PINS"
+          echo "TORCH_PIN=$(echo "$PINS" | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       # Fail fast before cibuildwheel spins up the build matrix: the
-      # [cpu]/[cuda] extra pins must stay on the torch 2.10 wheel lane this
-      # workflow builds against (constraints-wheel.txt; CIBW_BEFORE_BUILD).
+      # [cpu]/[cuda] extra pins must stay on the torch lane this workflow
+      # builds against (constraints-wheel.txt; CIBW_BEFORE_BUILD).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
           python -m pip install -q --upgrade pip

@@ -154,7 +154,12 @@ Script: [`example_image_cutouts.py`](published-examples/example_image_cutouts.py
 Stretch / normalize for viz or model input. Skip when you need raw stored values.
 
 ```python
-from torchfits.transforms import ArcsinhStretch, BackgroundSubtract, Compose, ZScaleNormalize
+from torchfits.transforms import (
+    ArcsinhStretch,
+    BackgroundSubtract,
+    Compose,
+    ZScaleNormalize,
+)
 
 pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
 out = pipeline(tensor)

@@ -11,35 +11,48 @@ tables — cutouts, filters, and a shell CLI (C++ engine, vendored CFITSIO).
 Optional datasets / transforms sit on top; you do not need an ML workflow to
 benefit.
 
-**Current:** [1.0.0rc4](https://pypi.org/project/torchfits/) (prerelease).
-Docs: [stable](https://astroai.github.io/torchfits/) (latest `v*` tag) ·
+**Current:** [1.0.0](https://pypi.org/project/torchfits/) — built for the
+**PyTorch 2.13 lane** (wheels are ABI-matched to the torch minor they ship
+for). Docs: [stable](https://astroai.github.io/torchfits/) (latest `v*` tag) ·
 [edge](https://astroai.github.io/torchfits/edge/) (`main` tip).
 
 ## Install
 
-One line for the full version (CUDA + CPU — works with or without a GPU):
+torchfits wheels are ABI-matched to the **PyTorch 2.13.x** minor, and the
+wheel's metadata pins that range (`torch>=2.13,<2.14`) — so the install
+command needs no torch restriction: pip installs or upgrades torch for you.
 
 ```bash
-pip install torchfits "torch>=2.10,<2.11"
+pip install torchfits
 ```
 
-Requires **Python 3.10+** and **PyTorch 2.10.x** (wheels are ABI-matched; the
-pin keeps pip on the matching minor). Pre-built wheels for Linux x86_64 and
-macOS arm64 (CFITSIO is vendored).
+Works with any Python 3.10+ and any installed PyTorch ≥ 2.10: if you already
+have torch 2.13.x (any flavor — CPU or CUDA), it is left untouched; an older
+minor is upgraded to 2.13.x automatically (the torch C++ ABI is per-minor, so
+torchfits must load against its lane). Pin explicitly only when you must keep
+a specific torch minor:
+
+```bash
+pip install torchfits "torch>=2.13,<2.14"
+```
+
+Requires **Python 3.10+** and **PyTorch ≥ 2.10** (wheels are built for the
+2.13.x lane; pip aligns your torch automatically). Pre-built wheels for Linux
+x86_64 and macOS arm64 (CFITSIO is vendored).
 
 Choose a PyTorch flavor in one line:
 
 | You want | Command |
 |---|---|
-| Default (CUDA + CPU) | `pip install torchfits "torch>=2.10,<2.11"` |
-| CPU-only (thin) | `pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu` |
-| CUDA build (e.g. cu128) | `pip install torchfits "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cu128` |
+| Default (CUDA + CPU) | `pip install torchfits "torch>=2.13,<2.14"` |
+| CPU-only (thin) | `pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu` |
+| CUDA build (e.g. cu129) | `pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cu129` |
 
-`torchfits[cpu]` / `torchfits[cuda]` extras provide the same flavors after a
-one-time index setting (`PIP_EXTRA_INDEX_URL` / `pip.conf`). Both extras are
-**Linux-only** — on macOS they are no-ops (MPS ships inside the default wheel;
-there is no `+cpu` / `+cu128` macOS build). In zsh, quote the extra
-(`pip install 'torchfits[cpu]'`). Details:
+The `[cpu]` / `[cuda]` extras pin the matching torch build exactly
+(`torch==2.13.0+cpu` / `torch==2.13.0+cu129`) after a one-time index setting
+(`PIP_EXTRA_INDEX_URL` / `pip.conf`). Both extras are **Linux-only** — on
+macOS they are no-ops (MPS ships inside the default wheel). In zsh, quote the
+extra (`pip install 'torchfits[cpu]'`). Details:
 [Install](https://astroai.github.io/torchfits/install/).
 
 ## At a glance

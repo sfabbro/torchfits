@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: pip install "zensical>=0.0.50,<0.0.51"
+      - run: pip install "zensical>=0.0.52,<0.0.53"
       - name: Build Pages tree (stable=/ edge=/edge/)
         run: bash scripts/build_docs_pages.sh
       - uses: actions/upload-pages-artifact@v3
