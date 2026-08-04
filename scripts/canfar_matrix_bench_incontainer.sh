@@ -41,7 +41,9 @@ PY="${TORCHFITS_BENCH_PYTHON}"
 LANE="${TORCHFITS_BENCH_TORCH}"
 PY_TAG="py${PY//./}"
 if [[ -z "${TORCHFITS_BENCH_CU_FLAVOR}" ]]; then
-  if [[ "${LANE}" == "2.13" ]]; then
+  # PyTorch wheel flavors: 2.10/2.11 ship cu128; 2.12+ ship cu129 only
+  # (no cu128 wheels exist for 2.12/2.13).
+  if [[ "${LANE}" == "2.13" || "${LANE}" == "2.12" ]]; then
     TORCHFITS_BENCH_CU_FLAVOR="cu129"
   else
     TORCHFITS_BENCH_CU_FLAVOR="cu128"
