@@ -102,11 +102,14 @@ if [[ -z "$(ls "${WHEELS_DIR}"/*.whl 2>/dev/null || true)" ]]; then
     _vos_root="${HOME}/.local/torchfits-vos"
     mkdir -p "${_vos_root}/bin" "${_vos_root}/lib/python"
     PYTHONNOUSERSITE=1 python3 -m pip install -q --target "${_vos_root}/lib/python" vos
-    printf '%s\n' '#!/usr/bin/env bash' \
-      "export PYTHONPATH=\"${_vos_root}/lib/python\${PYTHONPATH:+:\${PYTHONPATH}}\"" \
-      "exec python3 -m vos.commands.vcp \"\$@\"" >"${_vos_root}/bin/vcp"
-    chmod +x "${_vos_root}/bin/vcp"
-    export PATH="${_vos_root}/bin:${PATH}"
+    export PYTHONPATH="${_vos_root}/lib/python${PYTHONPATH:+:${PYTHONPATH}}"
+    export PATH="${_vos_root}/lib/python/bin:${PATH}"
+    # python3 -m vos.commands.vcp copies 0 files for dir sources; use the
+    # console-script entry point pip installed under .../bin/vcp.
+    if [[ ! -x "${_vos_root}/lib/python/bin/vcp" ]]; then
+      echo "ERROR: vos console script not found under private prefix" >&2
+      exit 1
+    fi
   fi
   # Trailing slash on the VOS source: copy the container's contents (not a
   # nested subdirectory) into WHEELS_DIR.
