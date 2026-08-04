@@ -5,7 +5,9 @@
 # from the prebuilt wheel bundle (see canfar_matrix_bench_incontainer.sh).
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Snapshot re-runs (poller_daemon.sh execs a copy under benchmarks_results/)
+# resolve ROOT_DIR from the exported var, not BASH_SOURCE.
+ROOT_DIR="${TORCHFITS_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT_DIR"
 
 GIT_REF="${TORCHFITS_GIT_REF:-main}"
@@ -192,6 +194,7 @@ if [[ "${TORCHFITS_CANFAR_FOREGROUND:-0}" != "1" && -z "${TORCHFITS_CANFAR_POLLE
     echo "export TORCHFITS_CANFAR_POLL_SECS=$(printf %q "${POLL_SECS}")"
     echo "export TORCHFITS_CANFAR_MAX_WAIT_SECS=$(printf %q "${MAX_WAIT_SECS}")"
     echo "export TORCHFITS_CANFAR_EXISTING_SESSION=$(printf %q "${SESSION_ID}")"
+    echo "export TORCHFITS_ROOT_DIR=$(printf %q "${ROOT_DIR}")"
     echo "exec bash $(printf %q "${SNAPSHOT}")"
   } > "${LOCAL_OUT}/poller_daemon.sh"
   chmod +x "${LOCAL_OUT}/poller_daemon.sh"

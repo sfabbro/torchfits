@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 # Upload torchfits CANFAR bench artifacts to VOSpace via vcp.
-# vos/CADC CLI is preinstalled in astroai/base images — never pip-install
-# into $HOME here (concurrent sessions corrupt shared user-site packages).
+# vos/CADC CLI is preinstalled in astroai/base images (outside the default
+# PATH) — never pip-install into $HOME here (concurrent sessions corrupt
+# shared user-site packages).
 set -euo pipefail
 
 bench_out="${1:?usage: $0 <benchmarks_results/run-id-dir>}"
 vos_dest="${2:?usage: $0 <bench-out> <vos:user/path/run-id>}"
 
 if ! command -v vcp >/dev/null; then
-  echo "vcp not on PATH (astroai/base preinstalls vos); refusing to pip-install into \$HOME" >&2
+  # astroai/base installs vos under its venv/bins, just not on PATH.
+  for d in /opt/astroai/venv/cadc/bin /opt/astroai/bin /opt/conda/bin /usr/local/bin; do
+    if [[ -x "${d}/vcp" ]]; then
+      export PATH="${d}:${PATH}"
+      break
+    fi
+  done
+fi
+if ! command -v vcp >/dev/null; then
+  echo "vcp not on PATH and not under the standard image locations; refusing to pip-install into \$HOME" >&2
   exit 1
 fi
 
