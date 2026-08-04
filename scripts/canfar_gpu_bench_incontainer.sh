@@ -3,7 +3,7 @@
 # Logs + benchmark CSVs land under ${TMP_SCRATCH_DIR}/torchfits-gpu-bench/<run-id>/.
 set -euo pipefail
 
-: "${TORCHFITS_BENCH_RUN_ID:=exhaustive_cuda_0.9.0_$(date -u +%Y%m%d_%H%M%S)}"
+: "${TORCHFITS_BENCH_RUN_ID:=exhaustive_cuda_$(date -u +%Y%m%d_%H%M%S)}"
 : "${TORCHFITS_BENCH_MODE:=exhaustive}"
 
 SCRATCH="${TMP_SCRATCH_DIR:-/scratch}"

@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-RUN_ID="${1:-exhaustive_0.9.0_$(date -u +%Y%m%d_%H%M%S)}"
+RUN_ID="${1:-exhaustive_$(date -u +%Y%m%d_%H%M%S)}"
 LOG_DIR="${ROOT_DIR}/benchmarks_results"
 LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
 OUT_DIR="${LOG_DIR}/${RUN_ID}"

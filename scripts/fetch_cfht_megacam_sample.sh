@@ -37,7 +37,7 @@ for name in "${FILES[@]}"; do
   fi
   url="${BASE}/${name}"
   echo "fetch: ${url}"
-  if curl -fL --retry 2 --connect-timeout 30 -o "${out}.partial" "$url"; then
+  if curl -fL -C - --retry 2 --retry-all-errors --connect-timeout 30 -o "${out}.partial" "$url"; then
     mv "${out}.partial" "$out"
     count=$((count + 1))
   else
