@@ -164,6 +164,12 @@ if [[ "${TORCHFITS_CANFAR_FOREGROUND:-0}" != "1" && -z "${TORCHFITS_CANFAR_POLLE
   CANFAR_BIN="$(command -v canfar)"
   CANFAR_DIR="$(cd "$(dirname "${CANFAR_BIN}")" && pwd)"
   POLLER_PATH="${PATH}:${CANFAR_DIR}"
+  # The daemon execs a SNAPSHOT copy of this script, never the live file:
+  # bash reads script files progressively, so editing the launcher while a
+  # poller is mid-execution corrupts its parse (observed in the 04:38 grid
+  # batch: 28 pollers died with "syntax error near unexpected token fi").
+  SNAPSHOT="${LOCAL_OUT}/launcher_snapshot.sh"
+  cp "${ROOT_DIR}/scripts/launch_canfar_gpu_bench.sh" "${SNAPSHOT}"
   {
     echo '#!/usr/bin/env bash'
     echo "export PATH=$(printf %q "${POLLER_PATH}")"
@@ -186,7 +192,7 @@ if [[ "${TORCHFITS_CANFAR_FOREGROUND:-0}" != "1" && -z "${TORCHFITS_CANFAR_POLLE
     echo "export TORCHFITS_CANFAR_POLL_SECS=$(printf %q "${POLL_SECS}")"
     echo "export TORCHFITS_CANFAR_MAX_WAIT_SECS=$(printf %q "${MAX_WAIT_SECS}")"
     echo "export TORCHFITS_CANFAR_EXISTING_SESSION=$(printf %q "${SESSION_ID}")"
-    echo "exec bash $(printf %q "${ROOT_DIR}/scripts/launch_canfar_gpu_bench.sh")"
+    echo "exec bash $(printf %q "${SNAPSHOT}")"
   } > "${LOCAL_OUT}/poller_daemon.sh"
   chmod +x "${LOCAL_OUT}/poller_daemon.sh"
   pixi run python - "${LOCAL_OUT}/poller_daemon.sh" "${LOCAL_OUT}/poller.pid" "${POLLER_LOG}" <<'PY'
