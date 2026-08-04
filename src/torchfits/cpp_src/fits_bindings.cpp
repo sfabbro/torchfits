@@ -1946,7 +1946,14 @@ void bind_fits(nb::module_& m) {
                 fits_write_comment(fptr, text.c_str(), &key_status);
             } else if (nb::isinstance<nb::str>(value)) {
                 std::string val = d::sanitize_fits_string(nb::cast<std::string>(value));
-                fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), comment_ptr, &key_status);
+                if (val.size() > 68) {
+                    // Long strings: fits_update_key truncates at 68 chars
+                    // silently. fits_update_key_longstr splits the value into
+                    // CONTINUE cards (FITS standard), matching astropy/fitsio.
+                    fits_update_key_longstr(fptr, key.c_str(), val.c_str(), comment_ptr, &key_status);
+                } else {
+                    fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), comment_ptr, &key_status);
+                }
             } else if (nb::isinstance<bool>(value)) {
                 int val = nb::cast<bool>(value) ? 1 : 0;
                 fits_update_key(fptr, TLOGICAL, key.c_str(), &val, comment_ptr, &key_status);

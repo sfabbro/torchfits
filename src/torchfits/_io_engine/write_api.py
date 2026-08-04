@@ -290,6 +290,12 @@ def write(
             item_header = item.get("header") if isinstance(item, dict) else None
             _write_header_cards_if_supported(path, idx, item_header)
 
+    except ValueError:
+        # Data-validation failures (e.g. unsupported uint64) are actionable
+        # as-is; do not bury the message in a generic RuntimeError wrapper.
+        if not path_exists and os.path.exists(path):
+            os.remove(path)
+        raise
     except Exception as e:
         if not path_exists and os.path.exists(path):
             os.remove(path)

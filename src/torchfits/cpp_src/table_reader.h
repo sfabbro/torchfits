@@ -659,13 +659,13 @@ public:
             read_column_by_column();
         }
 
-        // Apply FITS TSCAL/TZERO in-memory for integer-like columns.
-        // This preserves physical values while keeping the read path raw and fast.
+        // Apply FITS TSCAL/TZERO in-memory. This preserves physical values
+        // while keeping the read path raw and fast. FLOAT/DOUBLE columns are
+        // scaled too (legal FITS; CFITSIO's fits_read_col applies TSCAL/TZERO
+        // to any numeric type) — only complex/string/logical/VLA are exempt.
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
             if (!col.scaled ||
-                col.type == FITSColumnType::FLOAT ||
-                col.type == FITSColumnType::DOUBLE ||
                 col.type == FITSColumnType::COMPLEX_FLOAT ||
                 col.type == FITSColumnType::COMPLEX_DOUBLE ||
                 col.type == FITSColumnType::STRING ||
@@ -752,7 +752,7 @@ public:
 
     // Memory-mapped column reading
     // Returns a dict of column name to torch::Tensor (or numpy array for strings)
-    nb::dict read_columns_mmap(
+    std::unordered_map<std::string, torch::Tensor> read_columns_mmap(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1) {
 
@@ -762,7 +762,7 @@ public:
         }
 
         if (nrows_ == 0) {
-            return nb::dict();
+            return {};
         }
 
         // Validate rows
@@ -847,7 +847,7 @@ public:
         // size must match the original mmap() length (full file) passed to munmap().
         MMapHandle mmap_guard(map_ptr, sb.st_size, fd);
 
-        nb::dict result;
+        std::unordered_map<std::string, torch::Tensor> result;
         const uint8_t* base_ptr = static_cast<const uint8_t*>(map_ptr) + data_offset;
 
         // Calculate start offset based on start_row (0-based offset)
@@ -1021,7 +1021,7 @@ public:
                     tensor.add_(col.unsigned_offset);
                     tensor = tensor.to(col.unsigned_target_type);
                 }
-                result[col.name.c_str()] = tensor_to_python(tensor);
+                result[col.name] = std::move(tensor);
 
             } catch (const std::exception& e) {
                 // Never swallow: a failed column must surface as an error, not

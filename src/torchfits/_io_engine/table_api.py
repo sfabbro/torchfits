@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Union
 
+import numpy as np
 import torch
 
 from .hdu_api import _resolve_hdu_index, autodetect_hdu
@@ -57,9 +58,26 @@ def _thin_read_table_torch(
 
     col_names = list(columns) if columns is not None else []
     use_mmap = _resolve_mmap(mmap)
-    data = cpp.read_fits_table_rows(
-        path, int(hdu), col_names, int(start_row), int(num_rows), bool(use_mmap)
-    )
+    try:
+        data = cpp.read_fits_table_rows(
+            path, int(hdu), col_names, int(start_row), int(num_rows), bool(use_mmap)
+        )
+    except (RuntimeError, OSError, ValueError):
+        if not use_mmap:
+            raise
+        # mmap cannot serve every table (e.g. TSCAL/TZERO-scaled columns).
+        # Retry on the buffered path, which applies FITS scaling, so scaled
+        # tables read (and where= masks compare) physical values instead of
+        # raising.
+        data = cpp.read_fits_table_rows(
+            path, int(hdu), col_names, int(start_row), int(num_rows), False
+        )
+        # The buffered binding returns numpy columns; read_torch's contract
+        # is torch.Tensor columns (matching the mmap path).
+        data = {
+            k: torch.as_tensor(v) if isinstance(v, np.ndarray) else v
+            for k, v in data.items()
+        }
     return _move_table_dict(dict(data), device)
 
 
@@ -203,11 +221,17 @@ def read_table(
             mask = part if mask is None else (mask & part)
         assert mask is not None
         keep_cols = list(columns) if columns is not None else list(data.keys())
-        filtered = {
-            k: (v[mask] if isinstance(v, torch.Tensor) else v)
-            for k, v in data.items()
-            if k in keep_cols
-        }
+        np_mask = mask.cpu().numpy()
+        filtered = {}
+        for k, v in data.items():
+            if k not in keep_cols:
+                continue
+            if isinstance(v, torch.Tensor):
+                filtered[k] = v[mask]
+            elif isinstance(v, np.ndarray):
+                filtered[k] = v[np_mask]
+            else:
+                filtered[k] = v
         data = _apply_row_window(
             _move_table_dict(filtered, device), start_row, num_rows
         )

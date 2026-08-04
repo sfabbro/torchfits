@@ -64,6 +64,13 @@ def _unsigned_image_storage_for_fits_write(
     libraries read back as unsigned data.
     """
     tensor = _host_tensor_for_fits_write(tensor)
+    if tensor.dtype == torch.uint64:
+        raise ValueError(
+            "torchfits does not support writing uint64 image tensors: FITS has "
+            "no native uint64 storage (BITPIX=-64 is not standard), and a "
+            "BZERO=2**64 pseudo-unsigned convention is not interoperable. "
+            "Convert to int64 (requires values < 2**63) or float64 before writing."
+        )
     if tensor.dtype == torch.uint16:
         raw: Tensor = (tensor.to(torch.int32) - 32768).to(torch.int16)
         return raw, {"BSCALE": 1.0, "BZERO": 32768.0}
@@ -433,6 +440,14 @@ def _prepare_unsigned_table_data_for_write(
 
     for name, value in table_dict.items():
         col_name = str(name)
+        if isinstance(value, torch.Tensor) and value.dtype == torch.uint64:
+            raise ValueError(
+                f"torchfits does not support writing uint64 table column "
+                f"{col_name!r}: FITS has no native uint64 storage (BITPIX=-64 "
+                f"is not standard), and a BZERO=2**64 pseudo-unsigned "
+                f"convention is not interoperable. Convert to int64 (requires "
+                f"values < 2**63) or float64 before writing."
+            )
         converted = _unsigned_table_storage_for_fits_write(value)
         if converted is None:
             out[col_name] = value

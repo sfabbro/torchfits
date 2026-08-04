@@ -420,6 +420,14 @@ torchfits.write(path, data, header=None, overwrite=False, compress=False, quanti
     packs table columns via `table.write(..., quantize=)`. See
     [`example_quantize_int16.py`](published-examples/example_quantize_int16.py).
 
+!!! note "uint64 payloads are rejected"
+    FITS has no native uint64 storage (`BITPIX=-64` is not standard, and a
+    `BZERO=2**64` pseudo-unsigned convention is not interoperable).
+    `write()` raises `ValueError` for uint64 image tensors and uint64 table
+    columns with guidance: convert to `int64` (values `< 2**63`) or `float64`
+    before writing. Unsigned `uint16`/`uint32` are supported natively via the
+    standard signed storage + `BSCALE`/`BZERO` convention.
+
 ### `write_tensor()`
 
 Write a single PyTorch Tensor to a FITS image extension.

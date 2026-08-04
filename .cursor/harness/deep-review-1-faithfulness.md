@@ -1,8 +1,9 @@
 # Deep Review 1 — Faithfulness vs fitsio / astropy (verified findings)
 
-Status: DRAFT — experiments verified in-source on lane 2.13, python 3.13,
+Status: RESOLVED — experiments verified in-source on lane 2.13, python 3.13,
 commit ad527c1. Each finding below was reproduced with a standalone probe
 (images BSCALE/BZERO, tables TSCAL/TZERO, CONTINUE cards, uint64, TNULL).
+Resolution commit: (see git log; wave-5 fixes + tests landed on main together).
 
 ## Confirmed defects (reproducer → wrong/divergent result)
 
@@ -75,3 +76,82 @@ commit ad527c1. Each finding below was reproduced with a standalone probe
    raising (plus docs).
 5. G1: emit `CONTINUE` on write for values > 68 chars (parity with astropy) or
    warn; decide per fix plan.
+
+## Resolution log (wave-5, all landed on main)
+
+### F1 (resolved)
+- `parse_header_string` + `fast_parse_header_cards` both assemble CONTINUE
+  chains: LONGSTRN `&'`-terminated segments drop `&` (restored when no
+  CONTINUE follows); bare CONTINUE cards append with trailing blanks stripped.
+- Verified: torchfits r/w 121-char round-trip, astropy-written 120-char files,
+  literal trailing `&`, escaped quotes across CONTINUE.
+- Tests: `tests/test_deep_review_wave5.py` (longstr round-trip, astropy file,
+  trailing `&`, plain CONTINUE).
+
+### F2 (resolved)
+- `_host_tensor_for_fits_write` and `_prepare_unsigned_table_data_for_write`
+  raise `ValueError` naming the column/type with conversion guidance
+  (int64 < 2**63 or float64); `write_api.py` re-raises ValueError unwrapped
+  instead of burying it in RuntimeError. Docs note added to
+  `docs/api-core-io.md` (Writes section).
+- Tests: uint64 image + uint64 table column both assert the ValueError.
+
+### F3 (resolved)
+- `table_reader.h` scaling loop no longer skips FLOAT/DOUBLE; float64 and
+  int32 columns with TSCAL=2/TZERO=500 return physical values matching
+  astropy on buffered, mmap, and unified `torchfits.read`.
+- Tests: parametrized float64/int32 scaled reads (buffered + mmap).
+
+### F4 (resolved, plus a latent bug found)
+- `_thin_read_table_torch` retries buffered when mmap raises on scaled
+  columns (physical values + working `where=`).
+- Latent bug found while testing: the where-mask in `read_table` only masked
+  `torch.Tensor` values; numpy-backed columns (the buffered path) silently
+  ignored the predicate → `where=` returned unfiltered data. Mask now applied
+  to ndarray columns too.
+- Contract fix: the buffered fallback returns numpy from C++; read_torch's
+  documented contract is torch.Tensor columns, so the fallback converts
+  ndarray → tensor (regression: examples/example_quantize_int16.py and
+  example_table_interop.py broke when the fallback returned ndarray).
+- Tests: scaled where-select (physical comparison), scaled mmap reads.
+
+### G1 (resolved)
+- `write_hdu_header_cards` in `fits_bindings.cpp` uses `fits_update_key_longstr`
+  for values > 68 chars → standard LONGSTRN CONTINUE cards on disk (verified
+  in raw bytes), full-value read-back round-trip.
+- Tests: written bytes contain `CONTINUE`, read-back equals original.
+
+### GIL-hold (perf, resolved)
+- `read_columns_mmap` returns `unordered_map<string, torch::Tensor>`; mmap
+  read bindings release the GIL during the C++ read and acquire only for
+  conversion; `read_fits_table_rows_numpy` mmap branch likewise.
+- Tests: concurrent mmap full-reads stay consistent across threads.
+
+### Per-batch reopen (perf, resolved)
+- New `open_fits_mmap_reader` (persistent TableReader capsule) +
+  `read_fits_table_rows_mmap_from_reader`; `_iter_chunks_cpp_table` opens once
+  per scan and reads every batch from the reader (was: re-open + re-parse
+  header per batch — 13 opens per 13-batch narrow scan).
+- Tests: monkeypatched scan asserts exactly 1 open, 8 reader reads, 0 legacy
+  opens for 8 batches.
+
+### NIOBUF/MINDIRECT (perf, verified no-op → confirmed working)
+- Verified end-to-end: vendored headers carry the `#ifndef` guards (patch
+  applied at configure) and configure emits `-- Overriding CFITSIO NIOBUF=80 /
+  MINDIRECT=8640` from the pyproject cmake.args. Mechanism confirmed
+  functional (no silent no-op remains).
+- Test: guards present in `extern/cfitsio/fitsio.{h,2h}`.
+
+### Scale-on-device dead path (perf, resolved)
+- `_apply_scale_on_device` / `_apply_unsigned_offset` were defined but never
+  called from production code (tests only). Removed; live `scale_on_device`
+  path coverage kept in `tests/test_scale_on_device.py` (integration tests).
+  `tests/test_signed_byte_device_scale.py` (pure unit tests of the dead
+  helpers) deleted.
+
+### Grid deficit context
+- Grid (41 legs, commit 9f8f2a1) attributed the top deficits to GIL-hold
+  (compressed_hcompress read_full), per-batch reopen (narrow/varlen scans),
+  and CUDA small-payload transfer overhead. All source-level items above are
+  landed; CUDA small-payload gap is transfer/launch-bound (scale-on-device
+  wiring would worsen it) and stays as a benchmark follow-up.

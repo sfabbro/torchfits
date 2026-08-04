@@ -25,6 +25,18 @@ namespace nb = nanobind;
 
 namespace {
 
+nb::dict tensor_map_to_python(
+    const std::unordered_map<std::string, torch::Tensor>& result_map
+) {
+    // Must be called with the GIL held: wraps each C++ tensor as a Python
+    // object. The heavy read work itself happens GIL-free in the callers.
+    nb::dict result_dict;
+    for (auto& [key, tensor] : result_map) {
+        result_dict[key.c_str()] = tensor_to_python(tensor);
+    }
+    return result_dict;
+}
+
 nb::dict table_result_to_python(
     const std::unordered_map<std::string, torchfits::TableReader::ColumnData>& result_map,
     bool as_numpy
@@ -202,8 +214,9 @@ void bind_table(nb::module_& m) {
         nb::gil_scoped_release release;
         if (mmap) {
             torchfits::TableReader reader(filename, hdu_num);
+            auto result = reader.read_columns_mmap(column_names);
             nb::gil_scoped_acquire acquire;
-            return reader.read_columns_mmap(column_names);
+            return tensor_map_to_python(result);
         } else {
             fitsfile* fptr = nullptr;
             int status = 0;
@@ -228,8 +241,9 @@ void bind_table(nb::module_& m) {
         nb::gil_scoped_release release;
         if (mmap) {
             torchfits::TableReader reader(filename, hdu_num);
+            auto result = reader.read_columns_mmap(column_names, start_row, num_rows);
             nb::gil_scoped_acquire acquire;
-            return reader.read_columns_mmap(column_names, start_row, num_rows);
+            return tensor_map_to_python(result);
         } else {
             fitsfile* fptr = nullptr;
             int status = 0;
@@ -267,8 +281,11 @@ void bind_table(nb::module_& m) {
                                            const std::vector<std::string>& column_names,
                                            long start_row, long num_rows, bool mmap) -> nb::object {
         if (mmap) {
+            nb::gil_scoped_release release;
             torchfits::TableReader reader(filename, hdu_num);
-            nb::dict mapped = reader.read_columns_mmap(column_names, start_row, num_rows);
+            auto result_map = reader.read_columns_mmap(column_names, start_row, num_rows);
+            nb::gil_scoped_acquire acquire;
+            nb::dict mapped = tensor_map_to_python(result_map);
             nb::dict numpy_result;
             for (auto item : mapped) {
                 nb::handle key = item.first;
@@ -304,6 +321,30 @@ void bind_table(nb::module_& m) {
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
        nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("start_row") = 1, nb::arg("num_rows") = -1, nb::arg("mmap") = false);
+
+    m.def("open_fits_mmap_reader", [](const std::string& path, int hdu_num) -> nb::capsule {
+        // Persistent TableReader for batch mmap scans: opens + parses the
+        // header once; each read_rows call maps/unmaps per batch but never
+        // re-opens the file.
+        torchfits::TableReader* reader = new torchfits::TableReader(path, hdu_num);
+        return nb::capsule(reader, [](void* p) noexcept {
+            delete static_cast<torchfits::TableReader*>(p);
+        });
+    }, nb::arg("path"), nb::arg("hdu_num") = 1);
+
+    m.def("read_fits_table_rows_mmap_from_reader", [](nb::capsule reader_cap,
+                                                      const std::vector<std::string>& column_names,
+                                                      long start_row, long num_rows) -> nb::object {
+        auto* reader = static_cast<torchfits::TableReader*>(reader_cap.data());
+        if (reader == nullptr) {
+            throw std::runtime_error("Invalid mmap reader capsule");
+        }
+        nb::gil_scoped_release release;
+        auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
+        nb::gil_scoped_acquire acquire;
+        return tensor_map_to_python(result);
+    }, nb::arg("reader"), nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
 
     m.def("read_fits_table_filtered", [](const std::string& filename, int hdu_num,
                                          const std::vector<std::string>& column_names,

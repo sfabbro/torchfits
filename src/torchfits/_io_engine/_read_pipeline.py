@@ -106,61 +106,6 @@ def _coerce_unsigned_table_columns(table_data: Any, header: Header | None) -> An
     return out
 
 
-def _apply_unsigned_offset(
-    data: torch.Tensor,
-    dtype: torch.dtype,
-    offset: int,
-    *,
-    device: str | None = None,
-) -> torch.Tensor:
-    """Convert signed FITS storage to unsigned dtype with minimal widening."""
-    if device is not None and device != "cpu":
-        data = data.to(device=device)
-    if dtype == torch.uint16 and data.dtype == torch.int16:
-        return (data.to(torch.int32) + offset).to(torch.uint16)
-    if dtype == torch.uint32 and data.dtype == torch.int32:
-        return (data.to(torch.int64) + offset).to(torch.uint32)
-    if dtype == torch.int8 and data.dtype == torch.uint8 and offset == -128:
-        # FITS signed-byte (BZERO=-128): XOR path matches _apply_scale_on_device.
-        return (data ^ 0x80).view(torch.int8)
-    return data.to(torch.int64).add_(offset).to(dtype=dtype)
-
-
-def _apply_scale_on_device(
-    data: torch.Tensor,
-    *,
-    scaled: bool,
-    bscale: float,
-    bzero: float,
-    device: str,
-) -> torch.Tensor:
-    """Apply BSCALE/BZERO on ``device`` while preserving narrow integer H2D when possible."""
-    if not scaled:
-        return data.to(device=device)
-
-    if data.dtype == torch.int16 and bscale == 1.0 and bzero == 32768.0:
-        # Unsigned-16: convert on host, then one device copy (like signed-byte).
-        logical = _apply_unsigned_offset(data, torch.uint16, 32768, device="cpu")
-        return logical.to(device=device)
-    if data.dtype == torch.int32 and bscale == 1.0 and bzero == 2147483648.0:
-        logical = _apply_unsigned_offset(data, torch.uint32, 2147483648, device="cpu")
-        return logical.to(device=device)
-    if data.dtype == torch.uint8 and bscale == 1.0 and bzero == -128.0:
-        # FITS signed-byte (BZERO=-128): convert on host, then one device copy.
-        # Avoids CUDA/MPS int16/subtract/int8 cast kernels on tiny payloads.
-        logical = (data ^ 0x80).view(torch.int8)
-        return logical.to(device=device)
-
-    # Generic BSCALE/BZERO: host float scale, then one H2D. No size gate —
-    # device launch tax is never free for this one mul/add.
-    out = data.to(dtype=torch.float32)
-    if bscale != 1.0:
-        out = out.mul(bscale)
-    if bzero != 0.0:
-        out = out.add(bzero)
-    return out.to(device=device)
-
-
 # ---------------------------------------------------------------------------
 # Option parsing and validation (extracted from read_unified — A2 refactor)
 # ---------------------------------------------------------------------------

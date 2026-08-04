@@ -78,6 +78,16 @@ class FastHeaderParser:
         startswith = str.startswith
         isspace = str.isspace
 
+        # The keyword whose string value the next CONTINUE card extends.
+        # FITS CONTINUE cards continue the string value of the preceding
+        # string-valued card in the logical record.
+        last_string_keyword: Optional[str] = None
+
+        # LONGSTRN '&' continuation: a quoted value whose field ends with '&'
+        # is continued by the following CONTINUE card(s); the '&' is dropped
+        # and restored only if no CONTINUE card actually follows.
+        pending_ampersand_keyword: Optional[str] = None
+
         # Pre-calculate string lengths and slices outside the loop
         str_len = len(header_string)
 
@@ -86,6 +96,17 @@ class FastHeaderParser:
         for i in range(0, str_len, 80):
             card = header_string[i : i + 80]
             keyword = None
+
+            # Any card that is not a CONTINUE card ends a LONGSTRN '&' chain:
+            # the '&' then belongs to the value itself.
+            if (
+                not startswith(card, "CONTINUE")
+                and pending_ampersand_keyword is not None
+            ):
+                prev_val = header.get(pending_ampersand_keyword)
+                if isinstance(prev_val, str):
+                    header[pending_ampersand_keyword] = prev_val + "&"
+                pending_ampersand_keyword = None
 
             # Bolt optimization: stop parsing immediately at first END card.
             # FITS headers are padded with 2880-byte blocks of spaces. Breaking
@@ -123,10 +144,16 @@ class FastHeaderParser:
                         comment = None
 
                 value: Any = None
+                value_ends_ampersand = False
                 if value_str:
                     first_char = value_str[0]
                     if first_char == "'":
                         value = _parse_string_value(value_str)
+                        if value_str.endswith("&'"):
+                            # LONGSTRN marker: strip the '&'; a CONTINUE card
+                            # must follow (restored if it does not).
+                            value = value[:-1]
+                            value_ends_ampersand = True
                     elif keyword in string_keywords:
                         value = value_str
                     elif first_char in "+-0123456789.":
@@ -155,12 +182,48 @@ class FastHeaderParser:
 
                 if keyword:
                     header[keyword] = value
+                    if isinstance(value, str):
+                        last_string_keyword = keyword
+                        # A quoted value ending in '&' expects a CONTINUE card
+                        # next; a non-string value cannot start a chain.
+                        pending_ampersand_keyword = (
+                            keyword if value_ends_ampersand else None
+                        )
+                    else:
+                        pending_ampersand_keyword = None
                     if comment:
                         header[f"{keyword}_COMMENT"] = comment
             elif startswith(card, ("COMMENT ", "HISTORY ", "CONTINUE")):
                 keyword = card[:8].rstrip()
-                if keyword:
+                if keyword == "CONTINUE" and last_string_keyword is not None:
+                    # CONTINUE: append the segment to the preceding string
+                    # value. Per the FITS standard, trailing blanks of each
+                    # segment are dropped before concatenation.
+                    segment_raw = card[8:]
+                    comment_start = _find_comment_separator(segment_raw)
+                    if comment_start != -1:
+                        segment = segment_raw[:comment_start].strip()
+                    else:
+                        segment = segment_raw.strip()
+                    if segment:
+                        seg_value = (
+                            _parse_string_value(segment)
+                            if segment[0] == "'"
+                            else segment
+                        )
+                        prev = header.get(last_string_keyword)
+                        if isinstance(prev, str):
+                            header[last_string_keyword] = prev + seg_value
+                        # Each non-final LONGSTRN segment itself ends in '&',
+                        # so the chain stays open only while that marker is
+                        # present on the just-consumed card.
+                        pending_ampersand_keyword = (
+                            last_string_keyword if segment.endswith("&'") else None
+                        )
+                elif keyword:
                     header[keyword] = card[8:].strip()
+                    if keyword in string_keywords:
+                        last_string_keyword = keyword
             else:
                 # No equals sign - might be a comment-only keyword
                 keyword = card[:8].rstrip()
@@ -187,6 +250,22 @@ class FastHeaderParser:
         # Handle comment-only cards (COMMENT, HISTORY, etc.)
         if card.startswith(("COMMENT ", "HISTORY ", "CONTINUE")):
             keyword = card[:8].strip()
+            if keyword == "CONTINUE":
+                # Parse the continuation segment: split off any comment,
+                # unquote, and strip trailing blanks like a string value.
+                segment_raw = card[8:]
+                comment_start = cls._find_comment_separator(segment_raw)
+                if comment_start != -1:
+                    segment = segment_raw[:comment_start].strip()
+                    comment = segment_raw[comment_start + 1 :].strip()
+                else:
+                    segment = segment_raw.strip()
+                    comment = None
+                if segment and segment[0] == "'":
+                    segment_value = cls._parse_string_value(segment)
+                else:
+                    segment_value = segment
+                return keyword, segment_value, comment
             value: Any = card[8:].strip()
             return keyword, value, None
 
@@ -339,15 +418,65 @@ def fast_parse_header_cards(
     """
     cards: list[tuple[str, Any, str]] = []
     str_len = len(header_string)
+    # Index into cards of the last string-valued card; LONGSTRN '&' chains
+    # and bare CONTINUE cards extend its value.
+    last_value_index = -1
+    # Index of a card whose quoted value ended in '&' (LONGSTRN marker). The
+    # marker is dropped and restored only if no CONTINUE card follows.
+    pending_ampersand = -1
     for i in range(0, str_len, 80):
         card = header_string[i : i + 80]
         if card.startswith("END     "):
+            if pending_ampersand != -1:
+                pk, pv, pc = cards[pending_ampersand]
+                cards[pending_ampersand] = (pk, pv + "&", pc)
             break
         if not card or card.isspace():
             continue
         if len(card) < 80:
             card = card.ljust(80)
         kw, val, comment = FastHeaderParser._parse_card(card)
-        if kw is not None:
-            cards.append((kw, val, "" if comment is None else str(comment)))
+        if kw is None:
+            continue
+
+        if kw == "CONTINUE":
+            if last_value_index != -1 and isinstance(cards[last_value_index][1], str):
+                pk, pv, pc = cards[last_value_index]
+                segment_field = card[8:].strip()
+                segment_amp = (
+                    isinstance(val, str)
+                    and segment_field.startswith("'")
+                    and segment_field.endswith("&'")
+                )
+                if segment_amp and isinstance(val, str) and val.endswith("&"):
+                    val = val[:-1]
+                cards[last_value_index] = (pk, pv + val, pc)
+                pending_ampersand = last_value_index if segment_amp else -1
+            else:
+                # Orphan CONTINUE card (malformed): keep it visible as-is.
+                cards.append((kw, val, "" if comment is None else str(comment)))
+            continue
+
+        if pending_ampersand != -1:
+            # The '&' was not continued: it is part of the value.
+            pk, pv, pc = cards[pending_ampersand]
+            cards[pending_ampersand] = (pk, pv + "&", pc)
+            pending_ampersand = -1
+        cards.append((kw, val, "" if comment is None else str(comment)))
+        if isinstance(val, str):
+            last_value_index = len(cards) - 1
+            value_field = card[9:].strip()
+            if (
+                card[8] == "="
+                and value_field.startswith("'")
+                and value_field.endswith("&'")
+            ):
+                # LONGSTRN marker: drop the '&' from the stored value; a
+                # CONTINUE card must follow (restored if it does not).
+                cards[last_value_index] = (
+                    kw,
+                    val[:-1],
+                    "" if comment is None else str(comment),
+                )
+                pending_ampersand = last_value_index
     return cards

@@ -64,14 +64,25 @@ def _iter_chunks_cpp_table(
                 path, hdu, columns, header=header
             )
         file_handle = None
+        mmap_reader = None
         try:
+            if can_mmap_rows and hasattr(cpp, "open_fits_mmap_reader"):
+                try:
+                    # Open once: per-batch reopens (open + header parse per
+                    # batch) dominate the mmap row path for batched scans.
+                    mmap_reader = cpp.open_fits_mmap_reader(path, hdu)
+                except (RuntimeError, OSError) as exc:
+                    logger.debug(
+                        "mmap reader open failed; falling back to handle read: %s", exc
+                    )
+                    can_mmap_rows = False
             row = start_row
             while row <= end_row:
                 size = min(batch_size, end_row - row + 1)
-                if can_mmap_rows:
+                if can_mmap_rows and mmap_reader is not None:
                     try:
-                        yield cpp.read_fits_table_rows(
-                            path, hdu, col_list, row, size, True
+                        yield cpp.read_fits_table_rows_mmap_from_reader(
+                            mmap_reader, col_list, row, size
                         )
                         row += size
                         continue
