@@ -98,14 +98,16 @@ mkdir -p "${WHEELS_DIR}"
 if [[ -z "$(ls "${WHEELS_DIR}"/*.whl 2>/dev/null || true)" ]]; then
   echo "fetching wheel bundle from ${TORCHFITS_BENCH_WHEELS}"
   # vos CLI may live outside the image PATH; bootstrap a private prefix if needed.
+  # Never write into ${HOME}/.local/torchfits-vos/bin (a symlink may point back
+  # into lib/python/bin and clobber the real console script).
   if ! command -v vcp >/dev/null; then
     _vos_root="${HOME}/.local/torchfits-vos"
-    mkdir -p "${_vos_root}/bin" "${_vos_root}/lib/python"
-    PYTHONNOUSERSITE=1 python3 -m pip install -q --target "${_vos_root}/lib/python" vos
-    export PYTHONPATH="${_vos_root}/lib/python${PYTHONPATH:+:${PYTHONPATH}}"
+    mkdir -p "${_vos_root}/lib/python"
     export PATH="${_vos_root}/lib/python/bin:${PATH}"
-    # python3 -m vos.commands.vcp copies 0 files for dir sources; use the
-    # console-script entry point pip installed under .../bin/vcp.
+    if [[ ! -x "${_vos_root}/lib/python/bin/vcp" ]]; then
+      PYTHONNOUSERSITE=1 python3 -m pip install -q --upgrade --target "${_vos_root}/lib/python" vos
+    fi
+    export PYTHONPATH="${_vos_root}/lib/python${PYTHONPATH:+:${PYTHONPATH}}"
     if [[ ! -x "${_vos_root}/lib/python/bin/vcp" ]]; then
       echo "ERROR: vos console script not found under private prefix" >&2
       exit 1
