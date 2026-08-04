@@ -7,6 +7,10 @@ import stat
 import tempfile
 from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
+
+import torch
+
 from torch import Tensor
 
 from ..hdu import HDUList, Header, TensorHDU
@@ -159,7 +163,9 @@ def write(
 
         if compress:
             compressed_hdus: List[Any] = []
-            if isinstance(data, Tensor):
+            if isinstance(data, (Tensor, np.ndarray)):
+                if isinstance(data, np.ndarray):
+                    data = torch.as_tensor(data)
                 data, header = _apply_image_quantize(data, header, quantize)
                 img, img_header = _unsigned_image_storage_for_fits_write(data)
                 compressed_hdus = [
@@ -241,6 +247,13 @@ def write(
         if isinstance(data, Tensor):
             hdus_to_write.append(
                 _image_hdu_dict_for_fits_write(data, header, quantize=quantize)
+            )
+
+        elif isinstance(data, np.ndarray):
+            hdus_to_write.append(
+                _image_hdu_dict_for_fits_write(
+                    torch.as_tensor(data), header, quantize=quantize
+                )
             )
 
         elif hasattr(data, "__iter__") and not isinstance(data, (str, Tensor)):

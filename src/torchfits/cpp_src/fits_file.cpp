@@ -782,6 +782,26 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
         status = 0;
         fits_set_compression_type(fptr_, compression_type, &status);
         if (status != 0) throw std::runtime_error("Failed to set compression type");
+        // Default to lossless where CFITSIO supports it: CFITSIO quantizes
+        // float/double pixels (lossy) unless explicitly disabled, which would
+        // silently corrupt round-trips of compressed float images. GZIP and
+        // integer RICE compress losslessly with qlevel=0; float RICE and
+        // HCOMPRESS cannot be lossless (CFITSIO returns compression errors),
+        // so they keep the library default quantization (lossy, matching
+        // astropy and fitsio defaults).
+        bool lossless_capable = false;
+        if (compression_type == GZIP_1) {
+            lossless_capable = true;
+        } else if (compression_type == RICE_1) {
+            nb::dlpack::dtype dt = tensor.dtype();
+            lossless_capable =
+                dt.code != (uint8_t)nb::dlpack::dtype_code::Float;
+        }
+        if (lossless_capable) {
+            status = 0;
+            fits_set_quantize_level(fptr_, 0.0f, &status);
+            if (status != 0) throw std::runtime_error("Failed to set compression quantization");
+        }
         std::vector<long> tilesize(naxis, 1);
         tilesize[0] = naxes[0];
         if (compression_type == HCOMPRESS_1) {
