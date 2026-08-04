@@ -25,7 +25,7 @@ MANIFEST="benchmarks_results/wheels-manifest/manifest.txt"
   echo "torchfits wheel bundle for CANFAR matrix legs"
   echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "git: $(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  echo "torch_lanes: $(python3 scripts/release_lane.py --print-pins | sed 's/.*torch=//')"
+  echo "torch_lanes: $(pixi run python scripts/release_lane.py --print-pins | sed 's/.*torch=//')"
   echo "---"
 } > "${MANIFEST}"
 for w in "${SRC}"/*.whl; do

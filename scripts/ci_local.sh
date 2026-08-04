@@ -10,7 +10,7 @@ FAST="${CI_LOCAL_FAST:-0}"
 echo "=== ci_local: lint ==="
 pixi run ruff check .
 pixi run ruff format --check .
-python3 scripts/check_duplicate_cpp.py
+pixi run python scripts/check_duplicate_cpp.py
 # Resolves the [cpu]/[cuda] extra pins against download.pytorch.org (needs network).
 pixi run check-torch-pins
 # Verifies the committed lane pins match scripts/torch_lanes.json (no network).

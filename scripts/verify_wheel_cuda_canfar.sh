@@ -23,7 +23,7 @@ cd "$ROOT_DIR"
 
 LANES="${TORCHFITS_LANES:-}"
 if [[ -z "${LANES}" ]]; then
-  LANES="$(python3 -c 'import json; print(",".join(json.load(open("scripts/torch_lanes.json"))))')"
+  LANES="$(pixi run python -c 'import json; print(",".join(json.load(open("scripts/torch_lanes.json"))))')"
 fi
 JOBS="${TORCHFITS_JOBS:-2}"
 GIT_REF="${TORCHFITS_GIT_REF:-main}"
@@ -75,7 +75,7 @@ verify_lane() {
   fi
 
   session_id="$(
-    python3 - "$create_log" <<'PY'
+    pixi run python - "$create_log" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 m = re.search(r"ID:\s*([^)]+)\)", text)
@@ -91,7 +91,7 @@ PY
   local status="" start
   start="$(date +%s)"
   while true; do
-    status="$(canfar info "${session_id}" 2>/dev/null | python3 -c '
+    status="$(canfar info "${session_id}" 2>/dev/null | pixi run python -c '
 import re, sys
 text = sys.stdin.read()
 m = re.search(r"^\s*Status\s+(\S+)", text, re.MULTILINE)

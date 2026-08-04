@@ -136,7 +136,7 @@ EOF
   fi
 
   SESSION_ID="$(
-    python3 - "${CREATE_LOG}" <<'PY'
+    pixi run python - "${CREATE_LOG}" <<'PY'
 import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
@@ -189,7 +189,7 @@ if [[ "${TORCHFITS_CANFAR_FOREGROUND:-0}" != "1" && -z "${TORCHFITS_CANFAR_POLLE
     echo "exec bash $(printf %q "${ROOT_DIR}/scripts/launch_canfar_gpu_bench.sh")"
   } > "${LOCAL_OUT}/poller_daemon.sh"
   chmod +x "${LOCAL_OUT}/poller_daemon.sh"
-  python3 - "${LOCAL_OUT}/poller_daemon.sh" "${LOCAL_OUT}/poller.pid" "${POLLER_LOG}" <<'PY'
+  pixi run python - "${LOCAL_OUT}/poller_daemon.sh" "${LOCAL_OUT}/poller.pid" "${POLLER_LOG}" <<'PY'
 import os, sys
 
 daemon, pid_path, log_path = sys.argv[1:4]
@@ -223,7 +223,7 @@ fi
 terminal_status() {
   local info_status ps_status
   info_status="$(
-    canfar info "${SESSION_ID}" 2>/dev/null | python3 -c '
+    canfar info "${SESSION_ID}" 2>/dev/null | pixi run python -c '
 import re, sys
 
 text = sys.stdin.read()
@@ -238,7 +238,7 @@ print(m.group(1) if m else "")
 
   # ponytail: completed headless sessions may 404 on info; ps --all keeps history
   ps_status="$(
-    canfar ps --all --json 2>/dev/null | SESSION_ID="${SESSION_ID}" python3 -c '
+    canfar ps --all --json 2>/dev/null | SESSION_ID="${SESSION_ID}" pixi run python -c '
 import json, os, sys
 
 sid = os.environ["SESSION_ID"]
@@ -281,7 +281,7 @@ canfar events "${SESSION_ID}" > "${LOCAL_OUT}/canfar_events.txt" 2>&1 || true
 if [[ "${STATUS}" == "Succeeded" || "${STATUS}" == "Completed" ]]; then
   if command -v vcp >/dev/null && bash scripts/fetch_canfar_bench_vos.sh "${RUN_ID}"; then
     echo "fetched benchmarks_results/${RUN_ID} from ${VOS_DEST}" | tee -a "${LOCAL_OUT}/launcher.log"
-  elif python3 scripts/import_canfar_bench_artifacts.py "${LOCAL_OUT}/canfar_logs.txt" "${RUN_ID}" --dest "${ROOT_DIR}/benchmarks_results" 2>/dev/null; then
+  elif pixi run python scripts/import_canfar_bench_artifacts.py "${LOCAL_OUT}/canfar_logs.txt" "${RUN_ID}" --dest "${ROOT_DIR}/benchmarks_results" 2>/dev/null; then
     echo "imported benchmarks_results/${RUN_ID} from session logs (vcp fallback)" | tee -a "${LOCAL_OUT}/launcher.log"
   else
     echo "fetch results: bash scripts/fetch_canfar_bench_vos.sh ${RUN_ID}" | tee -a "${LOCAL_OUT}/launcher.log"

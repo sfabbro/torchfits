@@ -30,7 +30,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/logs"
 
 next_minor() {
-  python3 -c "major, minor = map(int, '$1'.split('.')); print(f'<{major}.{minor + 1}')"
+  pixi run python -c "major, minor = map(int, '$1'.split('.')); print(f'<{major}.{minor + 1}')"
 }
 
 verify_cell() {
@@ -39,7 +39,7 @@ verify_cell() {
   local lane
   # torchfits-1.0.0-cp313-cp313-linux_x86_64.whl -> lane from version, py from tag
   lane="$(basename "$wheel" | sed -n 's/^torchfits-\([0-9][0-9.]*[a-z0-9+]*\)-cp.*/\1/p' |
-    python3 -c '
+    pixi run python -c '
 import json, re, sys
 v = sys.stdin.read().strip()
 lanes = json.load(open("scripts/torch_lanes.json"))

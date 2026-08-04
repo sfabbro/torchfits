@@ -36,7 +36,7 @@ done
 
 cd "$ROOT"
 if [[ -z "$LANES" ]]; then
-  LANES="$(python3 -c 'import json; print(",".join(json.load(open("scripts/torch_lanes.json"))))')"
+  LANES="$(pixi run python -c 'import json; print(",".join(json.load(open("scripts/torch_lanes.json"))))')"
 fi
 mkdir -p "$OUT_DIR"
 
@@ -52,7 +52,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/logs"
 
 next_minor() {
-  python3 -c "major, minor = map(int, '$1'.split('.')); print(f'<{major}.{minor + 1}')"
+  pixi run python -c "major, minor = map(int, '$1'.split('.')); print(f'<{major}.{minor + 1}')"
 }
 
 build_cell() {

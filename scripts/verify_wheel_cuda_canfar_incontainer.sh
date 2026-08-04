@@ -27,7 +27,7 @@ if command -v nvidia-smi >/dev/null; then
 fi
 echo "driver=${DRIVER:-unknown}"
 
-SPEC="$(python3 - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
+SPEC="$(pixi run python - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
 import json, pathlib, sys
 lane = sys.argv[1]
 major, minor = (int(x) for x in lane.split("."))
@@ -35,7 +35,7 @@ lanes = json.loads(pathlib.Path("scripts/torch_lanes.json").read_text())
 print(">={},<{}.{}".format(lane, major, minor + 1))
 PY
 )"
-VERSION="$(python3 - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
+VERSION="$(pixi run python - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
 import json, pathlib, re, sys
 lane = sys.argv[1]
 lanes = json.loads(pathlib.Path("scripts/torch_lanes.json").read_text())
@@ -47,7 +47,7 @@ else:
 print(version)
 PY
 )"
-CU_FLAVORS="$(python3 - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
+CU_FLAVORS="$(pixi run python - "${TORCHFITS_CUDA_VERIFY_LANE}" <<'PY'
 import json, pathlib, sys
 lane = sys.argv[1]
 lanes = json.loads(pathlib.Path("scripts/torch_lanes.json").read_text())
@@ -59,7 +59,7 @@ print(" ".join(flavors))
 PY
 )"
 
-PYBIN="$(command -v python3)"
+PYBIN="$(pixi run python -c 'import sys; print(sys.executable)')"
 VENV="$WORK/venv"
 rm -rf "$VENV"
 "$PYBIN" -m venv "$VENV"

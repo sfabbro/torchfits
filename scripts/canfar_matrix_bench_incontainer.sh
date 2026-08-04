@@ -85,10 +85,15 @@ if [[ "${MEGACAM_COUNT}" -lt 1 ]]; then
 fi
 echo "megacam files=${MEGACAM_COUNT}"
 
-# --- torch lane: render the repo for the requested minor (idempotent on 2.13) ---
-echo "applying torch lane ${LANE} (release_lane.py --apply)"
-python3 scripts/release_lane.py --lane "${LANE}" --apply
-python3 scripts/release_lane.py --lane "${LANE}" --check
+# --- torch lane: render the repo for the requested minor ---
+# pixi-first: run the (stdlib-only) renderer with the pixi default env, never
+# with a bare python3 (no home/user-site writes). Lane 2.13 is the committed
+# state, so only non-2.13 lanes need the render. pixi auto-installs the
+# default env from the committed lock on first use.
+if [[ "${LANE}" != "2.13" ]]; then
+  echo "applying torch lane ${LANE} (release_lane.py --apply)"
+  pixi run -e default python scripts/release_lane.py --lane "${LANE}" --apply
+fi
 
 # --- pixi env for the python tier (pixi re-locks when pixi.toml changed) ---
 echo "pixi install -e ${ENV_NAME}"
@@ -97,7 +102,8 @@ pixi install -e "${ENV_NAME}"
 if [[ "${TORCHFITS_BENCH_CUDA}" == "1" ]]; then
   # Swap the conda CPU torch for the lane-matched cu wheel, build the C++
   # extension against it, and verify CUDA reachability.
-  TORCHFITS_TORCH_SPEC="torch>=${LANE},<$(python3 -c "m,n='${LANE}'.split('.'); print(f'{m}.{int(n)+1}')")" \
+  NEXT_MINOR=$(( ${LANE#*.} + 1 ))
+  TORCHFITS_TORCH_SPEC="torch>=${LANE},<${LANE%%.*}.${NEXT_MINOR}" \
   TORCHFITS_TORCH_INDEX="https://download.pytorch.org/whl/${TORCHFITS_BENCH_CU_FLAVOR}" \
     pixi run -e "${ENV_NAME}" gpu-bootstrap
   pixi run -e "${ENV_NAME}" bench-gpu-install
@@ -106,9 +112,13 @@ else
   pixi run -e "${ENV_NAME}" bench-install
 fi
 
-# --- verify leg: ABI match + roundtrip (+ CUDA reachability on GPU legs) ---
-pixi run -e "${ENV_NAME}" python - <<'PY'
-import sys, torch, torchfits, pathlib, tempfile
+# --- verify leg: lane pin, ABI match + roundtrip (+ CUDA on GPU legs) ---
+pixi run -e "${ENV_NAME}" python - "${LANE}" <<'PY'
+import subprocess, sys
+import torch, torchfits, pathlib, tempfile
+lane = sys.argv[1] if len(sys.argv) > 1 else "2.13"
+print("lane", lane, flush=True)
+subprocess.run([sys.executable, "scripts/release_lane.py", "--lane", lane, "--check"], check=True)
 print("torch", torch.__version__, "cuda_avail", torch.cuda.is_available(), "cuda_rt", torch.version.cuda, flush=True)
 print("torchfits", torchfits.__version__, "python", sys.version.split()[0], flush=True)
 f = str(pathlib.Path(tempfile.mkdtemp()) / "t.fits")
