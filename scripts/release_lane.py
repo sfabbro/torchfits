@@ -51,7 +51,18 @@ _PYPROJECT_VERSION_RE = re.compile(r'^(version = ")([^"]+)(")$', re.MULTILINE)
 _INIT_VERSION_RE = re.compile(r'^(__version__ = ")([^"]+)(")$', re.MULTILINE)
 _PIXI_VERSION_RE = re.compile(r'^(version = ")([^"]+)(")$', re.MULTILINE)
 _PIXI_PYTORCH_RE = re.compile(r'^(pytorch = ")(>=2\.\d+,<2\.\d+)(")$', re.MULTILINE)
+_PIXI_PYARROW_RE = re.compile(
+    r'^(pyarrow = ")(?:>=25\.0\.0,<26|>=24,<25)(")$', re.MULTILINE
+)
 _CONSTRAINTS_RE = re.compile(r"^(torch>=2\.\d+,<2\.\d+)$", re.MULTILINE)
+
+# conda-forge pins strict libabseil minors; torch 2.10's flatbuffers build
+# needs abseil 20260107.1 while every pyarrow 25.0.0 build needs abseil
+# 20260526+, so pyarrow must fall back to 24.x on the 2.10 lane (pyarrow 24
+# ships cp310-cp314 builds that accept the older abseil).
+_LANE_PIXI_PYARROW: dict[str, str] = {
+    "2.10": ">=24,<25",
+}
 _RECIPE_VERSION_RE = re.compile(r'^(  version: ")([^"]+)(")$', re.MULTILINE)
 _RECIPE_TORCH_PIN_RE = re.compile(
     r'^(  torch_pin: ")(>=2\.\d+,<2\.\d+)(")$', re.MULTILINE
@@ -222,6 +233,13 @@ def render(lane: str, version: str | None) -> dict[Path, str]:
     if count == 0:
         raise SystemExit("no pixi pytorch pins found to render")
     pixi = updated
+    pyarrow_pin = _LANE_PIXI_PYARROW.get(lane, ">=25.0.0,<26")
+    pixi = _replace_once(
+        pixi,
+        _PIXI_PYARROW_RE,
+        rf"\g<1>{pyarrow_pin}\g<2>",
+        "pixi pyarrow pin",
+    )
     rendered[PIXI] = pixi
 
     recipe = RECIPE.read_text(encoding="utf-8")
