@@ -108,7 +108,9 @@ if [[ -z "$(ls "${WHEELS_DIR}"/*.whl 2>/dev/null || true)" ]]; then
     chmod +x "${_vos_root}/bin/vcp"
     export PATH="${_vos_root}/bin:${PATH}"
   fi
-  vcp "${TORCHFITS_BENCH_WHEELS}" "${WHEELS_DIR}/" || vcp "${TORCHFITS_BENCH_WHEELS}"/* "${WHEELS_DIR}/"
+  # Trailing slash on the VOS source: copy the container's contents (not a
+  # nested subdirectory) into WHEELS_DIR.
+  vcp "${TORCHFITS_BENCH_WHEELS}/" "${WHEELS_DIR}/" || vcp "${TORCHFITS_BENCH_WHEELS}"/* "${WHEELS_DIR}/"
 fi
 ls "${WHEELS_DIR}" | head -25 || true
 if [[ "${LANE}" == "2.13" ]]; then
