@@ -60,10 +60,6 @@ pytest-cov = ">=7.0"
 ruff = ">=0.16.1,<0.17"
 mypy = ">=2.3.0"
 pip = ">=24.0"
-astropy = ">=8.0"
-fitsio = ">=1.4.0"
-matplotlib = ">=3.11"
-pandas = ">=2.2"
 scikit-build-core = ">=1.0.3"
 cmake = ">=3.21"
 ninja = ">=1.10"
@@ -72,6 +68,13 @@ pytorch = ">=2.13,<2.14"
 numpy = ">=1.20"
 pre-commit = ">=3.5.0"
 pyarrow = ">=25.0.0,<26"
+# Comparison libs with open floors (the solver picks python-compatible builds:
+# astropy 8 / matplotlib 3.11+ need 3.11+, numpy 2.5 needs 3.12+). The 3.10
+# lane automatically falls back to astropy 6.1.x / matplotlib 3.10.x.
+astropy = ">=6.1"
+fitsio = ">=1.4"
+matplotlib = ">=3.8"
+pandas = ">=2.2"
 polars = ">=1.43.2,<2"
 duckdb = ">=1.5.5,<2"
 
@@ -136,17 +139,12 @@ bench-table-render = "pixi run -e default python scripts/render_bench_iopath_tab
 [feature.prod.dependencies]
 python = "3.13.*"
 
-# Test feature with comparison libraries
 [feature.test.dependencies]
-astropy = ">=8.0"
-fitsio = ">=1.4.0"
 
-# Benchmark feature with additional dependencies
+# Benchmark feature with additional dependencies (polars/duckdb/astropy/
+# matplotlib/pandas live at workspace level so every env, incl. the 3.10
+# lane, gets them)
 [feature.bench.dependencies]
-astropy = ">=8.0"
-fitsio = ">=1.4.0"
-matplotlib = ">=3.11"
-pandas = ">=2.2"
 psutil = ">=7.2.2,<8"
 # Build deps needed so pip install -e . can compile the C++ extension
 cmake = ">=3.21"
@@ -199,12 +197,44 @@ gpu-env-check = "bash -c 'source scripts/gpu-env-loader.sh && python -c \"import
 # torch installed under ~/.local) would otherwise shadow the conda env.
 PYTHONNOUSERSITE = "1"
 
+# Per-python benchmark environments for the CANFAR grid (deep-review matrix):
+# python 3.10-3.14 x torch lanes 2.10-2.13 x {cpu, cuda}. The torch lane is
+# applied per session with scripts/release_lane.py --apply. pixi intersects
+# workspace + feature specs, so these envs deliberately exclude the prod
+# feature (python=3.13 pin); the solver picks python-compatible versions of
+# astropy/matplotlib/etc. automatically (astropy 8 needs 3.11+, numpy 2.5
+# needs 3.12+, so the 3.10 lane falls back to the newest compatible builds).
+[feature.py310.dependencies]
+python = "3.10.*"
+
+[feature.py311.dependencies]
+python = "3.11.*"
+
+[feature.py312.dependencies]
+python = "3.12.*"
+
+[feature.py313.dependencies]
+python = "3.13.*"
+
+[feature.py314.dependencies]
+python = "3.14.*"
+
 [environments]
 default = { features = ["prod"] }
 test = { features = ["prod", "test"] }
 bench = { features = ["prod", "bench"] }
 bench-all = { features = ["prod", "bench"] }
 bench-gpu = { features = ["prod", "bench", "gpu"] }
+bench-py310 = { features = ["bench", "py310"] }
+bench-py311 = { features = ["bench", "py311"] }
+bench-py312 = { features = ["bench", "py312"] }
+bench-py313 = { features = ["bench", "py313"] }
+bench-py314 = { features = ["bench", "py314"] }
+bench-gpu-py310 = { features = ["bench", "gpu", "py310"] }
+bench-gpu-py311 = { features = ["bench", "gpu", "py311"] }
+bench-gpu-py312 = { features = ["bench", "gpu", "py312"] }
+bench-gpu-py313 = { features = ["bench", "gpu", "py313"] }
+bench-gpu-py314 = { features = ["bench", "gpu", "py314"] }
 
 [target.osx-arm64.dependencies]
 cfitsio = ">=4.6.4,<4.6.5"

@@ -23,6 +23,7 @@ Usage::
     release_lane.py                print the current lane (from committed files)
     release_lane.py --check        verify committed files match torch_lanes.json
     release_lane.py --lane 2.13    print the rendered state for a lane
+    release_lane.py --lane 2.13 --check   verify files match a rendered lane
     release_lane.py --lane 2.13 --apply   rewrite the files for that lane
 
 ``--check`` is wired into preflight/CI so a lane pin can never drift from the
@@ -166,9 +167,15 @@ def render(lane: str, version: str | None) -> dict[Path, str]:
                 f"lane {lane!r} is not a release lane in torch_lanes.json; "
                 "its version derives from the current release"
             )
-        base = str(lanes[current_lane()]["torchfits_version"])
+        # Read the release base from pyproject; after --apply the version has a
+        # dev local segment (e.g. 1.0.0.dev0+torch212), so strip it first.
+        match = _PYPROJECT_VERSION_RE.search(PYPROJECT.read_text(encoding="utf-8"))
+        if match is None:
+            raise SystemExit("pyproject.toml has no version field")
+        base = re.sub(r"\.dev0\+torch\d+$", "", match.group(2))
+        base_lane = lane_for_version(base, load_lanes())
         version = f"{base}.dev0+torch{lane.replace('.', '')}"
-        cu_default = str(lanes[current_lane()]["cu_default"])
+        cu_default = str(lanes[base_lane]["cu_default"])
     nxt = next_lane(lane)
 
     rendered: dict[Path, str] = {}
@@ -236,7 +243,6 @@ def render(lane: str, version: str | None) -> dict[Path, str]:
 
 
 def check() -> int:
-    failed = False
     version_text = PYPROJECT.read_text(encoding="utf-8")
     match = _PYPROJECT_VERSION_RE.search(version_text)
     if match is None:
@@ -256,6 +262,11 @@ def check() -> int:
     except SystemExit as exc:
         print(f"[FAIL] {exc}", flush=True)
         return 1
+    return _verify(lane, expected)
+
+
+def _verify(lane: str, expected: dict[Path, str]) -> int:
+    failed = False
     for path, want in expected.items():
         got = path.read_text(encoding="utf-8")
         if got == want:
@@ -283,6 +294,13 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.check:
+        if args.lane is not None:
+            try:
+                expected = render(args.lane, None)
+            except SystemExit as exc:
+                print(f"[FAIL] {exc}", flush=True)
+                return 1
+            return _verify(args.lane, expected)
         return check()
 
     lanes = load_lanes()
