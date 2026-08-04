@@ -587,8 +587,11 @@ def test_compressed_uint32_roundtrip_exact(tmp_path):
     from astropy.io import fits
     from packaging.version import Version
 
-    # astropy < 6.0 has a bug decompressing uint32 (BZERO=2147483648) tile-compressed images
-    if Version(astropy.__version__) >= Version("6.0"):
+    # astropy < 7.0 (and no 7.x on py3.10, whose newest is 6.1.7) decodes
+    # uint32 (BZERO=2147483648) tile-compressed images with an int64->int32
+    # overflow that yields garbage (astropy 7.0.0 fixed it). Skip the oracle
+    # only there; the torchfits self-roundtrip above still asserts exactness.
+    if Version(astropy.__version__) >= Version("7.0"):
         np.testing.assert_array_equal(fits.getdata(path), data.numpy())
 
 
