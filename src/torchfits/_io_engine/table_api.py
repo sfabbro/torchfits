@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Union
 
-import numpy as np
 import torch
 
 from .hdu_api import _resolve_hdu_index, autodetect_hdu
@@ -54,6 +53,8 @@ def _thin_read_table_torch(
     mmap: Union[bool, str],
 ) -> dict[str, Any]:
     """CFITSIO → torch dict without going through read_unified image probes."""
+    import numpy as np
+
     import torchfits._C as cpp
 
     col_names = list(columns) if columns is not None else []
@@ -198,6 +199,8 @@ def read_table(
 
                 return data, torchfits.read_header(path, hdu=hdu)
             return data
+
+        import numpy as np
 
         mask: torch.Tensor | None = None
         for col, op, lit in predicates:

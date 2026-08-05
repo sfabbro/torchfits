@@ -7,8 +7,6 @@ import stat
 import tempfile
 from typing import Any, Dict, List, Optional, Union
 
-import numpy as np
-
 import torch
 
 from torch import Tensor
@@ -125,6 +123,7 @@ def write(
     if overwrite and path_exists:
         if os.path.isdir(path):
             raise IsADirectoryError(path)
+
         target = os.path.realpath(path)
         target_dir = os.path.dirname(target) or "."
         original_mode = stat.S_IMODE(os.stat(target).st_mode)
@@ -162,6 +161,8 @@ def write(
         hdus_to_write = []
 
         if compress:
+            import numpy as np
+
             compressed_hdus: List[Any] = []
             if isinstance(data, (Tensor, np.ndarray)):
                 if isinstance(data, np.ndarray):
@@ -243,6 +244,8 @@ def write(
                 "(numeric/bool/complex, strings, or VLA lists). Unsupported object/structure "
                 "columns should be converted before writing."
             )
+
+        import numpy as np
 
         if isinstance(data, Tensor):
             hdus_to_write.append(

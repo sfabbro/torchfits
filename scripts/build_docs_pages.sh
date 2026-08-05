@@ -32,7 +32,7 @@ need_cmd() {
   }
 }
 need_cmd git
-need_cmd pixi
+need_cmd python
 
 if command -v zensical >/dev/null 2>&1; then
   ZENSICAL=(zensical)
@@ -50,7 +50,7 @@ write_config() {
   local site_dir=$4
   local site_name=$5
   local channel=$6
-  pixi run python - "$src_cfg" "$dest" "$site_url" "$site_dir" "$site_name" "$channel" <<'PY'
+  python - "$src_cfg" "$dest" "$site_url" "$site_dir" "$site_name" "$channel" <<'PY'
 from pathlib import Path
 import sys
 
@@ -172,7 +172,7 @@ if [[ -n "$EDGE_WORK" ]]; then
   git worktree remove --force "$EDGE_WORK"
 fi
 
-pixi run python - <<PY
+python - <<PY
 from pathlib import Path
 import datetime
 

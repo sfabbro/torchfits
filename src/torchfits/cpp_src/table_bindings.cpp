@@ -26,10 +26,11 @@ namespace nb = nanobind;
 namespace {
 
 nb::dict tensor_map_to_python(
-    const std::unordered_map<std::string, torch::Tensor>& result_map
+    const std::vector<std::pair<std::string, torch::Tensor>>& result_map
 ) {
     // Must be called with the GIL held: wraps each C++ tensor as a Python
     // object. The heavy read work itself happens GIL-free in the callers.
+    // Input order (file/request column order) is preserved in the dict.
     nb::dict result_dict;
     for (auto& [key, tensor] : result_map) {
         result_dict[key.c_str()] = tensor_to_python(tensor);
@@ -38,7 +39,7 @@ nb::dict tensor_map_to_python(
 }
 
 nb::dict table_result_to_python(
-    const std::unordered_map<std::string, torchfits::TableReader::ColumnData>& result_map,
+    const std::vector<std::pair<std::string, torchfits::TableReader::ColumnData>>& result_map,
     bool as_numpy
 ) {
     nb::dict result_dict;

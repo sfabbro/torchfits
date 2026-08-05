@@ -405,8 +405,10 @@ public:
     }
 
     // Read columns from the table
-    // Returns a map of column name to ColumnData
-    std::unordered_map<std::string, ColumnData> read_columns(
+    // Returns column data in file order (request order when column_names is
+    // given), so callers that pair columns against TFORM/TTYPE cards (e.g. the
+    // table rewrite path) never see an arbitrary hash iteration order.
+    std::vector<std::pair<std::string, ColumnData>> read_columns(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1, bool vla_flat = false) {
 
@@ -487,7 +489,7 @@ public:
 
         // Check if we have any data
         if (nrows_ == 0 || ncols_ == 0) {
-             return result;
+             return {};
         }
 
         // Allocate tensors for all requested columns (except VLA)
@@ -707,7 +709,16 @@ public:
             it->second.fixed_data = converted.to(col.unsigned_target_type);
         }
 
-        return result;
+        // Order by file/request column index (see signature comment).
+        std::vector<std::pair<std::string, ColumnData>> ordered;
+        ordered.reserve(col_indices.size());
+        for (int col_idx : col_indices) {
+            auto it = result.find(columns_[col_idx].name);
+            if (it != result.end()) {
+                ordered.emplace_back(it->first, std::move(it->second));
+            }
+        }
+        return ordered;
 
     }
 
@@ -752,7 +763,8 @@ public:
 
     // Memory-mapped column reading
     // Returns a dict of column name to torch::Tensor (or numpy array for strings)
-    std::unordered_map<std::string, torch::Tensor> read_columns_mmap(
+    // in file/request column order (see read_columns signature comment).
+    std::vector<std::pair<std::string, torch::Tensor>> read_columns_mmap(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1) {
 
@@ -1030,11 +1042,20 @@ public:
             }
         }
 
-        return result;
+        // Order by file/request column index (see signature comment).
+        std::vector<std::pair<std::string, torch::Tensor>> ordered;
+        ordered.reserve(col_indices.size());
+        for (int col_idx : col_indices) {
+            auto it = result.find(columns_[col_idx].name);
+            if (it != result.end()) {
+                ordered.emplace_back(it->first, std::move(it->second));
+            }
+        }
+        return ordered;
     }
 
     // Filtered reading
-    std::unordered_map<std::string, torch::Tensor> read_columns_mmap_filtered(
+    std::vector<std::pair<std::string, torch::Tensor>> read_columns_mmap_filtered(
         const std::vector<std::string>& column_names,
         const std::vector<TableFilter>& filters) {
 
@@ -1584,7 +1605,16 @@ public:
             result[col.name] = out_tensor;
         }
 
-        return result;
+        // Order by file/request column index (see read_columns signature comment).
+        std::vector<std::pair<std::string, torch::Tensor>> ordered;
+        ordered.reserve(out_col_indices.size());
+        for (int col_idx : out_col_indices) {
+            auto it = result.find(columns_[col_idx].name);
+            if (it != result.end()) {
+                ordered.emplace_back(it->first, std::move(it->second));
+            }
+        }
+        return ordered;
     }
 
 
