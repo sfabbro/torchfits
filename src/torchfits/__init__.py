@@ -49,6 +49,7 @@ _ROOT_FUNCTIONS: dict[str, tuple[str, str]] = {
     "read_batch_info": ("torchfits.io", "read_batch_info"),
     "get_cache_performance": ("torchfits.io", "get_cache_performance"),
     "clear_file_cache": ("torchfits.io", "clear_file_cache"),
+    "clear_all_caches": ("torchfits.cache", "clear_all_caches"),
     "verify_checksums": ("torchfits.io", "verify_checksums"),
     "insert_hdu": ("torchfits.io", "insert_hdu"),
     "replace_hdu": ("torchfits.io", "replace_hdu"),
@@ -97,6 +98,7 @@ __all__ = tuple(
         "read_batch",
         "read_batch_info",
         "get_cache_performance",
+        "clear_all_caches",
         "clear_file_cache",
         "verify_checksums",
         "insert_hdu",
@@ -207,6 +209,7 @@ if TYPE_CHECKING:
     from .hdu import TableHDU as TableHDU
     from .hdu import TableHDURef as TableHDURef
     from .hdu import TensorHDU as TensorHDU
+    from .cache import clear_all_caches as clear_all_caches
     from .io import clear_file_cache as clear_file_cache
     from .io import delete_hdu as delete_hdu
     from .io import read_batch_info as read_batch_info

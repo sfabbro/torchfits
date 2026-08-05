@@ -469,7 +469,7 @@ result = torchfits.verify_checksums(path, hdu=0)
 
 | Layer | Entry points | Role |
 |---|---|---|
-| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `optimize_for_dataset(paths, avg_file_size_mb=10.0)` | Environment policy and on-disk roots |
+| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `clear_cache(disk=True)` / `clear_all_caches()`, `optimize_for_dataset(paths, avg_file_size_mb=10.0)` | Environment policy and on-disk roots |
 | I/O metadata | `get_cache_performance()`, `clear_file_cache(...)` | In-process header / meta / data caches |
 | Shared metadata (C++) | `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
 
@@ -481,9 +481,14 @@ torchfits.get_cache_performance()
 
 torchfits.cache.configure_for_environment()
 torchfits.cache.get_cache_stats()
-torchfits.cache.clear_cache()
+torchfits.cache.clear_cache()  # in-process only (default)
+torchfits.clear_all_caches()  # in-process + disk cache_root()
 torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
 ```
+
+`clear_cache()` clears policy + I/O metadata only. Pass `disk=True` (or call
+root `clear_all_caches()`) to also remove downloaded files under
+`cache_root()`.
 
 `clear_file_cache` keyword-only flags (all default `True`): `data`, `handles`,
 `meta`, `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the

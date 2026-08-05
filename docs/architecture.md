@@ -133,7 +133,9 @@ Caches sit in three places:
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
-`clear_file_cache(...)` clears the I/O metadata layers only. See
+`clear_file_cache(...)` clears the I/O metadata layers only.
+`clear_all_caches()` (or `clear_cache(disk=True)`) also removes on-disk
+roots under `cache_root()`. See
 [Cache Utilities](api-core-io.md#cache-utilities).
 
 Native in-process tiers:

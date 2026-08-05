@@ -10,6 +10,7 @@ no-ops after Option A (private handles); live shared state is SharedReadMeta.
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import warnings
 from pathlib import Path
@@ -331,8 +332,16 @@ def get_cache_stats() -> Dict[str, Any]:
     return get_cache_manager().get_stats()
 
 
-def clear_cache() -> None:
-    """Clear Python and C++ I/O caches."""
+def clear_cache(*, disk: bool = False) -> None:
+    """Clear Python and C++ I/O caches.
+
+    Parameters
+    ----------
+    disk : bool
+        If ``True``, also remove downloaded files from the disk cache
+        root (``cache_root()``).  Default ``False`` preserves cached
+        remote downloads and samples.
+    """
     get_cache_manager().clear()
     try:
         from ._io_engine.caches import clear_file_cache
@@ -344,6 +353,24 @@ def clear_cache() -> None:
             RuntimeWarning,
             stacklevel=2,
         )
+    if disk:
+        _remove_tree(cache_root())
+
+
+def clear_all_caches() -> None:
+    """Clear **all** torchfits caches: in-process LRUs, C++ handles, *and* disk.
+
+    This is the nuclear option.  It removes:
+
+    * Python-side read/image-meta/header-cards / HDU-type LRUs
+    * C++ ``SharedReadMeta`` and handle-pool state
+    * Downloaded files under ``cache_root()`` (remote + samples)
+
+    After this call every subsequent read re-fetches / re-opens.
+    Use :func:`clear_cache` (or :func:`clear_file_cache`) when you only
+    need to invalidate stale in-process state.
+    """
+    clear_cache(disk=True)
 
 
 clear = clear_cache
@@ -400,11 +427,22 @@ def _detect_environment_type() -> str:
         return "local"
 
 
+def _remove_tree(path: Path) -> None:
+    """Recursively remove *path* and its contents, ignoring errors.
+
+    Intentionally a no-op when *path* does not exist so callers can
+    use it unconditionally.
+    """
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+
+
 __all__ = [
     "CacheConfig",
     "CacheManager",
     "cache_root",
     "clear",
+    "clear_all_caches",
     "clear_cache",
     "configure_cache",
     "configure_for_environment",

@@ -24,7 +24,8 @@ lists signatures, defaults, and edge cases.
 removed in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
 
 **Caches.** Clear in-process I/O metadata with `clear_file_cache()` /
-`get_cache_performance()`. Disk roots and dataset sizing live under
+`get_cache_performance()`. Wipe everything (in-process + disk roots) with
+`clear_all_caches()`. Disk roots and dataset sizing live under
 `torchfits.cache`. See [Core I/O → Cache Utilities](api-core-io.md#cache-utilities).
 
 ---
