@@ -440,7 +440,12 @@ def _prepare_unsigned_table_data_for_write(
 
     for name, value in table_dict.items():
         col_name = str(name)
-        if isinstance(value, torch.Tensor) and value.dtype == torch.uint64:
+        import numpy as np
+
+        is_uint64 = (
+            isinstance(value, torch.Tensor) and value.dtype == torch.uint64
+        ) or (isinstance(value, np.ndarray) and value.dtype == np.uint64)
+        if is_uint64:
             raise ValueError(
                 f"torchfits does not support writing uint64 table column "
                 f"{col_name!r}: FITS has no native uint64 storage (BITPIX=-64 "
