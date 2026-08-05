@@ -1,6 +1,7 @@
 # Plan: perf backlog items 1–10 + output-parity gate (2026-08-04)
 
-Status: APPROVED by human (2026-08-04). Execution order fixed: Wave 0 first;
+Status: COMPLETED with dispositions (2026-08-05). Approved by human (2026-08-04);
+Wave 0 was executed first;
 every perf change is gated by the Wave 0 parity suite.
 
 ## Wave 0 — Cross-library output-parity suite (correctness gate)
@@ -92,3 +93,14 @@ same host.
   ci-local` at wave boundaries; bench before/after same-host per item; results
   logged in `.cursor/harness/deep-review-1-faithfulness.md` resolution log.
 - Wave 0 parity suite lands first and gates every subsequent diff.
+
+## Disposition
+
+- Wave 0: landed in `9bad157`.
+- Wave 1: profiled; no stable same-host >2D gap reproduced; speculative scaling
+  shortcut rejected by exact parity/performance evidence.
+- Wave 2: P10 landed in `e3d61ad`; B1 was already single-sourced; P3 deferred
+  pending a CUDA host.
+- Wave 3: landed in `a1796f3`.
+- Wave 4: measured/documented or gated no-change outcomes; no speculative
+  CUDA, mutation, GPU-cache, MegaCam, or narrow-table patch landed.
