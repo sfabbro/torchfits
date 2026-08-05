@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `clear_all_caches()` — root-level clear of in-process *and* disk caches
+  (including `cache_root()` downloads/samples); `clear_cache()` stays
+  in-process-only by default.
+- CI/scripts: `release_lane.py --prerelease rc<N> --apply` renders a lane's
+  release version plus a PEP 440 prerelease suffix (e.g. `1.0.0rc5` on the
+  2.13 lane) across all five pinned files; `--check` / `check-lane` accept rc
+  states as the lane base; unit tests cover suffix render/check/reject paths.
 - Opt-in robust float→int16 packing: `write` / `write_tensor(..., quantize=)` and
   `table.write(..., quantize=)` (`"robust"` or `{"lo_q","hi_q","keep_zero"}`).
   Default remains native float (`BITPIX=-32` / float `TFORM`).
@@ -53,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `table.read`).
 
 ### Fixed
+- macOS compressed-float parity: the vendored CFITSIO now builds with
+  `-ffp-contract=off` (clang/aarch64 FMA contraction shifted low-ULP bits of
+  decompressed float tiles, e.g. exact `0.0` read back as ~1.9e-16); the
+  compressed-image parity suite additionally allows ≤1 dtype eps vs
+  fitsio/astropy on macOS, staying bitwise-exact everywhere else.
 - Table int16 columns with `TSCAL`/`TZERO`: disable CFITSIO auto-scale on read
   before casting, then apply scale in memory (avoids int16 overflow).
 
