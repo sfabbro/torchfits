@@ -10,6 +10,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <limits>
 #include <stdexcept>
@@ -232,7 +233,7 @@ struct SharedReadMeta {
     // Absolute CFITSIO HDU the shared fptr is currently on (-1 = unknown).
     // Lets one-shot FITSFile wrappers skip redundant fits_movabs_hdu.
     int current_fits_hdu = -1;
-    std::mutex mutex;
+    std::shared_mutex mutex;
 };
 
 inline std::mutex g_shared_meta_mutex;
@@ -265,7 +266,7 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
     }
     if (!can_stat) return meta;
     const int64_t now_ns = torchfits::internal::monotonic_now_ns();
-    std::lock_guard<std::mutex> meta_lock(meta->mutex);
+    std::unique_lock<std::shared_mutex> meta_lock(meta->mutex);
     if (kSharedMetaValidateIntervalNs > 0 && meta->last_stat_check_ns != 0 &&
         (now_ns - meta->last_stat_check_ns) < kSharedMetaValidateIntervalNs) {
         return meta;
@@ -316,7 +317,7 @@ inline int open_fits_readonly(fitsfile** fptr, const std::string& path) {
 inline std::shared_ptr<RawFdHolder> get_shared_raw_fd(
     const std::shared_ptr<SharedReadMeta>& meta, const std::string& filename) {
     if (!meta || has_cfitsio_extended_filename_syntax(filename)) return nullptr;
-    std::lock_guard<std::mutex> lock(meta->mutex);
+    std::unique_lock<std::shared_mutex> lock(meta->mutex);
     if (!meta->raw_fd) {
         meta->raw_fd = std::make_shared<RawFdHolder>(open_readonly_fd(filename));
     }

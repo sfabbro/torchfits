@@ -187,3 +187,16 @@ Resolution commit: (see git log; wave-5 fixes + tests landed on main together).
   stack removal would trade one batched H2D transfer for many launches without
   a measurable VRAM result, so the implementation remains unchanged pending a
   CUDA-host measurement.
+
+### Wave-3 C++ cache internals (2026-08-05)
+- `fits_bindings.cpp` thread-local HDU metadata now uses a bounded 4096-entry
+  LRU (`std::list` + `unordered_map`) instead of clearing the complete map at
+  the threshold. `LocalKey` retains `SharedReadMeta::uid`, so entries from an
+  invalidated metadata generation cannot be returned; LRU bounds their stale
+  residency.
+- `SharedReadMeta::mutex` is now a `std::shared_mutex`. Read-only metadata
+  lookups use shared locks; cache population, invalidation, raw-fd creation,
+  and current-HDU updates use unique locks. This reduces reader contention
+  without sharing mutable CFITSIO handles.
+- Focused concurrent-read, cache, image/table parity, and deep-review tests
+  passed (`119 passed`).

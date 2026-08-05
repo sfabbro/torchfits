@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <limits>
 #include <cerrno>
@@ -106,7 +107,7 @@ void FITSFile::ensure_hdu(int hdu_num, int* status) {
         if (*status == 0) {
             current_hdu_ = target_hdu;
             if (shared_meta_) {
-                std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+                std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
                 shared_meta_->current_fits_hdu = target_hdu;
             }
         }
@@ -117,7 +118,7 @@ const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
     auto it = scale_cache_.find(hdu_num);
     if (it != scale_cache_.end()) return it->second;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::shared_lock<std::shared_mutex> lock(shared_meta_->mutex);
         auto sit = shared_meta_->scale_cache.find(hdu_num);
         if (sit != shared_meta_->scale_cache.end()) {
             auto [scaled, trusted, bscale, bzero] = sit->second;
@@ -134,7 +135,7 @@ const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
     info.bscale = detected.bscale; info.bzero = detected.bzero;
     auto inserted = scale_cache_.emplace(hdu_num, info);
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
         shared_meta_->scale_cache[hdu_num] = std::make_tuple(
             info.scaled, info.trusted, info.bscale, info.bzero);
     }
@@ -150,7 +151,7 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
     auto it = compressed_cache_.find(hdu_num);
     if (it != compressed_cache_.end()) return it->second;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::shared_lock<std::shared_mutex> lock(shared_meta_->mutex);
         auto sit = shared_meta_->compressed_cache.find(hdu_num);
         if (sit != shared_meta_->compressed_cache.end()) {
             compressed_cache_[hdu_num] = sit->second;
@@ -162,7 +163,7 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
     bool result = (status == 0 && is_compressed);
     compressed_cache_[hdu_num] = result;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
         shared_meta_->compressed_cache[hdu_num] = result;
     }
     return result;
@@ -172,7 +173,7 @@ bool FITSFile::has_compressed_nulls_cached(int hdu_num) {
     auto it = compressed_nulls_cache_.find(hdu_num);
     if (it != compressed_nulls_cache_.end()) return it->second;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::shared_lock<std::shared_mutex> lock(shared_meta_->mutex);
         auto sit = shared_meta_->compressed_nulls_cache.find(hdu_num);
         if (sit != shared_meta_->compressed_nulls_cache.end()) {
             compressed_nulls_cache_[hdu_num] = sit->second;
@@ -182,7 +183,7 @@ bool FITSFile::has_compressed_nulls_cached(int hdu_num) {
     bool result = detail::has_compressed_nulls(fptr_);
     compressed_nulls_cache_[hdu_num] = result;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
         shared_meta_->compressed_nulls_cache[hdu_num] = result;
     }
     return result;
@@ -192,7 +193,7 @@ const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(in
     auto it = image_info_cache_.find(hdu_num);
     if (it != image_info_cache_.end()) return it->second;
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::shared_lock<std::shared_mutex> lock(shared_meta_->mutex);
         auto sit = shared_meta_->image_info_cache.find(hdu_num);
         if (sit != shared_meta_->image_info_cache.end()) {
             auto inserted = image_info_cache_.emplace(hdu_num, sit->second);
@@ -208,7 +209,7 @@ const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(in
     if (status != 0) throw std::runtime_error("Could not read image parameters");
     auto inserted = image_info_cache_.emplace(hdu_num, std::make_tuple(bitpix, naxis, naxes_ll));
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
         shared_meta_->image_info_cache[hdu_num] = inserted.first->second;
     }
     return inserted.first->second;
@@ -258,7 +259,7 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
 
     image_info_cache_[hdu_num] = std::make_tuple(bitpix, naxis, naxes_ll);
     if (shared_meta_) {
-        std::lock_guard<std::mutex> lock(shared_meta_->mutex);
+        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
         shared_meta_->image_info_cache[hdu_num] = image_info_cache_[hdu_num];
     }
 

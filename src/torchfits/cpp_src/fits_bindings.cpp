@@ -8,6 +8,9 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <list>
+#include <iterator>
 #include <atomic>
 #include <limits>
 #include <cerrno>
@@ -99,6 +102,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         }
     };
     struct LocalHduMeta {
+        std::list<LocalKey>::iterator lru_it;
         bool has_info = false;
         int bitpix = 0;
         int naxis = 0;
@@ -114,27 +118,30 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         double bzero = 0.0;
     };
     static thread_local std::unordered_map<LocalKey, LocalHduMeta, LocalKeyHash> tl_cache;
+    static thread_local std::list<LocalKey> tl_lru;
 
     LocalKey key{meta->uid, hdu_num};
     LocalHduMeta* local = nullptr;
-    {
-        auto it = tl_cache.find(key);
-        if (it != tl_cache.end()) {
-            local = &it->second;
-        }
-    }
-    if (!local) {
-        if (tl_cache.size() > 4096) {
-            tl_cache.clear();
+    auto cache_it = tl_cache.find(key);
+    if (cache_it != tl_cache.end()) {
+        tl_lru.splice(tl_lru.end(), tl_lru, cache_it->second.lru_it);
+        local = &cache_it->second;
+    } else {
+        constexpr size_t kTlCacheCapacity = 4096;
+        if (tl_cache.size() >= kTlCacheCapacity && !tl_lru.empty()) {
+            tl_cache.erase(tl_lru.front());
+            tl_lru.pop_front();
         }
         auto inserted = tl_cache.emplace(key, LocalHduMeta{});
+        tl_lru.push_back(key);
+        inserted.first->second.lru_it = std::prev(tl_lru.end());
         local = &inserted.first->second;
     }
 
     auto get_image_info = [&]() -> void {
         if (local->has_info) return;
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(meta->mutex);
             auto it = meta->image_info_cache.find(hdu_num);
             if (it != meta->image_info_cache.end()) {
                 local->bitpix = std::get<0>(it->second);
@@ -152,7 +159,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
             throw std::runtime_error("Could not read image parameters");
         }
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::unique_lock<std::shared_mutex> lock(meta->mutex);
             meta->image_info_cache[hdu_num] = std::make_tuple(local->bitpix, local->naxis, local->naxes_ll);
         }
         local->has_info = true;
@@ -161,7 +168,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     auto get_compressed = [&]() -> bool {
         if (local->has_compressed) return local->compressed;
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(meta->mutex);
             auto it = meta->compressed_cache.find(hdu_num);
             if (it != meta->compressed_cache.end()) {
                 local->compressed = it->second;
@@ -176,7 +183,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
             status = 0;
         }
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::unique_lock<std::shared_mutex> lock(meta->mutex);
             meta->compressed_cache[hdu_num] = local->compressed;
         }
         local->has_compressed = true;
@@ -186,7 +193,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     auto get_compressed_nulls = [&]() -> bool {
         if (local->has_nulls) return local->compressed_nulls;
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(meta->mutex);
             auto it = meta->compressed_nulls_cache.find(hdu_num);
             if (it != meta->compressed_nulls_cache.end()) {
                 local->compressed_nulls = it->second;
@@ -196,7 +203,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         }
         local->compressed_nulls = d::has_compressed_nulls(fptr);
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::unique_lock<std::shared_mutex> lock(meta->mutex);
             meta->compressed_nulls_cache[hdu_num] = local->compressed_nulls;
         }
         local->has_nulls = true;
@@ -215,7 +222,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
             return;
         }
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(meta->mutex);
             auto it = meta->scale_cache.find(hdu_num);
             if (it != meta->scale_cache.end()) {
                 local->scaled = std::get<0>(it->second);
@@ -233,7 +240,7 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         local->bzero = detected.bzero;
 
         {
-            std::lock_guard<std::mutex> lock(meta->mutex);
+            std::unique_lock<std::shared_mutex> lock(meta->mutex);
             meta->scale_cache[hdu_num] = std::make_tuple(
                 local->scaled, local->trusted, local->bscale, local->bzero
             );
@@ -330,7 +337,7 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
 
     auto meta = d::get_shared_meta_for_path(path);
     if (meta) {
-        std::lock_guard<std::mutex> lock(meta->mutex);
+        std::shared_lock<std::shared_mutex> lock(meta->mutex);
         auto it = meta->hdu_name_cache.find(hdu_name_key);
         if (it != meta->hdu_name_cache.end()) {
             return it->second;
@@ -365,7 +372,7 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
     fits_get_hdu_num(fptr, &current_hdu);
     const int resolved = std::max(0, current_hdu - 1);
     if (meta) {
-        std::lock_guard<std::mutex> lock(meta->mutex);
+        std::unique_lock<std::shared_mutex> lock(meta->mutex);
         meta->hdu_name_cache[hdu_name_key] = resolved;
     }
     return resolved;
@@ -657,7 +664,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
         naxes_ll.fill(0);
         bool info_cached = false;
         if (shared_meta) {
-            std::lock_guard<std::mutex> lock(shared_meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(shared_meta->mutex);
             auto it = shared_meta->image_info_cache.find(hdu_num);
             if (it != shared_meta->image_info_cache.end()) {
                 bitpix = std::get<0>(it->second);
@@ -674,7 +681,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                 throw std::runtime_error("Could not read image parameters");
             }
             if (shared_meta) {
-                std::lock_guard<std::mutex> lock(shared_meta->mutex);
+                std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
                 shared_meta->image_info_cache[hdu_num] = std::make_tuple(
                     bitpix, naxis, naxes_ll);
             }
@@ -725,7 +732,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
         bool compressed = false;
         bool compressed_cached = false;
         if (shared_meta) {
-            std::lock_guard<std::mutex> lock(shared_meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(shared_meta->mutex);
             auto it = shared_meta->compressed_cache.find(hdu_num);
             if (it != shared_meta->compressed_cache.end()) {
                 compressed = it->second;
@@ -738,7 +745,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
             compressed = (status == 0) && (is_comp != 0);
             if (status != 0) status = 0;
             if (shared_meta) {
-                std::lock_guard<std::mutex> lock(shared_meta->mutex);
+                std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
                 shared_meta->compressed_cache[hdu_num] = compressed;
             }
         }
@@ -749,7 +756,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
         double bzero = 0.0;
         bool scale_cached = false;
         if (shared_meta) {
-            std::lock_guard<std::mutex> lock(shared_meta->mutex);
+            std::shared_lock<std::shared_mutex> lock(shared_meta->mutex);
             auto it = shared_meta->scale_cache.find(hdu_num);
             if (it != shared_meta->scale_cache.end()) {
                 scaled = std::get<0>(it->second);
@@ -766,7 +773,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
             bscale = detected.bscale;
             bzero = detected.bzero;
             if (shared_meta) {
-                std::lock_guard<std::mutex> lock(shared_meta->mutex);
+                std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
                 shared_meta->scale_cache[hdu_num] = std::make_tuple(
                     scaled, scale_trusted, bscale, bzero);
             }
@@ -784,7 +791,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
         if (resolved.compressed) {
             bool nulls_cached = false;
             if (shared_meta) {
-                std::lock_guard<std::mutex> lock(shared_meta->mutex);
+                std::shared_lock<std::shared_mutex> lock(shared_meta->mutex);
                 auto it = shared_meta->compressed_nulls_cache.find(hdu_num);
                 if (it != shared_meta->compressed_nulls_cache.end()) {
                     resolved.compressed_nulls = it->second;
@@ -794,7 +801,7 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
             if (!nulls_cached) {
                 resolved.compressed_nulls = d::has_compressed_nulls(fptr);
                 if (shared_meta) {
-                    std::lock_guard<std::mutex> lock(shared_meta->mutex);
+                    std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
                     shared_meta->compressed_nulls_cache[hdu_num] = resolved.compressed_nulls;
                 }
             }
@@ -2237,7 +2244,7 @@ void bind_fits(nb::module_& m) {
                 auto meta = d::get_shared_meta_for_path(filename);
                 bool hit = false;
                 if (meta) {
-                    std::lock_guard<std::mutex> lock(meta->mutex);
+                    std::shared_lock<std::shared_mutex> lock(meta->mutex);
                     auto it = meta->image_info_cache.find(hdu_num);
                     if (it != meta->image_info_cache.end()) {
                         bitpix = std::get<0>(it->second);
