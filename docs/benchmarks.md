@@ -91,6 +91,16 @@ or stream-manager change is being landed. The remaining large uint16 gap also
 contains a host decode/dtype-path difference, so it is not explained by the
 small-transfer hypothesis alone.
 
+**uint16 host-decode gap fixed (2026-08-05, `4652476`).** The mmap fast path
+applied the BZERO=32768 unsigned offset with a scalar second pass over the
+buffer after the vectorized byte-swap copy; folding the offset into the SIMD
+loops removed that pass (wraps mod 2^16 exactly like the scalar cast). Same
+host, mmap-on, median of 3 interleaved runs: `large_uint16_2d`
+6.180 → 1.399 ms (3.4× vs standalone fitsio; 1.32 → 0.57× vs the in-family
+tensor peer `fitsio` + `torch.from_numpy`), `medium_uint16_2d`
+1.830 → 0.408 ms, `small_uint16_2d` 0.178 → 0.124 ms. Bitwise-verified against
+the CFITSIO path on full-range uint16 data; parity suite and `ci-local` green.
+
 ## Published CSVs
 
 Exhaustive `results.csv` / `torchfits_deficits.csv` for the scorecard runs are
