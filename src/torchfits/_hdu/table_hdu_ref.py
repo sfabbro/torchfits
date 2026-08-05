@@ -42,6 +42,7 @@ class TableHDURef:
         self._columns: Optional[tuple[str, ...]] = tuple(columns) if columns else None
         self._row_slice = row_slice
         self._all_columns_cache: tuple[str, ...] | None = None
+        self._all_columns_cache_version: tuple[Any, int] | None = None
 
     def _require_source(self) -> tuple[str, int]:
         if not self._source_path or self._source_hdu is None:
@@ -80,7 +81,9 @@ class TableHDURef:
         if self._columns is not None:
             return list(self._columns)
 
-        if self._all_columns_cache is not None:
+        if self._all_columns_cache is not None and (
+            self._all_columns_cache_version == (id(self.header), self.header._version)
+        ):
             return list(self._all_columns_cache)
         try:
             n = int(self.header.get("TFIELDS", 0))
@@ -94,6 +97,7 @@ class TableHDURef:
             else:
                 out.append(f"COL{i}")
         self._all_columns_cache = tuple(out)
+        self._all_columns_cache_version = (id(self.header), self.header._version)
         return out
 
     @property

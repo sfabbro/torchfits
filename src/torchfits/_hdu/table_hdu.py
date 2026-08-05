@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import html
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, cast
 
 import torch
 from torch import Tensor
@@ -78,17 +78,30 @@ class TableHDU:
 
         return set(string_column_names(header))
 
-    # ⚡ Bolt: Cache string column derivation to avoid redundant header parsing and
-    # string extraction on repeated access (e.g., during loops or schema validations).
-    @functools.cached_property
-    def string_columns(self) -> List[str]:
-        return sorted(self._get_string_columns(self.header))
+    # Cache string column derivation and schema builds, invalidated when the
+    # header is mutated (Header._version bumps on every change) or replaced.
+    def _cached(self, name: str, compute: Callable[[], Any]) -> Any:
+        key = (id(self.header), self.header._version)
+        cached = getattr(self, name, None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        value = compute()
+        setattr(self, name, (key, value))
+        return value
 
-    # ⚡ Bolt: Cache schema building to prevent O(N) header traversals
-    # for TTYPE*/TFORM* keys on every property access.
-    @functools.cached_property
+    @property
+    def string_columns(self) -> List[str]:
+        return cast(
+            List[str],
+            self._cached(
+                "_string_columns_cache",
+                lambda: sorted(self._get_string_columns(self.header)),
+            ),
+        )
+
+    @property
     def schema(self) -> Dict[str, Any]:
-        return self._build_schema()
+        return cast(Dict[str, Any], self._cached("_schema_cache", self._build_schema))
 
     def _build_schema(self) -> Dict[str, Any]:
         from ..fits_schema import build_table_schema_dict
