@@ -42,11 +42,13 @@ Exit code is non-zero when any pin fails. Run via ``pixi run check-torch-pins``
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -188,6 +190,40 @@ def check_doc_drift(
     return failures
 
 
+def _format_full_version(info: Any) -> str:
+    """Full CPython implementation version (mirrors packaging's private helper)."""
+    version = f"{info.major}.{info.minor}.{info.micro}"
+    kind = info.releaselevel
+    if kind != "final":
+        version += kind[0] + str(info.serial)
+    return version
+
+
+def _active_marker_environment() -> dict[str, str]:
+    """Live marker context for the current process.
+
+    packaging >= 26.3 computes its default marker environment once per
+    process and caches it, so platform patches (e.g. ``sys.platform`` swaps
+    in the unit tests) would be ignored. Evaluate markers against an
+    explicit environment instead so behavior is version-independent.
+    """
+    import platform
+
+    return {
+        "implementation_name": sys.implementation.name,
+        "implementation_version": _format_full_version(sys.implementation.version),
+        "os_name": os.name,
+        "platform_machine": platform.machine(),
+        "platform_release": platform.release(),
+        "platform_system": platform.system(),
+        "platform_version": platform.version(),
+        "python_full_version": platform.python_version(),
+        "platform_python_implementation": platform.python_implementation(),
+        "python_version": ".".join(platform.python_version_tuple()[:2]),
+        "sys_platform": sys.platform,
+    }
+
+
 def _iter_torch_entries(pyproject_text: str) -> Iterator[tuple[str, str]]:
     """Yield (extra, entry) for every torch requirement in the extras."""
     data = tomllib.loads(pyproject_text)
@@ -203,7 +239,9 @@ def iter_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
     """Yield (extra, entry, Version) for active torch pins in the extras."""
     for extra, entry in _iter_torch_entries(pyproject_text):
         req = Requirement(entry)
-        if req.marker is not None and not req.marker.evaluate():
+        if req.marker is not None and not req.marker.evaluate(
+            environment=_active_marker_environment()
+        ):
             print(
                 f"[skip] {extra}: {entry} (marker not active on this platform)",
                 flush=True,
