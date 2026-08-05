@@ -4,6 +4,7 @@ Test caching functionality.
 
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -107,10 +108,28 @@ class TestCaching:
 
             # Verify cache is cleared
             torchfits.get_cache_performance()
-            # After clearing, stats should be reset or show no cached entries
+            # After clearing, stats should be reset or show no cached entries.
 
         finally:
             os.unlink(filepath)
+
+    def test_concurrent_python_lru_access_preserves_outputs(self):
+        """Concurrent metadata/LRU access must not corrupt read results."""
+        filepath, expected = self.create_test_fits((64, 48))
+
+        def read_once(_: int) -> np.ndarray:
+            torchfits.read_header(filepath, hdu=0)
+            return np.asarray(torchfits.read(filepath, hdu=0, mmap="auto").numpy())
+
+        try:
+            torchfits.clear_file_cache()
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                outputs = list(pool.map(read_once, range(32)))
+            for output in outputs:
+                np.testing.assert_array_equal(output, expected)
+        finally:
+            os.unlink(filepath)
+            torchfits.clear_file_cache()
 
     def test_multiple_file_caching(self):
         """Test caching with multiple files."""

@@ -155,3 +155,35 @@ Resolution commit: (see git log; wave-5 fixes + tests landed on main together).
   and CUDA small-payload transfer overhead. All source-level items above are
   landed; CUDA small-payload gap is transfer/launch-bound (scale-on-device
   wiring would worsen it) and stays as a benchmark follow-up.
+
+### Wave-1 image/cube profile (2026-08-05)
+- Re-ran the flagged >2D image cases on the local host with the existing
+  `bench_fits_io.py` schedules, both mmap modes, and a direct same-process
+  probe of the C++ entry points. The previous large gaps were not reproducible
+  as a stable local result: plain 2D/3D integer reads were generally at or
+  ahead of `fitsio_torch`; only compressed HCOMPRESS remained a small gap.
+- The arbitrary-scaled `scaled_large` path was profiled because it was the one
+  repeatable CPU candidate. An unused raw-read + scale helper was tested, but
+  its float32 arithmetic differed from CFITSIO by one ULP on robust-quantized
+  images. A double-intermediate implementation preserved parity but regressed
+  the representative scaled image, so the speculative dispatch was removed.
+- Correctness gate stayed strict: the output-parity suite remained green after
+  each experiment (`102 passed` in the focused image/parity run). No Wave-1
+  source change is retained until a same-host profile demonstrates a stable
+  image/cube deficit and a fix that is both faster and bit-identical.
+
+### Wave-2 cache/batch follow-up (2026-08-05)
+- B1 was already resolved by the table-module split: `_table/read.py` now
+  re-exports the capability helpers from `_read_schema.py`; the full-read
+  predicate implementation is single-sourced there. No duplicate helper patch
+  was warranted.
+- P10 landed as a Python-side `RLock` around the OrderedDict cache sequences.
+  The lock covers read-cache hit/move/evict, image metadata/mmap policy LRUs,
+  HDU/header LRUs, fallback cache stores, invalidation, and statistics. A new
+  threaded cache test performs 32 concurrent header+image reads and compares
+  every output to the reference array.
+- P3 was measured but not changed: this host has no CUDA device, and the C++
+  batch readers return CPU tensors before `batch_to_device`. A speculative
+  stack removal would trade one batched H2D transfer for many launches without
+  a measurable VRAM result, so the implementation remains unchanged pending a
+  CUDA-host measurement.

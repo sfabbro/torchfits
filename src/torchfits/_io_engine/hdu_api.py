@@ -13,6 +13,7 @@ from ..hdu import HDUList, Header
 from .caches import (
     _HEADER_CARDS_CACHE_MAX,
     auto_hdu_cache,
+    cache_lock,
     get_cached_handle,
     get_cached_hdu_type,
     header_cards_cache,
@@ -111,22 +112,24 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
     """Return the first HDU with payload, preferring image/compressed-image HDUs."""
     sig = path_signature(path)
     cache_key = (path, "payload")
-    cached = auto_hdu_cache.get(cache_key)
-    if cached is not None:
-        cached_sig, cached_hdu = cached
-        if sig is None or cached_sig is None or cached_sig == sig:
-            auto_hdu_cache.move_to_end(cache_key)
-            return int(cached_hdu)
-        auto_hdu_cache.pop(cache_key, None)
+    with cache_lock:
+        cached = auto_hdu_cache.get(cache_key)
+        if cached is not None:
+            cached_sig, cached_hdu = cached
+            if sig is None or cached_sig is None or cached_sig == sig:
+                auto_hdu_cache.move_to_end(cache_key)
+                return int(cached_hdu)
+            auto_hdu_cache.pop(cache_key, None)
 
     resolved = find_first_hdu(path, handle_cache_capacity=handle_cache_capacity)
     if resolved is None:
         return 0
 
-    auto_hdu_cache[cache_key] = (sig, int(resolved))
-    auto_hdu_cache.move_to_end(cache_key)
-    while len(auto_hdu_cache) > 512:
-        auto_hdu_cache.popitem(last=False)
+    with cache_lock:
+        auto_hdu_cache[cache_key] = (sig, int(resolved))
+        auto_hdu_cache.move_to_end(cache_key)
+        while len(auto_hdu_cache) > 512:
+            auto_hdu_cache.popitem(last=False)
     return int(resolved)
 
 
@@ -293,14 +296,15 @@ def get_header(
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     sig = path_signature(path)
     cache_key = (path, hdu_index)
-    cached = header_cards_cache.get(cache_key)
-    if cached is not None:
-        cached_sig, cards = cached
-        if sig is None or cached_sig is None or cached_sig == sig:
-            header_cards_cache.move_to_end(cache_key)
-            # Fresh Header so callers can mutate without poisoning the cache.
-            return Header(list(cards))
-        header_cards_cache.pop(cache_key, None)
+    with cache_lock:
+        cached = header_cards_cache.get(cache_key)
+        if cached is not None:
+            cached_sig, cards = cached
+            if sig is None or cached_sig is None or cached_sig == sig:
+                header_cards_cache.move_to_end(cache_key)
+                # Fresh Header so callers can mutate without poisoning the cache.
+                return Header(list(cards))
+            header_cards_cache.pop(cache_key, None)
 
     def _read_header(path: str, hdu_index: int) -> Header:
         handle = None
@@ -309,10 +313,11 @@ def get_header(
             header_string = cpp.read_header_string(handle, hdu_index)
             if header_string:
                 cards = fast_parse_header_cards(header_string)
-                header_cards_cache[cache_key] = (sig, tuple(cards))
-                header_cards_cache.move_to_end(cache_key)
-                while len(header_cards_cache) > _HEADER_CARDS_CACHE_MAX:
-                    header_cards_cache.popitem(last=False)
+                with cache_lock:
+                    header_cards_cache[cache_key] = (sig, tuple(cards))
+                    header_cards_cache.move_to_end(cache_key)
+                    while len(header_cards_cache) > _HEADER_CARDS_CACHE_MAX:
+                        header_cards_cache.popitem(last=False)
                 return Header(cards)
         except Exception as exc:
             warnings.warn(

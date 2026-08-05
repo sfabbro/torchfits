@@ -16,6 +16,7 @@ from ..hdu import Header
 from .options import ReadOptions
 from .caches import (
     cache_stats,
+    cache_lock,
     get_cached_hdu_type,
 )
 
@@ -640,8 +641,9 @@ def _read_cpu_fast_path(
             data = data.to(torch.bfloat16)
 
         try:
-            cache_stats["total_requests"] += 1
-            cache_stats["misses"] += 1
+            with cache_lock:
+                cache_stats["total_requests"] += 1
+                cache_stats["misses"] += 1
         except Exception:
             pass
         return data, False

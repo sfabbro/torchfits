@@ -18,11 +18,10 @@ from ._read_pipeline import (
     _coerce_unsigned_table_columns,
 )
 from .caches import (
-    cache_stats,
-    file_cache,
     get_cached_handle,
     path_signature,
     set_cached_hdu_type,
+    store_cached_read,
 )
 
 _log = logging.getLogger(__name__)
@@ -235,14 +234,15 @@ def read_fallback_image(
             header = Header(header_data)
 
     if use_cache and cache_key is not None:
-        file_cache[cache_key] = (
-            data.cpu() if device != "cpu" else data,
-            header,
-            path_signature(path),
+        store_cached_read(
+            cache_key,
+            (
+                data.cpu() if device != "cpu" else data,
+                header,
+                path_signature(path),
+            ),
+            cache_capacity,
         )
-        while len(file_cache) > cache_capacity:
-            file_cache.popitem(last=False)
-        cache_stats["cache_size"] = len(file_cache)
 
     if isinstance(hdu_num, int):
         set_cached_hdu_type(path, hdu_num, "IMAGE")
@@ -338,10 +338,11 @@ def read_fallback_table(
                 table_data[key] = value[start_row - 1 : end_row]
 
     if use_cache and cache_key is not None:
-        file_cache[cache_key] = (table_data, header, path_signature(path))
-        while len(file_cache) > cache_capacity:
-            file_cache.popitem(last=False)
-        cache_stats["cache_size"] = len(file_cache)
+        store_cached_read(
+            cache_key,
+            (table_data, header, path_signature(path)),
+            cache_capacity,
+        )
 
     if device != "cpu":
         new_data: dict[str, Any] = {}

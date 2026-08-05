@@ -6,6 +6,7 @@ import os
 import warnings
 from collections import OrderedDict
 from types import MappingProxyType
+from threading import RLock
 from typing import Any
 
 
@@ -17,6 +18,10 @@ _CACHE_STATS_DEFAULT = {
 }
 
 cache_stats: dict[str, int] = dict(_CACHE_STATS_DEFAULT)
+# OrderedDict operations are individually GIL-safe, but cache hit/move/evict
+# sequences are not atomic across reader threads. Keep one re-entrant lock so
+# callers can compose operations without exposing partially updated LRU state.
+cache_lock = RLock()
 file_cache: OrderedDict[Any, Any] = OrderedDict()
 image_meta_cache: OrderedDict[tuple[str, int], Any] = OrderedDict()
 # (path, hdu) -> (path_signature, cards tuple) for repeated read_header.
@@ -149,10 +154,11 @@ def get_cached_handle(path: str, handle_cache_capacity: int) -> tuple[Any, bool]
 def get_cached_hdu_type(path: str, hdu: int) -> str | None:
     """Return a cached HDU payload type for path/HDU dispatch, if known."""
     sig = (path, hdu)
-    cached = hdu_type_cache.get(sig)
-    if cached is not None:
-        hdu_type_cache.move_to_end(sig)
-    return cached
+    with cache_lock:
+        cached = hdu_type_cache.get(sig)
+        if cached is not None:
+            hdu_type_cache.move_to_end(sig)
+        return cached
 
 
 def set_cached_hdu_type(path: str, hdu: int, hdu_type: str | None) -> None:
@@ -160,13 +166,45 @@ def set_cached_hdu_type(path: str, hdu: int, hdu_type: str | None) -> None:
     if not hdu_type:
         return
     sig = (path, hdu)
-    hdu_type_cache[sig] = hdu_type
-    hdu_type_cache.move_to_end(sig)
-    while len(hdu_type_cache) > 512:
-        hdu_type_cache.popitem(last=False)
+    with cache_lock:
+        hdu_type_cache[sig] = hdu_type
+        hdu_type_cache.move_to_end(sig)
+        while len(hdu_type_cache) > 512:
+            hdu_type_cache.popitem(last=False)
 
 
 def check_read_cache(
+    *,
+    path: str,
+    hdu: Any,
+    device: str,
+    fp16: bool,
+    bf16: bool,
+    columns: Any,
+    start_row: int,
+    num_rows: int,
+    return_header: bool,
+    cache_capacity: int,
+    invalidate_path: Any,
+) -> tuple[bool, Any, Any]:
+    """Check the Python-side read cache under the cache lock."""
+    with cache_lock:
+        return _check_read_cache_locked(
+            path=path,
+            hdu=hdu,
+            device=device,
+            fp16=fp16,
+            bf16=bf16,
+            columns=columns,
+            start_row=start_row,
+            num_rows=num_rows,
+            return_header=return_header,
+            cache_capacity=cache_capacity,
+            invalidate_path=invalidate_path,
+        )
+
+
+def _check_read_cache_locked(
     *,
     path: str,
     hdu: Any,
@@ -256,6 +294,17 @@ def check_read_cache(
     return False, None, cache_key
 
 
+def store_cached_read(cache_key: Any, value: Any, capacity: int) -> None:
+    """Store one read result and evict the oldest entry under the cache lock."""
+    if capacity <= 0 or cache_key is None:
+        return
+    with cache_lock:
+        file_cache[cache_key] = value
+        while len(file_cache) > capacity:
+            file_cache.popitem(last=False)
+        cache_stats["cache_size"] = len(file_cache)
+
+
 def _register_open_hdulist(path: str, handle: Any, hdulist: Any) -> None:
     """Register an HDUList's open file handle so mutations can close it."""
     try:
@@ -300,6 +349,13 @@ def invalidate_path_caches(path: str) -> None:
     # Close any open HDUList file handle so mutations can open the file for writing.
     _close_hdulist_for_path(path)
 
+    with cache_lock:
+        _invalidate_path_caches_locked(path)
+
+
+def _invalidate_path_caches_locked(path: str) -> None:
+    """Remove all Python cache entries for *path*; caller holds cache_lock."""
+
     stale_data_keys = [
         key
         for key in list(file_cache.keys())
@@ -330,12 +386,14 @@ def invalidate_path_caches(path: str) -> None:
 
 def get_cache_performance() -> dict[str, Any]:
     """Return root FITS I/O cache performance statistics."""
-    total = cache_stats["total_requests"]
-    hits = cache_stats["hits"]
-    misses = cache_stats["misses"]
+    with cache_lock:
+        total = cache_stats["total_requests"]
+        hits = cache_stats["hits"]
+        misses = cache_stats["misses"]
+        cache_size = cache_stats["cache_size"]
 
     return {
-        "cache_size": cache_stats["cache_size"],
+        "cache_size": cache_size,
         "hit_rate": hits / total if total > 0 else 0.0,
         "miss_rate": misses / total if total > 0 else 0.0,
         "total_requests": total,
@@ -346,8 +404,9 @@ def get_cache_performance() -> dict[str, Any]:
 
 def reset_cache_stats() -> None:
     """Reset root FITS I/O cache counters in place."""
-    cache_stats.clear()
-    cache_stats.update(_CACHE_STATS_DEFAULT)
+    with cache_lock:
+        cache_stats.clear()
+        cache_stats.update(_CACHE_STATS_DEFAULT)
 
 
 def clear_python_caches(
@@ -359,21 +418,23 @@ def clear_python_caches(
     stats: bool = True,
 ) -> None:
     """Clear Python-side root FITS I/O caches."""
-    if data:
-        file_cache.clear()
+    with cache_lock:
+        if data:
+            file_cache.clear()
 
-    if meta:
-        image_meta_cache.clear()
-        header_cards_cache.clear()
-        cold_nommap_cache.clear()
-        auto_mmap_cache.clear()
+        if meta:
+            image_meta_cache.clear()
+            header_cards_cache.clear()
+            cold_nommap_cache.clear()
+            auto_mmap_cache.clear()
 
-    if hdu_types:
-        hdu_type_cache.clear()
-        auto_hdu_cache.clear()
+        if hdu_types:
+            hdu_type_cache.clear()
+            auto_hdu_cache.clear()
 
-    if stats:
-        reset_cache_stats()
+        if stats:
+            cache_stats.clear()
+            cache_stats.update(_CACHE_STATS_DEFAULT)
 
 
 def clear_file_cache(
