@@ -255,3 +255,26 @@ Resolution commit: (see git log; wave-5 fixes + tests landed on main together).
   `1.465 ms` versus fitsio at `1.469 ms`; the specialized torchfits path was
   `1.389 ms`. The earlier 1.06–1.15x lag did not reproduce on this host, so no
   dispatch or table-reader change was justified.
+
+### Wave-5: local benchmark sweep + uint16 mmap gap fix (2026-08-05)
+- Full local sweep (fits_io 87 cases × mmap on/off, fitstable 108 cases,
+  MegaCam 16 cases) found torchfits ≥ fitsio_torch in 171/178 and 104/108 and
+  16/16; the only consistent same-host gap was scaled-16-bit uint16 with mmap
+  enabled (`large_uint16_2d` 1.27–1.32x, `medium_uint16_2d` 1.25–1.58x vs the
+  in-family tensor peer `fitsio_torch`).
+- Methodology note: compressed-image deficits reported earlier in this log
+  (0.70–0.91x) were an artifact of comparing torchfits against standalone
+  fitsio; against the in-family tensor peer `fitsio_torch` (which pays the same
+  torch-conversion cost) torchfits wins gzip 0.89–0.93x, rice 0.93x, hcompress
+  0.97x. The compressed cluster is not a real deficit.
+- Root cause of the uint16 gap: the mmap fast path applied the BZERO=32768
+  unsigned offset with a scalar second pass over the whole buffer after the
+  vectorized bswap copy. Folding the offset add into the SIMD loop
+  (`paddw`/`vaddq_u16`, which wraps mod 2^16 exactly like the scalar cast)
+  removed the second pass; the subset reader shares the same helper.
+- Before/after (mmap=on, median of 3 interleaved runs, same host, same seed):
+  `large_uint16_2d` 6.180→1.399 ms (tf/ft 1.32→0.57), `medium_uint16_2d`
+  1.830→0.408 ms (1.25→0.53), `small_uint16_2d` 0.178→0.124 ms (1.20→0.63).
+- Correctness: bitwise equality of the mmap-on path vs the CFITSIO path on
+  full-range uint16 data, plus the full parity suite (137 tests incl. 20-seed
+  fuzz) and `pixi run ci-local` green.
