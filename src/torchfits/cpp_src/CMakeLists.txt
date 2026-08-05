@@ -440,6 +440,16 @@ else()
         set(CFITSIO_LIBRARY cfitsio)
         set(CFITSIO_INCLUDE_DIR "${CFITSIO_SOURCE_DIR}")
         set(CFITSIO_FOUND TRUE)
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            # Compressed-float decode must be bit-exact across platforms.
+            # Clang contracts FP expressions (FMA fusion) by default at
+            # -O2/-O3, and aarch64 GCC does too, which shifts low-ULP bits
+            # of unquantized / HCOMPRESS-renormalized tiles: an arm64 build
+            # then reads e.g. 1.94e-16 where the lossless tile stores exact
+            # 0.0, disagreeing with wheel builds that disable contraction
+            # (fitsio/astropy). Pin contraction off for vendored CFITSIO.
+            target_compile_options(cfitsio PRIVATE -ffp-contract=off)
+        endif()
         if(TORCHFITS_NIOBUF)
             # CFITSIO reads this compile-time macro directly from fitsio.h.
             target_compile_definitions(cfitsio PRIVATE NIOBUF=${TORCHFITS_NIOBUF})
