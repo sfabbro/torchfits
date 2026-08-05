@@ -32,6 +32,18 @@ pixi run check-lane
 - `packaging/conda/recipe.yaml` (torch_pin)
 - `src/torchfits/__init__.py` (`__version__`)
 
+Release candidates (pre-tag soaks) render the lane base plus a PEP 440
+prerelease suffix:
+
+```bash
+python scripts/release_lane.py --lane <X.Y> --prerelease rc<N> --apply
+```
+
+e.g. `--prerelease rc5` on lane 2.13 renders `1.0.0rc5` everywhere, and
+`--check` / `check-lane` accept the rc state as the lane's base version.
+A plain `--apply` (no `--prerelease`) always finalizes back to the map
+version.
+
 `check-lane` fails unless all five agree with `scripts/torch_lanes.json`.
 Update the compatibility / install docs (README.md, `docs/install.md`,
 `docs/compatibility.md`) when the current-lane numbers change.

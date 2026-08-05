@@ -25,9 +25,15 @@ Usage::
     release_lane.py --lane 2.13    print the rendered state for a lane
     release_lane.py --lane 2.13 --check   verify files match a rendered lane
     release_lane.py --lane 2.13 --apply   rewrite the files for that lane
+    release_lane.py --lane 2.13 --prerelease rc5 --apply
+                                   rewrite the files for a release candidate
+                                   (e.g. torchfits 1.0.0rc5 on lane 2.13)
 
 ``--check`` is wired into preflight/CI so a lane pin can never drift from the
-lane map. Exit code is non-zero on any mismatch.
+lane map. Exit code is non-zero on any mismatch. Pre-release states (e.g.
+``1.0.0rc5``) are recognized by ``--check`` as the lane's base version plus a
+PEP 440 prerelease suffix; ``--apply`` without ``--prerelease`` always renders
+the plain map version (finalize).
 """
 
 from __future__ import annotations
@@ -67,6 +73,21 @@ _RECIPE_VERSION_RE = re.compile(r'^(  version: ")([^"]+)(")$', re.MULTILINE)
 _RECIPE_TORCH_PIN_RE = re.compile(
     r'^(  torch_pin: ")(>=2\.\d+,<2\.\d+)(")$', re.MULTILINE
 )
+
+# PEP 440 prerelease suffixes the lane tool accepts on top of a lane version:
+# 1.0.0rc5 / 1.0.0b1 / 1.0.0a2, optionally with a .postN segment. Dev local
+# segments (.dev0+torch213) are stripped first so backport-candidate builds
+# resolve back to their lane base too.
+_PRERELEASE_SUFFIX_RE = re.compile(
+    r"(?:rc\d+|a\d+|b\d+|alpha\d+|beta\d+)(?:\.post\d+)?$"
+)
+_DEV_LOCAL_RE = re.compile(r"\.dev0\+torch\d+$")
+
+
+def strip_prerelease(version: str) -> str:
+    """Return the lane base version of *version* (drop prerelease/dev-local)."""
+    return _PRERELEASE_SUFFIX_RE.sub("", _DEV_LOCAL_RE.sub("", version))
+
 
 PYPROJECT_DEPS_BLOCK = """# Core runtime dependencies for the library.
 # These are automatically managed by pixi for conda packages
@@ -131,8 +152,9 @@ def next_lane(lane: str) -> str:
 
 
 def lane_for_version(version: str, lanes: dict[str, dict[str, object]]) -> str:
+    base = strip_prerelease(version)
     for lane, spec in lanes.items():
-        if spec["torchfits_version"] == version:
+        if spec["torchfits_version"] == base:
             return lane
     raise SystemExit(
         f"version {version!r} is not a torchfits release-lane version "
@@ -155,14 +177,25 @@ def _replace_once(text: str, pattern: re.Pattern[str], new: str, what: str) -> s
     return updated
 
 
-def render(lane: str, version: str | None) -> dict[Path, str]:
+def render(
+    lane: str, version: str | None, prerelease: str | None = None
+) -> dict[Path, str]:
     lanes = load_lanes()
     if lane in lanes:
         spec = lanes[lane]
         expected_version = str(spec["torchfits_version"])
-        if version is None:
+        if prerelease is not None:
+            # Release candidate: base version + PEP 440 prerelease suffix.
+            if version is not None and strip_prerelease(version) != expected_version:
+                raise SystemExit(
+                    f"lane {lane} releases as torchfits {expected_version}, "
+                    f"not {version!r} (torch_lanes.json)"
+                )
+            version = f"{expected_version}{prerelease}"
+        elif version is None:
+            # Plain apply/finalize: always the map version.
             version = expected_version
-        if version != expected_version:
+        elif strip_prerelease(version) != expected_version:
             raise SystemExit(
                 f"lane {lane} releases as torchfits {expected_version}, "
                 f"not {version!r} (torch_lanes.json)"
@@ -178,12 +211,17 @@ def render(lane: str, version: str | None) -> dict[Path, str]:
                 f"lane {lane!r} is not a release lane in torch_lanes.json; "
                 "its version derives from the current release"
             )
+        if prerelease is not None:
+            raise SystemExit(
+                f"lane {lane!r} is not a release lane in torch_lanes.json; "
+                "--prerelease only applies to release lanes"
+            )
         # Read the release base from pyproject; after --apply the version has a
         # dev local segment (e.g. 1.0.0.dev0+torch212), so strip it first.
         match = _PYPROJECT_VERSION_RE.search(PYPROJECT.read_text(encoding="utf-8"))
         if match is None:
             raise SystemExit("pyproject.toml has no version field")
-        base = re.sub(r"\.dev0\+torch\d+$", "", match.group(2))
+        base = strip_prerelease(match.group(2))
         base_lane = lane_for_version(base, load_lanes())
         version = f"{base}.dev0+torch{lane.replace('.', '')}"
         cu_default = str(lanes[base_lane]["cu_default"])
@@ -295,6 +333,11 @@ def _verify(lane: str, expected: dict[Path, str]) -> int:
     return 1 if failed else 0
 
 
+def committed_version() -> str | None:
+    match = _PYPROJECT_VERSION_RE.search(PYPROJECT.read_text(encoding="utf-8"))
+    return match.group(2) if match is not None else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lane", help="torch minor lane to render (e.g. 2.13)")
@@ -305,16 +348,30 @@ def main() -> int:
         "--check", action="store_true", help="verify committed files match the lane map"
     )
     parser.add_argument(
+        "--prerelease",
+        help="PEP 440 prerelease suffix for the lane version (e.g. rc5 -> 1.0.0rc5)",
+    )
+    parser.add_argument(
         "--print-pins",
         action="store_true",
         help="print lane/version/torch pins for the committed state (CI use)",
     )
     args = parser.parse_args()
 
+    if args.prerelease is not None and not re.fullmatch(
+        r"(?:rc|a|b|alpha|beta)\d+", args.prerelease
+    ):
+        parser.error(
+            f"--prerelease {args.prerelease!r} is not a PEP 440 prerelease suffix "
+            "(e.g. rc5, b1)"
+        )
+
     if args.check:
         if args.lane is not None:
+            # Validate against the committed version (may carry a prerelease
+            # suffix), so a checked-out rc state verifies as the lane's base.
             try:
-                expected = render(args.lane, None)
+                expected = render(args.lane, committed_version())
             except SystemExit as exc:
                 print(f"[FAIL] {exc}", flush=True)
                 return 1
@@ -333,7 +390,7 @@ def main() -> int:
         print(f"current lane: {lane}", flush=True)
         return 0
 
-    rendered = render(args.lane, None)
+    rendered = render(args.lane, None, prerelease=args.prerelease)
     version_match = _PYPROJECT_VERSION_RE.search(rendered[PYPROJECT])
     assert version_match is not None
     version = version_match.group(2)
