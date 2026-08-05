@@ -200,3 +200,58 @@ Resolution commit: (see git log; wave-5 fixes + tests landed on main together).
   without sharing mutable CFITSIO handles.
 - Focused concurrent-read, cache, image/table parity, and deep-review tests
   passed (`119 passed`).
+
+### Wave-4 item 10: CUDA small-payload measurement (2026-08-05)
+- The active host has no CUDA device, so the existing matched CUDA artifacts
+  were analyzed instead of using a CPU proxy: 21 CUDA lanes, 3,654 paired
+  `read_full`/`read_full_gpu` rows, mmap-on, same case and host.
+- Tiny medians: torchfits `0.0656 -> 0.1158 ms` (added `0.0509 ms`) versus
+  fitsio `0.0911 -> 0.1094 ms` (added `0.0179 ms`). Small medians: torchfits
+  `0.1127 -> 0.1801 ms` (added `0.0732 ms`) versus fitsio `0.1588 -> 0.1857 ms`
+  (added `0.0262 ms`). The combined launch/H2D/conversion overhead hypothesis
+  is supported for small payloads, but the CSV cannot distinguish launch from
+  transfer without Nsight/CUDA events.
+- `large_uint16_2d` also has a host decode/dtype gap (`3.0271 -> 3.3141 ms`
+  torchfits; fitsio `2.4247 -> 2.2133 ms`), so it is not a small-transfer-only
+  issue. No speculative CUDA graph or stream-manager change was landed;
+  methodology and disposition are documented in `docs/benchmarks.md`.
+
+### Wave-4 item 9: MegaCam Rice repro (2026-08-05)
+- Ran the existing local CFHT sample with two `.fits.fz` files, four image HDUs,
+  and 40 256x256 cutouts per HDU. `torchfits_cached` led `fitsio_cached` on
+  all four cases by 7.5–15.2% (new run:
+  `/scratch/.tmp-sfabbro/opencode/megacam-wave4/20260805_004215`).
+- `torchfits_materialize` was faster but used more RSS and is a separate
+  full-plane algorithm, not a like-for-like cached cutout path. The required
+  lag repro did not appear and no Rice/materialize code change was retained.
+
+### Wave-4 item 8: combined table mutation disposition (2026-08-05)
+- Audited fitsio 1.4.2 and `astropy.io.fits`: neither exposes a public
+  arbitrary-position `insert_rows` operation comparable to torchfits. fitsio
+  exposes lower-level `delete_rows`/`resize`/column writes, while Astropy can
+  rebuild a table in memory and write it once; those are not like-for-like
+  competitors for the public mutation contract.
+- The user's competition gate is therefore not met. No combined mutation
+  capsule was added; revisit only if a competitor exposes the same operation
+  or a real torchfits caller demonstrates repeated insert+update sessions.
+
+### Wave-4 item 5: GPU fallback/table-device audit (2026-08-05)
+- Normal full-image reads return from the generic image fast path before the
+  Python `file_cache` check; repeated `device="cuda"` reads therefore reuse
+  only C++ metadata/raw-fd state, not decoded device tensors, and pay host
+  decode plus H2D each time.
+- `table.read_torch(device=...)` uses the thin C++ row reader on CPU and then
+  `_move_table_dict` for one `.to(device)` per tensor column. The thin path
+  intentionally ignores the legacy cache-capacity knobs; no device data cache
+  exists. Non-tensor VLA/list values remain host-side by contract.
+- A device data cache would require explicit device-aware keys, VRAM eviction,
+  synchronization, and a CUDA benchmark. With no CUDA hardware on this host
+  and no measured repeat-read workload, the audit produced no justified patch;
+  the current host-first/H2D behavior remains documented in the GPU benchmark
+  methodology.
+
+### Wave-4 item 1: narrow-table polish disposition (2026-08-05)
+- Fresh buffered `narrow_100000::read_full` repro measured torchfits at
+  `1.465 ms` versus fitsio at `1.469 ms`; the specialized torchfits path was
+  `1.389 ms`. The earlier 1.06–1.15x lag did not reproduce on this host, so no
+  dispatch or table-reader change was justified.

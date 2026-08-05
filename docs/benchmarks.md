@@ -69,6 +69,28 @@ Table GPU transport rows compare `table.read_torch(..., device=cpu)` against
 (`mixed_100000`). Decode still happens on the host; the GPU column measures
 host decode plus H2D copy into tensor columns.
 
+### Small-payload CUDA overhead measurement (2026-08-04)
+
+The current development host has no CUDA device, so this follow-up uses the
+matched CUDA scorecard artifacts rather than a CPU proxy. Across 21 CUDA lanes
+and 3,654 paired `read_full` / `read_full_gpu` rows (mmap-on, same case and
+host), the medians were:
+
+| Case group | torchfits host | torchfits GPU | torchfits added | fitsio host | fitsio GPU | fitsio added |
+|---|---:|---:|---:|---:|---:|---:|
+| tiny images | 0.0656 ms | 0.1158 ms | 0.0509 ms | 0.0911 ms | 0.1094 ms | 0.0179 ms |
+| small images | 0.1127 ms | 0.1801 ms | 0.0732 ms | 0.1588 ms | 0.1857 ms | 0.0262 ms |
+| `large_uint16_2d` | 3.0271 ms | 3.3141 ms | 0.3606 ms | 2.4247 ms | 2.2133 ms | -0.1251 ms |
+
+The small-payload overhead hypothesis is **supported**: torchfits is faster on
+host decode for the tiny/small groups, but its host-to-device path adds more
+fixed time and reaches parity with fitsio or slightly loses. The rows prove a
+combined launch/H2D/conversion cost, not which component dominates; that needs
+Nsight or CUDA event instrumentation on a GPU host. No speculative CUDA-graph
+or stream-manager change is being landed. The remaining large uint16 gap also
+contains a host decode/dtype-path difference, so it is not explained by the
+small-transfer hypothesis alone.
+
 ## Published CSVs
 
 Exhaustive `results.csv` / `torchfits_deficits.csv` for the scorecard runs are
@@ -134,6 +156,14 @@ pixi run bench-megacam
 
 Outputs land in `benchmarks_results/<run-id>/megacam_results.csv`. Sample
 FITS files are gitignored under `benchmarks_data/cfht_megacam/`.
+
+The 2026-08-05 same-host repro (`megacam-wave4/20260805_004215`, two files,
+four HDUs, 40 256x256 cutouts per HDU) did **not** reproduce a torchfits lag:
+`torchfits_cached` led `fitsio_cached` on every sampled HDU by approximately
+7.5–15.2%. `torchfits_materialize` was faster still, but it is a separate
+full-plane algorithm and used higher peak RSS on the larger sample. No Rice
+decompression or materialization change is justified without a new host/file
+combination that reverses this result.
 
 For **uncompressed** survey mosaics (e.g. CFHTLS MegaPipe float32 stacks),
 `open_subset_reader` maps the data segment once and slices cutouts with
