@@ -306,12 +306,15 @@ def write(
             item_header = item.get("header") if isinstance(item, dict) else None
             _write_header_cards_if_supported(path, idx, item_header)
 
-    except ValueError:
-        # Data-validation failures (e.g. unsupported uint64) are actionable
-        # as-is; do not bury the message in a generic RuntimeError wrapper.
+    except ValueError as e:
+        # uint64 rejections are documented as ValueError with guidance;
+        # every other write failure keeps the historical RuntimeError
+        # contract so callers cannot accidentally swallow validation bugs.
         if not path_exists and os.path.exists(path):
             os.remove(path)
-        raise
+        if "uint64" in str(e):
+            raise
+        raise RuntimeError(f"Failed to write FITS file '{path}': {e}") from e
     except Exception as e:
         if not path_exists and os.path.exists(path):
             os.remove(path)
