@@ -1,0 +1,35 @@
+{#-
+  Overrides zensical/templates/partials/actions.html to honor a per-page
+  `hide: [edit, view]` front-matter key. Generated, non-editable pages
+  (e.g. docs/published-examples/README.md) drop the Edit / View source
+  buttons so they never point at raw/main files that do not exist.
+-#}
+{% if page.meta and page.meta.hide and "edit" in page.meta.hide %}
+  {# edit action suppressed for this page #}
+{% else %}
+  {% if page.edit_url %}
+    {% if "content.action.edit" in features %}
+      <a href="{{ page.edit_url }}" title="{{ lang.t('action.edit') }}" class="md-content__button md-icon" rel="edit">
+        {% set icon = config.theme.icon.edit or "material/file-edit-outline" %}
+        {% include ".icons/" ~ icon ~ ".svg" %}
+      </a>
+    {% endif %}
+  {% endif %}
+{% endif %}
+{% if page.meta and page.meta.hide and "view" in page.meta.hide %}
+  {# view-source action suppressed for this page #}
+{% else %}
+  {% if page.edit_url %}
+    {% if "content.action.view" in features %}
+      {% if "/blob/" in page.edit_url %}
+        {% set part = "/blob/" %}
+      {% else %}
+        {% set part = "/edit/" %}
+      {% endif %}
+      <a href="{{ page.edit_url | replace(part, '/raw/') }}" title="{{ lang.t('action.view') }}" class="md-content__button md-icon">
+        {% set icon = config.theme.icon.view or "material/file-eye-outline" %}
+        {% include ".icons/" ~ icon ~ ".svg" %}
+      </a>
+    {% endif %}
+  {% endif %}
+{% endif %}

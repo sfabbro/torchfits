@@ -13,6 +13,8 @@ for f in "${ROOT}/examples/cli"/*; do
   [[ -f "$f" ]] || continue
   cp "$f" "${DEST}/cli/"
 done
-# Marker so empty trees are obvious in CI logs
-printf '# Published examples\n\nCopied from `examples/` at docs-build time. Do not edit.\n' \
+# Marker so empty trees are obvious in CI logs; the generated README is not a
+# source file (docs/published-examples/ is uncommitted), so hide the Edit /
+# View source buttons that would 404 on raw/main.
+printf -- '---\nhide:\n  - edit\n  - view\n---\n\n# Published examples\n\nCopied from `examples/` at docs-build time. Do not edit.\n' \
   > "${DEST}/README.md"
