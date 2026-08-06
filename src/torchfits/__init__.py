@@ -15,7 +15,7 @@ import threading
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "1.0.0"
+__version__ = "1.0.0rc5"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
