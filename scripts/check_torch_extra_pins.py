@@ -75,6 +75,11 @@ def lane_for_version(version: str) -> str:
     for lane, spec in lanes.items():
         if spec["torchfits_version"] == version:
             return lane
+        # Prerelease states (e.g. 1.0.0rc5) belong to the lane whose base
+        # version they carry, mirroring release_lane.py --prerelease.
+        base = re.sub(r"rc\d+$", "", version)
+        if base != version and spec["torchfits_version"] == base:
+            return lane
     raise SystemExit(
         f"pyproject version {version!r} is not a torchfits release-lane version "
         f"(torch_lanes.json: {', '.join(lanes)})"
@@ -307,7 +312,6 @@ def main() -> int:
         print("all torch flavor pins skipped by platform markers — OK", flush=True)
         return 0
 
-    failed = False
     for extra, entry, version in pins:
         label = f"{extra}: {entry}"
         if not lane.contains(version.public, prereleases=True):

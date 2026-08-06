@@ -145,6 +145,37 @@ def test_main_fails_when_pin_off_wheel_lane(
     assert "2.11.0" in out
 
 
+def test_lane_for_version_accepts_prerelease_suffix() -> None:
+    """rc prerelease states map to the lane of their base version."""
+    lanes = json.loads(
+        (ROOT / "scripts" / "torch_lanes.json").read_text(encoding="utf-8")
+    )
+    current = max(lanes)
+    base = lanes[current]["torchfits_version"]
+    assert pins.lane_for_version(base) == current
+    assert pins.lane_for_version(f"{base}rc5") == current
+
+
+def test_main_fails_when_lane_map_consistency_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A [FAIL] from the lane-map check must propagate to the exit code."""
+    monkeypatch.setattr(
+        pins, "iter_torch_pins", lambda _text: [_pin("cpu", "2.13.0+cpu")]
+    )
+    monkeypatch.setattr(
+        pins, "check_lane_map_consistency", lambda _lane: ["[FAIL] lane drifted"]
+    )
+    monkeypatch.setattr(pins, "check_doc_drift", lambda _lane, _pins: [])
+    monkeypatch.setattr(
+        pins,
+        "resolve",
+        lambda _spec, _index: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    assert pins.main() == 1
+    assert "lane drifted" in capsys.readouterr().out
+
+
 def test_main_succeeds_for_real_pins_without_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
