@@ -13,9 +13,12 @@
 #   bash scripts/build_wheels_local.sh [--lanes 2.12,2.13] [--pythons 3.11,3.13] [--jobs 2]
 #
 # Flags:
-#   --lanes    comma-separated torch lanes (default: all in scripts/torch_lanes.json)
-#   --pythons  comma-separated CPython versions (default: 3.10,3.11,3.12,3.13,3.14)
-#   --jobs     parallel build cells (default: 2)
+#   --lanes      comma-separated torch lanes (default: all in scripts/torch_lanes.json)
+#   --pythons    comma-separated CPython versions (default: 3.10,3.11,3.12,3.13,3.14)
+#   --jobs       parallel build cells (default: 2)
+#   --prerelease prerelease suffix (e.g. rc5) to render onto the lane version,
+#                mirroring `release_lane.py --prerelease` (matches the rc tag
+#                state the CI wheel build runs on)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,12 +26,14 @@ OUT_DIR="dist-local"
 JOBS=2
 LANES=""
 PYTHONS="3.10,3.11,3.12,3.13,3.14"
+PRERELEASE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --lanes) LANES="$2"; shift 2 ;;
     --pythons) PYTHONS="$2"; shift 2 ;;
     --jobs) JOBS="$2"; shift 2 ;;
+    --prerelease) PRERELEASE="$2"; shift 2 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) OUT_DIR="$1"; shift ;;
   esac
@@ -67,7 +72,9 @@ build_cell() {
       --exclude=build --exclude='*.egg-info' --exclude=__pycache__ \
       --exclude='.venv' --exclude='venv*' --exclude=docs \
       . | tar -C "$copy" -xf -
-    "$PIXI_PY" "$copy/scripts/release_lane.py" --lane "$lane" --apply
+    "$PIXI_PY" "$copy/scripts/release_lane.py" --lane "$lane" \
+      $(if [[ -n "$PRERELEASE" ]]; then printf '%s' "--prerelease $PRERELEASE"; fi) \
+      --apply
     "$PIXI_PY" "$copy/scripts/release_lane.py" --check
     echo "== $lane / py$py: creating venv (uv pulls CPython $py) =="
     uv venv --python "$py" --no-project "$copy/.venv" --quiet
@@ -92,7 +99,7 @@ build_cell() {
 }
 
 export -f build_cell next_minor
-export ROOT OUT_DIR WORK PIXI_PY PIXI_PREFIX
+export ROOT OUT_DIR WORK PIXI_PY PIXI_PREFIX PRERELEASE
 
 cells=()
 for lane in $(echo "$LANES" | tr ',' ' '); do

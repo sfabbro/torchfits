@@ -45,6 +45,11 @@ v = sys.stdin.read().strip()
 lanes = json.load(open("scripts/torch_lanes.json"))
 lane = next((l for l, c in lanes.items() if c["torchfits_version"] == v), "")
 if not lane:
+    # Prerelease wheels (e.g. 1.0.0rc5) carry a PEP 440 suffix on the lane
+    # version; strip it before matching torch_lanes.json.
+    base = re.sub(r"(rc|a|b|\.dev0\+\S*)\d*$", "", v) if v else ""
+    lane = next((l for l, c in lanes.items() if c["torchfits_version"] == base), "")
+if not lane:
     m = re.fullmatch(r".*\.dev0\+torch(\d)(\d+)", v)
     if m:
         lane = f"{m.group(1)}.{m.group(2)}"
