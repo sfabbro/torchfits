@@ -973,7 +973,7 @@ _…and 4 more rows in `torchfits_deficits.csv`._
 <!-- BENCH_HOSTS_BEGIN -->
 | Linux x86_64 / CPU | `exhaustive_cpu_20260806_012620` | 3057 | 9 | 293.6 | lab + mmap-matrix |
 | Linux x86_64 / CUDA | `exhaustive_cuda_20260806_012651` | 4315 | 30 | 722.6 | lab + mmap-matrix + GPU |
-| macOS arm64 / MPS | `exhaustive_mps_20260806_022603` | 3057 | 5 | 300.2 | lab + mmap-matrix |
+| Linux x86_64 / CPU | `exhaustive_cpu_20260806_022603` | 3057 | 5 | 300.2 | lab + mmap-matrix |
 <!-- BENCH_HOSTS_END -->
 
 Round-3 soak (post thin-I/O): MPS `exhaustive_mps_20260719_143706` (local);

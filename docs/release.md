@@ -96,8 +96,9 @@ pixi run bench-exhaustive-local
 # After CANFAR finishes:
 bash scripts/fetch_canfar_bench_vos.sh exhaustive_cpu_<stamp>
 bash scripts/fetch_canfar_bench_vos.sh exhaustive_cuda_<stamp>
+# Local leg: bench-exhaustive-local prints its run-id (exhaustive_<cpu|mps>_<stamp>).
 pixi run bench-release-scorecard -- \
-  benchmarks_results/exhaustive_mps_<stamp> \
+  benchmarks_results/exhaustive_<cpu-or-mps>_<localstamp> \
   benchmarks_results/exhaustive_cpu_<stamp> \
   benchmarks_results/exhaustive_cuda_<stamp>
 ```

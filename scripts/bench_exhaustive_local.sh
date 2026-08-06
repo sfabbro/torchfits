@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Local Mac exhaustive: lab profile + mmap matrix + MPS GPU when available.
+# Local exhaustive: lab profile + mmap matrix + MPS GPU when available.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-RUN_ID="${1:-exhaustive_mps_$(date -u +%Y%m%d_%H%M%S)}"
+# Name the run after the platform actually in use, so the run-id never
+# mislabels the results (e.g. an "mps" tag on a Linux box without MPS).
+DEFAULT_TAG="cpu"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  DEFAULT_TAG="mps"
+fi
+RUN_ID="${1:-exhaustive_${DEFAULT_TAG}_$(date -u +%Y%m%d_%H%M%S)}"
 ENV_NAME="${TORCHFITS_BENCH_ENV:-bench-all}"
 LOG_DIR="${ROOT}/benchmarks_results"
 LOG_FILE="${LOG_DIR}/${RUN_ID}.log"

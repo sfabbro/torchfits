@@ -110,10 +110,15 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
 - Bench docs: multi-host GPU/CPU scorecard from the CANFAR matrix grid.
 - Bench docs: rc5 re-soak snapshot — CANFAR CPU
   `exhaustive_cpu_20260806_012620`, CUDA `exhaustive_cuda_20260806_012651`,
-  local MPS `exhaustive_mps_20260806_022603`. CUDA 100% fits win rate
+  local CPU `exhaustive_cpu_20260806_022603`. CUDA 100% fits win rate
   (smart/specialized), fitstable ≥98.9%; only residual lags are
   table `read_full` / predicate rows (≤1.15×, fitsio/astropy) and
   HCOMPRESS_1 (≤1.03×).
+- Bench labeling: host scorecard derives the platform from the benchmark
+  data (`metadata` device field / `host` column token), not the run-id tag —
+  the local bench script names every run `exhaustive_mps_*` regardless of
+  platform, so a CPU run on a Linux box used to be mislabeled "macOS arm64 /
+  MPS". The script now tags runs `exhaustive_cpu_*` on non-Darwin hosts.
 - SSRF hardening waves: private/loopback/link-local/reserved-address guards
   on read_header, read_batch, HDU write paths, and public cpp; `scan_polars`
   guards before importing optional polars.

@@ -33,8 +33,15 @@ def _replace_block(text: str, begin: str, end: str, body: str) -> str:
 
 
 def _host_label(csv_path: Path) -> str:
-    """OS / arch / accelerator — never raw hostname."""
+    """OS / arch / accelerator — never raw hostname.
+
+    Device signal comes from the actual benchmark data (per-row ``metadata``
+    ``device`` field, then the ``host`` column token), not the run-id tag: the
+    local bench script names every run ``exhaustive_mps_*`` regardless of the
+    platform actually used, and a run with no device observed is a CPU run.
+    """
     devices: set[str] = set()
+    host_tokens: set[str] = set()
     with csv_path.open(newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             md = row.get("metadata") or ""
@@ -45,26 +52,25 @@ def _host_label(csv_path: Path) -> str:
                 devices.add("cuda")
             elif "mps" in md.lower():
                 devices.add("mps")
-            name = (csv_path.parent.name or "").lower()
-            if "cuda" in name:
-                devices.add("cuda")
-            elif "mps" in name:
-                devices.add("mps")
-            elif "cpu" in name:
-                devices.add("cpu")
+            host = (row.get("host") or "").lower()
+            if "cuda" in host:
+                host_tokens.add("cuda")
+            elif "mps" in host:
+                host_tokens.add("mps")
+            elif "cpu" in host:
+                host_tokens.add("cpu")
+
     device = "cpu"
-    if "cuda" in devices:
-        device = "cuda"
-    elif "mps" in devices:
-        device = "mps"
-    name = (csv_path.parent.name or "").lower()
-    if "mps" in name or device == "mps":
-        return "macOS arm64 / MPS"
-    if "cuda" in name or device == "cuda":
+    for signal in ("cuda", "mps"):
+        if signal in devices or signal in host_tokens:
+            device = signal
+            break
+
+    if device == "cuda":
         return "Linux x86_64 / CUDA"
-    if "cpu" in name or device == "cpu":
-        return "Linux x86_64 / CPU"
-    return f"host / {device.upper()}"
+    if device == "mps":
+        return "macOS arm64 / MPS"
+    return "Linux x86_64 / CPU"
 
 
 def _median_rss(csv_path: Path) -> str:
