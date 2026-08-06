@@ -4,7 +4,7 @@
 and FITS **table** I/O vs Astropy and fitsio. CPU↔GPU comparisons are published
 when hardware was available; GPU deficits are listed, not hidden.
 
-**Honesty:** torchfits is a **1.0.0rc4** prerelease. Headline ratios below are
+**Honesty:** torchfits is a **1.0.0rc5** prerelease. Headline ratios below are
 lab medians from named scorecard runs — not guarantees on your filesystem,
 file mix, or PyTorch version. Check [Performance deficits](#performance-deficits)
 before assuming torchfits wins every case.
@@ -105,8 +105,12 @@ the CFITSIO path on full-range uint16 data; parity suite and `ci-local` green.
 
 Exhaustive `results.csv` / `torchfits_deficits.csv` for the scorecard runs are
 linked from GitHub Release assets when published, and mirrored under
-`docs/assets/bench/<run-id>/` when size allows. Example local paths used to
-build this page:
+`docs/assets/bench/<run-id>/` when size allows. The newest CPU/CUDA
+exhaustives (`exhaustive_cpu_20260806_*`, `exhaustive_cuda_20260806_*`) feed
+the generated tables above; their CSVs are archived under
+`benchmarks_results/<run-id>/` locally and on the benchmark hosts until the
+next release mirrors them as assets. Example local paths from the Round-3
+soak that are already mirrored:
 
 - `docs/assets/bench/exhaustive_mps_20260719_143706/results.csv`
 - `docs/assets/bench/exhaustive_cpu_20260719_144337/results.csv`
@@ -380,12 +384,13 @@ The following table showcases median wall-clock times for key FITS tensor and ta
 
 ## Benchmark category summary
 
-Aggregated wins across every domain and operation in the CANFAR CUDA exhaustive
-(`exhaustive_cuda_20260719_144457`, 4,087 rows; see host scorecard for
-deficit honesty — all lags listed, floors label noise vs significant).
-Category ranges below are the last regenerated aggregation shape; for this
-run’s absolute times prefer [Performance highlights](#performance-highlights)
-and the full table.
+CPU category rows aggregate the rc5 CPU exhaustive
+(`exhaustive_cpu_20260806_012620`, source of the generated
+[highlights](#performance-highlights) and [full table](#exhaustive-benchmark-results)
+above); the GPU (CUDA) rows come from `exhaustive_cuda_20260719_144457`
+(see host scorecard for deficit honesty — all lags listed, floors label
+noise vs significant). Category ranges are the last regenerated aggregation
+shape; for absolute times prefer the generated tables above.
 
 ### FITS image I/O
 
@@ -398,7 +403,7 @@ and the full table.
 | **Scaled** (BSCALE/BZERO, small–large) | 6 | 154 μs – 3.53 ms | 935 μs – 11.44 ms | 277 μs – 4.76 ms | **2.5–6.1×** | **1.3–1.8×** |
 | **MEF** (multi-extension, small/medium) | 2 | 112–324 μs | 1.11–1.56 ms | 267–507 μs | **4.8–9.9×** | **1.6–2.4×** |
 | **Multi-MEF** (10 extensions, cutouts + random reads) | 3 | 95 μs – 6.62 ms | 3.39–11.25 ms | 361 μs – 10.19 ms | **1.7–35.9×** | **1.1–3.8×** |
-| **Repeated cutouts** (50× 100×100) | 1 | 4.68 ms | 75.36 ms | 4.94 ms | **16.7×** | **1.1×** |
+| **Repeated cutouts** (50× 100×100) | 1 | 467 μs | 50.85 ms | 3.21 ms | **108.8×** | **6.9×** |
 | **Time series frames** (5 frames) | 5 | 148–160 μs | 750–763 μs | 272–278 μs | **4.7–5.1×** | **1.7–1.9×** |
 | **Header read** (all fixture types) | ~55 | 88–109 μs | 615–1010 μs | 128–159 μs | **6.5–9.5×** | **1.4–1.5×** |
 

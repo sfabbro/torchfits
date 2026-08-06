@@ -54,8 +54,15 @@ pipeline.inverse(normalized, mask=finite_mask)
 
 | Kind | `inverse()` |
 |---|---|
-| Stretches, normalizers, FITS scale | Yes (state cached on the instance) |
+| Stretches, `FITSHeaderScale`, `FITSScaleColumns` | Yes |
+| Normalizers (`ZScale`, `Robust`, `BackgroundSubtract`, `MinMax`, `GlobalScalar`) | Yes (state cached on the instance) |
+| `PercentileClipNormalize` | Approximate only — forward clips to `[lower, upper]`, so clipped pixels cannot be recovered exactly |
 | `SigmaClip`, `AsymmetricSigmaClip`, `TNullToNan` | No — lossy / many-to-one |
+
+!!! note "Float inputs required"
+    The normalizers and `ArcsinhStretch` require float tensors — integer
+    inputs raise `RuntimeError`. Convert first (`image.float()`); `LogStretch`,
+    `SqrtStretch`, and `FITSHeaderScale` accept integer tensors.
 
 Stateless stretches are the most likely to work under `torch.compile`;
 data-dependent normalizers cache Python-side state and may graph-break.
@@ -69,7 +76,8 @@ The implementation lives under `torchfits.transforms` as a small package
 
 ## Stretches
 
-Stateless, always invertible. Apply non-linear flux scaling for visualization.
+Stateless, with analytic inverses. `LogStretch` / `SqrtStretch` clamp
+negative input to zero, so their inverse cannot recover negatives.
 
 ### `ArcsinhStretch(a=1.0)`
 
@@ -89,7 +97,8 @@ $$\text{output} = \frac{\operatorname{arcsinh}(a \cdot x)}{\operatorname{arcsinh
 
 ### `LogStretch(a=1000.0, eps=1e-9)`
 
-Logarithmic stretch for heavy-tailed flux distributions.
+Logarithmic stretch for heavy-tailed flux distributions. Negative input is
+clamped to zero (inverse cannot recover negatives).
 
 $$\text{output} = \frac{\log_{10}(1 + a \cdot \max(x, 0))}{\log_{10}(1 + a)}$$
 
@@ -106,7 +115,8 @@ $$\text{output} = \frac{\log_{10}(1 + a \cdot \max(x, 0))}{\log_{10}(1 + a)}$$
 
 ### `SqrtStretch()`
 
-Square-root stretch — stabilizes Poisson variance.
+Square-root stretch — stabilizes Poisson variance. Negative input is clamped
+to zero (inverse cannot recover negatives).
 
 $$\text{output} = \sqrt{\max(x, 0)}$$
 
@@ -120,12 +130,14 @@ $$\text{output} = \sqrt{\max(x, 0)}$$
 
 ## Normalizers
 
-Data-dependent, invertible. Compute statistics from the image and cache them
-for inverse transforms.
+Data-dependent — compute statistics from the image and cache them for
+inverse transforms. Require float input; see [Invertibility](#invertibility).
 
 ### `ZScaleNormalize(contrast=0.25, dim=(-2, -1))`
 
-IRAF zscale auto-contrast algorithm. Maps display range to [0, 1].
+IRAF zscale auto-contrast algorithm. Maps the display range `[z1, z2]` to
+`[0, 1]` — pixels outside `[z1, z2]` land outside `[0, 1]` (no clamp on the
+output).
 
 $$z_1 = \text{median} - \frac{\text{MAD} \times 1.4826}{\max(\text{contrast}, 10^{-5})}$$
 
@@ -184,7 +196,8 @@ $$\text{output} = x - \text{median}(x)$$
 
 ### `PercentileClipNormalize(lower_pct=1, upper_pct=99, dim=(-2, -1))`
 
-Clip to percentile range, scale to [0, 1].
+Clip to percentile range, scale to [0, 1]. `inverse()` is **approximate** —
+values clipped by the clamp cannot be recovered exactly.
 
 $$\text{lower} = Q_{\text{lower\_pct}/100}(x), \quad \text{upper} = Q_{\text{upper\_pct}/100}(x)$$
 
@@ -390,7 +403,8 @@ instance for undo.
 ### `lupton_rgb(r, g, b, *, Q=8.0, stretch=0.5)`
 
 Lupton asinh RGB from three single-band tensors (same shape). Returns a
-`[H, W, 3]` float tensor in `[0, 1]`. Matches Astropy's
+`[H, W, 3]` **float64** tensor in `[0, 1]` (channel last; accepts any
+tensor-convertible inputs). Matches Astropy's
 `make_lupton_rgb` / `LuptonAsinhStretch` mapping. See
 `examples/example_lupton_rgb_sdss.py`.
 

@@ -60,15 +60,16 @@ patterns.
 
 | Metric | fitsio | torchfits |
 |--------|--------|-----------|
-| Large float32 image (16 MB, CPU) | 5.25 ms | 3.85 ms (**~1.4× faster**) |
-| Same read @ CUDA | 12.22 ms | 8.37 ms (**~1.5× faster**) |
-| Compressed Rice image (CPU) | 18.03 ms | 18.16 ms (**~parity**) |
-| 50× repeated 100×100 cutouts (CPU) | 18.16 ms | 13.60 ms (**~1.3× faster**) |
-| Table read (100k rows, 8 cols, mixed) | 31.45 ms | 5.65 ms (**~5.6× faster**) |
+| Large float32 image (16 MB, CPU) | 5.02 ms | 3.85 ms (**~1.3× faster**) |
+| Same read @ CUDA | 5.22 ms | 3.28 ms (**~1.6× faster**) |
+| Compressed Rice image (CPU) | 12.57 ms | 12.40 ms (**~parity**) |
+| 50× repeated 100×100 cutouts (CPU) | 3.21 ms | 467 μs (**~6.9× faster**) |
+| Table read (100k rows, 8 cols, mixed) | 10.36 ms | 2.56 ms (**~4.0× faster**) |
 
-*Medians from Round-3 scorecard (`exhaustive_mps_20260719_143706` / CUDA
-`exhaustive_cuda_20260719_144457`); see [Benchmarks](benchmarks.md) host
-scorecard. Absolute highlight times refresh with each soak — prefer
+*CPU medians from the rc5 re-soak (`exhaustive_cpu_20260806_012620` via
+[Benchmarks](benchmarks.md) host scorecard); the CUDA row from the Round-3 CUDA
+scorecard (`exhaustive_cuda_20260719_144457`). Absolute highlight times refresh
+with each soak — prefer
 `docs/benchmarks.md#performance-highlights` over this migration snapshot when
 numbers disagree.*
 

@@ -5,8 +5,8 @@ forward-looking only.
 
 ## Current focus (toward 1.0.0)
 
-**`1.0.0rc4`** is on PyPI with manylinux + macOS arm64 wheels
-(`pip install "torchfits==1.0.0rc4"`). Collaborator soak is in progress; SemVer
+**`1.0.0rc5`** is on PyPI with manylinux + macOS arm64 wheels
+(`pip install "torchfits==1.0.0rc5"`). Collaborator soak is in progress; SemVer
 **`1.0.0`** waits for feedback. Scope cuts (cache merge, dataset zoo, CLI trim)
 stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not block the tag.
 
@@ -21,7 +21,7 @@ stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not block the tag.
 
 ## Near-term (through 1.0.0)
 
-- Soak `1.0.0rc4` with collaborators; fold feedback before SemVer `1.0.0`
+- Soak `1.0.0rc5` with collaborators; fold feedback before SemVer `1.0.0`
 - Keep published exhaustive scorecards honest (tensor vs table, CPU↔GPU deficits,
   CFITSIO-direct rows, MegaCam cutouts) — see [Benchmarks](benchmarks.md)
 - Docs / CLI polish that lands with 1.0 (install recipes, `header` dump quality,

@@ -62,25 +62,25 @@ For runnable workflows, start with [Examples](examples.md).
 ## Performance notes
 
 See [Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
-for the live table. Snapshot (Round-3 published suite):
+for the live table. Snapshot (rc5 CPU exhaustive + Round-3 CUDA):
 
 | Metric | astropy | torchfits |
 |--------|---------|-----------|
-| Large float32 image (16 MB, CPU) | 4.77 ms | 2.52 ms (**~1.9× faster**) |
-| Same read @ CUDA | 7.02 ms | 3.40 ms (**~2.1× faster**) |
-| Compressed Rice image (CPU) | 17.60 ms | 6.50 ms (**~2.7× faster**) |
-| 50× repeated 100×100 cutouts (CPU) | 86.01 ms | 0.79 ms (**~110× faster**) |
-| Table read (100k rows, 8 cols, mixed) | 31.85 ms | 2.20 ms (**~15× faster**) |
+| Large float32 image (16 MB, CPU) | 5.02 ms | 3.85 ms (**~1.3× faster**) |
+| Same read @ CUDA | 5.22 ms | 3.28 ms (**~1.6× faster**) |
+| Compressed Rice image (CPU) | 32.85 ms | 12.40 ms (**~2.6× faster**) |
+| 50× repeated 100×100 cutouts (CPU) | 50.85 ms | 0.47 ms (**~108× faster**) |
+| Table read (100k rows, 8 cols, mixed) | 34.81 ms | 2.56 ms (**~13.6× faster**) |
 
 ## Key Behavioral Differences
 
 ### 1. Data Scaling & Type Promotion
 * **Astropy**: Applies `BSCALE` / `BZERO` on the CPU when HDU data is loaded.
   Integers may promote to `float64` when scaling yields floats.
-* **torchfits**: Optional on-device scaling via
-  `torchfits.read(..., scale_on_device=True)`. Raw integers transfer to
-  GPU/MPS; scaling yields `float32`. On `read_tensor`, pass `raw_scale=True`
-  for storage dtypes, or use `read()` for `scale_on_device`.
+* **torchfits**: Scaling yields `float32` (on-device by default; pass
+  `scale_on_device=False` to read through the host pipeline). On
+  `read_tensor`, pass `raw_scale=True` for storage dtypes (e.g. the
+  signed-byte / pseudo-unsigned conventions expose `uint8` / `int16`).
 
 ### 2. Table Representation
 * **Astropy**: `astropy.table.Table` or `numpy.recarray`.

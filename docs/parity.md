@@ -16,7 +16,7 @@ Status values:
 |---|---:|---|---|
 | FITS IMAGE HDU → tensor read/write | Supported | `astropy.io.fits`, `fitsio`, CFITSIO backend | `tests/test_api.py`, `tests/test_writing.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Multi-extension FITS files | Supported | `astropy.io.fits` HDUList workflows | `tests/test_hdu.py`, `tests/test_astropy_upstream_smoke.py` |
-| FITS headers and cards | Supported | Astropy/fitsio header reads and torchfits `Header` | `tests/test_header_parser.py`, `tests/test_complex_header.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
+| FITS headers and cards | Supported | Astropy/fitsio header reads and torchfits `Header` | `tests/test_read_header.py`, `tests/test_header_versioning.py`, `tests/test_complex_header.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Checksums | Supported | fitsio/CFITSIO checksum workflows | `tests/test_checksum.py`, `tests/test_fitsio_upstream_smoke.py`, `tests/test_astropy_upstream_smoke.py` |
 | Compressed image reads | Supported | Astropy `CompImageHDU` (RICE_1, GZIP_1, PLIO_1, HCOMPRESS_1), fitsio image reads | `tests/test_compression.py`, `tests/test_astropy_upstream_smoke.py`, `tests/test_fitsio_upstream_smoke.py` |
 | Compressed image writes | Supported | CFITSIO compressed-image writer | `tests/test_writing.py`; tensor and numpy array/list payloads are supported for compressed image HDUs |

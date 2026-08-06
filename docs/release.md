@@ -112,8 +112,9 @@ Quick local smoke (not a published scorecard): `pixi run bench-all` /
 
 Repository: https://github.com/astroai/torchfits.
 
-**PyPI trusted publishing:** `astroai/torchfits` is registered; tag pushes
-trigger `.github/workflows/build_wheels.yml`.
+**PyPI publishing:** `astroai/torchfits` is registered; tag pushes trigger
+`.github/workflows/build_wheels.yml` (publishes via a PyPI API token,
+`secrets.PYPI_API_TOKEN`).
 
 Do not make new performance claims unless the benchmark run is archived and the
 comparison target is listed in `docs/parity.md`.
@@ -189,7 +190,8 @@ Publishing triggers `.github/workflows/build_wheels.yml`, which:
    `release_lane.py --print-pins`).
 2. Builds wheels on Linux and macOS plus sdist (cp310–cp314, torch pinned to
    the lane).
-3. Uploads to [PyPI](https://pypi.org/project/torchfits/) via trusted publishing.
+3. Uploads to [PyPI](https://pypi.org/project/torchfits/) via a PyPI API
+   token (`secrets.PYPI_API_TOKEN`), not trusted publishing.
 
 ## 11. Post-release verification
 

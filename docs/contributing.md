@@ -51,8 +51,8 @@ below, stop and add a `[dependencies]` entry in `pixi.toml` (or a feature's
 **Documented exceptions**
 
 - `pip install -e .` invocations inside any `[tasks]` or
-  `[feature.<name>.tasks]` block of `pixi.toml` and inside
-  `scripts/gpu-bootstrap.sh` run inside an activated pixi env and are
+  `[feature.<name>.tasks]` block of `pixi.toml`
+  run inside an activated pixi env and are
   intentional — they rebuild the C++ extension against the
   pixi-managed dependencies already on `$PATH`. They are not bare-pip
   installs. (In particular, `bench-gpu-install` under

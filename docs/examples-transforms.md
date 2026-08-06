@@ -37,7 +37,7 @@ from torchfits.transforms import (
     ZScaleNormalize,
 )
 
-tensor = torchfits.read_tensor("horsehead.fits", hdu=0)
+tensor = torchfits.read_tensor("horsehead.fits", hdu=0).float()  # transforms need float input
 pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
 out = pipeline(tensor)
 ```

@@ -5,7 +5,7 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0rc5] — 2026-08-05
+## [1.0.0rc5] — 2026-08-06
 
 Fifth release candidate on the 2.13 torch ABI lane; adds prerelease-aware release
 tooling, a root cache reset entry point, and the macOS compressed-float parity fix.
@@ -535,7 +535,7 @@ API freeze (rc line followed for soak + blockers).
 - Site logo/favicon: `torchfits-logo.png`.
 - README / benchmark run IDs aligned with [`docs/benchmarks.md`](benchmarks.md).
 
-## [0.9.1] - 2026-07-15
+## [0.9.1] - 2026-07-14
 
 ### Fixed
 
@@ -620,7 +620,7 @@ API freeze (rc line followed for soak + blockers).
 - **`should_skip_cpp_numpy_for_where`** — internal alias removed from
   `torchfits._table_engine`. Use `should_skip_cpp_for_where`.
 
-## [0.7.0] - 2026-07-10
+## [0.7.0] - 2026-07-11
 
 ### Added
 
@@ -1023,7 +1023,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...HEAD
+[1.0.0rc5]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/astroai/torchfits/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/astroai/torchfits/compare/v1.0.0rc2...v1.0.0rc3
 [1.0.0rc2]: https://github.com/astroai/torchfits/compare/v1.0.0rc1...v1.0.0rc2
