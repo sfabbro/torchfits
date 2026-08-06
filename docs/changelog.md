@@ -5,7 +5,10 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0rc5] — 2026-08-05
+
+Fifth release candidate on the 2.13 torch ABI lane; adds prerelease-aware release
+tooling, a root cache reset entry point, and the macOS compressed-float parity fix.
 
 ### Added
 - `clear_all_caches()` — root-level clear of in-process *and* disk caches
@@ -35,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   x86_64; CUDA builds also run on GPU-less machines via CPU fallback).
 - Docs: full docs↔code sync audit — one-line pinned installs in quickstart /
   CLI docs, `write()` payload types corrected (no top-level ndarray),
-  CLI-recipe transform kwargs documented, architecture freshness rc4.
+  CLI-recipe transform kwargs documented, architecture freshness rc5.
 - CI/scripts: `check-torch-pins` resolves the `[cpu]` / `[cuda]` extra pins
   against the PyTorch indexes on the wheel ABI lane, run as the first step of
   both CI jobs and the wheel-build workflow so lane drift fails fast (CI lint
