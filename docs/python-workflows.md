@@ -65,13 +65,13 @@ df = torchfits.table.read(
     columns=["RA", "DEC", "MAG_G"],
     where="MAG_G < 20",
 )
-print(df.num_rows)  # pyarrow.Table
+print(df.num_rows)  # number of rows in the pyarrow.Table
 
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
-# where= on read_torch: simple compare / BETWEEN / AND only
+# where= on read_torch: numeric comparisons / BETWEEN / AND only
 
 for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
-    process(batch)  # pyarrow.RecordBatch
+    print(batch.num_rows)  # pyarrow.RecordBatch
 ```
 
 !!! warning "Two table shapes"
@@ -131,11 +131,11 @@ More: [`read_subset`](api-core-io.md#read_subset) ·
 ```python
 from torchfits.data import FitsImageDataset, make_loader
 
-ds = FitsImageDataset("observations/*.fits", label_key="CLASS")
+ds = FitsImageDataset("observations/*.fits", label_key="CLASS", mmap=False)
 loader = make_loader(ds, batch_size=32, num_workers=4)
 
 for images, labels in loader:
-    ...
+    break
 ```
 
 | Dataset | Typical use | Item shape |
@@ -157,8 +157,8 @@ Reference: [Data module](api-data.md) · [Transforms](api-transforms.md)
 | In-process Python API | Pipelines and many reads in one process |
 | `torchfits` CLI | Inspect, checksums, one-off cutouts, shell scripts |
 
-Each CLI invocation pays a PyTorch/extension import (~1 s on many laptops).
-For tight loops, stay in Python.
+Each CLI invocation pays a PyTorch/extension import, which can dominate tiny
+one-file operations. For tight loops, stay in Python.
 
 Tour: [CLI](cli.md) · Recipes: [CLI recipes](cli-recipes.md)
 

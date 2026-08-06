@@ -31,10 +31,9 @@ smoke() {
   # shellcheck disable=SC1091
   source "$venv/bin/activate"
   python -m pip install -q --upgrade pip
-  # Documented CPU-only one-liner (docs/install.md): local wheel + ABI-lane
-  # torch pin, torch pulled from the PyTorch CPU index (numpy/pyarrow come
-  # in as torchfits dependencies).
-  python -m pip install -q "$WHEEL" "torch>=2.10,<2.11" --extra-index-url https://download.pytorch.org/whl/cpu
+   # Documented CPU-only one-liner (docs/install.md): local wheel + current
+   # 2.13 ABI-lane torch pin, pulled from the PyTorch CPU index.
+   python -m pip install -q "$WHEEL" "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu
   python - <<'PY'
 import tempfile
 from pathlib import Path

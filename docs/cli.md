@@ -1,6 +1,6 @@
 # torchfits CLI
 
-After `pip install torchfits "torch>=2.13,<2.14"`, the `torchfits` command
+After `pip install torchfits`, the `torchfits` command
 inspects and transforms FITS files from the shell. It wraps the same C++ engine as the Python API.
 
 **Every flag is on `torchfits <cmd> --help`.** This page is a tour, not an
@@ -10,11 +10,12 @@ Inventory commands (`info`, `header`, `verify`, `stats`, `table`, `probe`) take
 paths on the command line or from stdin / `--stdin`. Mutation commands
 (`copy`, `cutout`, `arith`, …) take explicit input/output paths.
 
-Common shorts (where applicable):
+For lane and CPU/CUDA flavor details, see [Installation](install.md). Common
+shorts (where applicable):
 
 | Short | Long | Notes |
 |-------|------|-------|
-| `-e` | `--hdu` | HDU index / list (`-e` avoids clashing with `-h` help) |
+| `-e` | `--hdu` | HDU index; some inventory commands also accept lists (`-e` avoids clashing with `-h` help) |
 | `-f` | `--format` | inventory output: `text` / `json` / `jsonl` |
 | `-o` | `--out` | output path (also positional on copy/cutout/convert/compress) |
 | `-w` / `-c` | `--where` / `--columns` | `convert` table filter (STILTS-like) |
@@ -26,11 +27,10 @@ HTTP timeout.
 
 ### Process tax (cold start)
 
-Each CLI invocation pays a **PyTorch / extension import** (~0.8–1 s on typical
-laptops) before any FITS work. That dominates wall time versus gnuastro or
-raw CFITSIO tools for tiny files. Prefer the in-process Python API for tight
-loops ([Python workflows](python-workflows.md)); use the CLI for shell
-pipelines and one-shot inspection.
+Each CLI invocation pays a PyTorch / extension import before any FITS work.
+That can dominate wall time for tiny files. Prefer the in-process Python API
+for tight loops ([Python workflows](python-workflows.md)); use the CLI for
+shell pipelines and one-shot inspection.
 
 ## Install and help
 
@@ -62,7 +62,6 @@ torchfits compress *.fits --out-dir /tmp/fz -J 0   # -J = file workers
 torchfits compress mef.fits --split hdu --out-dir /tmp/fz_hdus
 torchfits arith a.fits b.fits --op mul -o product.fits
 torchfits arith mef.fits --op mul --value 2 -e 0,1 -o mef_x2.fits
-torchfits table catalog.fits -e 1 -n 10
 torchfits probe https://example.edu/file.fits --header-bytes 5760 --timeout 30
 ```
 
@@ -99,14 +98,16 @@ printf '%s\n' *.fits | torchfits header --stdin --keyword-table -k OBJECT -k NAX
 | `diff` | compare two files (exit 1 if they differ) |
 | `copy` | MEF-preserving FITS → FITS copy; multi-file `--out-dir` + `-J` |
 | `arith` | image ±×÷ scalar **or** second image; multi-HDU / multi-file |
-| `compress` / `decompress` | tile-compress or expand; `--algorithm`; `--out-dir`; `--split file|hdu` |
+| `compress` / `decompress` | tile-compress or expand; `compress --algorithm`; `--out-dir`; `--split file|hdu` |
 | `transform` / `cutout` | named transforms / pixel box; multi-file `--out-dir` + `-J` |
 | `setkey` | set / rename / `--delete`; `@list` paths; `--out-dir` + `-J` |
 
 ### Multi-extension FITS (MEF)
 
 Most commands walk **all HDUs** by default (including `header`). Narrow with
-`-e 0,1,2`. JSONL mode emits one record per `(file, hdu)`.
+`-e 0,1,2` where that command accepts an HDU list. JSONL is one JSON object per
+output item; for example, `header -f jsonl` emits header-card records, while
+inventory commands emit file/HDU records.
 
 ### Parallelism / cores
 
@@ -177,8 +178,13 @@ Text output uses three labels:
 
 Files without checksum keywords exit **0** with label
 `OK (no checksum keywords)` — there is nothing to verify (fitsverify-style
-warning, not corruption). Use `torchfits write_checksums(path, hdu=...)` to
-add checksums before verification.
+warning, not corruption). Add checksums from Python before verification:
+
+```python
+import torchfits
+
+torchfits.write_checksums("science.fits", hdu=0)
+```
 
 ```bash
 torchfits verify science.fits
@@ -238,8 +244,10 @@ torchfits header *.fits --keyword-table -k BITPIX -f json
   - `csv` / `tsv` are for flat columns (nested / list columns need parquet or
     arrow).
   - `arrow` is Arrow IPC / Feather V2 (``.arrow``).
-- **png** — Lupton asinh RGB preview from one cube (`--bands 0,1,2`) or three
-  band files. Writes PNG with torch + stdlib only (no Pillow dependency).
+- **png** — Lupton asinh RGB preview from a file containing three image HDUs
+  (`--bands 0,1,2`) or three band files. `--bands` selects HDU indices; it does
+  not split planes from one 3-D cube. Writes PNG with torch + stdlib only (no
+  Pillow dependency).
 
 `--to` is optional when the output extension is unambiguous
 (`.parquet`, `.csv`, `.tsv`/`.tab`, `.arrow`/`.feather`/`.ipc`, `.fits`, `.png`).

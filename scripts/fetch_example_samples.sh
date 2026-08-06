@@ -3,7 +3,9 @@
 # cache via curl. Skips manga_logcube (~200MB) unless --with-manga is given.
 set -euo pipefail
 
-CACHE_DIR="${TORCHFITS_SAMPLE_CACHE:-$HOME/.cache/torchfits/samples}"
+# Keep shell downloads aligned with examples/_sample_data.py and
+# torchfits.cache.sample_cache_root().
+CACHE_DIR="${TORCHFITS_SAMPLE_CACHE:-${TORCHFITS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/torchfits}/samples}"
 mkdir -p "$CACHE_DIR"
 
 WITH_MANGA=0

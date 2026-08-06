@@ -1,15 +1,15 @@
 # Installation
 
-torchfits **1.0.0** is built against **PyTorch 2.13.x** — the wheel ABI lane
+torchfits **1.0.0rc5** is built against **PyTorch 2.13.x** — the wheel ABI lane
 the release ships for. The wheel's metadata pins that range
 (`torch>=2.13,<2.14`), so the install command needs no torch restriction: pip
 installs or upgrades torch for you.
 
-torchfits needs **Python 3.10+** and **PyTorch ≥ 2.10**: if you already have
-torch 2.13.x (any flavor — CPU or CUDA), it is left untouched; an older minor
-is upgraded to 2.13.x automatically (the torch C++ ABI is per-minor, so
-torchfits must load against its lane). Pin explicitly only when you must keep
-a specific torch minor.
+torchfits wheels need **Python 3.10+** and **PyTorch 2.13.x**. If you already
+have that minor (any flavor — CPU or CUDA), it is left untouched; an older
+minor is upgraded automatically because the torch C++ ABI is per-minor. Source
+builds can target **PyTorch ≥2.10** when the build frontend is installed and
+the project is installed with `--no-deps`.
 
 - **PyPI wheels** are ABI-matched to **PyTorch 2.13.x** (Linux x86_64, macOS
   arm64). No system CFITSIO — CFITSIO is vendored into the wheel.
@@ -123,8 +123,7 @@ recipe is all you need; there is no macOS `+cu129` **or `+cpu`** build — both
 `[cpu]` / `[cuda]` extras are Linux-only no-ops there (the exact `+local` pins
 have no macOS wheel to resolve).
 
-At import, torchfits calls `cache.configure_for_environment()` once so mmap /
-prefetch defaults match CPU vs CUDA vs MPS.
+On first runtime use, torchfits configures cache defaults for CPU, CUDA, or MPS.
 
 **Disk cache** (HTTP remotes + example samples only): default
 `$XDG_CACHE_HOME/torchfits` or `~/.cache/torchfits`. Override with
@@ -158,6 +157,7 @@ contributing.
 - [PyTorch](https://pytorch.org/) **≥ 2.10** already installed (the build
   embeds that torch's major.minor as the ABI tag)
 - [NumPy](https://numpy.org/) 1.20+
+- `scikit-build-core` and `nanobind` (the Python build frontend)
 
 === "Linux"
 
@@ -169,6 +169,7 @@ contributing.
 
     ```bash
     xcode-select --install
+    brew install cmake ninja
     ```
 
 === "Windows"
@@ -186,15 +187,16 @@ git clone https://github.com/astroai/torchfits.git
 cd torchfits
 ./extern/vendor.sh      # download vendored CFITSIO sources
 
-# Install the torch minor you want first, then build against it
-pip install "torch>=2.10"   # wheels are 2.13; for other minors rebuild from source
-pip install --no-build-isolation -e .
+# Install the torch minor you want and the build frontend first, then build
+# against that environment. Use --no-deps so pip does not replace the torch.
+pip install "torch>=2.10" numpy scikit-build-core nanobind
+pip install --no-deps --no-build-isolation -e .
 ```
 
 For a release build:
 
 ```bash
-pip install --no-build-isolation .
+pip install --no-deps --no-build-isolation .
 ```
 
 The extension records the torch **major.minor** it was built with. Import fails
@@ -217,7 +219,7 @@ Pin a specific version:
 Link against system CFITSIO instead:
 
 ```bash
-pip install -e . --no-build-isolation --config-settings=cmake.args="-DTORCHFITS_USE_VENDORED_CFITSIO=OFF"
+pip install -e . --no-deps --no-build-isolation --config-settings=cmake.args="-DTORCHFITS_USE_VENDORED_CFITSIO=OFF"
 ```
 
 ---
@@ -275,7 +277,7 @@ PyArrow is a core dependency (`torchfits.table` is Arrow-native). Pandas,
 Polars, and DuckDB remain optional integrations:
 
 ```bash
-pip install polars duckdb  # optional table interop
+pip install pandas polars duckdb  # optional table interop
 ```
 
 ---
@@ -295,7 +297,7 @@ pip install -e . --no-build-isolation -v
 
 **`./extern/vendor.sh` fails**
 
-Ensure `curl` or `wget` are available. Behind a proxy? Set `HTTPS_PROXY`.
+Ensure `curl` and `tar` are available. Behind a proxy? Set `HTTPS_PROXY`.
 
 **`ImportError: ... ABI mismatch` / symbol not found**
 
@@ -308,17 +310,14 @@ reimporting:
 pip install "torch>=2.13,<2.14"
 ```
 
-If you are on an older lane, install the matching torchfits release for it
-(e.g. `pip install torchfits==1.0.0` together with that lane's torch pin).
-
-Only rebuild if you actually need a different torch minor:
+This release publishes only the 2.13 wheel lane. If you need a different torch
+minor, rebuild torchfits from source in an environment containing that minor:
 
 ```bash
-pip install -e . --no-build-isolation --force-reinstall
+pip install --no-deps -e . --no-build-isolation --force-reinstall
 ```
 
 **Slow first read**
 
-Import already runs `torchfits.cache.configure_for_environment()`. Call it
-again only if you change devices or want to re-tune after changing hardware
-visibility.
+Runtime initialization configures the environment on first API use. Rebuild
+or reinstall if the imported torch minor changes.

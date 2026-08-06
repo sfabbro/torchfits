@@ -44,9 +44,9 @@ Runnable scripts and transform galleries.
 Methodology and scorecards.
 </li>
 <li markdown>
-[Migration](migration_astropy.md)
+[Migration](migration_astropy.md) · [fitsio](migration_fitsio.md)
 
-From Astropy / fitsio.
+Side-by-side guides from Astropy and fitsio.
 </li>
 <li markdown>
 [Parity](parity.md)
@@ -72,21 +72,18 @@ torchfits header image.fits
 
 ## Why torchfits?
 
-torchfits is a **1.0.0rc4** prerelease — see [Changelog](changelog.md) and
+torchfits is a **1.0.0rc5** prerelease — see [Changelog](changelog.md) and
 [Benchmarks](benchmarks.md#performance-deficits) for scope and known lags.
 
 | | astropy / fitsio | torchfits |
 |---|---|---|
-| **Image read (16 MB, MPS)** | 8.16 ms / 3.67 ms | **3.85 ms** (~2× vs astropy; ~parity vs fitsio) |
-| **Table read (100k rows, mixed)** | 31.85 ms / 10.44 ms | **2.20 ms** (~15× / ~5×) |
-| **Repeated cutouts (50×)** | 86.01 ms / 5.37 ms | **0.79 ms** (~116× / ~7×) |
 | **Device placement** | manual `.to(device)` | `device="cuda"` / `"mps"` / `"cpu"` |
 | **Table filtering** | Python mask | `where=` on `table.read` |
 | **Shell tooling** | fitsinfo / fitsheader / … | `torchfits` CLI |
 
-Representative medians from Round-3 `exhaustive_mps_20260719_143706`
-(methodology and deficits in [Benchmarks](benchmarks.md)). Datasets and
-loaders for multi-file work live under `torchfits.data` — see
+Current performance results and methodology live in [Benchmarks](benchmarks.md);
+the landing page intentionally avoids copying volatile benchmark numbers.
+Datasets and loaders for multi-file work live under `torchfits.data` — see
 [Examples → ML with FITS](examples-ml.md) when you need them.
 
 Docs channels: [stable](https://astroai.github.io/torchfits/) (latest `v*` tag) ·

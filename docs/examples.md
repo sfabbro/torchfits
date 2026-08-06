@@ -1,6 +1,6 @@
 # Examples
 
-Short worked examples with real outputs. Scripts live in `examples/`; docs
+Short worked examples with representative outputs. Scripts live in `examples/`; docs
 builds copy them to [`published-examples/`](published-examples/README.md).
 API choice: [Python workflows](python-workflows.md).
 
@@ -23,19 +23,21 @@ off arrays for WCS math elsewhere.
 
 ## Sample sources
 
-Most examples run against public tutorial and survey files, fetched once
-into `~/.cache/torchfits/samples/` (or CFHT MegaCam data into
+Most examples run against public tutorial and survey files, fetched once into
+the resolved sample cache (or CFHT MegaCam data into
 `benchmarks_data/cfht_megacam/`):
 
 ```bash
+export TORCHFITS_SAMPLE_CACHE="${TORCHFITS_SAMPLE_CACHE:-$PWD/.torchfits-samples}"
 bash scripts/fetch_example_samples.sh              # astropy tutorial samples
 bash scripts/fetch_example_samples.sh --with-manga  # + ~200MB MaNGA LOGCUBE
 bash scripts/fetch_cfht_megacam_sample.sh           # CFHT MegaCam MEF (CADC)
 bash scripts/fetch_cfht_megapipe_sample.sh          # CFHTLS MegaPipe mosaics (~5.3 GB)
 ```
 
-`TORCHFITS_EXAMPLE_FAST=1` (set in CI) skips downloads and uses synthetic
-fallbacks or a clean `SKIP:` exit where no fallback exists.
+`TORCHFITS_EXAMPLE_FAST=1` (set in CI) skips network downloads. Python examples
+use synthetic fallbacks or a clean `SKIP:` exit where no fallback exists;
+repository shell demos that require a named sample need that sample cached.
 
 | Source | Sample(s) | Script |
 |---|---|---|
@@ -79,7 +81,12 @@ Default write keeps native float. When size forces `BITPIX=16` /
 `TFORM=I`, use percentile bulk packing instead of global min→max:
 
 ```python
+import torch
 import torchfits
+
+tensor = torch.zeros((8, 8), dtype=torch.float32)
+ids = torch.tensor([1, 2], dtype=torch.int32)
+flux = torch.tensor([1.5, 2.5], dtype=torch.float32)
 
 torchfits.write_tensor("packed.fits", tensor, quantize="robust", overwrite=True)
 torchfits.table.write(
@@ -125,17 +132,20 @@ CLI users: CFITSIO path sections (1-based inclusive). Python /
 `--box`: 0-based half-open (same as `read_subset`). Do not mix the two.
 
 ```python
-cut = torchfits.read_subset("horsehead.fits", 0, 100, 100, 356, 356)
+import os
+
+sample = os.path.join(os.environ["TORCHFITS_SAMPLE_CACHE"], "horsehead.fits")
+cut = torchfits.read_subset(sample, 0, 100, 100, 356, 356)
 print(cut.shape, float(cut.float().mean()))
 ```
 
 ```text
-torch.Size([256, 256]) 8402.0
+torch.Size([256, 256]) 8402.1416015625  # sample-dependent value
 ```
 
 ```bash
-torchfits cutout 'horsehead.fits[101:356,101:356]' cutout.fits
-torchfits cutout horsehead.fits cutout.fits --box 100,100,356,356
+torchfits cutout "$TORCHFITS_SAMPLE_CACHE/horsehead.fits[101:356,101:356]" cutout.fits
+torchfits cutout "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" cutout.fits --box 100,100,356,356
 torchfits info cutout.fits --hdu 0
 ```
 
@@ -169,7 +179,7 @@ restored = pipeline.inverse(out)
 ![Compose pipeline](assets/gallery/image_compose_pipeline.png)
 
 Full gallery (Lupton RGB, light-curve clip): [Transform gallery](examples-transforms.md).
-Script: [`example_transforms.py`](published-examples/example_transforms.py).
+Script: [`gallery_images.py`](published-examples/gallery_images.py).
 Custom subclass: [`example_custom_transform.py`](published-examples/example_custom_transform.py).
 
 ---
@@ -186,14 +196,14 @@ API reference: [Data module](api-data.md).
 ## CLI on real data (HorseHead)
 
 ```bash
-torchfits info horsehead.fits --hdu 0
-torchfits stats horsehead.fits --hdu 0 --format jsonl
+torchfits info "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" --hdu 0
+torchfits stats "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" --hdu 0 --format jsonl
 ```
 
 ```text
 dtype='int16' file='horsehead.fits' hdu=0 name='PRIMARY' shape='(893, 891)' type='IMAGE'
 {"hdu": 0, "name": "PRIMARY", "shape": [893, 891], "dtype": "int16",
- "min": 3759.0, "max": 22918.0, "mean": 9831.48}
+ "min": ..., "max": ..., "mean": ..., "std": ..., "median": ...}
 ```
 
 Recipes: [CLI recipes](cli-recipes.md). Shell demo:
@@ -247,8 +257,8 @@ Recipes: [CLI recipes](cli-recipes.md). Shell demo:
 | [`gallery_images.py`](published-examples/gallery_images.py) | image before/after PNGs |
 | [`gallery_tables_lc.py`](published-examples/gallery_tables_lc.py) | light-curve / table plots |
 
-Samples cache under `~/.cache/torchfits/samples/`. CI sets
-`TORCHFITS_EXAMPLE_FAST=1` to skip downloads.
+Samples use `TORCHFITS_SAMPLE_CACHE` when set, otherwise torchfits' normal
+cache precedence. CI sets `TORCHFITS_EXAMPLE_FAST=1` to skip downloads.
 
 ### Out of gallery
 

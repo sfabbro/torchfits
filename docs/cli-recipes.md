@@ -1,11 +1,12 @@
 # CLI recipes
 
-Shell workflows for common FITS jobs. Samples come from
-`examples/_sample_data.py` (cached under `~/.cache/torchfits/samples/`).
+Shell workflows for common FITS jobs. Run them from the repository root in a
+Pixi environment. The explicit cache override keeps every command here
+self-consistent.
 
 ```bash
-pixi run python -c "from examples._sample_data import ensure_sample; print(ensure_sample('horsehead'))"
-export HH=~/.cache/torchfits/samples/horsehead.fits
+export TORCHFITS_SAMPLE_CACHE="${TORCHFITS_SAMPLE_CACHE:-$PWD/.torchfits-samples}"
+export HH="$(pixi run python -c "from examples._sample_data import ensure_sample; print(ensure_sample('horsehead'))")"
 ```
 
 Or run the bundled script:
@@ -88,7 +89,9 @@ For multi-step parameterized pipelines, use the Python API
 ## Compression
 
 ```bash
-torchfits compress "$HH" /tmp/hh_packed.fits
+# HorseHead has a table extension; make an image-only input before compression.
+torchfits cutout "$HH" /tmp/hh_image.fits -e 0 --box 0,0,256,256
+torchfits compress /tmp/hh_image.fits /tmp/hh_packed.fits
 torchfits decompress /tmp/hh_packed.fits /tmp/hh_unpacked.fits
 ```
 
@@ -101,12 +104,12 @@ torchfits verify "$HH"
 ## Tables and filter+export
 
 ```bash
-pixi run python -c "from examples._sample_data import ensure_sample; print(ensure_sample('chandra_events'))"
-export EV=~/.cache/torchfits/samples/chandra_events.fits
+export EV="$(pixi run python -c "from examples._sample_data import ensure_sample; print(ensure_sample('chandra_events'))")"
 torchfits info "$EV"
 torchfits table "$EV" -e 1 -n 5
 torchfits convert "$EV" /tmp/events.parquet --to parquet -e 1
-torchfits convert "$EV" /tmp/events.csv --to csv -e 1
+# CSV requires flat columns; select the scalar event columns explicitly.
+torchfits convert "$EV" -o /tmp/events.csv --to csv -e 1 -c time,energy
 # STILTS-like filter+export (predicate = table.read where=)
 torchfits convert "$EV" -o /tmp/bright.parquet -e 1 -w "energy > 500" -c time,energy
 ```
@@ -127,19 +130,5 @@ Tune `--q` / `--stretch` for contrast. Gallery asset:
 
 ---
 
-## Familiar-tool map
-
-| Classic | torchfits |
-|---------|-----------|
-| `imstat` | `stats` |
-| `imarith` (constant) | `arith` |
-| `imcopy` | `copy` / `cutout` |
-| `imheader` / `hedit` | `header` / `setkey` |
-| `hselect` / `fitsort` | `header --keyword-table` |
-| `imfunction` | `transform --name …` |
-| `fitsinfo` | `info` |
-| `fitsverify` (checksums) | `verify` (checksum keywords only; missing keywords = OK) |
-| `fpack` / `funpack` | `compress` / `decompress` |
-| `astconvertt` / STILTS `tpipe` | `convert` (+ `--where` / `--columns`) |
-
-Full flags: [CLI guide](cli.md).
+For the classic-tool mapping and complete flag reference, see the
+[CLI guide](cli.md).
