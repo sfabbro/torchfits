@@ -31,20 +31,21 @@ torchfits.read(
 | `mode` | `str` | `"auto"` | `"auto"`, `"image"`, or `"table"` |
 | `return_header` | `bool` | `False` | Return `(data, Header)` tuple |
 
-**Returns:** `torch.Tensor` (images), `dict[str, torch.Tensor]` (tables), or
-tuple if `return_header=True`.
+**Returns:** `torch.Tensor` (images), a column mapping for tables (scalar
+columns are tensors; VLA columns may use list/tuple values), or a tuple if
+`return_header=True`.
 
-!!! warning "options=" vs kwargs"
-    ``options=`` (a `ReadOptions` instance) and individual keyword arguments
-    (``fp16=``, ``mmap=``, etc.) are **mutually exclusive** — passing both
-    raises a ``TypeError``. Pick one style: either ``options=ReadOptions(...)``
-    or ``read(..., mmap=True, fp16=False)``.
+!!! note "Advanced options"
+    Prefer the explicit parameters and keyword arguments shown here. The
+    internal `options=` helper is not part of the public facade — do not
+    import it from a private module in application code.
 
 !!! tip "When to mmap"
-    Mmap helps large local IMAGE HDUs and repeated cutouts. Prefer
-    `mmap=False` when many workers open the same files, on cold network
-    filesystems, and for VLA / scaled tables. Dataset docs:
-    [Data module](api-data.md).
+    Mmap can help eligible large local integer IMAGE HDUs and repeated
+    cutouts. It still returns a normal tensor, and float / compressed images
+    use a buffered path. Prefer `mmap=False` when many workers open the same
+    files, on cold network filesystems, and for VLA / scaled tables. Dataset
+    docs: [Data module](api-data.md).
 
 !!! info "When to use"
     Use `read()` for quick exploration (`hdu=0` by default; `hdu=None`
@@ -83,9 +84,9 @@ torchfits.read_tensor(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str` | *(required)* | FITS file path |
-| `hdu` | `int` or `str` | `0` | HDU index or EXTNAME (required) |
+| `hdu` | `int` or `str` | `0` | HDU index or EXTNAME |
 | `device` | `str` | `"cpu"` | `"cpu"`, `"cuda"`, `"mps"` |
-| `mmap` | `bool` | `True` | Memory-mapped reads (faster for repeated access) |
+| `mmap` | `bool` | `True` | Request the eligible memory-mapped input path |
 | `fp16` | `bool` | `False` | Read as float16 |
 | `bf16` | `bool` | `False` | Read as bfloat16 |
 | `raw_scale` | `bool` | `False` | Skip BSCALE/BZERO, return native storage dtype |
@@ -100,7 +101,9 @@ torchfits.read_tensor(
 !!! tip "GPU reads"
     Pass `device="cuda"` or `device="mps"` to place the result on device.
     Generic BSCALE/BZERO scaling still yields `float32` unless you opt into
-    storage dtypes with `raw_scale=True` (e.g. int8 / uint16 parity with fitsio).
+    storage dtypes with `raw_scale=True`. For example, signed-byte and
+    pseudo-unsigned conventions expose their on-disk `uint8` / `int16` storage
+    dtypes rather than the logical `int8` / `uint16` dtypes.
 
 ```python
 # Read to GPU
@@ -180,7 +183,7 @@ with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
 
 ## `read_hdus()`
 
-Read multiple HDUs from a single FITS file as a list of tensors.
+Read multiple image HDUs from a single FITS file as a list of tensors.
 
 ```python
 torchfits.read_hdus(path, hdus, *, device="cpu", mmap=True, return_header=False)
@@ -189,12 +192,13 @@ torchfits.read_hdus(path, hdus, *, device="cpu", mmap=True, return_header=False)
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str` | *(required)* | FITS file path |
-| `hdus` | `list[int` or `str]` | *(required)* | HDU indices or EXTNAME strings |
+| `hdus` | `list[int | str]` or `tuple[int | str, ...]` | *(required)* | Image HDU indices or EXTNAME strings |
 | `device` | `str` | `"cpu"` | Target device |
-| `mmap` | `bool` | `True` | Memory-mapped reads |
-| `return_header` | `bool` | `False` | Return list of `(tensor, Header)` tuples |
+| `mmap` | `bool` | `True` | Request the eligible memory-mapped input path |
+| `return_header` | `bool` | `False` | Also return a parallel list of `Header` objects |
 
-**Returns:** `list[torch.Tensor]`
+**Returns:** `list[torch.Tensor]`, or `(list[torch.Tensor], list[Header])`
+when `return_header=True`.
 
 ```python
 sci, wht, msk = torchfits.read_hdus("mef.fits", hdus=["SCI", "WHT", "MASK"])
@@ -216,7 +220,7 @@ Root aliases `read_table` / `read_table_rows` / `stream_table` were removed in
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
 for chunk in torchfits.table.scan_torch("survey.fits", hdu=1, batch_size=100_000):
-    process(chunk)
+    print(chunk.keys())
 ```
 
 ---
@@ -248,7 +252,8 @@ Inspect shape and dtype consistency across files before batch reading.
 torchfits.read_batch_info(file_paths)
 ```
 
-**Returns:** `dict` with shape, dtype, and file info.
+**Returns:** `dict` with `num_files` (paths supplied) and `existing_files`
+(paths present on disk).
 
 ---
 
@@ -275,11 +280,10 @@ existence checks use the base path before `[`. Prefer `hdu=` / EXTNAME
 indexing over path HDU selectors (`file.fits[1]`) — those are not a certified
 torchfits `open` surface yet.
 
-!!! warning "mmap writes require flush"
-    When writing via `open()` with mmap-backed HDUs, changes are held in
-    memory-mapped pages and **not persisted to disk** until you call
-    `hdul.flush()`. Always flush before closing the context manager if
-    you modified data in-place.
+!!! warning "The open model is read-oriented"
+    `TensorHDU.data` is a read-oriented `DataView`; `HDUList` has no
+    `flush()` method or in-place write protocol. To create a modified file,
+    construct the desired HDUs and call `hdul.write(output_path, overwrite=...)`.
 
 !!! info "EXTNAME lookup returns first match"
     When indexing by EXTNAME (`hdul["SCI"]`), only the **first** HDU with
@@ -460,7 +464,7 @@ torchfits.delete_hdu(path, hdu, compress=False)
 ```python
 torchfits.write_checksums(path, hdu=0)
 result = torchfits.verify_checksums(path, hdu=0)
-# result: dict with "datastatus", "hdustatus", "ok"
+# result: dict with "datastatus", "hdustatus", "ok", and "status" ("ok" / "no_checksums" / "fail")
 ```
 
 ---
@@ -486,9 +490,9 @@ torchfits.clear_all_caches()  # in-process + disk cache_root()
 torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
 ```
 
-`clear_cache()` clears policy + I/O metadata only. Pass `disk=True` (or call
-root `clear_all_caches()`) to also remove downloaded files under
-`cache_root()`.
+`clear_cache()` clears in-process policy, data, and metadata caches. Pass
+`disk=True` (or call root `clear_all_caches()`) to also remove downloaded
+files under `cache_root()`.
 
 `clear_file_cache` keyword-only flags (all default `True`): `data`, `handles`,
 `meta`, `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the
@@ -507,6 +511,6 @@ Advanced helpers on `torchfits.io`: `cache_subsystem_policy(name)` /
 Remote downloads and example samples use
 `TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE` / `TORCHFITS_SAMPLE_CACHE`
 ([Environment variables](architecture.md#environment-variables)). Those roots
-are separate from `clear_file_cache` / `get_cache_performance`. Datasets accept
-`cache_dir=` to override the remote root; see
-[Data module](api-data.md#cache-how-and-when).
+are separate from `clear_file_cache` / `get_cache_performance`. Remote-capable
+image, tensor, cube, and spectrum datasets accept `cache_dir=` to override the
+remote root; see [Data module](api-data.md#cache-how-and-when).

@@ -6,8 +6,8 @@ column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 | Destination | Call | Returns |
 |---|---|---|
 | Arrow table | `table.read` / `table.read_arrow` | `pyarrow.Table` |
-| Column → tensor map | `table.read_torch` | `dict[str, torch.Tensor]` |
-| Polars | `table.read_polars` | Polars DataFrame-like |
+| Column → tensor map | `table.read_torch` | `dict[str, torch.Tensor]` (VLA columns use list/tuple values) |
+| Polars | `table.read_polars` | `FITSPolarsFrame` wrapper around `pl.DataFrame` |
 
 Supports `where=` filters, column projection, streaming, mutations, and
 handoff to Polars, DuckDB, Pandas, and PyArrow.
@@ -106,11 +106,11 @@ torchfits.table.read_torch(
 | `return_header` | `bool` | `False` | Also return the HDU `Header` |
 | `where` | `str` or `None` | `None` | Simple numeric filter (see below) |
 
-**Returns:** `dict[str, torch.Tensor]`, or `(dict, Header)` when
-`return_header=True`.
+**Returns:** `dict[str, torch.Tensor]` (scalar columns; VLA columns use
+list/tuple values), or `(dict, Header)` when `return_header=True`.
 
 `where=` on `read_torch` accepts only **simple** predicates: comparisons
-(`=`, `!=`, `<`, `<=`, `>`, `>=`), `BETWEEN`, and `AND` of those. Expressions
+(`==`, `!=`, `<`, `<=`, `>`, `>=`), `BETWEEN`, and `AND` of those. Expressions
 with `OR`, `IN`, `IS NULL`, or `NOT` raise `ValueError` — use
 `table.read(..., where=...)` for the full dialect. Matching rows are kept by
 reading the needed columns and applying a torch mask.
@@ -154,7 +154,7 @@ torchfits.table.scan(
 
 ```python
 for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
-    process(batch)  # pyarrow.RecordBatch
+    print(batch.num_rows, batch.column_names)  # pyarrow.RecordBatch
 ```
 
 !!! info "When to use"
@@ -187,7 +187,7 @@ torchfits.table.scan_torch(
 
 ```python
 for batch in torchfits.table.scan_torch("survey.fits", hdu=1, batch_size=10000):
-    process(batch)
+    print(batch.keys())  # dict[str, torch.Tensor]
 ```
 
 ---
@@ -264,14 +264,18 @@ Root `torchfits.read()` has no `where=` parameter.
 
 | Operator | Example |
 |---|---|
-| `=` / `!=` | `where="CLASS = 'star'"` |
+| `==` / `!=` | `where="CLASS == 'star'"` |
 | `<` / `>` / `<=` / `>=` | `where="MAG_G < 20"` |
 | `AND` / `OR` | `where="MAG_G < 20 AND DEC > 0"` |
-| `NOT` | `where="NOT CLASS = 'star'"` |
+| `NOT` | `where="NOT CLASS == 'star'"` |
 | `IN (...)` | `where="id IN (1, 2, 3)"` |
 | `NOT IN (...)` | `where="id NOT IN (4, 5)"` |
 | `BETWEEN ... AND ...` | `where="MAG_G BETWEEN 15 AND 20"` |
 | `IS NULL` / `IS NOT NULL` | `where="DEC IS NOT NULL"` |
+
+!!! note "Use `==` for equality"
+    The WHERE dialect is Python-expression based — single `=` is not an
+    operator; write `==` (also accepts `&&` / `||` / `~` C-style forms).
 
 ### `backend=` on `table.read` / `table.scan`
 
@@ -383,14 +387,16 @@ polars_df = torchfits.to_polars(table_dict, decode_bytes=True)
 ### DuckDB
 
 ```python
-# Register and query
+# Register and query (share the relation name between both calls)
 con = torchfits.table.to_duckdb("catalog.fits", hdu=1, relation_name="tbl")
 result = torchfits.table.duckdb_query(
     "catalog.fits",
     "SELECT * FROM tbl WHERE MAG < 20",
     hdu=1,
+    relation_name="tbl",
 )
-# result: pyarrow.Table (by default)
+# result: pyarrow object (Table or RecordBatchReader by version);
+# call result.read_all() to force a pyarrow.Table
 ```
 
 ### Arrow and Pandas

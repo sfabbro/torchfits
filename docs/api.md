@@ -2,7 +2,7 @@
 
 FITS I/O for images (tensors), tables (Arrow / Polars / column tensors),
 headers, and compression. Datasets and transforms live under
-`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0rc4**
+`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0rc5**
 (prerelease).
 
 Job-oriented patterns: [Python workflows](python-workflows.md). This page
@@ -16,8 +16,8 @@ lists signatures, defaults, and edge cases.
 |---|---|---|---|
 | Image / cube / spectrum | `read_tensor(path, hdu=0)` | `torch.Tensor` | `True` |
 | Catalog as Arrow | `table.read(path, hdu=1, where=…)` | `pyarrow.Table` | `True` |
-| Columns as tensors | `table.read_torch(path, hdu=1)` | `dict[str, torch.Tensor]` | `True` |
-| Polars | `table.read_polars(path, hdu=1)` | Polars DataFrame-like | (via `table.read`) |
+| Columns as tensors | `table.read_torch(path, hdu=1)` | scalar columns as tensors; VLA columns use list/tuple values | `"auto"` |
+| Polars | `table.read_polars(path, hdu=1)` | `FITSPolarsFrame` wrapper | (via `table.read`) |
 
 `table.read_arrow` is a synonym of `table.read`. Root `read_table` /
 `stream_table` / `read_table_rows` / `get_header` / `get_batch_info` were
@@ -69,8 +69,10 @@ Destination-qualified spelling of `table.read` (same object): `table.read_arrow`
 
 ### Datasets and loaders
 
-Use raw I/O until you need shuffling, workers, or epochs — see
-[Data module](api-data.md) and [Transforms](api-transforms.md).
+Start with [Quick start](quickstart.md) for a first read, then use raw I/O
+until you need shuffling, workers, or epochs — see [Data module](api-data.md)
+and [Transforms](api-transforms.md). Runnable scripts are indexed in
+[Examples](examples.md).
 
 | Goal | Entry point | Reference |
 |---|---|---|
@@ -142,7 +144,7 @@ private until promoted there.
 | `read_image(...)` | `read_tensor(...)` |
 | `read_table(...)` (root) | `table.read_torch(...)` or `table.read(...)` |
 | `stream_table(...)` (root) | `table.scan_torch(...)` |
-| `read_table_rows(...)` (root) | `table.read_torch(..., start_row=, num_rows=)` |
+| `read_table_rows(...)` (root) | `table.read_torch(..., start_row=<start_row>, num_rows=<num_rows>)` |
 | `get_header(...)` | `read_header(...)` |
 | `get_batch_info(...)` | `read_batch_info(...)` |
 | Root transform classes (e.g. `torchfits.ArcsinhStretch`) | `torchfits.transforms.*` |
@@ -157,5 +159,8 @@ Transforms are not re-exported at the package root. Import them from
 
 - VLA columns use buffered I/O; mmap reads and in-place updates are not supported.
 - Scaled table columns do not support mmap updates; use the buffered path.
-- Non-CPU tensors are copied to host before FITS writes.
-- Compressed writes accept tensor IMAGE-HDU payloads; dict payloads must contain tensor data.
+- Non-CPU image tensors are copied to host before FITS writes; table-column
+  handling has a separate backend path.
+- Compressed writes accept tensor-convertible IMAGE-HDU payloads; table mappings
+  are also supported, but dict image descriptors must contain tensor-convertible
+  data.

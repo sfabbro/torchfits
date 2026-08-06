@@ -4,7 +4,8 @@ PyTorch `Dataset` / `IterableDataset` classes over FITS images and tables,
 plus `make_loader` (a `DataLoader` factory with torchfits cache defaults).
 
 For a single file, use [Core I/O](api-core-io.md) or [Tables](api-tables.md).
-Use Datasets when you need shuffle, workers, or many samples per epoch.
+Use Datasets when you need workers, shuffling (map-style via `make_loader`),
+or many samples.
 
 Typical stack: `read_tensor` / `table.read` → optional
 [`transforms`](api-transforms.md) → `Fits*Dataset` → `make_loader`.
@@ -44,7 +45,8 @@ should branch on dict vs tensor if they need mask-aware wiring — see
     `TORCHFITS_CACHE_DIR` (default `$XDG_CACHE_HOME/torchfits` or
     `~/.cache/torchfits`), with `remote/` and `samples/` subdirs. Override
     with `TORCHFITS_REMOTE_CACHE` / `TORCHFITS_SAMPLE_CACHE`, or pass
-    `cache_dir=` on a Dataset. HTTP auth: `TORCHFITS_HTTP_AUTHORIZATION` or
+    `cache_dir=` on a remote-capable dataset (image / tensor / cube /
+    spectrum). HTTP auth: `TORCHFITS_HTTP_AUTHORIZATION` or
     `TORCHFITS_HTTP_TOKEN`. Uncompressed 2D HTTP cutouts use Range GETs when
     possible; compressed and vos paths cache the full file first.
 
@@ -220,7 +222,7 @@ ds = FitsTensorIterableDataset(
 | `transform` | `callable` or `None` | `None` | Applied to each payload |
 | `device` | `str` | `"cpu"` | Torch device |
 | `mmap` | `bool` or `str` | `True` | Memory-mapped reads |
-| `shuffle` | `bool` | `False` | Shuffle file order per epoch |
+| `shuffle` | `bool` | `False` | Shuffle file order (deterministic — same `seed=` permutation every epoch) |
 | `seed` | `int` | `0` | Base seed for shuffling |
 | `add_channel_dim` | `bool` | `False` | Prepend channel dimension |
 | `cache_dir` | `str` or `Path` or `None` | `None` | Override remote prefetch directory |
@@ -247,7 +249,7 @@ ds = FitsTableDataset(
     hdu=1,
     columns=["RA", "DEC", "MAG_G"],
     where="MAG_G < 20",  # predicate pushdown at load time
-    labels=[0, 1, 0, 1, ...],  # optional per-row labels (default 0)
+    labels=[0, 1, 0, 1, 0, 1],  # optional per-row labels (default 0)
     transform=None,
 )
 ```
@@ -424,7 +426,8 @@ size       = per_worker + (1 if worker_id < remainder else 0)
 ```
 
 Every file is seen exactly once per epoch. Shuffling permutes within each
-worker's shard (epoch-seeded).
+worker's shard using the fixed `seed=` — the permutation repeats identically
+every epoch (set a new `seed` per run for different orders).
 
 ### Tables (`FitsTableIterableDataset`)
 
