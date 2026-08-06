@@ -47,6 +47,24 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
   every extra's exact pin string (e.g. `torch==2.10.0+cpu`) to appear in
   install.md / README; unit tests cover the lane guard, the marker-skip
   path, the missing-extras failure, and the exact-pin doc-drift check.
+- Lossless compressed float writes: GZIP_1 and integer RICE_1 no longer
+  silently quantize (`fits_set_quantize_level(0)`); float RICE_1 /
+  HCOMPRESS_1 keep CFITSIO default quantization (lossless unsupported),
+  matching astropy/fitsio defaults. Documented in `io.write()`.
+- Compression matrix suite (48 tests): all algorithms × int dtypes with
+  astropy oracles, PLIO range rejection, float quantization bound,
+  per-algorithm cutouts, fpack byte-identity.
+- Output-parity suite (`tests/test_output_parity.py`, 69 tests): bitwise
+  cross-library read parity (torchfits == fitsio == astropy), write
+  round-trips through fitsio for every compression type + quantize +
+  LONGSTRN + uint64 rejection, seeded fuzz-lite sweep.
+- Bit-faithful write/read fidelity suite (55 tests) with astropy as an
+  independent oracle.
+- `BZIP2_1` image codec (vendored CFITSIO patch, opt-in via
+  `TORCHFITS_USE_BZIP2`, default ON when libbz2 is available; not part of
+  the FITS standard — astropy refuses it).
+- CANFAR matrix bench mode: any python × torch lane × device grid from a VOS
+  wheel bundle (`scripts/launch_canfar_matrix_grid.sh`), 41-leg grid soak.
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).
@@ -61,6 +79,38 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
 - `table.read_torch(..., where=)` applies a torch mask after reading projected
   columns; dialect is simple compare / `BETWEEN` / `AND` only (full dialect on
   `table.read`).
+- `write()` no longer rejects numpy arrays: torchfits.write(numpy_array)
+  writes image HDUs (plain, quantized, compressed) instead of raising
+  TypeError. Fixed the public-API bug where docs documented broken behavior.
+- LONGSTRN/CONTINUE read+write: header values > 68 chars assemble via
+  CONTINUE chains (`&` + bare CONTINUE) on read and
+  `fits_update_key_longstr` on write.
+- uint64 image/table writes raise `ValueError` with guidance (was an
+  unsupported-column error); the rejection covers numpy table columns too.
+- TSCAL/TZERO scaling applied to FLOAT/DOUBLE table columns; scaled tables
+  fall back to buffered (non-mmap) reads with physical values.
+- int8 images use the BZERO=-128 signed-byte convention instead of raw bytes
+  without BZERO (values ≥ 128 corrupted on read); unsigned table prep
+  registers untouched columns in the synthesized schema.
+- ASCII string columns use code-first `Aw` tforms; `fits_schema.parse_tform`
+  understands the ASCII `Aw` form so `update_rows` stops truncating ASCII
+  strings.
+- LOGICAL decode accepts `'T'` / `'1'` / `1` (CFITSIO returns converted 1/0
+  on `fits_read_col(TBYTE)`); uint64 images (BZERO=2^63) detected as scaled
+  instead of read raw.
+- `Header.remove` fast path for huge HISTORY lists; 20k-delete regression
+  smoke.
+- TableHDU caches version-gated on the header (were stale after TTYPE/TFORM
+  mutation).
+- HCOMPRESS uses 2D 16-row tiles like fpack's default (1D tiles rejected by
+  CFITSIO with status 413).
+- Concurrency: Python FITS-cache LRUs and the thread-local metadata cache are
+  lock-protected / size-bounded for concurrent reads; uint16 BZERO offset is
+  fused into the SIMD bswap mmap path.
+- Bench docs: multi-host GPU/CPU scorecard from the CANFAR matrix grid.
+- SSRF hardening waves: private/loopback/link-local/reserved-address guards
+  on read_header, read_batch, HDU write paths, and public cpp; `scan_polars`
+  guards before importing optional polars.
 
 ### Fixed
 - macOS compressed-float parity: the vendored CFITSIO now builds with
@@ -70,6 +120,18 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
   fitsio/astropy on macOS, staying bitwise-exact everywhere else.
 - Table int16 columns with `TSCAL`/`TZERO`: disable CFITSIO auto-scale on read
   before casting, then apply scale in memory (avoids int16 overflow).
+- Silent data loss / corruption fixes: compressed float writes silently
+  quantized by CFITSIO defaults (documented behavior change above); int8
+  images without BZERO corrupted values ≥ 128; table column ordering scrambled
+  on rewrite (unordered_map → ordered vectors); ASCII string columns truncated
+  to one character on `update_rows`.
+- PLIO heap overflow in vendored CFITSIO (`imcomp_calc_max_elem` sizing, ASAN-
+  confirmed 16-byte overwrite on incompressible data), fixed by auto-applied
+  patch; bzip2 image codec re-enabled upstream.
+- LOGICAL (T/F) decode accepts all of `'T'`/`'1'`/`1`.
+- `scan_polars` guarded before importing optional polars.
+- CI lint packaging dep fix; astropy < 6.0 uint32 tile-compression test
+  failures fixed; py3.10 uint32 astropy oracle skipped below 7.0.
 
 ## [1.0.0rc4] — 2026-07-20
 
