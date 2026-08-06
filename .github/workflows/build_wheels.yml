@@ -105,7 +105,7 @@ jobs:
       # builds against (constraints-wheel.txt; CIBW_BEFORE_BUILD).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
-          python -m pip install -q --upgrade pip
+          python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
