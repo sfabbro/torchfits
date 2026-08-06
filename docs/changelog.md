@@ -108,6 +108,12 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
   lock-protected / size-bounded for concurrent reads; uint16 BZERO offset is
   fused into the SIMD bswap mmap path.
 - Bench docs: multi-host GPU/CPU scorecard from the CANFAR matrix grid.
+- Bench docs: rc5 re-soak snapshot — CANFAR CPU
+  `exhaustive_cpu_20260806_012620`, CUDA `exhaustive_cuda_20260806_012651`,
+  local MPS `exhaustive_mps_20260806_022603`. CUDA 100% fits win rate
+  (smart/specialized), fitstable ≥98.9%; only residual lags are
+  table `read_full` / predicate rows (≤1.15×, fitsio/astropy) and
+  HCOMPRESS_1 (≤1.03×).
 - SSRF hardening waves: private/loopback/link-local/reserved-address guards
   on read_header, read_batch, HDU write paths, and public cpp; `scan_polars`
   guards before importing optional polars.
@@ -132,6 +138,12 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
 - `scan_polars` guarded before importing optional polars.
 - CI lint packaging dep fix; astropy < 6.0 uint32 tile-compression test
   failures fixed; py3.10 uint32 astropy oracle skipped below 7.0.
+- `check-torch-pins` misleading pass on rc states: `main()` re-initialized the
+  `failed` flag after the lane-consistency loop, so a genuine `[FAIL]` line
+  never gated CI (exit 0), and `lane_for_version` rejected the `rc<N>`
+  prerelease suffix — the gate re-fired a spurious FAIL on every rc cut.
+  Suffix is now accepted as the lane base and lane-consistency failures
+  propagate to the exit code (regression tests added).
 
 ## [1.0.0rc4] — 2026-07-20
 
