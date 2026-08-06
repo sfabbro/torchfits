@@ -35,7 +35,7 @@ pipelines and one-shot inspection.
 ## Install and help
 
 ```bash
-pip install torchfits "torch>=2.13,<2.14"
+pip install torchfits   # wheels pin the torch 2.13.x lane — no torch flag needed
 torchfits --help
 torchfits info --help
 torchfits convert --help

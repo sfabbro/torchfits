@@ -5,13 +5,18 @@ Get up and running with torchfits in minutes. Current PyPI line is **1.0.0**
 
 ## Install
 
+One bare command — torchfits wheels are ABI-matched to PyTorch 2.13.x (Linux
+x86_64, macOS arm64), and the wheel metadata pins that range, so pip installs
+or upgrades torch for you (works whatever PyTorch you already have; Python
+3.10+):
+
 ```bash
-pip install torchfits "torch>=2.13,<2.14"
+pip install torchfits
 ```
 
-Pre-built wheels for Linux x86_64 and macOS arm64. No system CFITSIO needed — it's
-vendored. Requires Python 3.10+ and **PyTorch 2.13** (ABI-matched wheels). For
-other torch minors or CUDA/MPS install details, see [Installation](install.md).
+Pre-built wheels, no system CFITSIO needed (it's vendored). Prefer a CUDA /
+CPU / MPS flavor, or must keep a specific torch minor? See
+[Installation](install.md).
 
 ## Shell tools
 

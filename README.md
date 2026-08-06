@@ -44,7 +44,7 @@ Choose a PyTorch flavor in one line:
 
 | You want | Command |
 |---|---|
-| Default (CUDA + CPU) | `pip install torchfits "torch>=2.13,<2.14"` |
+| Default (CUDA + CPU) | `pip install torchfits` |
 | CPU-only (thin) | `pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu` |
 | CUDA build (e.g. cu129) | `pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cu129` |
 
