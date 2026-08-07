@@ -163,6 +163,7 @@ long infer_num_rows_from_payload(nb::dict tensor_dict) {
 }
 
 // forward decl: used by insert_rows below
+void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long num_rows);
 void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows);
 void delete_rows(const char* filename, int hdu_num, long start_row, long num_rows);
 
@@ -445,16 +446,22 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
     }
 
     fits_insert_rows(fptr, start_row - 1, num_rows, &status);
-    fits_close_file(fptr, &status);
     if (status != 0) {
+        fits_close_file(fptr, &status);
         throw std::runtime_error("Failed to insert rows into FITS table");
     }
 
-    // Reuse the existing typed write path to populate inserted rows.
-    // Best-effort rollback if column writes fail after the structural insert.
+    // Populate the inserted rows on the same open handle (single CFITSIO
+    // open for insert+populate). Best-effort rollback if column writes fail
+    // after the structural insert.
     try {
-        update_rows(filename, hdu_num, tensor_dict, start_row, num_rows);
+        populate_rows(fptr, tensor_dict, start_row, num_rows);
+        fits_close_file(fptr, &status);
+        if (status != 0) {
+            throw std::runtime_error("Failed to insert rows into FITS table");
+        }
     } catch (...) {
+        fits_close_file(fptr, &status);
         try {
             delete_rows(filename, hdu_num, start_row, num_rows);
         } catch (...) {
@@ -511,37 +518,17 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
     }
 }
 
-void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
-    if (num_rows <= 0) {
-        return;
-    }
-
-    fitsfile* fptr;
+void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long num_rows) {
+    // Write every column of tensor_dict into rows [start_row, start_row+num_rows)
+    // of an already-open table HDU. The caller owns the handle and its
+    // open/close; errors propagate as exceptions (the caller closes).
     int status = 0;
-
-    constexpr int kFitsReadWrite = 1;
-    torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
-    if (status != 0) {
-        char err_msg[FLEN_STATUS];
-        fits_get_errstatus(status, err_msg);
-        throw std::runtime_error(
-            std::string("Failed to open FITS file for writing: ") + err_msg
-        );
-    }
-
-    fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
-    if (status != 0) {
-        fits_close_file(fptr, &status);
-        throw std::runtime_error("Failed to move to table HDU");
-    }
 
     for (auto item : tensor_dict) {
         std::string col_name = nb::cast<std::string>(item.first);
         int colnum = 0;
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &colnum, &status);
         if (status != 0) {
-            fits_close_file(fptr, &status);
             throw std::runtime_error("Column not found for update_rows: " + col_name);
         }
 
@@ -551,7 +538,6 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
         long width = 0;
         fits_get_coltype(fptr, colnum, &typecode, &repeat, &width, &col_status);
         if (col_status != 0) {
-            fits_close_file(fptr, &status);
             throw std::runtime_error("Failed to get column type for update_rows: " + col_name);
         }
 
@@ -559,21 +545,18 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
             int base_type = -typecode;
             nb::handle obj = item.second;
             if (!(nb::isinstance<nb::list>(obj) || nb::isinstance<nb::tuple>(obj))) {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error("update_rows VLA column expects list/tuple for " + col_name);
             }
 
             nb::sequence seq = nb::cast<nb::sequence>(obj);
             long seq_len = static_cast<long>(nb::len(seq));
             if (seq_len != num_rows) {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error("update_rows column length mismatch for " + col_name);
             }
 
             for (long row = 0; row < num_rows; ++row) {
                 nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
                 if (arr.ndim() > 1) {
-                    fits_close_file(fptr, &status);
                     throw std::runtime_error("update_rows VLA rows must be 1D for " + col_name);
                 }
                 long nelements = static_cast<long>(arr.size());
@@ -633,7 +616,6 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                     !(dt_str.code == (uint8_t)nb::dlpack::dtype_code::UInt &&
                       dt_str.bits == 8)
                 ) {
-                    fits_close_file(fptr, &status);
                     throw std::runtime_error(
                         "update_rows string ndarray must be uint8 for " + col_name
                     );
@@ -651,20 +633,17 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                     rows_str = static_cast<long>(t_str.shape(0));
                     user_repeat_str = static_cast<long>(t_str.shape(1));
                 } else {
-                    fits_close_file(fptr, &status);
                     throw std::runtime_error(
                         "update_rows string ndarray must be 1D/2D for " + col_name
                     );
                 }
                 if (rows_str != num_rows) {
-                    fits_close_file(fptr, &status);
                     throw std::runtime_error(
                         "update_rows column length mismatch for " + col_name
                     );
                 }
                 long width_chars_str = repeat > 1 ? repeat : width;
                 if (user_repeat_str > width_chars_str) {
-                    fits_close_file(fptr, &status);
                     throw std::runtime_error(
                         "update_rows string width " +
                         std::to_string(user_repeat_str) + " exceeds column " +
@@ -696,12 +675,10 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                 );
                 continue;
             } else {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error("update_rows string column expects list/tuple/str for " + col_name);
             }
 
             if (static_cast<long>(values.size()) != num_rows) {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error("update_rows column length mismatch for " + col_name);
             }
 
@@ -752,19 +729,16 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                 rows_t = static_cast<long>(t.shape(0));
                 user_repeat = static_cast<long>(t.shape(1));
             } else {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error(
                     "update_rows BIT only supports 1D/2D columns for " + col_name
                 );
             }
             if (rows_t != num_rows) {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error(
                     "update_rows column length mismatch for " + col_name
                 );
             }
             if (user_repeat <= 0 || user_repeat > repeat) {
-                fits_close_file(fptr, &status);
                 throw std::runtime_error(
                     "update_rows BIT repeat must be 1.." + std::to_string(repeat) +
                     " for " + col_name
@@ -797,7 +771,6 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
                     ) {
                         val = src_u8_b[byte_off] != 0;
                     } else {
-                        fits_close_file(fptr, &status);
                         throw std::runtime_error(
                             "update_rows BIT dtype must be bool or uint8 for " +
                             col_name
@@ -832,12 +805,10 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
             rows = static_cast<long>(tensor.shape(0));
             repeat_vals = static_cast<long>(tensor.shape(1));
         } else {
-            fits_close_file(fptr, &status);
             throw std::runtime_error("update_rows only supports 1D/2D columns for " + col_name);
         }
 
         if (rows != num_rows) {
-            fits_close_file(fptr, &status);
             throw std::runtime_error("update_rows column length mismatch for " + col_name);
         }
 
@@ -845,7 +816,6 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
         // different element count per row interleaves cells and corrupts
         // every following row.
         if (repeat > 0 && repeat_vals != repeat) {
-            fits_close_file(fptr, &status);
             throw std::runtime_error(
                 "update_rows repeat mismatch for " + col_name + ": column repeat=" +
                 std::to_string(repeat) + " payload width=" + std::to_string(repeat_vals));
@@ -887,11 +857,45 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
         } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::Complex && dt.bits == 128) {
             fits_type = TDBLCOMPLEX;
         } else {
-            fits_close_file(fptr, &status);
             throw std::runtime_error("Unsupported dtype for update_rows");
         }
 
         fits_write_col(fptr, fits_type, colnum, start_row, 1, nelements, data_ptr, &status);
+    }
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to update rows in FITS table");
+    }
+}
+
+void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row, long num_rows) {
+    if (num_rows <= 0) {
+        return;
+    }
+
+    fitsfile* fptr = nullptr;
+    int status = 0;
+
+    constexpr int kFitsReadWrite = 1;
+    torchfits::check_fits_filename_security(filename ? filename : "");
+    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    if (status != 0) {
+        char err_msg[FLEN_STATUS];
+        fits_get_errstatus(status, err_msg);
+        throw std::runtime_error(
+            std::string("Failed to open FITS file for writing: ") + err_msg
+        );
+    }
+
+    try {
+        fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
+        if (status != 0) {
+            throw std::runtime_error("Failed to move to table HDU");
+        }
+        populate_rows(fptr, tensor_dict, start_row, num_rows);
+    } catch (...) {
+        fits_close_file(fptr, &status);
+        throw;
     }
 
     fits_close_file(fptr, &status);

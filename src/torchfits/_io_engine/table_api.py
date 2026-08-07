@@ -224,7 +224,6 @@ def read_table(
             mask = part if mask is None else (mask & part)
         assert mask is not None
         keep_cols = list(columns) if columns is not None else list(data.keys())
-        np_mask = mask.cpu().numpy()
         filtered = {}
         for k, v in data.items():
             if k not in keep_cols:
@@ -232,7 +231,10 @@ def read_table(
             if isinstance(v, torch.Tensor):
                 filtered[k] = v[mask]
             elif isinstance(v, np.ndarray):
-                filtered[k] = v[np_mask]
+                # Buffered reads return numpy columns; gather with the torch
+                # mask (numpy fancy indexing is several× slower for the same
+                # work) and keep read_torch's tensor contract.
+                filtered[k] = torch.as_tensor(v)[mask]
             else:
                 filtered[k] = v
         data = _apply_row_window(
