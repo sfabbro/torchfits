@@ -349,6 +349,16 @@ def invalidate_path_caches(path: str) -> None:
     # Close any open HDUList file handle so mutations can open the file for writing.
     _close_hdulist_for_path(path)
 
+    # Drop this thread's cached C++ TableReader for the path: it holds the file
+    # open READONLY (CFITSIO refuses a READWRITE reopen while registered) and its
+    # cached column metadata goes stale once the file is mutated.
+    try:
+        import torchfits._C as cpp
+
+        cpp.evict_cached_reader(path)
+    except Exception:
+        pass
+
     with cache_lock:
         _invalidate_path_caches_locked(path)
 

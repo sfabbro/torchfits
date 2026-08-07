@@ -294,6 +294,19 @@ def read_fallback_table(
             table_result = None
 
     if table_result is None:
+        # Prefer the cold-path binding with the thread-local reader cache:
+        # it reuses the CFITSIO handle, the row scratch buffer and the pread
+        # fd across calls (steady-state reads stop re-faulting ~24 MiB of
+        # anonymous memory per call). from_handle fallbacks keep working for
+        # older extension builds.
+        if hasattr(cpp_module, "read_fits_table_rows"):
+            try:
+                table_result = cpp_module.read_fits_table_rows(
+                    path, hdu_num, col_list, start_row, num_rows, False
+                )
+            except Exception:
+                table_result = None
+    if table_result is None:
         if columns is None and start_row == 1 and num_rows == -1:
             table_result = cpp_module.read_fits_table_from_handle(file_handle, hdu_num)
         elif hasattr(cpp_module, "read_fits_table_rows_from_handle"):

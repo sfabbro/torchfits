@@ -30,6 +30,7 @@
 namespace nb = nanobind;
 
 namespace torchfits {
+
 class TableReader {
 public:
     TableReader(const std::string& filename, int hdu_num = 1) : filename_(filename), hdu_num_(hdu_num), owns_fptr_(true) {
@@ -78,6 +79,10 @@ public:
     }
 
     ~TableReader() {
+        if (data_fd_cached_ >= 0) {
+            ::close(data_fd_cached_);
+            data_fd_cached_ = -1;
+        }
         if (fptr_ && owns_fptr_) {
             int status = 0;
             fits_close_file(fptr_, &status);
@@ -2227,19 +2232,36 @@ public:
         }
         rows_per_chunk = std::max(1L, std::min(rows_per_chunk, num_rows));
 
-        std::vector<uint8_t> buffer(
-            static_cast<size_t>(rows_per_chunk) * row_width_bytes_);
+        // Reuse the persistent scratch buffer so its pages stay resident
+        // across calls (a fresh per-call allocation would refault ~6k pages
+        // per 12 MiB read, ~5-10 ms on a busy host).
+        const size_t need_bytes =
+            static_cast<size_t>(rows_per_chunk) * row_width_bytes_;
+        if (scratch_buffer_.size() < need_bytes) {
+            scratch_buffer_.resize(need_bytes);
+        }
+        std::vector<uint8_t>& buffer = scratch_buffer_;
 
         // Prefer direct pread of the table heap over fits_read_tblbytes when we
         // have a local path (same bytes, less CFITSIO overhead on cold opens).
+        // The data offset is cached: fits_get_hduaddrll touches ~12 MiB of
+        // anonymous memory on every call (kernel rusage shows ~2930 minor
+        // faults per read), which dominates the pread cost on a busy host.
         int data_fd = -1;
-        LONGLONG data_offset = 0;
         if (!filename_.empty() && !has_cfitsio_extended_filename_syntax(filename_)) {
-            LONGLONG headstart = 0, dataend = 0;
-            int addr_status = 0;
-            fits_get_hduaddrll(fptr_, &headstart, &data_offset, &dataend, &addr_status);
-            if (addr_status == 0 && data_offset > 0) {
-                data_fd = ::open(filename_.c_str(), O_RDONLY);
+            if (data_offset_ < 0) {
+                LONGLONG headstart = 0, dataend = 0;
+                int addr_status = 0;
+                fits_get_hduaddrll(fptr_, &headstart, &data_offset_, &dataend, &addr_status);
+                if (addr_status != 0 || data_offset_ <= 0) {
+                    data_offset_ = -1;
+                }
+            }
+            if (data_offset_ > 0) {
+                if (data_fd_cached_ < 0) {
+                    data_fd_cached_ = ::open(filename_.c_str(), O_RDONLY);
+                }
+                data_fd = data_fd_cached_;
             }
         }
 
@@ -2250,7 +2272,7 @@ public:
             int status = 0;
             if (data_fd >= 0) {
                 const off_t file_off = static_cast<off_t>(
-                    data_offset +
+                    data_offset_ +
                     static_cast<LONGLONG>(start_row - 1 + rows_read) * row_width_bytes_);
                 const size_t nbytes =
                     static_cast<size_t>(current_chunk_rows) * row_width_bytes_;
@@ -2297,9 +2319,6 @@ public:
             }
 
             rows_read += current_chunk_rows;
-        }
-        if (data_fd >= 0) {
-            ::close(data_fd);
         }
     }
 
@@ -2441,6 +2460,17 @@ private:
     long row_width_bytes_ = 0;
     std::vector<ColumnInfo> columns_;
     bool is_ascii_ = false;
+    // Reused row-buffer for buffered table reads. A fresh per-call
+    // std::vector would be mmap'd and munmap'd by glibc (large sizes),
+    // refaulting every page on every read (~6k minor faults/12 MiB); keeping
+    // it on the reader keeps the pages resident across calls.
+    std::vector<uint8_t> scratch_buffer_;
+    // Cached byte offset of the table data section (fits_get_hduaddrll
+    // refaults ~12 MiB of anonymous memory per call on this host).
+    LONGLONG data_offset_ = -1;
+    // Persistent raw fd for pread of the table heap (avoids re-opening the
+    // file on every buffered read).
+    int data_fd_cached_ = -1;
 };
 
 } // namespace torchfits

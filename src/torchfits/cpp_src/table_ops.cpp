@@ -174,7 +174,7 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
     // Use explicit cfitsio mode value to avoid macro collisions with Python headers.
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);
@@ -418,7 +418,7 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);
@@ -481,7 +481,7 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
 
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);
@@ -878,7 +878,7 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);
@@ -916,7 +916,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
 
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);
@@ -975,7 +975,7 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
 
     constexpr int kFitsReadWrite = 1;
     torchfits::check_fits_filename_security(filename ? filename : "");
-    fits_open_file(&fptr, filename, kFitsReadWrite, &status);
+    status = torchfits::open_fits_for_write(&fptr, filename);
     if (status != 0) {
         char err_msg[FLEN_STATUS];
         fits_get_errstatus(status, err_msg);

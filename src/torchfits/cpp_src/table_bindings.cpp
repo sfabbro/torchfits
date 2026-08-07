@@ -3,7 +3,9 @@
  */
 
 #include <string>
+#include <cstdlib>
 #include <vector>
+#include <list>
 #include <unordered_map>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -24,6 +26,80 @@
 namespace nb = nanobind;
 
 namespace {
+
+struct ReaderCacheKey {
+    std::string filename;
+    int hdu_num = 0;
+    bool operator==(const ReaderCacheKey& o) const {
+        return filename == o.filename && hdu_num == o.hdu_num;
+    }
+};
+
+struct ReaderCacheKeyHash {
+    size_t operator()(const ReaderCacheKey& k) const noexcept {
+        size_t h = std::hash<std::string>()(k.filename);
+        return h ^ ((size_t)k.hdu_num * 0x9e3779b97f4a7c15ULL);
+    }
+};
+
+// Thread-local LRU of owned TableReader handles. Repeated cold table reads of
+// the same (file, hdu) reuse the CFITSIO handle, the ~16 MiB row scratch
+// buffer and the pread fd, so steady-state reads stop re-opening the file,
+// re-parsing the header and re-faulting ~24 MiB of anonymous memory per call
+// (mirrors fitsio's persistent-handle behavior).
+struct ThreadLocalReaderCache {
+    struct Entry {
+        std::unique_ptr<torchfits::TableReader> reader;
+        std::list<ReaderCacheKey>::iterator lru_it;
+    };
+    std::unordered_map<ReaderCacheKey, Entry, ReaderCacheKeyHash> map_;
+    std::list<ReaderCacheKey> lru_;
+    static constexpr size_t kCapacity = 8;
+
+    std::unique_ptr<torchfits::TableReader> acquire(const ReaderCacheKey& key) {
+        auto it = map_.find(key);
+        if (it == map_.end()) {
+            return std::unique_ptr<torchfits::TableReader>();
+        }
+        lru_.splice(lru_.end(), lru_, it->second.lru_it);
+        auto reader = std::move(it->second.reader);
+        map_.erase(it);
+        return reader;
+    }
+
+    void release(ReaderCacheKey key, std::unique_ptr<torchfits::TableReader> reader) {
+        if (!reader) {
+            return;
+        }
+        if (map_.size() >= kCapacity) {
+            const ReaderCacheKey victim = lru_.front();
+            lru_.pop_front();
+            map_.erase(victim);
+        }
+        lru_.push_back(key);
+        map_[key] = Entry{std::move(reader), std::prev(lru_.end())};
+    }
+
+    // Drop any cached reader for `filename`. The TableReader holds a CFITSIO
+    // handle open READONLY, and CFITSIO refuses to reopen a file READWRITE in
+    // the same process while such a handle is registered (status 104 in
+    // fits_already_open); writers evict before/while opening for write.
+    // Readers for other threads are untouched: cache entries are thread-local
+    // by design (CFITSIO Option A handles are not shareable), so a writer can
+    // only clear readers cached on its own thread.
+    void evict(const std::string& filename) {
+        for (auto it = map_.begin(); it != map_.end();) {
+            if (it->first.filename == filename) {
+                lru_.erase(it->second.lru_it);
+                it = map_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+};
+
+static thread_local ThreadLocalReaderCache g_reader_cache;
 
 nb::dict tensor_map_to_python(
     const std::vector<std::pair<std::string, torch::Tensor>>& result_map
@@ -79,6 +155,14 @@ nb::dict table_result_to_python(
 
 } // anonymous namespace
 
+namespace torchfits {
+
+void evict_cached_reader(const std::string& filename) {
+    g_reader_cache.evict(filename);
+}
+
+}  // namespace torchfits
+
 // Forward declare invalidation functions (defined in cache.cpp)
 namespace torchfits {
 void invalidate_cached(const std::string& filepath);
@@ -115,10 +199,13 @@ void bind_table(nb::module_& m) {
            nb::arg("start_row") = 1, nb::arg("num_rows") = -1)
         .def_prop_ro("num_cols", &torchfits::TableReader::get_num_cols);
 
+    m.def("evict_cached_reader", &torchfits::evict_cached_reader, nb::arg("path"));
+
     m.def("write_fits_table", [](const std::string& filename, nb::dict tensor_dict, nb::dict header, bool overwrite,
                                  nb::object schema, const std::string& table_type) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         write_fits_table(filename.c_str(), tensor_dict, header, overwrite, schema, table_type);
     }, nb::arg("filename"), nb::arg("tensor_dict"), nb::arg("header"), nb::arg("overwrite"),
        nb::arg("schema") = nb::none(), nb::arg("table_type") = "binary");
@@ -126,6 +213,7 @@ void bind_table(nb::module_& m) {
     m.def("append_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         append_rows(filename.c_str(), hdu_num, tensor_dict);
     });
 
@@ -133,6 +221,7 @@ void bind_table(nb::module_& m) {
                                        long start_row) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         insert_rows(filename.c_str(), hdu_num, tensor_dict, start_row);
     });
 
@@ -140,6 +229,7 @@ void bind_table(nb::module_& m) {
                                        long start_row, long num_rows) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         update_rows(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
     });
 
@@ -147,18 +237,21 @@ void bind_table(nb::module_& m) {
                                             long start_row, long num_rows) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         update_rows_mmap(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
     });
 
     m.def("rename_fits_table_columns", [](const std::string& filename, int hdu_num, nb::dict mapping) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         rename_columns(filename.c_str(), hdu_num, mapping);
     });
 
     m.def("drop_fits_table_columns", [](const std::string& filename, int hdu_num, nb::list columns) {
         torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         drop_columns(filename.c_str(), hdu_num, columns);
     });
 
@@ -213,23 +306,19 @@ void bind_table(nb::module_& m) {
 
     m.def("read_fits_table", [](const std::string& filename, int hdu_num, const std::vector<std::string>& column_names, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
+        ReaderCacheKey key{filename, hdu_num};
+        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
+        if (!reader) {
+            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        }
         if (mmap) {
-            torchfits::TableReader reader(filename, hdu_num);
-            auto result = reader.read_columns_mmap(column_names);
+            auto result = reader->read_columns_mmap(column_names);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
             return tensor_map_to_python(result);
         } else {
-            fitsfile* fptr = nullptr;
-            int status = 0;
-            torchfits::check_fits_filename_security(filename);
-            status = torchfits::detail::open_fits_readonly(&fptr, filename);
-            if (status != 0 || !fptr) {
-                throw std::runtime_error("Could not open FITS file");
-            }
-            torchfits::FitsHandleGuard guard;
-            guard.fptr = fptr;
-            torchfits::TableReader reader(fptr, hdu_num);
-            auto result_map = reader.read_columns(column_names, 1, -1, true);
+            auto result_map = reader->read_columns(column_names, 1, -1, true);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
             nb::object out = nb::object(table_result_to_python(result_map, false));
             return out;
@@ -240,25 +329,21 @@ void bind_table(nb::module_& m) {
                                      const std::vector<std::string>& column_names,
                                      long start_row, long num_rows, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
+        ReaderCacheKey key{filename, hdu_num};
+        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
+        if (!reader) {
+            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        }
         if (mmap) {
-            torchfits::TableReader reader(filename, hdu_num);
-            auto result = reader.read_columns_mmap(column_names, start_row, num_rows);
+            auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
             return tensor_map_to_python(result);
         } else {
-            fitsfile* fptr = nullptr;
-            int status = 0;
-            torchfits::check_fits_filename_security(filename);
-            status = torchfits::detail::open_fits_readonly(&fptr, filename);
-            if (status != 0 || !fptr) {
-                throw std::runtime_error("Could not open FITS file");
-            }
-            torchfits::FitsHandleGuard guard;
-            guard.fptr = fptr;
-            torchfits::TableReader reader(fptr, hdu_num);
-            auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
+            auto result_map = reader->read_columns(column_names, start_row, num_rows, true);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
-            nb::object out = table_result_to_python(result_map, true);
+            nb::object out = table_result_to_python(result_map, false);
             return out;
         }
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
@@ -281,42 +366,37 @@ void bind_table(nb::module_& m) {
     m.def("read_fits_table_rows_numpy", [](const std::string& filename, int hdu_num,
                                            const std::vector<std::string>& column_names,
                                            long start_row, long num_rows, bool mmap) -> nb::object {
+        nb::gil_scoped_release release;
+        ReaderCacheKey key{filename, hdu_num};
+        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
+        if (!reader) {
+            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        }
         if (mmap) {
-            nb::gil_scoped_release release;
-            torchfits::TableReader reader(filename, hdu_num);
-            auto result_map = reader.read_columns_mmap(column_names, start_row, num_rows);
+            auto result_map = reader->read_columns_mmap(column_names, start_row, num_rows);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
             nb::dict mapped = tensor_map_to_python(result_map);
             nb::dict numpy_result;
             for (auto item : mapped) {
-                nb::handle key = item.first;
+                nb::handle key_h = item.first;
                 nb::handle value = item.second;
                 if (PyObject_HasAttrString(value.ptr(), "numpy")) {
                     PyObject* np_obj = PyObject_CallMethod(value.ptr(), "numpy", nullptr);
                     if (!np_obj) {
                         throw nb::python_error();
                     }
-                    numpy_result[key] = nb::steal(np_obj);
+                    numpy_result[key_h] = nb::steal(np_obj);
                 } else {
-                    numpy_result[key] = nb::borrow(value);
+                    numpy_result[key_h] = nb::borrow(value);
                 }
             }
             return nb::object(numpy_result);
         } else {
-            nb::gil_scoped_release release;
-            fitsfile* fptr = nullptr;
-            int status = 0;
-            torchfits::check_fits_filename_security(filename);
-            status = torchfits::detail::open_fits_readonly(&fptr, filename);
-            if (status != 0 || !fptr) {
-                throw std::runtime_error("Could not open FITS file");
-            }
-            torchfits::TableReader reader(fptr, hdu_num);
-            auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
+            auto result_map = reader->read_columns(column_names, start_row, num_rows, true);
+            g_reader_cache.release(key, std::move(reader));
             nb::gil_scoped_acquire acquire;
             nb::object out = table_result_to_python(result_map, true);
-            int close_status = 0;
-            fits_close_file(fptr, &close_status);
             return out;
         }
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
