@@ -42,6 +42,10 @@ public:
         if (status != 0 || !fptr_) {
             throw std::runtime_error("Failed to open FITS file");
         }
+        // Capture the file identity for stale-reader detection: a cached
+        // reader may outlive a writer on another thread replacing the file
+        // (thread-local caches can only be evicted by their own thread).
+        stat_valid_ = (::stat(filename_.c_str(), &file_stat_) == 0);
 
         // If HDU move or analysis fails, the destructor will not run (the object
         // is not fully constructed), so close the handle we opened before
@@ -87,6 +91,25 @@ public:
             int status = 0;
             fits_close_file(fptr_, &status);
         }
+    }
+
+    // True if the file at filename_ still matches the identity captured at
+    // construction. Path-based readers cached in the thread-local LRU call
+    // this on acquire; a file replaced by another thread's writer (new inode,
+    // size or mtime) makes the cached handle and pread fd stale, so the cache
+    // must drop it and open fresh.
+    bool file_unchanged() const {
+        if (!stat_valid_) {
+            return false;
+        }
+        struct stat st;
+        if (::stat(filename_.c_str(), &st) != 0) {
+            return false;
+        }
+        return st.st_dev == file_stat_.st_dev &&
+               st.st_ino == file_stat_.st_ino &&
+               st.st_size == file_stat_.st_size &&
+               st.st_mtime == file_stat_.st_mtime;
     }
 
     void analyze_table() {
@@ -2471,6 +2494,10 @@ private:
     // Persistent raw fd for pread of the table heap (avoids re-opening the
     // file on every buffered read).
     int data_fd_cached_ = -1;
+    // File identity captured at construction (stat of filename_) for the
+    // stale-reader check in file_unchanged().
+    struct stat file_stat_ {};
+    bool stat_valid_ = false;
 };
 
 } // namespace torchfits

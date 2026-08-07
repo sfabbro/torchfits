@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <vector>
 #include <list>
+#include <mutex>
+#include <algorithm>
 #include <unordered_map>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -47,16 +49,40 @@ struct ReaderCacheKeyHash {
 // buffer and the pread fd, so steady-state reads stop re-opening the file,
 // re-parsing the header and re-faulting ~24 MiB of anonymous memory per call
 // (mirrors fitsio's persistent-handle behavior).
+//
+// Every cache registers in a process-wide registry so writers can evict the
+// file's readers from ALL threads: a cached reader holds a CFITSIO handle
+// open READONLY, and CFITSIO refuses to reopen a file READWRITE in the same
+// process while such a handle is registered (status 104 in fits_already_open).
+// Cache entries are only ever inserted/removed by their owning thread, but
+// evict() from another thread may destroy an idle cached reader, so map_/lru_
+// are mutex-guarded.
 struct ThreadLocalReaderCache {
     struct Entry {
         std::unique_ptr<torchfits::TableReader> reader;
         std::list<ReaderCacheKey>::iterator lru_it;
     };
+
+    ThreadLocalReaderCache() {
+        std::lock_guard<std::mutex> g(g_registry_mu);
+        g_registry.push_back(this);
+    }
+
+    ~ThreadLocalReaderCache() {
+        std::lock_guard<std::mutex> g(g_registry_mu);
+        auto it = std::find(g_registry.begin(), g_registry.end(), this);
+        if (it != g_registry.end()) {
+            g_registry.erase(it);
+        }
+    }
+
+    std::mutex mu_;
     std::unordered_map<ReaderCacheKey, Entry, ReaderCacheKeyHash> map_;
     std::list<ReaderCacheKey> lru_;
     static constexpr size_t kCapacity = 8;
 
     std::unique_ptr<torchfits::TableReader> acquire(const ReaderCacheKey& key) {
+        std::lock_guard<std::mutex> l(mu_);
         auto it = map_.find(key);
         if (it == map_.end()) {
             return std::unique_ptr<torchfits::TableReader>();
@@ -64,6 +90,13 @@ struct ThreadLocalReaderCache {
         lru_.splice(lru_.end(), lru_, it->second.lru_it);
         auto reader = std::move(it->second.reader);
         map_.erase(it);
+        if (!reader->file_unchanged()) {
+            // The file was replaced or rewritten since this reader was cached
+            // (e.g. a writer on another thread whose eviction raced this
+            // thread's release): the handle, cached offset and pread fd are
+            // stale. Drop it and let the caller open fresh.
+            return std::unique_ptr<torchfits::TableReader>();
+        }
         return reader;
     }
 
@@ -71,6 +104,7 @@ struct ThreadLocalReaderCache {
         if (!reader) {
             return;
         }
+        std::lock_guard<std::mutex> l(mu_);
         if (map_.size() >= kCapacity) {
             const ReaderCacheKey victim = lru_.front();
             lru_.pop_front();
@@ -80,14 +114,11 @@ struct ThreadLocalReaderCache {
         map_[key] = Entry{std::move(reader), std::prev(lru_.end())};
     }
 
-    // Drop any cached reader for `filename`. The TableReader holds a CFITSIO
-    // handle open READONLY, and CFITSIO refuses to reopen a file READWRITE in
-    // the same process while such a handle is registered (status 104 in
-    // fits_already_open); writers evict before/while opening for write.
-    // Readers for other threads are untouched: cache entries are thread-local
-    // by design (CFITSIO Option A handles are not shareable), so a writer can
-    // only clear readers cached on its own thread.
+    // Drop any cached reader for `filename` from this cache. A reader is only
+    // destroyed here while idle (not acquired), so a concurrent read on the
+    // owning thread never touches an evicted reader.
     void evict(const std::string& filename) {
+        std::lock_guard<std::mutex> l(mu_);
         for (auto it = map_.begin(); it != map_.end();) {
             if (it->first.filename == filename) {
                 lru_.erase(it->second.lru_it);
@@ -97,7 +128,21 @@ struct ThreadLocalReaderCache {
             }
         }
     }
+
+    static void evict_everywhere(const std::string& filename) {
+        std::lock_guard<std::mutex> g(g_registry_mu);
+        for (ThreadLocalReaderCache* cache : g_registry) {
+            cache->evict(filename);
+        }
+    }
+
+private:
+    static std::mutex g_registry_mu;
+    static std::vector<ThreadLocalReaderCache*> g_registry;
 };
+
+std::mutex ThreadLocalReaderCache::g_registry_mu;
+std::vector<ThreadLocalReaderCache*> ThreadLocalReaderCache::g_registry;
 
 static thread_local ThreadLocalReaderCache g_reader_cache;
 
@@ -158,7 +203,7 @@ nb::dict table_result_to_python(
 namespace torchfits {
 
 void evict_cached_reader(const std::string& filename) {
-    g_reader_cache.evict(filename);
+    ThreadLocalReaderCache::evict_everywhere(filename);
 }
 
 }  // namespace torchfits

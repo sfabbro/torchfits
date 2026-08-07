@@ -40,11 +40,11 @@ void* get_fptr_from_python_object(nanobind::object obj);
 void invalidate_shared_meta(const std::string& filename);
 void clear_shared_read_meta_cache();
 
-// Drop this thread's cached TableReader for `filename` (defined in
+// Drop every thread's cached TableReader for `filename` (defined in
 // table_bindings.cpp). Writers call this before opening a file READWRITE:
-// the cached reader holds a CFITSIO handle open READONLY, and CFITSIO
-// refuses to reopen a file READWRITE in the same process while such a
-// handle is still registered (status 104, fits_already_open).
+// a cached reader holds a CFITSIO handle open READONLY, and CFITSIO refuses
+// to reopen a file READWRITE in the same process while such a handle is
+// still registered (status 104, fits_already_open).
 void evict_cached_reader(const std::string& filename);
 
 // Open `path` for writing, retrying once if a cached READONLY handle for it
@@ -52,6 +52,7 @@ void evict_cached_reader(const std::string& filename);
 // read-then-mutate sequences work without the caller knowing about the cache.
 inline int open_fits_for_write(fitsfile** fptr, const std::string& path) {
     int status = 0;
+    *fptr = nullptr;
     fits_open_file(fptr, path.c_str(), 1 /* READWRITE */, &status);
     if (status == 104) {
         evict_cached_reader(path);
