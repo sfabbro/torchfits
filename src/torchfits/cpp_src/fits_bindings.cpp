@@ -894,6 +894,54 @@ void* ensure_c_contiguous_ndarray(
 
 }  // namespace
 
+// Schema metadata values may arrive as ints/floats (user-supplied) or as
+// numeric strings (reconstructed from FITS header cards, e.g. TNULLn).
+// nanobind dropped implicit str->number conversion, so parse explicitly.
+long long table_schema_to_ll(const nb::object& obj) {
+    if (PyLong_Check(obj.ptr())) {
+        return nb::cast<long long>(obj);
+    }
+    if (PyFloat_Check(obj.ptr())) {
+        return static_cast<long long>(nb::cast<double>(obj));
+    }
+    if (PyUnicode_Check(obj.ptr())) {
+        try {
+            const std::string s = nb::cast<std::string>(obj);
+            size_t pos = 0;
+            const long long v = std::stoll(s, &pos);
+            while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) {
+                ++pos;
+            }
+            if (pos == s.size()) {
+                return v;
+            }
+        } catch (const std::exception&) {
+        }
+    }
+    throw std::runtime_error("schema numeric value must be an int or a numeric string");
+}
+
+double table_schema_to_double(const nb::object& obj) {
+    if (PyLong_Check(obj.ptr()) || PyFloat_Check(obj.ptr())) {
+        return nb::cast<double>(obj);
+    }
+    if (PyUnicode_Check(obj.ptr())) {
+        try {
+            const std::string s = nb::cast<std::string>(obj);
+            size_t pos = 0;
+            const double v = std::stod(s, &pos);
+            while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) {
+                ++pos;
+            }
+            if (pos == s.size()) {
+                return v;
+            }
+        } catch (const std::exception&) {
+        }
+    }
+    throw std::runtime_error("schema numeric value must be a number or a numeric string");
+}
+
 void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::object schema_obj, bool is_ascii) {
     struct ColumnWriteInfo {
         std::string name;
@@ -1046,18 +1094,18 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                 }
                 if (meta.contains("null")) {
                     col.has_tnull = true;
-                    col.tnull = nb::cast<long long>(meta["null"]);
+                    col.tnull = table_schema_to_ll(meta["null"]);
                 } else if (meta.contains("tnull")) {
                     col.has_tnull = true;
-                    col.tnull = nb::cast<long long>(meta["tnull"]);
+                    col.tnull = table_schema_to_ll(meta["tnull"]);
                 }
                 if (meta.contains("bscale")) {
                     col.has_bscale = true;
-                    col.bscale = nb::cast<double>(meta["bscale"]);
+                    col.bscale = table_schema_to_double(meta["bscale"]);
                 }
                 if (meta.contains("bzero")) {
                     col.has_bzero = true;
-                    col.bzero = nb::cast<double>(meta["bzero"]);
+                    col.bzero = table_schema_to_double(meta["bzero"]);
                 }
                 if (meta.contains("dim")) {
                     col.tdim = nb::cast<std::string>(meta["dim"]);
