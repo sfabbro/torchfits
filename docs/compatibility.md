@@ -22,7 +22,7 @@ minor.
 
 | PyTorch lane | torchfits release |
 |---|---|
-| **2.13.x** | **1.2.3** lane (**1.2.3** cut, not yet released) |
+| **2.13.x** | **1.0.0** lane (**1.0.0** cut, not yet released) |
 
 Install the pair together, e.g. `pip install torchfits "torch>=2.13,<2.14"` —
 see [Install](install.md). The lane map lives in `scripts/torch_lanes.json`

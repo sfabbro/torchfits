@@ -5,7 +5,7 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.3] — 2026-08-07
+## [1.0.0] — 2026-08-07
 
 Version cut on the 2.13 torch ABI lane: buffered table reads through a
 thread-local reader cache (process-wide eviction, stat-identity stale guard),
@@ -1060,8 +1060,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.3...HEAD
-[1.2.3]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.2.3
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.0.0
 [1.0.0rc5]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/astroai/torchfits/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/astroai/torchfits/compare/v1.0.0rc2...v1.0.0rc3

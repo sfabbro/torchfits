@@ -4,7 +4,7 @@
 and FITS **table** I/O vs Astropy and fitsio. CPU↔GPU comparisons are published
 when hardware was available; GPU deficits are listed, not hidden.
 
-**Honesty:** torchfits cuts **1.2.3** next (not yet released; **1.0.0rc5** is on
+**Honesty:** torchfits cuts **1.0.0** next (not yet released; **1.0.0rc5** is on
 PyPI). Headline ratios below are
 lab medians from named scorecard runs — not guarantees on your filesystem,
 file mix, or PyTorch version. Check [Performance deficits](#performance-deficits)

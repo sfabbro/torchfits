@@ -2,7 +2,7 @@
 
 FITS I/O for images (tensors), tables (Arrow / Polars / column tensors),
 headers, and compression. Datasets and transforms live under
-`torchfits.data` / `torchfits.transforms`. Current line: **1.2.3**
+`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0**
 (cut, not yet released).
 
 Job-oriented patterns: [Python workflows](python-workflows.md). This page
@@ -146,7 +146,7 @@ private until promoted there.
 
 ## Public API Index
 
-The root `torchfits.__all__` (frozen surface for 1.2.3):
+The root `torchfits.__all__` (frozen surface for 1.0.0):
 
 - **Image / table I/O:** `read`, `write`, `open`, `read_tensor`, `read_subset`,
   `read_hdus`, `read_batch`, `read_batch_info`, `open_subset_reader`,
