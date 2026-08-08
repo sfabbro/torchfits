@@ -48,9 +48,15 @@ removed in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
 | Selected header keys (skinny) | `read_keys(path, keys, hdu=0)` | [Core I/O](api-core-io.md#read_keys) |
 | Image BITPIX+shape (skinny) | `read_shape(path, hdu=0)` | [Core I/O](api-core-io.md#read_shape) |
 | HDU type / count (skinny) | `read_hdu_type` / `read_num_hdus` | [Core I/O](api-core-io.md#skinny-hdu-type-count-extname) |
+| EXTNAME of an HDU (skinny) | `read_extname(path, hdu=1)` | [Core I/O](api-core-io.md#skinny-hdu-type-count-extname) |
 | Table colnames / info (skinny) | `read_colnames` / `read_table_info` | [Core I/O](api-core-io.md#skinny-colnames-table-info) |
 | Multi-HDU context manager | `open(path, mode="r")` | [Core I/O](api-core-io.md#open) |
 | Batch-read many files | `read_batch(file_paths, hdu=0)` | [Core I/O](api-core-io.md#read_batch) |
+| Insert an HDU | `insert_hdu(path, data, index=1)` | [Core I/O](api-core-io.md#hdu-mutation) |
+| Replace an HDU | `replace_hdu(path, hdu, data)` | [Core I/O](api-core-io.md#hdu-mutation) |
+| Delete an HDU | `delete_hdu(path, hdu)` | [Core I/O](api-core-io.md#hdu-mutation) |
+| Write FITS checksums | `write_checksums(path, hdu=0)` | [Core I/O](api-core-io.md#checksums) |
+| Verify FITS checksums | `verify_checksums(path, hdu=0)` | [Core I/O](api-core-io.md#checksums) |
 
 ### Tables as dataframes
 
@@ -65,6 +71,20 @@ removed in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
 | DuckDB SQL | `table.duckdb_query(path, sql, hdu=1)` | [Tables](api-tables.md#duckdb) |
 
 Destination-qualified spelling of `table.read` (same object): `table.read_arrow`.
+
+| Goal | Entry point | Reference |
+|---|---|---|
+| Interop: Polars | `to_polars(table_dict, decode_bytes=True)` | [Tables](api-tables.md#polars) |
+| Interop: Arrow | `to_arrow(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
+| Interop: pandas | `to_pandas(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
+
+### Cache
+
+| Goal | Entry point | Reference |
+|---|---|---|
+| Reset in-process + disk caches | `clear_all_caches()` | [Core I/O](api-core-io.md#cache-utilities) |
+| Evict one file's cached state | `clear_file_cache(data=True, ..., cpp=True)` | [Core I/O](api-core-io.md#cache-utilities) |
+| Cache hit / eviction counters | `get_cache_performance()` | [Core I/O](api-core-io.md#cache-utilities) |
 
 
 ### Datasets and loaders
@@ -121,6 +141,28 @@ and [Transforms](api-transforms.md). Runnable scripts are indexed in
 performance-sensitive downstream packages. Its `__all__` is the
 function-level compatibility contract; new compiled-extension symbols are
 private until promoted there.
+
+---
+
+## Public API Index
+
+The root `torchfits.__all__` (frozen surface for 1.2.3):
+
+- **Image / table I/O:** `read`, `write`, `open`, `read_tensor`, `read_subset`,
+  `read_hdus`, `read_batch`, `read_batch_info`, `open_subset_reader`,
+  `open_table_reader`, `write_tensor`
+- **Skinny metadata:** `read_header`, `read_colnames`, `read_extname`,
+  `read_hdu_type`, `read_keys`, `read_nrows`, `read_num_hdus`, `read_shape`,
+  `read_table_info`
+- **Checksums / HDU mutation:** `verify_checksums`, `write_checksums`,
+  `insert_hdu`, `replace_hdu`, `delete_hdu`
+- **Cache:** `get_cache_performance`, `clear_all_caches`, `clear_file_cache`
+- **Interop:** `to_pandas`, `to_arrow`, `to_polars`
+- **HDU types:** `Header`, `Card`, `HDUList`, `TensorHDU`, `TableHDU`,
+  `TableHDURef`
+- **Namespaces:** `table`, `cache`, `cpp`
+
+Each entry has a quick-path row and a reference page above.
 
 ---
 
