@@ -1,9 +1,13 @@
 # Installation
 
-torchfits **1.2.3** (current cut, not yet released) is built against
-**PyTorch 2.13.x** — the wheel ABI lane the release ships for. The wheel's metadata pins that range
-(`torch>=2.13,<2.14`), so the install command needs no torch restriction: pip
-installs or upgrades torch for you.
+torchfits **1.0** is the current PyPI line (published as the **1.0.0rc5**
+prerelease until the final tag; see [Changelog](changelog.md)). It is built
+against **PyTorch 2.13.x** — the wheel ABI lane the release ships for.
+
+Installing torchfits is like installing PyTorch: one plain `pip install`, no
+version pins. The wheel metadata requires **torch 2.13.\*** (`torch>=2.13,<2.14`
+in metadata, which pip treats as exactly `2.13.*`), so pip installs or
+upgrades torch for you — you never type a torch pin.
 
 torchfits wheels need **Python 3.10+** and **PyTorch 2.13.x**. If you already
 have that minor (any flavor — CPU or CUDA), it is left untouched; an older
@@ -18,20 +22,24 @@ the project is installed with `--no-deps`.
 
 ## Quick install (wheels)
 
-torchfits wheels are ABI-matched to **PyTorch 2.13.x**, and the wheel metadata
-pins that range — so the default install is one bare command:
+torchfits wheels are ABI-matched to **PyTorch 2.13.x**; the wheel metadata
+pins that range, so the install command carries no torch restriction. The 1.0
+line is currently a release candidate on PyPI, so add `--pre` until the final
+tag — one bare command:
 
 ```bash
-pip install torchfits
+pip install --pre torchfits
 ```
 
-The recipes below show the pin explicitly; that form only matters when you
-must keep a specific torch minor (pip would otherwise upgrade an older one).
+The recipes below are all just `pip install` plus an optional PyTorch flavor
+index — none of them pin torchfits or torch versions. The torch restriction
+form only matters if you must keep a specific torch minor (pip would otherwise
+upgrade an older one).
 
 ### One line: full version (CUDA + CPU) — the default
 
 ```bash
-pip install torchfits "torch>=2.13,<2.14"
+pip install --pre torchfits
 ```
 
 This installs the default PyTorch build from PyPI, which **bundles the CUDA
@@ -61,7 +69,7 @@ thinner — it does **not** pull the CUDA runtime / cuDNN stack into the env.
 Self-contained one-liner (no config needed):
 
 ```bash
-pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu
+pip install --pre torchfits --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 Or, with the CPU index configured once (`export
@@ -71,7 +79,7 @@ user-global; the env var is per-shell and a project-level `pip.conf` also
 works), the deterministic extras form works:
 
 ```bash
-pip install 'torchfits[cpu]'   # Linux: torch 2.13.0+cpu; macOS: no-op (MPS is the default)
+pip install --pre 'torchfits[cpu]'   # Linux: torch 2.13.0+cpu; macOS: no-op (MPS is the default)
 ```
 
 !!! note
@@ -89,14 +97,14 @@ Point pip at the CUDA toolkit you need (cu118 / cu121 / cu124 / cu126 / cu128
 current matrix; this lane's extras pin cu129):
 
 ```bash
-pip install torchfits "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cu129
+pip install --pre torchfits --extra-index-url https://download.pytorch.org/whl/cu129
 ```
 
 With the index configured once (`PIP_EXTRA_INDEX_URL` or `pip config set
 global.extra-index-url https://download.pytorch.org/whl/cu129`):
 
 ```bash
-pip install 'torchfits[cuda]'   # Linux: torch 2.13.0+cu129; macOS: no-op (MPS is the default)
+pip install --pre 'torchfits[cuda]'   # Linux: torch 2.13.0+cu129; macOS: no-op (MPS is the default)
 ```
 
 These CUDA builds also run on machines **without** a GPU — see above.
@@ -106,17 +114,17 @@ These CUDA builds also run on machines **without** a GPU — see above.
 PyTorch’s own wheels use PEP 440 **local versions** (`2.13.0+cpu`,
 `2.13.0+cu129`), which sort *above* the plain PyPI build (`2.13.0+cpu >
 2.13.0`). When the PyTorch index is visible, pip therefore automatically
-prefers its build for the pinned `torch>=2.13,<2.14` range — no need to choose
-one index or the other: torchfits comes from PyPI, torch comes from the extra
-index, in the same command. With `PIP_EXTRA_INDEX_URL` (or `pip.conf`
-`extra-index-url`) set once, even a plain `pip install torchfits
-"torch>=2.13,<2.14"` picks your flavor up automatically.
+prefers its build for torchfits's torch requirement (`2.13.*`) — no need to
+choose one index or the other: torchfits comes from PyPI, torch comes from the
+extra index, in the same command. With `PIP_EXTRA_INDEX_URL` (or `pip.conf`
+`extra-index-url`) set once, even a plain `pip install --pre torchfits` picks
+your flavor up automatically.
 
 The `torchfits[cpu]` / `torchfits[cuda]` extras **cannot embed index URLs**, so
 they resolve only when the matching PyTorch index is reachable (the one-time
 setting above). Keep exactly one PyTorch index configured at a time. uv works
-the same way: `uv pip install torchfits "torch>=2.13,<2.14"
---extra-index-url https://download.pytorch.org/whl/cpu` (or `UV_EXTRA_INDEX_URL`).
+the same way: `uv pip install --pre torchfits --extra-index-url
+https://download.pytorch.org/whl/cpu` (or `UV_EXTRA_INDEX_URL`).
 
 Apple Silicon: the default macOS torch wheel includes **MPS**, so the default
 recipe is all you need; there is no macOS `+cu129` **or `+cpu`** build — both
@@ -268,7 +276,8 @@ pixi run bench-all      # exhaustive benchmarks
 The `[cpu]` / `[cuda]` extras are the flavors from
 [Quick install](#quick-install-wheels): they pin an exact torch build from a
 PyTorch index, so that index must be reachable via `PIP_EXTRA_INDEX_URL` or
-`pip.conf` first.
+`pip.conf` first. Install them with `pip install --pre 'torchfits[cpu]'` etc.
+while the 1.0 line is a release candidate.
 
 Notebooks: `_repr_html_` works with any Jupyter kernel — **ipykernel is not**
 a torchfits dependency.
@@ -307,7 +316,7 @@ newer torch than the wheel lane. First try pinning the wheel lane and
 reimporting:
 
 ```bash
-pip install "torch>=2.13,<2.14"
+pip install "torch==2.13.*"
 ```
 
 This release publishes only the 2.13 wheel lane. If you need a different torch
