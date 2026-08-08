@@ -2,8 +2,8 @@
 
 FITS I/O for images (tensors), tables (Arrow / Polars / column tensors),
 headers, and compression. Datasets and transforms live under
-`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0rc5**
-(prerelease).
+`torchfits.data` / `torchfits.transforms`. Current line: **1.2.3**
+(cut, not yet released).
 
 Job-oriented patterns: [Python workflows](python-workflows.md). This page
 lists signatures, defaults, and edge cases.

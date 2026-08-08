@@ -4,7 +4,8 @@
 and FITS **table** I/O vs Astropy and fitsio. CPU↔GPU comparisons are published
 when hardware was available; GPU deficits are listed, not hidden.
 
-**Honesty:** torchfits is a **1.0.0rc5** prerelease. Headline ratios below are
+**Honesty:** torchfits cuts **1.2.3** next (not yet released; **1.0.0rc5** is on
+PyPI). Headline ratios below are
 lab medians from named scorecard runs — not guarantees on your filesystem,
 file mix, or PyTorch version. Check [Performance deficits](#performance-deficits)
 before assuming torchfits wins every case.
@@ -114,16 +115,17 @@ linked from GitHub Release assets when published, and mirrored under
 `docs/assets/bench/<run-id>/` when size allows. The newest CPU/CUDA
 exhaustives (`exhaustive_cpu_20260807_082931_reader_cache`,
 `exhaustive_cuda_20260807_013736`, refreshed 2026-08-07) feed
-the generated tables above; their CSVs are archived under
-`benchmarks_results/<run-id>/` locally and on the benchmark hosts until the
-next release mirrors them as assets. Example local paths from the Round-3
-soak that are already mirrored:
+the generated tables above; the surviving 2026-08-07 CPU/CUDA run CSVs are
+mirrored alongside the earlier Round-3 soak runs:
 
+- `docs/assets/bench/exhaustive_cpu_20260807_013736/results.csv`
+- `docs/assets/bench/exhaustive_cuda_20260807_013736/results.csv`
 - `docs/assets/bench/exhaustive_mps_20260719_143706/results.csv`
 - `docs/assets/bench/exhaustive_cpu_20260719_144337/results.csv`
 - `docs/assets/bench/exhaustive_cuda_20260719_144457/results.csv`
 
-(also under `benchmarks_results/<run-id>/` locally)
+(the `_082931_reader_cache` run's CSVs were lost with a local workspace reset;
+its scorecard numbers are preserved in the generated tables above)
 
 
 Deficit floors (same-mmap peers):

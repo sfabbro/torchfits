@@ -1,7 +1,7 @@
 # Quick Start
 
-Get up and running with torchfits in minutes. Current PyPI line is **1.0.0rc5**
-(built for the PyTorch 2.13 lane); see [Changelog](changelog.md) for release notes.
+Get up and running with torchfits in minutes. Current cut is **1.2.3** (not yet released; **1.0.0rc5** is the PyPI line,
+built for the PyTorch 2.13 lane); see [Changelog](changelog.md) for release notes.
 
 ## Install
 

@@ -11,8 +11,8 @@ tables — cutouts, filters, and a shell CLI (C++ engine, vendored CFITSIO).
 Optional datasets / transforms sit on top; you do not need an ML workflow to
 benefit.
 
-**Current:** [1.0.0](https://pypi.org/project/torchfits/) — built for the
-**PyTorch 2.13 lane** (wheels are ABI-matched to the torch minor they ship
+**Current cut:** 1.2.3 (not yet released; [1.0.0rc5](https://pypi.org/project/torchfits/)
+on PyPI) — built for the **PyTorch 2.13 lane** (wheels are ABI-matched to the torch minor they ship
 for). Docs: [stable](https://astroai.github.io/torchfits/) (latest `v*` tag) ·
 [edge](https://astroai.github.io/torchfits/edge/) (`main` tip).
 

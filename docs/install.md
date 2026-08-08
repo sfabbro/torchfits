@@ -1,7 +1,7 @@
 # Installation
 
-torchfits **1.0.0rc5** is built against **PyTorch 2.13.x** — the wheel ABI lane
-the release ships for. The wheel's metadata pins that range
+torchfits **1.2.3** (current cut, not yet released) is built against
+**PyTorch 2.13.x** — the wheel ABI lane the release ships for. The wheel's metadata pins that range
 (`torch>=2.13,<2.14`), so the install command needs no torch restriction: pip
 installs or upgrades torch for you.
 

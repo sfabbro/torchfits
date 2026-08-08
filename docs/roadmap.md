@@ -3,12 +3,14 @@
 `torchfits` is FITS I/O for tensors, tables, and the shell. This page is
 forward-looking only.
 
-## Current focus (toward 1.0.0)
+## Current focus (toward 1.2.3)
 
 **`1.0.0rc5`** is on PyPI with manylinux + macOS arm64 wheels
-(`pip install "torchfits==1.0.0rc5"`). Collaborator soak is in progress; SemVer
-**`1.0.0`** waits for feedback. Scope cuts (cache merge, dataset zoo, CLI trim)
-stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not block the tag.
+(`pip install "torchfits==1.0.0rc5"`). The next cut, **`1.2.3`** (2.13 lane),
+is versioned and changelogged on `main` but **not released**: it waits on
+collaborator feedback on docs and usability. Scope cuts (cache merge, dataset
+zoo, CLI trim) stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not
+block the cut.
 
 ## Parity tiers
 
@@ -19,9 +21,10 @@ stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not block the tag.
 | Selected CFITSIO | Documented where we expose CFITSIO-backed semantics (1.x) |
 | Non-goals | Full CFITSIO API parity; WCS / sphere / HEALPix / sky simulation |
 
-## Near-term (through 1.0.0)
+## Near-term (through 1.2.3)
 
-- Soak `1.0.0rc5` with collaborators; fold feedback before SemVer `1.0.0`
+- Fold collaborator feedback on docs and usability into `main` before
+  releasing `1.2.3` (tag + wheels)
 - Keep published exhaustive scorecards honest (tensor vs table, CPU↔GPU deficits,
   CFITSIO-direct rows, MegaCam cutouts) — see [Benchmarks](benchmarks.md)
 - Docs / CLI polish that lands with 1.0 (install recipes, `header` dump quality,

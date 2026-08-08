@@ -5,6 +5,43 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — 2026-08-07
+
+Version cut on the 2.13 torch ABI lane: buffered table reads through a
+thread-local reader cache (process-wide eviction, stat-identity stale guard),
+single-open insert/update of table rows, and torch-mask predicate
+materialization. **Not yet released** — awaits collaborator docs/usability
+feedback.
+
+### Performance
+
+- Cached table reader: `read_table`/`read_batch` reuse an open CFITSIO handle
+  per thread instead of open/read/close per call; benchmark-host side effects
+  drop from ~5861 to ~750 minor faults per read after warmup; isolated
+  `narrow_1000000` `read_full` window 17.8 ms -> 6.7 ms (lab window,
+  `exhaustive_cpu_20260807_082144_reader_cache`).
+- `exhaustive_cpu_20260807_082931_reader_cache` scorecard: fitstable
+  `read_full` ratio vs astropy 1.365x -> 1.072x; `predicate_filter` on
+  `narrow_1000000` 16.60 -> 11.01 ms (1.21x -> 1.64x vs astropy); selective
+  10.68 -> 9.33 ms (1.50x -> 1.71x) via torch-gather `where=` (mmap off, lab).
+- Insert/update rows open the table once per operation (`6d2338c`).
+
+### Fixed
+
+- Read-then-mutate regression: appending rows after a cached read no longer
+  hits CFITSIO error 104 (reader cache eviction is now process-wide, covering
+  cross-thread writers).
+- Stale reads: replaced files (new inode) are re-detected via stat identity;
+  cached pread handles are dropped, never serving old data.
+- Schema metadata with nanobind >= 2.14 (dropped str->int coercion):
+  `tnull`/`bscale`/`bzero`/null values parsed from header strings instead of
+  raising `std::bad_cast` on the write path.
+
+### Docs
+
+- Scorecards refreshed from the 2026-08-07 exhaustive runs (CPU + CUDA);
+  `docs/assets/bench/` mirrors the surviving 2026-08-07 CPU/CUDA run CSVs.
+
 ## [1.0.0rc5] — 2026-08-06
 
 Fifth release candidate on the 2.13 torch ABI lane; adds prerelease-aware release
@@ -1023,7 +1060,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.2.3
 [1.0.0rc5]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/astroai/torchfits/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/astroai/torchfits/compare/v1.0.0rc2...v1.0.0rc3

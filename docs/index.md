@@ -72,7 +72,7 @@ torchfits header image.fits
 
 ## Why torchfits?
 
-torchfits is a **1.0.0rc5** prerelease — see [Changelog](changelog.md) and
+torchfits cuts **1.2.3** next (not yet released; **1.0.0rc5** is on PyPI) — see [Changelog](changelog.md) and
 [Benchmarks](benchmarks.md#performance-deficits) for scope and known lags.
 
 | | astropy / fitsio | torchfits |
