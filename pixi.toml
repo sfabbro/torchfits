@@ -129,6 +129,7 @@ bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
 # Pure-C CFITSIO (vendored) microbench + torchfits/fitsio peers on same fixtures
 bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
 bench-megacam = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_megacam_cutouts.py"
+bench-denoise = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_denoise.py"
 bench-ml = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_ml_loader.py --output benchmarks_results/ml_$(date -u +%Y%m%d_%H%M%S)/ml_results.csv --run-id ml_$(date -u +%Y%m%d_%H%M%S)"
 
 # Render the bench-all CSV into the I/O Transport x Backend markdown section
