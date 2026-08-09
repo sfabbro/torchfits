@@ -12,7 +12,9 @@ set -euo pipefail
 
 : "${TORCHFITS_DENOISE_RUN_ID:=denoise_$(date -u +%Y%m%d_%H%M%S)}"
 : "${TORCHFITS_DENOISE_MODE:=full}"
-: "${TORCHFITS_DENOISE_EPOCHS:=8}"
+# lr 1e-3 diverges after ~epoch 4 (l1 rises, CR removal drops); 4 epochs is
+# the stable maximum with the fixed LR — see docs/denoise-pipeline.md.
+: "${TORCHFITS_DENOISE_EPOCHS:=4}"
 : "${TORCHFITS_DENOISE_PAIRS:=4}"
 : "${TORCHFITS_DENOISE_PATCHES:=64}"
 : "${TORCHFITS_DENOISE_EVAL_HDUS:=8}"
