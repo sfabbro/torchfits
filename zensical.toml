@@ -32,6 +32,7 @@ nav = [
     "examples.md",
     "examples-transforms.md",
     "examples-ml.md",
+    "denoise-pipeline.md",
     "benchmarks.md",
     "parity.md",
   ]},

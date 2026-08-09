@@ -69,6 +69,24 @@ Script: [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyz
 
 ---
 
+## MegaCam cosmic-ray cleaning: Noise2Noise on real darks
+
+Train a compact U-Net that removes cosmic rays + detector noise from real CFHT
+MegaCam science frames. Any two **darks are perfect N2N twins** (zero field,
+independent noise), so the net learns the noise-to-blank map without any
+simulation or synthetic ground truth.
+
+```bash
+bash scripts/fetch_cfht_megacam_sample.sh
+bash scripts/fetch_cfht_calib_frames.sh   # 12 darks + 8 biases from CADC
+pixi run python examples/example_megacam_cr_denoise.py --mode both
+```
+
+Design rationale, rejected alternatives, measured noise statistics, results
+and stated limitations: [Denoise pipeline](denoise-pipeline.md).
+
+---
+
 ## Survey mosaic cutouts: CFHT MegaPipe
 
 Public CFHTLS D1 IQ MegaPipe stacks (~20k×21k float32, ~1.74 GB/band,

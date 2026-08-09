@@ -247,6 +247,7 @@ mmap-on and mmap-off peers are never cross-compared.
 | `bench_gpu_transports.py` | fits (GPU) | CUDA/MPS image reads, cutouts, repeated cutouts (`disk→CPU→GPU` / `disk→RAM→GPU` rows) |
 | `bench_ml_loader.py` | fits (diagnostic) | PyTorch `DataLoader` throughput (not merged into `bench-all` CSV) |
 | `bench_gpu_memory.py` | fits (diagnostic) | GPU memory/leak checks (non-gating) |
+| `bench_denoise.py` | ml (scientific) | Noise2Noise CR-cleaning on real CFHT MegaCam frames (dark→blank framing, `torchfits` loaders vs Astropy; see [denoise-pipeline.md](denoise-pipeline.md)) |
 
 ## Coverage matrix
 

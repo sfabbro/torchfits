@@ -5,6 +5,20 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- MegaCam cosmic-ray denoise example (`example_megacam_cr_denoise.py`):
+  Noise2Noise on real dark/bias calibration twins (zero-field N2N), with
+  self-normalizing pair transforms, held-out CCD evaluation, and honest
+  transfer metrics (CR suppression, star fluxes, background, noise probe).
+  Full rationale and results: [Denoise pipeline](denoise-pipeline.md).
+- `scripts/fetch_cfht_calib_frames.sh`: idempotent download of CFHT MegaCam
+  darks/biases from the CADC data service.
+- `scripts/canfar_denoise_incontainer.sh` + `scripts/launch_canfar_denoise.sh`:
+  headless Skaha job running the denoise example on a CUDA GPU.
+
 ## [1.0.0] — 2026-08-07
 
 Version cut on the 2.13 torch ABI lane: buffered table reads through a
