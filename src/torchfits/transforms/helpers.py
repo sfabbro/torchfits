@@ -10,6 +10,33 @@ def _normalize_dims(ndim: int, dim: Tuple[int, ...]) -> Tuple[int, ...]:
     return tuple(sorted({d if d >= 0 else ndim + d for d in dim}))
 
 
+def _stats_upcast(x: torch.Tensor) -> torch.Tensor:
+    """Promote integer inputs for stats reductions, like astropy does.
+
+    FITS subsets of BZERO-scaled data come back as UInt16, and torch ships
+    no reduction kernels for the uint16/32/64 line; other integer dtypes
+    reduce but produce integer stats that break downstream arithmetic
+    (min/max sentinels, division). Float32 is the stats dtype; int64 keeps
+    precision as float64.
+    """
+    if x.dtype.is_floating_point:
+        return x
+    return x.float() if x.dtype != torch.int64 else x.double()
+
+
+def _mask_fill(x: torch.Tensor, mode: str) -> torch.Tensor:
+    """Dtype-safe fill for masked positions in stats reductions."""
+    if x.dtype.is_floating_point:
+        value = {"amin": float("inf"), "amax": float("-inf"), "nan": float("nan")}[mode]
+        return torch.tensor(value, dtype=x.dtype, device=x.device)
+    if mode == "nan":
+        raise ValueError("NaN sentinel requires a floating dtype; upcast first")
+    info = torch.iinfo(x.dtype)
+    return torch.tensor(
+        info.max if mode == "amin" else info.min, dtype=x.dtype, device=x.device
+    )
+
+
 def _get_valid_mask(x: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
     """Combine an optional explicit mask with an implicit NaN mask.
 
@@ -66,12 +93,19 @@ def _median(
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Mask-aware torch.median over tuple dim."""
+    x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(
-        valid,
-        x,
-        torch.tensor(float("nan"), dtype=x.dtype, device=x.device),
-    )
+    if valid.all():
+        if x.dtype.is_floating_point:
+            med = lambda t, d, k: torch.nanmedian(t, dim=d, keepdim=k).values  # noqa: E731
+        else:
+            med = lambda t, d, k: torch.median(t, dim=d, keepdim=k).values  # noqa: E731
+        return _reduce_keepdim(x, dim, med)
+    if not x.dtype.is_floating_point:
+        # NaN sentinel needs a float dtype; masked integer medians upcast.
+        x = x.float() if x.dtype != torch.int64 else x.double()
+        valid = _get_valid_mask(x, mask)
+    x_clean = torch.where(valid, x, _mask_fill(x, "nan"))
     return _reduce_keepdim(
         x_clean, dim, lambda t, d, k: torch.nanmedian(t, dim=d, keepdim=k).values
     )
@@ -83,12 +117,9 @@ def _amin(
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Mask-aware torch.amin over tuple dim."""
+    x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(
-        valid,
-        x,
-        torch.tensor(float("inf"), dtype=x.dtype, device=x.device),
-    )
+    x_clean = torch.where(valid, x, _mask_fill(x, "amin"))
     return _reduce_keepdim(
         x_clean, dim, lambda t, d, k: torch.amin(t, dim=d, keepdim=k)
     )
@@ -100,12 +131,9 @@ def _amax(
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Mask-aware torch.amax over tuple dim."""
+    x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(
-        valid,
-        x,
-        torch.tensor(float("-inf"), dtype=x.dtype, device=x.device),
-    )
+    x_clean = torch.where(valid, x, _mask_fill(x, "amax"))
     return _reduce_keepdim(
         x_clean, dim, lambda t, d, k: torch.amax(t, dim=d, keepdim=k)
     )
@@ -118,12 +146,12 @@ def _quantile(
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Mask-aware torch.quantile over tuple dim."""
+    x = _stats_upcast(x)
+    if not x.dtype.is_floating_point:
+        # torch.quantile only supports float dtypes.
+        x = x.float() if x.dtype != torch.int64 else x.double()
     valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(
-        valid,
-        x,
-        torch.tensor(float("nan"), dtype=x.dtype, device=x.device),
-    )
+    x_clean = torch.where(valid, x, _mask_fill(x, "nan"))
     return _reduce_keepdim(
         x_clean, dim, lambda t, d, k: torch.nanquantile(t, q, dim=d, keepdim=k)
     )
@@ -197,6 +225,7 @@ def estimate_background(
         MAD × 1.4826 ≈ standard deviation of the background.
     """
     with torch.no_grad():
+        x = _stats_upcast(x)
         med = _median(x, dim, mask=mask)
         mad = _median(torch.abs(x - med), dim, mask=mask)
         std_approx = mad.mul_(1.4826)

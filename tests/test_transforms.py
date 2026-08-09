@@ -843,6 +843,74 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+class TestIntegerInputDtypes:
+    """Stats transforms must accept reader dtypes (UInt16 subsets etc.).
+
+    ``read_subset`` returns BZERO-scaled FITS data as UInt16, and torch has
+    no reduction kernels for the uint16/32/64 line; int dtypes must also
+    not trip the inf/NaN sentinels.
+    """
+
+    def test_minmax_uint16(self) -> None:
+        if not hasattr(torch, "uint16"):
+            pytest.skip("torch.uint16 unavailable")
+        x = torch.tensor([[3, 30000, 7], [9, 1, 20000]], dtype=torch.uint16).unsqueeze(
+            0
+        )
+        out = MinMaxNormalize()(x)
+        assert out.dtype == torch.float32
+        assert out.min() >= -1e-6
+        assert out.max() <= 1.0 + 1e-6
+        assert out[0, 0, 1].item() > 0.99
+
+    def test_percentile_int32(self) -> None:
+        x = torch.randint(0, 1000, (2, 16, 16), dtype=torch.int32)
+        out = PercentileClipNormalize(lower_pct=5.0, upper_pct=95.0)(x)
+        assert out.dtype == torch.float32
+        assert out.min() >= -1e-6
+        assert out.max() <= 1.0 + 1e-6
+
+    def test_robust_normalize_int64(self) -> None:
+        x = torch.randint(0, 1000, (2, 16, 16), dtype=torch.int64)
+        out = RobustNormalize()(x)
+        assert out.dtype == torch.float64  # int64 keeps precision as f64
+
+    def test_sigma_clip_int32_promotes_float(self) -> None:
+        x = torch.full((2, 8, 8), 50, dtype=torch.int32)
+        x[0, 0, 0] = 1000
+        out = SigmaClip(n_sigma=3.0, max_iter=5)(x)
+        assert out.dtype == torch.float32
+        assert out[0, 0, 0].item() < 100.0
+
+    def test_median_fill_int32(self) -> None:
+        x = torch.full((2, 8, 8), 50, dtype=torch.int32)
+        x[0, 0, 0] = 1000
+        out = SigmaClip(n_sigma=3.0, max_iter=5, fill="median")(x)
+        assert out.dtype == torch.float32
+        assert abs(out[0, 0, 0].item() - 50.0) < 1.0
+
+    def test_masked_int_minmax(self) -> None:
+        x = torch.tensor([[5, 200, 300]], dtype=torch.int16).unsqueeze(0)
+        mask = torch.tensor([[[True, True, False]]])
+        out = MinMaxNormalize()(x, mask=mask)
+        assert out.dtype == torch.float32
+        # Masked pixel excluded from stats: valid range [5, 200] -> [0, 1],
+        # the 300 stays outside the normalized range (transform doesn't clip).
+        assert abs(out[0, 0, 0].item() - 0.0) < 1e-5
+        assert abs(out[0, 0, 1].item() - 1.0) < 1e-5
+        assert out[0, 0, 2].item() > 1.0
+
+    def test_estimate_background_uint16(self) -> None:
+        if not hasattr(torch, "uint16"):
+            pytest.skip("torch.uint16 unavailable")
+        x = torch.tensor([[10, 11, 12, 5000]], dtype=torch.uint16).unsqueeze(0)
+        from torchfits.transforms.helpers import estimate_background
+
+        med, std = estimate_background(x, dim=(-2, -1))
+        assert med.dtype == torch.float32
+        assert med[0, 0, 0].item() > 10.0  # median of the background columns
+
+
 class TestSigmaClip:
     def test_removes_outliers(self) -> None:
         x = torch.ones(10, 10) * 5.0

@@ -69,6 +69,10 @@ class SigmaClip(FITSTransform):
             dims = _normalize_dims(ndim, self.dim)
 
         with torch.no_grad():
+            # Integer images promote to float (like astropy.sigma_clip);
+            # UInt16/32/64 additionally lack reduction kernels in torch.
+            if not x.dtype.is_floating_point:
+                x = x.float() if x.dtype != torch.int64 else x.double()
             # Combine user mask with NaN mask if provided.
             if mask is not None:
                 internal_mask = _get_valid_mask(x, mask)
@@ -137,13 +141,10 @@ class SigmaClip(FITSTransform):
                     cnt = mask_f.sum()
                     fill_val = masked_buf.sum() / max(cnt.item(), 1.0)
             else:
-                # Median fill: use the existing _median helper
+                # Median fill: use the existing _median helper; masked
+                # positions are excluded by the mask (no inf sentinel).
                 fill_val = _median(
-                    torch.where(
-                        internal_mask,
-                        x,
-                        torch.tensor(float("inf"), device=x.device, dtype=x.dtype),
-                    ),
+                    x,
                     dims if dims else (-1,),
                     mask=internal_mask,
                 )
