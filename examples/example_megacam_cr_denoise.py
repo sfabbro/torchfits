@@ -20,7 +20,7 @@ on the real science frames of ``scripts/fetch_cfht_megacam_sample.sh``:
 - training pairs: ``FitsCutoutDataset`` over two dark MEFs (shared cutout
   coords) + ``StackDataset`` + ``make_loader``, zero-mean normalized with
   pair-global median/MAD (the Noise2Noise convention)
-- CCD split: train on CCDs 0..29, hold out CCDs 30..39 of the same darks
+- CCD split: train on CCDs 1..30, hold out CCDs 31..40 of the same darks
   for the convergence check (the net must not beat the noise floor)
 - transfer metrics on science (no ground truth exists — every number is
   honest): CR-like fraction, sharp-outlier (CR+hot) fraction, faint-source
@@ -33,7 +33,8 @@ on the real science frames of ``scripts/fetch_cfht_megacam_sample.sh``:
 Data: CFHT MegaCam, 40 CCDs per MEF, 4644x2112 int16, ~230 MB / file.
 Skips cleanly when calibration frames are missing.
 
-Runs in ``TORCHFITS_EXAMPLE_FAST=1`` (CI) as a one-epoch, few-patch smoke.
+Runs in ``TORCHFITS_EXAMPLE_FAST=1`` (CI) as a one-epoch, few-patch smoke
+with bounded 1024x1024 eval/probe windows.
 """
 
 from __future__ import annotations
@@ -235,7 +236,7 @@ def _bg_median(x: torch.Tensor) -> float:
 
 
 def _star_fluxes(x: torch.Tensor) -> list[tuple[int, int, float]]:
-    """Bright-star apertures: 5x5 local maxima above 12 sigma over the box
+    """Bright-star apertures: 5x5 local maxima above 10 sigma over the box
     background (noise peaks at 5 sigma are background-dominated and would
     hide real flux loss). Returns ``(y, x, flux)``; flux of the same
     positions is measured on the cleaned image for the before/after ratio."""
@@ -353,6 +354,7 @@ def train_blank(
     transform: SelfNorm,
     device: str,
     seed: int,
+    tag: str,
 ) -> tuple[nn.Module, dict[str, Any]]:
     train_hdus = list(range(1, 31))
     val_hdus = list(range(31, 41))
@@ -408,7 +410,7 @@ def train_blank(
         "params": sum(p.numel() for p in net.parameters()),
     }
     print(
-        f"  held-out dark CCDs: val rms={stats['val_rms']:.3f} of target "
+        f"  held-out {tag} CCDs: val rms={stats['val_rms']:.3f} of target "
         f"std={y_std:.3f} (blank explains {100 * stats['val_blank_explained']:.1f}% "
         "of the variance — the rest is unpredictable noise)",
         flush=True,
@@ -455,7 +457,14 @@ def eval_science(
     full_hdus: int,
     other_hdus: int,
     device: str,
+    side: int = 0,
 ) -> list[dict[str, Any]]:
+    """Per-CCD metrics on real science frames.
+
+    ``side > 0`` bounds the evaluated window (FAST mode): the full CCD is
+    still read, but metrics are measured on a ``side``-square window, keeping
+    the smoke cheap while exercising the exact same pipeline path.
+    """
     rows: list[dict[str, Any]] = []
     _ndim, shape = torchfits.read_shape(str(files[0]), 1)
     x_lim, y_lim = int(shape[-1]), int(shape[-2])
@@ -464,6 +473,8 @@ def eval_science(
         for hdu in range(1, n_hdus + 1):
             t0 = time.monotonic()
             ccd = torchfits.read_subset(str(path), hdu, 0, 0, x_lim, y_lim).float()
+            if side > 0:
+                ccd = ccd[: min(side, ccd.shape[0]), : min(side, ccd.shape[1])]
             m = _ccd_metrics(net, ccd, transform, device)
             m.update(
                 {
@@ -493,9 +504,12 @@ def noise_injection_probe(
     device: str,
     size: int = 0,
 ) -> dict[str, Any]:
-    """science + (dark_j - dark_k) must come back to science: real noise
-    of the same statistics the net was trained on, on a real field.
-    ``size > 0`` probes a square window instead of the full CCD (FAST mode)."""
+    """science + (dark_j - dark_k) must come back to science.
+
+    Both branches are probed with the same dark-difference noise: dark
+    statistics are at least as harsh as bias statistics, so this is the
+    uniform, harder test for either net. ``size > 0`` probes a square
+    window instead of the full CCD (FAST mode)."""
     _ndim, shape = torchfits.read_shape(str(science), hdu)
     x_lim, y_lim = int(shape[-1]), int(shape[-2])
     if size > 0:
@@ -663,6 +677,7 @@ def main() -> int:
         args.full_hdus = min(args.full_hdus, 1)
         args.eval_hdus = min(args.eval_hdus, 1)
         args.probe_size = min(args.probe_size or 2**31, 1024)
+    eval_side = 1024 if _fast_mode() else 0
     darks = sorted((args.calib_dir / "darks").glob("*.fits.fz"))
     biases = sorted((args.calib_dir / "biases").glob("*.fits.fz"))
     sciences = sorted((args.science_dir).glob("*o.fits.fz"))
@@ -701,6 +716,7 @@ def main() -> int:
                 transform=transform,
                 device=device,
                 seed=args.seed,
+                tag=tag,
             )
             print(f"[{tag}] transfer evaluation on science", flush=True)
             rows = eval_science(
@@ -710,6 +726,7 @@ def main() -> int:
                 args.full_hdus,
                 args.eval_hdus,
                 device,
+                side=eval_side,
             )
             probe = noise_injection_probe(
                 net, transform, darks, sciences[0], 1, device, size=args.probe_size

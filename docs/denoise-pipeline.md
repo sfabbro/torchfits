@@ -114,9 +114,10 @@ flowchart LR
 3. **CCD split**: train on CCDs 1–30 of the dark files, hold out CCDs 31–40.
    The held-out evaluation confirms convergence: the trained net predicts the
    blank, leaving only unpredictable noise (see results below).
-4. **Noise-injection probe**: adding `(dark_j − dark_k)` — real noise of the
-   training statistics — to a science CCD must come back clean. This is a
-   fully real-data transfer test with no synthetic field.
+4. **Noise-injection probe**: adding `(dark_j − dark_k)` — real noise of
+   dark-difference statistics, at least as harsh as the bias net's training
+   noise — to a science CCD must come back clean. This is a fully real-data
+   transfer test with no synthetic field.
 
 ## Results
 
@@ -134,7 +135,7 @@ Two nets are trained and compared: **darks** (field + read noise + CRs) and
 | Background median (ADU) | 1096–1356 | preserved (±1) | drift up to −33 (CCDs 3, 7, 8) | sky level preserved by self-normalization |
 | Bright-star flux ratio (10σ+ stars) | 1.0 | 0.80–0.98 | 0.80–0.96 | real flux loss ~10% at bright-star apertures |
 | Injected-star recovery (known flux) | 1.0 | 0.27 | 0.66 | appendix; varies run-to-run (0.12–0.84) |
-| Injected-noise residual σ (probe) | 57.5 | ≈ baseline 35.3 | ≈ baseline 22.3 | real training-statistics noise fully suppressed |
+| Injected-noise residual σ (probe) | 57.5 | ≈ baseline 35.3 | ≈ baseline 22.3 | both nets probed with the same dark-difference noise (the harder, uniform test); each comes back to its own baseline |
 
 Interpretation, stated plainly:
 
@@ -153,12 +154,12 @@ Interpretation, stated plainly:
    as out-of-distribution inputs; its response there is controlled
    extrapolation, which is exactly what the metrics above measure rather than
    assume.
-4. **The noise-injection probe passes for both nets**: injected real noise of
-   the training statistics (σ 57.5) comes back to each net's own baseline
-   level (35.3 dark / 22.3 bias) — the net treats it exactly like the noise
-   it was trained on. The bias net is the more aggressive cleaner on this
-   run (lower probe floor, more injected-star flux kept); the dark net
-   preserves the sky better (±1 vs −33 ADU drift).
+4. **The noise-injection probe passes for both nets**: both are probed with
+   the same injected dark-difference noise (σ 57.5 — at least as harsh as
+   either net's training statistics), and each brings it back to its own
+   baseline level (35.3 dark / 22.3 bias). The bias net is the more
+   aggressive cleaner on this run (lower probe floor, more injected-star
+   flux kept); the dark net preserves the sky better (±1 vs −33 ADU drift).
 5. **The earlier "~1000×" claim was withdrawn**: it came from a run whose
    evaluation counted border pixels (conv-padding artifacts once the image is
    flat) as CRs and whose "star ratio" detected background-dominated noise

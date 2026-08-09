@@ -79,8 +79,9 @@ def _run_example(name: str) -> tuple[bool, str]:
     env = os.environ.copy()
     if os.environ.get("GITHUB_ACTIONS"):
         env["TORCHFITS_EXAMPLE_FAST"] = "1"
-    # The denoise example trains a U-Net + evaluates full CCDs; the smoke
-    # path (1 epoch, 1 CCD, 1024x1024 probe) runs it in well under a minute.
+    # The denoise example trains a U-Net + evaluates CCDs; the smoke path
+    # (1 epoch, 1 CCD, bounded 1024x1024 eval + probe windows) runs in
+    # well under a minute even on single-threaded torch.
     if name == "example_megacam_cr_denoise.py":
         env["TORCHFITS_EXAMPLE_FAST"] = "1"
     # Keep the Galaxy Zoo smoke path bounded: full DEFAULT_GZ_N=200 cutout
