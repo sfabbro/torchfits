@@ -5,7 +5,13 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-08-09
+
+Version cut on the 2.13 torch ABI lane: buffered table reads through a
+thread-local reader cache (process-wide eviction, stat-identity stale guard),
+single-open insert/update of table rows, and torch-mask predicate
+materialization. Final pre-release checks complete; awaiting collaborator
+docs/usability soak before the tag.
 
 ### Added
 
@@ -19,17 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/canfar_denoise_incontainer.sh` + `scripts/launch_canfar_denoise.sh`:
   headless Skaha job running the denoise example on a CUDA GPU (defaults to
   the 4-epoch setting; longer fixed-LR runs diverge — see the pipeline page).
-- Denoise example now writes a before/after gallery figure
+- Denoise example writes a before/after gallery figure
   (`examples/output/megacam_cr_denoise_dark.png`, rendered in the ML guide
   and the pipeline page).
-
-## [1.0.0] — 2026-08-07
-
-Version cut on the 2.13 torch ABI lane: buffered table reads through a
-thread-local reader cache (process-wide eviction, stat-identity stale guard),
-single-open insert/update of table rows, and torch-mask predicate
-materialization. **Not yet released** — awaits collaborator docs/usability
-feedback.
+- Exemplary science-pipeline benchmark (`bench_science_pipeline.py`: robust
+  sigma-clipped coadd + ML cutout serving, torchfits vs astropy) with
+  per-stage code-lines rows (`bench_contract.code_lines`); `bench-denoise`
+  pixi task for the MegaCam CR-cleaning benchmark.
 
 ### Performance
 
@@ -42,6 +44,11 @@ feedback.
   `read_full` ratio vs astropy 1.365x -> 1.072x; `predicate_filter` on
   `narrow_1000000` 16.60 -> 11.01 ms (1.21x -> 1.64x vs astropy); selective
   10.68 -> 9.33 ms (1.50x -> 1.71x) via torch-gather `where=` (mmap off, lab).
+  The `_082144` / `_082931` run CSVs were lost in a local workspace reset
+  (noted in `benchmarks.md`); the numbers survive in the benchmarks page's
+  generated tables, and the reader-cache direction was spot-verified on
+  current HEAD 2026-08-09 (`narrow_1000000` `read_full`: torchfits 7.9 ms vs
+  astropy 16.5 ms, mmap on).
 - Insert/update rows open the table once per operation (`6d2338c`).
 
 ### Fixed
@@ -54,11 +61,18 @@ feedback.
 - Schema metadata with nanobind >= 2.14 (dropped str->int coercion):
   `tnull`/`bscale`/`bzero`/null values parsed from header strings instead of
   raising `std::bad_cast` on the write path.
+- Stats transforms accept integer dtypes (BZERO-scaled `read_subset` results
+  come back as UInt16, which torch cannot reduce): helpers upcast to float32
+  (int64 keeps precision as float64), masked fills use dtype-safe sentinels,
+  and `SigmaClip` promotes integer inputs instead of raising.
 
 ### Docs
 
 - Scorecards refreshed from the 2026-08-07 exhaustive runs (CPU + CUDA);
   `docs/assets/bench/` mirrors the surviving 2026-08-07 CPU/CUDA run CSVs.
+- Denoise pipeline page with honest dark-vs-bias results and stated
+  limitations; MegaCam CR-cleaning section in the ML guide; examples index
+  row.
 
 ## [1.0.0rc5] — 2026-08-06
 
@@ -1078,7 +1092,6 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.0.0
 [1.0.0rc5]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/astroai/torchfits/compare/v1.0.0rc3...v1.0.0rc4
