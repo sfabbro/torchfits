@@ -121,18 +121,18 @@ flowchart LR
 ## Results
 
 Representative run: CANFAR GPU (`denoise_20260809_145148`, 4 epochs, lr
-1e-3, 4 pairs × 64 patches), science file `2366188o.fits.fz`, CCDs 1–9
+1e-3, 4 pairs × 64 patches), science file `2366188o.fits.fz`, CCDs 1–40
 (full tables are written to the run's `dark_metrics.md` / `bias_metrics.md`).
 Two nets are trained and compared: **darks** (field + read noise + CRs) and
 **biases** (read noise only, the 0 s-exposure control).
 
 | Metric | Before | Dark net | Bias net | Note |
 |---|---|---|---|---|
-| CR-like fraction | 1.0–2.8e-03 | 3–7e-05 (CCDs 1–8) | 5e-05–5e-04 | residual count is dominated by net artifacts at star cores, not leftover CRs |
-| **CR removed** (at known CR positions) | — | **85.6–99.4%** (median ~98.5%) | **63.8–95.1%** (median ~92%) | the honest suppression metric |
-| Sharp outliers (CR + hot pixels) | ~5e-04–1.4e-03 | ~3–5e-05 (CCDs 1–8) | ~8e-05–5e-04 | 10–30× down |
+| CR-like fraction | 1.0–2.8e-03 | 3–7e-05 (most CCDs) | 5e-05–5e-04 | residual count is dominated by net artifacts at star cores, not leftover CRs |
+| **CR removed** (at known CR positions) | — | **85.6–99.5%** (median 98.8%) | **63.8–97.4%** (median 89.5%) | the honest suppression metric |
+| Sharp outliers (CR + hot pixels) | ~5e-04–1.4e-03 | ~1e-05–1e-03 | ~5e-05–1e-03 | 10–30× down on most CCDs; hdu 09 is a worst case for both nets |
 | Background median (ADU) | 1096–1356 | preserved (±1) | drift up to −33 (CCDs 3, 7, 8) | sky level preserved by self-normalization |
-| Bright-star flux ratio (10σ+ stars) | 1.0 | 0.80–0.92 | 0.86–0.92 | real flux loss ~10% at bright-star apertures |
+| Bright-star flux ratio (10σ+ stars) | 1.0 | 0.80–0.98 | 0.80–0.96 | real flux loss ~10% at bright-star apertures |
 | Injected-star recovery (known flux) | 1.0 | 0.27 | 0.66 | appendix; varies run-to-run (0.12–0.84) |
 | Injected-noise residual σ (probe) | 57.5 | ≈ baseline 35.3 | ≈ baseline 22.3 | real training-statistics noise fully suppressed |
 
@@ -148,7 +148,7 @@ Interpretation, stated plainly:
    means the net predicts the blank; the background level comes back
    untouched, ±1 ADU for the dark net).
 3. **Star flux is attenuated, not destroyed**: bright-star aperture ratios
-   land at 0.80–0.92, and the injected-Moffat appendix quantifies recovery
+   land at 0.80–0.98, and the injected-Moffat appendix quantifies recovery
    against *known* flux. A net trained only on zero-field frames sees stars
    as out-of-distribution inputs; its response there is controlled
    extrapolation, which is exactly what the metrics above measure rather than
@@ -176,7 +176,7 @@ the GPU run above ran 1.57→1.31→1.31→1.40 with probe baseline 35.3, and th
 original local run (whose table this page first published) ran
 1.62→1.34→1.33→1.30 with probe baseline 18.4 and injected-star recovery
 0.84. **The qualitative findings are stable across all runs** (CR removal at
-known positions 85–99%, probe residual ≈ baseline, star ratios 0.80–0.93,
+known positions 85–99%, probe residual ≈ baseline, star ratios 0.80–0.98,
 background preserved for the dark net) — the exact decimal places are not.
 4 epochs / lr 1e-3 is the safe default; longer runs diverge (measured:
 l1 1.29 at epoch 4 → 1.75 at epoch 8, CR removal 98.8% → 87%).
@@ -236,7 +236,7 @@ TORCHFITS_DENOISE_MODE=full bash scripts/launch_canfar_denoise.sh
 
 ## Limitations (stated, not hidden)
 
-- **Star flux loss is real**: bright-star aperture ratios are 0.80–0.92 and
+- **Star flux loss is real**: bright-star aperture ratios are 0.80–0.98 and
   the injected-Moffat recovery is 0.12–0.84 across runs (dark net) / 0.37–0.66
   (bias net). A net trained on zero-field frames has no signal to preserve;
   its behaviour on stars is controlled extrapolation, measured — not
@@ -253,7 +253,7 @@ TORCHFITS_DENOISE_MODE=full bash scripts/launch_canfar_denoise.sh
   the demo mitigates by using same-era calibration (2019–2020).
 - Which net is "more aggressive" flips between runs: on the GPU run above
   the bias net cleaned more (probe floor 22.3) but let the sky drift (up to
-  −33 ADU) and removed fewer CRs (median 92% vs 98.5%); on the original
+  −33 ADU) and removed fewer CRs (median 89.5% vs 98.8%); on the original
   local run the ordering was reversed. The dark net preserved the background
   (±1 ADU) in every run — the balanced choice.
 - CRs *inside* extended sources or saturated cores are not perfectly
