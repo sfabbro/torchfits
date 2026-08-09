@@ -168,6 +168,8 @@ The `--inject-stars` appendix (off by default) quantifies recovery on known
 synthetic Moffat stars placed on a real CCD — the only synthetic element in
 the whole demo, and it is validation-only.
 
+![MegaCam CR cleaning: before vs after (dark net)](assets/gallery/megacam_cr_denoise.png)
+
 ## torchfits API usage
 
 The whole pipeline composes from existing public API — no new abstraction was

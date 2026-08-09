@@ -247,6 +247,7 @@ Recipes: [CLI recipes](cli-recipes.md). Shell demo:
 | [`example_make_loader_vs_dataloader.py`](published-examples/example_make_loader_vs_dataloader.py) | `make_loader` vs plain `DataLoader` |
 | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | GZ1 labels + Legacy Survey FITS cutouts → Dataset → tiny CNN ([ML guide](examples-ml.md)) |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | MegaPipe mosaic cutouts + Lupton collage + timing ([ML guide](examples-ml.md)) |
+| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | Noise2Noise CR cleaning on real MegaCam darks; honest transfer metrics ([ML guide](examples-ml.md), [denoise pipeline](denoise-pipeline.md)) |
 | [`example_image_dataset.py`](published-examples/example_image_dataset.py) | Minimal `FitsImageDataset` + `make_loader` ([ML guide](examples-ml.md)) |
 | [`example_data_catalogs.py`](published-examples/example_data_catalogs.py) | Table + cutout datasets ([ML guide](examples-ml.md)) |
 

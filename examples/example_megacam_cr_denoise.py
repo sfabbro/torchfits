@@ -578,6 +578,56 @@ def _write_products(out_dir: Path, rows: list[dict[str, Any]], tag: str) -> None
     print(f"wrote {out_dir / (tag + '_metrics.md')}")
 
 
+def _render_gallery(
+    net: nn.Module,
+    transform: SelfNorm,
+    science: Path,
+    hdu: int,
+    device: str,
+    tag: str,
+) -> Path | None:
+    """Before/after figure on the CR-richest 512x512 window of a science CCD.
+
+    Written to examples/output/megacam_cr_denoise_<tag>.png (the docs
+    gallery convention); skipped when matplotlib is unavailable. FAST mode
+    skips the full-CCD scan, so the smoke path stays bounded.
+    """
+    if _fast_mode():
+        return None
+    try:
+        from examples._plotting import save_image_before_after
+    except ImportError:
+        print("skipping gallery figure: matplotlib not installed")
+        return None
+    _ndim, shape = torchfits.read_shape(str(science), hdu)
+    x_lim, y_lim = int(shape[-1]), int(shape[-2])
+    ccd = torchfits.read_subset(str(science), hdu, 0, 0, x_lim, y_lim).float()
+    mask = _cr_mask(ccd).bool()
+    wins = 512
+    best_x, best_y, best_n = 0, 0, 0
+    for y0 in range(_MARGIN, y_lim - wins, wins // 2):
+        for x0 in range(_MARGIN, x_lim - wins, wins // 2):
+            n = int(mask[y0 : y0 + wins, x0 : x0 + wins].sum().item())
+            if n > best_n:
+                best_x, best_y, best_n = x0, y0, n
+    if best_n == 0:
+        best_x, best_y = x_lim // 4, y_lim // 4
+    raw = ccd[best_y : best_y + wins, best_x : best_x + wins]
+    cleaned = _clean_ccd(net, raw, transform, device)
+    path = save_image_before_after(
+        raw,
+        cleaned,
+        f"megacam_cr_denoise_{tag}",
+        titles=(
+            f"{science.name} hdu {hdu} (CRs before)",
+            f"{tag} net (CRs after)",
+        ),
+    )
+    if path is not None:
+        print(f"wrote {path}", flush=True)
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--calib-dir", type=Path, default=megacam_dir() / "calib")
@@ -668,6 +718,10 @@ def main() -> int:
             if args.inject_stars:
                 extra.update(_inject_stars(net, transform, sciences[0], 1, device))
             _write_products(args.out_dir, rows, tag)
+            if rows:
+                _render_gallery(
+                    net, transform, sciences[0], rows[0]["hdu"], device, tag
+                )
             summary = {
                 "tag": tag,
                 "stats": stats,

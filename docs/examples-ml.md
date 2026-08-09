@@ -80,7 +80,14 @@ simulation or synthetic ground truth.
 bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh   # 12 darks + 8 biases from CADC
 pixi run python examples/example_megacam_cr_denoise.py --mode both
+# copy examples/output/megacam_cr_denoise_dark.png → docs/assets/gallery/ when refreshing
 ```
+
+The example writes per-CCD metrics (`cr removed` measured at known CR
+positions), a noise-injection probe, and a before/after figure of the
+CR-richest science window:
+
+![MegaCam CR cleaning: before vs after (dark net)](assets/gallery/megacam_cr_denoise.png)
 
 Design rationale, rejected alternatives, measured noise statistics, results
 and stated limitations: [Denoise pipeline](denoise-pipeline.md).

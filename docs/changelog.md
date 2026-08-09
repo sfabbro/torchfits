@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_cfht_calib_frames.sh`: idempotent download of CFHT MegaCam
   darks/biases from the CADC data service.
 - `scripts/canfar_denoise_incontainer.sh` + `scripts/launch_canfar_denoise.sh`:
-  headless Skaha job running the denoise example on a CUDA GPU.
+  headless Skaha job running the denoise example on a CUDA GPU (defaults to
+  the 4-epoch setting; longer fixed-LR runs diverge — see the pipeline page).
+- Denoise example now writes a before/after gallery figure
+  (`examples/output/megacam_cr_denoise_dark.png`, rendered in the ML guide
+  and the pipeline page).
 
 ## [1.0.0] — 2026-08-07
 
