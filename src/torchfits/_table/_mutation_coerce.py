@@ -214,7 +214,7 @@ def _normalize_mutation_rows(
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
     complex_codes: dict[str, str] = {}
-    for col_name in columns:
+    for col_name in input_columns:
         tform = tform_map.get(col_name, "")
         if not tform:
             continue
@@ -275,35 +275,19 @@ def _normalize_mutation_rows(
         return {}, 0
 
     for col_name in deferred_defaults:
+        tform = tform_map.get(col_name, "")
         default_value = _default_table_column_values(
             col_name,
-            tform_map.get(col_name, ""),
+            tform,
             expected_rows,
             tnull=tnull_map.get(col_name),
         )
-        if col_name in vla_codes:
-            normalized[col_name] = _coerce_table_vla_values(
-                col_name,
-                default_value,
-                vla_codes[col_name],
-                expected_rows=expected_rows,
-            )
-        elif col_name in string_widths:
-            normalized[col_name] = _coerce_table_string_values(
-                col_name, default_value, expected_rows=expected_rows
-            )
-        elif col_name in complex_codes:
-            normalized[col_name] = _coerce_table_complex_values(
-                col_name,
-                default_value,
-                complex_codes[col_name],
-                expected_rows=expected_rows,
-                allow_2d=True,
-            )
-        else:
-            normalized[col_name] = _coerce_table_column_array(
-                col_name, default_value, expected_rows=expected_rows, allow_2d=True
-            )
+        normalized[col_name] = _normalize_column_values_for_format(
+            col_name,
+            default_value,
+            tform,
+            expected_rows,
+        )
 
     return normalized, expected_rows
 
