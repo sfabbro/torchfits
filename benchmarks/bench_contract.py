@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import csv
 import ast
+import inspect
 import json
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def write_json(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -143,6 +144,29 @@ def _extract_n_points(row: dict[str, Any]) -> int | None:
     if j < 0:
         return None
     return _to_int(case_id[i + len(marker) : j])
+
+
+def code_lines(fn: Callable[..., Any]) -> tuple[int, list[str]]:
+    """Count implementation lines and collect imports of a module-level fn.
+
+    Blank lines, comments, and decorators are excluded; the ``def`` line is
+    counted. Imports are the ``import``/``from`` statements present in the
+    function's source text.
+    """
+    try:
+        source = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return 0, []
+    lines: list[str] = []
+    imports: list[str] = []
+    for raw in source.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "@")):
+            continue
+        lines.append(line)
+        if line.startswith(("import ", "from ")):
+            imports.append(line)
+    return len(lines), imports
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> None:
