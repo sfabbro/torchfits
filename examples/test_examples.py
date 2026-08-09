@@ -79,6 +79,10 @@ def _run_example(name: str) -> tuple[bool, str]:
     env = os.environ.copy()
     if os.environ.get("GITHUB_ACTIONS"):
         env["TORCHFITS_EXAMPLE_FAST"] = "1"
+    # The denoise example trains a U-Net + evaluates full CCDs; the smoke
+    # path (1 epoch, 1 CCD, 1024x1024 probe) runs it in well under a minute.
+    if name == "example_megacam_cr_denoise.py":
+        env["TORCHFITS_EXAMPLE_FAST"] = "1"
     # Keep the Galaxy Zoo smoke path bounded: full DEFAULT_GZ_N=200 cutout
     # downloads routinely exceed the runner timeout on a cold cache.
     if name == "example_ml_galaxyzoo_legacy.py":
