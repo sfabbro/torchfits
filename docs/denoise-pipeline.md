@@ -132,7 +132,7 @@ Run locally (CPU) and on CANFAR (GPU); representative numbers, science file
 | **CR removed** (at known CR positions) | — | **84.5–96.8%** | **95.9–98.8%** | the honest suppression metric |
 | Sharp outliers (CR + hot pixels) | ~5e-04–1.3e-03 | ~5e-05–7e-04 | ~3e-05–5e-05 | 10–30× down |
 | Background median (ADU) | 1138–1356 | preserved (±15 worst case) | preserved (±3) | sky level preserved by self-normalization |
-| Bright-star flux ratio (12σ+ stars) | 1.0 | 0.87–0.93 | 0.81–0.92 | real flux loss ~10% at bright-star apertures |
+| Bright-star flux ratio (10σ+ stars) | 1.0 | 0.87–0.93 | 0.81–0.92 | real flux loss ~10% at bright-star apertures |
 | Injected-star recovery (known flux) | 1.0 | 0.84 | 0.37 | appendix; the bias net is more aggressive |
 | Injected-noise residual σ (probe) | 57.5 | ≈ baseline 18.4 | ≈ baseline 33.5 | real training-statistics noise fully suppressed |
 
@@ -160,7 +160,7 @@ Interpretation, stated plainly:
 5. **The earlier "~1000×" claim was withdrawn**: it came from a run whose
    evaluation counted border pixels (conv-padding artifacts once the image is
    flat) as CRs and whose "star ratio" detected background-dominated noise
-   maxima at 5σ. Both metrics were fixed (interior margin; 12σ bright-star
+   maxima at 5σ. Both metrics were fixed (interior margin; 10σ bright-star
    apertures; removal measured at known positions) before the numbers above
    were produced.
 
