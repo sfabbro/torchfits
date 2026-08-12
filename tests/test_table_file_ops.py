@@ -47,6 +47,7 @@ def test_update_rows_mmap_forced_failure_not_swallowed(tmp_path):
     torchfits.table.write(path, {"A": np.array([1, 2, 3])})
 
     import torchfits._C as cpp
+
     original_mmap = cpp.update_fits_table_rows_mmap
 
     def mock_mmap(*args, **kwargs):
