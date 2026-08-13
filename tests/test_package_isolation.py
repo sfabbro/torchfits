@@ -66,8 +66,20 @@ def test_native_torch_abi_range_is_consistent() -> None:
     wheel_workflow = (
         REPO_ROOT / ".github" / "workflows" / "build_wheels.yml"
     ).read_text(encoding="utf-8")
-    assert "CIBW_BUILD_FRONTEND" in wheel_workflow
-    assert "--no-build-isolation" in wheel_workflow
+    cibw = pyproject.get("tool", {}).get("cibuildwheel", {})
+    frontend = cibw.get("build-frontend")
+    assert frontend == {"name": "pip", "args": ["--no-build-isolation"]} or (
+        isinstance(frontend, str) and "no-build-isolation" in frontend
+    )
+    assert "cp314-*" in str(cibw.get("build", ""))
+    assert "cp31?t-*" in str(cibw.get("skip", ""))
+    assert "ubuntu-24.04-arm" in wheel_workflow
+    assert "pypa/cibuildwheel@v4.1.1" in wheel_workflow
+    # PyPI must not get an sdist — unmatched CPython/arch would compile.
+    assert "pattern: cibw-wheels-*" in wheel_workflow
+    cmake_args = " ".join(pyproject["tool"]["scikit-build"]["cmake"]["args"])
+    assert "CONDA_PREFIX" not in cmake_args
+    assert "-DUSE_CUDA=OFF" in cmake_args
     assert (REPO_ROOT / "constraints-wheel.txt").is_file()
     assert f"torch{lane_spec}" in (REPO_ROOT / "constraints-wheel.txt").read_text(
         encoding="utf-8"
@@ -78,6 +90,10 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert "TORCHFITS_BUILD_TORCH_VERSION" in cmake
     assert 'TORCHFITS_TORCH_ABI="${TORCHFITS_TORCH_ABI}"' in cmake
     assert "matching_abi" in bindings
+    assert "pip should not compile" in cmake
+    assert (REPO_ROOT / "scripts" / "cibw_before_build.sh").is_file()
+    assert (REPO_ROOT / "scripts" / "cibw_test.sh").is_file()
+    assert (REPO_ROOT / "scripts" / "cibuildwheel.sh").is_file()
 
     # [dev] covers test + bench + examples deps (no ipykernel).
     dev = set(pyproject["project"]["optional-dependencies"]["dev"])

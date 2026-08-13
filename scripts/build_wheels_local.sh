@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build a torchfits wheel locally for every (torch lane, CPython) cell and
-# drop the wheels into dist-local/. This is the local, docker-free equivalent
-# of the cibuildwheel matrix (which only runs on tag). Wheels carry local
-# platform tags (linux_x86_64); manylinux_2_28 tagging stays CI-side.
+# drop the wheels into dist-local/. Docker-free smoke (linux_x86_64 / macos
+# tags). Published manylinux / macosx wheels come from
+# `bash scripts/cibuildwheel.sh` / `.github/workflows/build_wheels.yml`.
 #
 # Each cell builds in a throwaway copy of the tree whose lane pins are
 # rendered onto the requested torch lane by scripts/release_lane.py, against

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Runs inside astroai/base on CANFAR (headless GPU session): verify the
-# torchfits wheel for one torch lane against a CUDA-flavored lane torch on a
-# real GPU. Driver-vs-flavor fit is probed, not assumed: try each CUDA flavor
-# the lane ships (scripts/torch_lanes.json), first one where
-# torch.cuda.is_available() succeeds wins.
+# Runs inside astroai/base on CANFAR (headless GPU session): install the
+# published (CPU-linked) torchfits wheel for one torch lane and verify it
+# against a CUDA-flavored lane torch on a real GPU. There is no separate
+# CUDA torchfits wheel. Driver-vs-flavor fit is probed, not assumed: try
+# each CUDA flavor the lane ships (scripts/torch_lanes.json); the first one
+# where torch.cuda.is_available() succeeds wins.
 #
 # Prints a one-line "[ OK ] lane=<lane> cu=<flavor> driver=<ver>" or
 # "[FAIL] lane=<lane> ..." result marker that the launcher greps for.

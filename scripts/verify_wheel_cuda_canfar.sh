@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OPTIONAL CUDA verification tier — never part of preflight/ci-local/
-# release-gate. Verifies the published torchfits wheels against lane-pinned
-# CUDA-flavored PyTorch on real GPUs via headless CANFAR sessions, one
-# session per torch lane, in parallel (scripts/verify_wheel_cuda_canfar_incontainer.sh).
+# release-gate. torchfits ships one CPU-linked wheel per (CPython, arch);
+# this script installs that wheel against lane-pinned CUDA-flavored PyTorch
+# on real GPUs via headless CANFAR sessions.
 #
 # Soft-fail by default: per-lane [FAIL] lines are printed and results land
 # under benchmarks_results/canfar_cuda_verify_<run-id>/ but the script exits 0

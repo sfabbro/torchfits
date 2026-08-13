@@ -100,14 +100,12 @@ cmake.args = [
     "-DTORCHFITS_USE_VENDORED_CFITSIO=ON",
     "-DTORCHFITS_NIOBUF=80",
     "-DTORCHFITS_MINDIRECT=8640",
+    # No .cu kernels. Wheels (and pip installs) build against the CPU
+    # libtorch from download.pytorch.org/whl/cpu. CMakeLists.txt stubs
+    # Caffe2 CUDA targets if a CUDA-enabled libtorch is used instead
+    # (pixi GPU / CANFAR); do not point CUDA_TOOLKIT_ROOT_DIR at conda
+    # here — that made blank-machine pip source builds look for conda.
     "-DUSE_CUDA=OFF",
-    # The extension has no .cu kernels; USE_CUDA=OFF is intentional. We link
-    # libtorch from a CUDA-enabled wheel for the tensor API surface only, and
-    # Caffe2's cuda.cmake probes unconditionally when libtorch was built with
-    # CUDA, so point the toolkit at the conda prefix to satisfy its layout
-    # expectations (no nvcc is ever run).
-    "-DCUDA_TOOLKIT_ROOT_DIR=${CONDA_PREFIX}",
-    "-DCUDAToolkit_ROOT=${CONDA_PREFIX}",
     "-DCMAKE_C_FLAGS=-O3",
     "-DCMAKE_CXX_FLAGS=-O3",
 ]
@@ -120,6 +118,37 @@ wheel.exclude = ["torchfits/cpp_src/**"]
 
 # Incremental builds via CMake/Ninja for fast iteration.
 build-dir = "build/{wheel_tag}"
+
+# GitHub Release may attach an sdist; PyPI does not (pip must not compile).
+[tool.scikit-build.sdist]
+exclude = [".cursor/**", ".pixi/**", ".github/**"]
+
+# Published wheels: CPython 3.10–3.14, Linux glibc x86_64 + aarch64, macOS
+# arm64. Built against CPU torch; the same wheel loads CUDA torch of the
+# matching minor. Free-threaded (cp314t) and musl are out of scope.
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "pp* *-musllinux_* *-manylinux_i686 *-win32 cp31?t-*"
+test-requires = ["numpy", "pyarrow", "pytest"]
+build-frontend = { name = "pip", args = ["--no-build-isolation"] }
+before-build = "bash {project}/scripts/cibw_before_build.sh"
+test-command = "bash {project}/scripts/cibw_test.sh {project}"
+
+[tool.cibuildwheel.linux]
+# Native arch only by default (GHA sets CIBW_ARCHS per job: x86_64 or aarch64).
+archs = ["auto"]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+before-all = "bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt"
+environment = { PIP_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cpu" }
+repair-wheel-command = "auditwheel repair --exclude libtorch_python.so --exclude libtorch_cpu.so --exclude libtorch.so --exclude libc10.so -w {dest_dir} {wheel}"
+
+[tool.cibuildwheel.macos]
+archs = ["arm64"]
+before-all = "bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt"
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", CMAKE_OSX_DEPLOYMENT_TARGET = "11.0", PIP_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cpu" }
+# ponytail: PyTorch extensions resolve torch at runtime; delocate breaks @rpath.
+repair-wheel-command = ""
 
 [tool.pytest.ini_options]
 markers = [

@@ -6,10 +6,9 @@ built for the PyTorch 2.13 lane); see [Changelog](changelog.md) for release note
 ## Install
 
 One bare command — torchfits wheels are ABI-matched to PyTorch 2.13.x (Linux
-x86_64, macOS arm64), and the wheel metadata pins that range, so pip installs
-or upgrades torch for you (works whatever PyTorch you already have; Python
-3.10+). The 1.0 line is still a release candidate on PyPI, so add `--pre`
-until the final tag:
+x86_64 and aarch64, macOS arm64, CPython 3.10–3.14), and the wheel metadata
+pins that range, so pip installs or upgrades torch for you. The 1.0 line is
+still a release candidate on PyPI, so add `--pre` until the final tag:
 
 ```bash
 pip install --pre torchfits

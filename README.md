@@ -24,7 +24,8 @@ One command; no torch pin needed — the wheel metadata installs torch 2.13.x
 for you (add `--pre` only while the 1.0 line is a release candidate). CPU-only
 or CUDA flavors: [install.md](docs/install.md).
 
-Requires Python 3.10+. Wheels: Linux x86_64, macOS arm64 (CFITSIO vendored).
+Requires Python 3.10–3.14. Wheels: Linux x86_64 + aarch64, macOS arm64
+(CFITSIO vendored; pip does not compile).
 
 ## At a glance
 

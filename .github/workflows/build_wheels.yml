@@ -32,7 +32,7 @@ jobs:
           echo "TORCH_PIN=$(echo "$PINS" | sed 's/.*torch=//')" >> "$GITHUB_ENV"
       # Fail fast before vendoring / installing / building: the [cpu]/[cuda]
       # extra pins must stay on the torch lane this workflow builds against
-      # (constraints-wheel.txt; CIBW_BEFORE_BUILD below).
+      # (constraints-wheel.txt; cibw_before_build.sh).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
           python -m pip install -q --upgrade pip packaging
@@ -50,68 +50,37 @@ jobs:
         run: pytest tests/ -q --maxfail=1
 
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Wheels ${{ matrix.os }} ${{ matrix.arch }}
     needs: tests
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+          - os: macos-15
+            arch: arm64
     env:
-      CIBW_BUILD: cp310-* cp311-* cp312-* cp313-* cp314-*
-      CIBW_SKIP: pp* *-musllinux_* *-manylinux_i686 *-win32
-      CIBW_ARCHS_LINUX: x86_64
-      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-      # ponytail: macOS x86_64 hits nanobind LTO + libtorch link failures on GHA; arm64 is primary.
-      CIBW_ARCHS_MACOS: arm64
-      CIBW_TEST_REQUIRES: numpy pyarrow pytest
-      # Build against the same torch ABI lane we test and document (resolved
-      # from torch_lanes.json in the "Resolve torch ABI lane" step). Isolated
-      # builds would otherwise resolve torch>=2.x to a newer minor and fail
-      # the release smoke / ABI check.
-      CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
-      CIBW_BEFORE_BUILD: |
-        python -m pip install -U pip
-        python -m pip install "scikit-build-core>=1.0.3" "nanobind>=2.13.0" "numpy>=1.20.0" "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
-      CIBW_TEST_COMMAND: |
-        pip install "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
-        TORCH_LIB="$(python -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')"
-        if [ "$(uname)" = "Darwin" ]; then
-          export DYLD_FALLBACK_LIBRARY_PATH="$TORCH_LIB${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
-        else
-          export LD_LIBRARY_PATH="$TORCH_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        fi
-        pytest -c /dev/null --noconftest {project}/tests/test_release_smoke.py -q
-      CIBW_BEFORE_ALL_LINUX: bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
-      CIBW_BEFORE_ALL_MACOS: bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
-      CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0 CMAKE_OSX_DEPLOYMENT_TARGET=11.0 PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
-      CIBW_ENVIRONMENT_LINUX: PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
-      CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair --exclude libtorch_python.so --exclude libtorch_cpu.so --exclude libtorch.so --exclude libc10.so -w {dest_dir} {wheel}"
-      # ponytail: PyTorch extensions resolve torch at runtime; delocate breaks @rpath linkage.
-      CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
+      # Host-arch only in pyproject; each job builds one published arch.
+      CIBW_ARCHS: ${{ matrix.arch }}
 
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Resolve torch ABI lane
-        run: |
-          PINS="$(python scripts/release_lane.py --print-pins)"
-          echo "$PINS"
-          echo "TORCH_PIN=$(echo "$PINS" | sed 's/.*torch=//')" >> "$GITHUB_ENV"
-      # Fail fast before cibuildwheel spins up the build matrix: the
-      # [cpu]/[cuda] extra pins must stay on the torch lane this workflow
-      # builds against (constraints-wheel.txt; CIBW_BEFORE_BUILD).
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
         run: |
           python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+        uses: pypa/cibuildwheel@v4.1.1
       - uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
 
   build_sdist:
@@ -128,7 +97,7 @@ jobs:
           path: dist/*.tar.gz
 
   upload_pypi:
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     environment: pypi
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -138,7 +107,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: cibw-*
+          # Wheels only. An sdist on PyPI makes pip compile on unmatched
+          # CPython / arch (Ubuntu 26.04 = 3.14 had no wheel on rc5).
+          pattern: cibw-wheels-*
           path: dist
           merge-multiple: true
       - name: Publish to PyPI

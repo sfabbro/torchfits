@@ -313,7 +313,14 @@ endif()
 get_filename_component(TORCHFITS_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(CFITSIO_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/cfitsio")
 set(TORCHFITS_VENDOR_SCRIPT "${TORCHFITS_REPO_ROOT}/extern/vendor.sh")
-option(TORCHFITS_AUTO_VENDOR_DEPS "Auto-run extern/vendor.sh when vendored deps are missing" ON)
+# Git checkouts may fetch CFITSIO on first configure. PyPI sdists (and any
+# tree without .git) must not: pip installs are wheels-only.
+if(EXISTS "${TORCHFITS_REPO_ROOT}/.git")
+    set(_torchfits_auto_vendor_default ON)
+else()
+    set(_torchfits_auto_vendor_default OFF)
+endif()
+option(TORCHFITS_AUTO_VENDOR_DEPS "Auto-run extern/vendor.sh when vendored deps are missing" "${_torchfits_auto_vendor_default}")
 set(TORCHFITS_VENDOR_RAN FALSE)
 
 macro(torchfits_run_vendor_once)
@@ -461,7 +468,11 @@ else()
             message(STATUS "Overriding CFITSIO MINDIRECT=${TORCHFITS_MINDIRECT}")
         endif()
     else()
-        message(FATAL_ERROR "CFITSIO not found in environment and vendored version not found at ${CFITSIO_SOURCE_DIR}. Run ./extern/vendor.sh")
+        message(FATAL_ERROR
+            "CFITSIO sources not found at ${CFITSIO_SOURCE_DIR}. "
+            "PyPI installs torchfits from prebuilt wheels (CPython 3.10-3.14, "
+            "Linux x86_64/aarch64, macOS arm64) — pip should not compile. "
+            "From a git checkout run: ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt")
     endif()
 endif()
 

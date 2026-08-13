@@ -188,10 +188,19 @@ Publishing triggers `.github/workflows/build_wheels.yml`, which:
 
 1. Runs tests (each job resolves the lane's torch pin via
    `release_lane.py --print-pins`).
-2. Builds wheels on Linux and macOS plus sdist (cp310–cp314, torch pinned to
-   the lane).
-3. Uploads to [PyPI](https://pypi.org/project/torchfits/) via a PyPI API
-   token (`secrets.PYPI_API_TOKEN`), not trusted publishing.
+2. Builds wheels (Linux x86_64 + aarch64, macOS arm64, cp310–cp314, torch
+   pinned to the lane via `scripts/cibw_before_build.sh`). An sdist is
+   attached to the GitHub Release only — **not** uploaded to PyPI.
+3. Uploads **wheels** to [PyPI](https://pypi.org/project/torchfits/) via a
+   PyPI API token (`secrets.PYPI_API_TOKEN`), not trusted publishing.
+
+Local / out-of-band builds (same `[tool.cibuildwheel]` config):
+
+```bash
+bash scripts/cibuildwheel.sh                 # host arch (Linux Docker or macOS)
+CIBW_ARCHS=aarch64 bash scripts/cibuildwheel.sh
+bash scripts/verify_wheel_cuda_canfar.sh     # CUDA torch vs the CPU-linked wheel
+```
 
 ## 11. Post-release verification
 

@@ -9,16 +9,18 @@ version pins. The wheel metadata requires **torch 2.13.\*** (`torch>=2.13,<2.14`
 in metadata, which pip treats as exactly `2.13.*`), so pip installs or
 upgrades torch for you — you never type a torch pin.
 
-torchfits wheels need **Python 3.10+** and **PyTorch 2.13.x**. If you already
+torchfits wheels need **Python 3.10–3.14** and **PyTorch 2.13.x**. If you already
 have that minor (any flavor — CPU or CUDA), it is left untouched; an older
 minor is upgraded automatically because the torch C++ ABI is per-minor. Source
-builds can target **PyTorch ≥2.10** when the build frontend is installed and
-the project is installed with `--no-deps`.
+builds from a git checkout can target **PyTorch ≥2.10** with `--no-deps`.
 
-- **PyPI wheels** are ABI-matched to **PyTorch 2.13.x** (Linux x86_64, macOS
-  arm64). No system CFITSIO — CFITSIO is vendored into the wheel.
-- **Other torch minors (≥ 2.10):** build from source against the torch already
-  installed (see [From source](#from-source) and [Compatibility](compatibility.md)).
+- **PyPI wheels** are ABI-matched to **PyTorch 2.13.x** for **CPython 3.10–3.14**
+  on **Linux x86_64**, **Linux aarch64**, and **macOS arm64**. No system
+  CFITSIO — it is vendored into the wheel. PyPI does **not** ship an sdist:
+  `pip install` never compiles.
+- **Other torch minors (≥ 2.10):** build from a git checkout against the torch
+  already installed (see [From source](#from-source) and
+  [Compatibility](compatibility.md)).
 
 ## Quick install (wheels)
 
@@ -42,9 +44,10 @@ upgrade an older one).
 pip install --pre torchfits
 ```
 
-This installs the default PyTorch build from PyPI, which **bundles the CUDA
-runtime** on Linux x86_64 (CUDA 12.x; on other platforms the default is CPU /
-MPS). It works whether or not the machine has an NVIDIA GPU:
+This installs a **prebuilt wheel** (no compiler, no conda, no CFITSIO
+package). The default PyTorch build from PyPI **bundles the CUDA runtime** on
+Linux (CUDA 12.x; on macOS the default is CPU / MPS). It works whether or not
+the machine has an NVIDIA GPU:
 
 - **With a GPU** (NVIDIA driver installed): `device="cuda"` reads work out of
   the box — `torch.cuda.is_available()` is `True`.
@@ -63,8 +66,9 @@ This also installs the `torchfits` CLI (`torchfits --help`). See the
 
 ### One line: CPU-only (thin, no CUDA libraries)
 
-Prefer this when you never touch NVIDIA GPUs. The **CPU** PyTorch wheel is much
-thinner — it does **not** pull the CUDA runtime / cuDNN stack into the env.
+Prefer this on CPU-only machines (blank Ubuntu, CI, laptops). The **CPU**
+PyTorch wheel is much thinner — it does **not** pull the CUDA runtime / cuDNN
+stack into the env. torchfits itself is the same wheel either way.
 
 Self-contained one-liner (no config needed):
 
@@ -153,8 +157,8 @@ for the full list. This is separate from the in-memory handle/
 
 ## From source
 
-Use this when you need torchfits against a **non-2.13** torch (≥ 2.10), or when
-contributing.
+PyPI never compiles torchfits. Use a git checkout when you need torchfits
+against a **non-2.13** torch (≥ 2.10), or when contributing.
 
 ### Prerequisites
 
@@ -292,6 +296,13 @@ pip install pandas polars duckdb  # optional table interop
 ---
 
 ## Troubleshooting
+
+**`ERROR: No matching distribution found for torchfits`**
+
+There is no wheel for this CPython / OS / arch, and PyPI has no sdist (so pip
+will not compile). Published wheels: CPython **3.10–3.14**, Linux **x86_64**
+and **aarch64**, macOS **arm64**. Not published: Windows, macOS x86_64, Alpine
+(musl), free-threaded CPython (`cp314t`).
 
 **`ModuleNotFoundError: No module named 'torchfits._C'`** (or `'torchfits.cpp'`)
 

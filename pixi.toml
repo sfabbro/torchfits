@@ -154,20 +154,11 @@ nanobind = ">=2.13.0"
 scikit-build-core = ">=1.0.3"
 pip = ">=24.0"
 cxx-compiler = ">=1.11.0,<2"
-# GPU feature pins its own gcc downgrade so nvcc 12.4 accepts the host
-# compiler. cudart-dev 12.8 bundles a libcudart that exposes cudaGetDriver*
-# symbols; the conda install path is satisfied by the CUDAToolkit_* cmake
-# flags in pyproject.toml.
-# GPU feature: real CUDA-enabled PyTorch for H100/Hopper (sm_90) benchmarking.
-# We start from the conda-forge CPU pytorch that the workspace already pins,
-# then swap it for the CUDA wheel via pip in 'gpu-bootstrap'. This avoids the
-# pytorch-channel python-version mismatch and lets us target H100 sm_90 with
-# the cu128 wheel while keeping the rest of the env on conda-forge.
-#
-# cuda-toolkit is added so the C++ extension's cmake can find_package(CUDA)
-# when scikit-build-core probes libtorch. The cu128 pip wheel replaces the
-# conda pytorch CPU build at runtime; cuda-toolkit satisfies the compile-time
-# probe without dragging in a full nvidia channel.
+# GPU feature: CUDA-enabled PyTorch for H100/Hopper (sm_90) benchmarking.
+# Start from the conda-forge CPU pytorch the workspace already pins, then
+# swap it for the CUDA wheel in gpu-bootstrap. CMakeLists.txt stubs Caffe2
+# CUDA targets so the compile-time probe does not need a conda toolkit.
+# Wheels themselves are CPU-linked (USE_CUDA=OFF).
 [feature.gpu.dependencies]
 # Cuda-toolkit lives on the nvidia channel, which has no osx-arm64 builds; gate
 # it to linux-64 only. macOS users keep the CPU-only default and stay on bench-all.
@@ -177,8 +168,8 @@ cxx-compiler = ">=1.11.0,<2"
 [feature.gpu.target.linux-64.dependencies]
 # cu128 wheel bundles its own nvidia-cuda-runtime-cu12/libs.
 # We don't need conda CUDA dev packages which only ship
-# libcudart.so without headers; -DCAFFE2_USE_CUDA=OFF in
-# pyproject.toml short-circuits Caffe2's CUDA probe.
+# libcudart.so without headers; CMakeLists.txt stubs Caffe2 CUDA
+# targets so the probe does not require a toolkit.
 
 [feature.gpu.tasks]
 gpu-bootstrap = "bash scripts/gpu-bootstrap.sh"

@@ -66,6 +66,17 @@ docs/usability soak before the tag.
   (int64 keeps precision as float64), masked fills use dtype-safe sentinels,
   and `SigmaClip` promotes integer inputs instead of raising.
 
+### Packaging
+
+- Linux wheels now cover **x86_64 and aarch64** for CPython **3.10–3.14**
+  (cibuildwheel 4.1; GHA `ubuntu-24.04-arm` for aarch64). macOS arm64 is
+  unchanged; run `bash scripts/cibuildwheel.sh` on a Mac to build locally.
+- PyPI no longer receives an sdist — `pip install` cannot fall back to a
+  source compile (the rc5 trap on Ubuntu 26.04 / Python 3.14).
+- Wheel cmake args no longer point `CUDA_TOOLKIT_ROOT_DIR` at conda.
+  CUDA torch at runtime is the same CPU-linked wheel; verify on CANFAR with
+  `scripts/verify_wheel_cuda_canfar.sh`.
+
 ### Docs
 
 - Scorecards refreshed from the 2026-08-07 exhaustive runs (CPU + CUDA);
