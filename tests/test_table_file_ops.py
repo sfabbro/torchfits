@@ -42,6 +42,43 @@ def test_table_write_negative_stride_column_roundtrip():
         os.unlink(handle.name)
 
 
+def test_update_rows_mmap_forced_failure_not_swallowed(tmp_path):
+    path = str(tmp_path / "test_mmap_swallow.fits")
+    torchfits.table.write(path, {"A": np.array([1, 2, 3])})
+
+    import torchfits._C as cpp
+
+    original_mmap = cpp.update_fits_table_rows_mmap
+
+    def mock_mmap(*args, **kwargs):
+        raise RuntimeError("Mock mmap error")
+
+    cpp.update_fits_table_rows_mmap = mock_mmap
+
+    try:
+        with pytest.raises(RuntimeError, match="Mock mmap error"):
+            torchfits.table.update_rows(
+                path, {"A": np.array([4, 5])}, row_slice=slice(0, 2), mmap="mmap"
+            )
+
+        with pytest.raises(RuntimeError, match="Mock mmap error"):
+            torchfits.table.update_rows(
+                path, {"A": np.array([4, 5])}, row_slice=slice(0, 2), mmap=True
+            )
+
+        # auto should swallow the error and fall back
+        torchfits.table.update_rows(
+            path, {"A": np.array([4, 5])}, row_slice=slice(0, 2), mmap="auto"
+        )
+
+        # Verify it actually updated by reading it
+        table = torchfits.table.read_torch(path, columns=["A"])
+        assert table["A"].squeeze(-1).tolist() == [4, 5, 3]
+
+    finally:
+        cpp.update_fits_table_rows_mmap = original_mmap
+
+
 def test_table_append_update_rename_drop():
     path = _make_basic_table_file()
     try:
