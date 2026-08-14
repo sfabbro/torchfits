@@ -51,6 +51,7 @@ if [[ ! -d extern/cfitsio ]]; then
 fi
 
 PIXI_PY="$(pixi run python -c 'import sys; print(sys.executable)')"
+PIXI_PREFIX="$(dirname "$(dirname "$PIXI_PY")")"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/logs"
@@ -85,7 +86,8 @@ build_cell() {
     uv pip install --python "$copy/.venv/bin/python" --quiet \
       "numpy" "nanobind" "scikit-build-core" "cmake" "ninja"
     echo "== $lane / py$py: building wheel =="
-    (cd "$copy" && unset PREFIX CONDA_PREFIX CMAKE_PREFIX_PATH && \
+    (cd "$copy" && unset PREFIX CONDA_PREFIX && \
+      CMAKE_PREFIX_PATH="${PIXI_PREFIX}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" \
       MACOSX_DEPLOYMENT_TARGET=11.0 \
       ./.venv/bin/python -m pip wheel . \
       --no-deps --no-build-isolation -w "$ROOT/$OUT_DIR")
@@ -99,7 +101,7 @@ build_cell() {
 }
 
 export -f build_cell next_minor
-export ROOT OUT_DIR WORK PIXI_PY PRERELEASE
+export ROOT OUT_DIR WORK PIXI_PY PIXI_PREFIX PRERELEASE
 
 cells=()
 for lane in $(echo "$LANES" | tr ',' ' '); do
