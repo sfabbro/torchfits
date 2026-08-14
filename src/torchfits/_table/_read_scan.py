@@ -7,6 +7,7 @@ from typing import Any, Iterator, Optional
 
 import torch
 
+from .._io_engine.device import to_device
 from .._table.cache import _acquire_cpp_handle, _acquire_cpp_reader
 from .._table.utils import _normalize_row_slice, _require_pyarrow
 from .._table.arrow_convert import _chunk_to_record_batch
@@ -574,7 +575,7 @@ def _scan_torch_iter(
         mmap=use_mmap,
         total_rows=total_rows,
     ):
-        if device == "cpu":
+        if str(device) == "cpu":
             yield chunk
             continue
 
@@ -584,9 +585,7 @@ def _scan_torch_iter(
                 t = value
                 if pin_memory and t.device.type == "cpu":
                     t = t.pin_memory()
-                if device == "mps" and t.dtype == torch.float64:
-                    t = t.float()
-                moved[key] = t.to(device, non_blocking=non_blocking)
+                moved[key] = to_device(t, device, non_blocking=non_blocking)
             elif isinstance(value, list):
                 new_list = []
                 for item in value:
@@ -594,9 +593,7 @@ def _scan_torch_iter(
                         t = item
                         if pin_memory and t.device.type == "cpu":
                             t = t.pin_memory()
-                        if device == "mps" and t.dtype == torch.float64:
-                            t = t.float()
-                        new_list.append(t.to(device, non_blocking=non_blocking))
+                        new_list.append(to_device(t, device, non_blocking=non_blocking))
                     else:
                         new_list.append(item)
                 moved[key] = new_list

@@ -301,9 +301,13 @@ class TestPerformanceIntegration:
                 os.unlink(f.name)
 
     def test_gpu_memory_transfer(self):
-        """Test GPU memory transfer if CUDA available."""
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+        """Test GPU/MPS memory transfer if accelerator available."""
+        if torch.cuda.is_available():
+            dev = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            dev = "mps"
+        else:
+            pytest.skip("No GPU/MPS accelerator available")
 
         shape = (1000, 1000)
         data = np.random.normal(0, 1, shape).astype(np.float32)
@@ -316,13 +320,13 @@ class TestPerformanceIntegration:
 
             try:
                 # Test direct GPU loading
-                result, _ = torchfits.read(f.name, device="cuda", return_header=True)
-                assert result.device.type == "cuda"
+                result, _ = torchfits.read(f.name, device=dev, return_header=True)
+                assert result.device.type == dev
                 assert result.shape == shape
 
                 # Test CPU->GPU transfer
                 cpu_result, _ = torchfits.read(f.name, return_header=True)
-                gpu_result = cpu_result.cuda()
+                gpu_result = cpu_result.to(dev)
 
                 torch.testing.assert_close(result, gpu_result)
 

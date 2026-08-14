@@ -176,6 +176,16 @@ def test_table_read_write_mps(tmp_path: Path) -> None:
         t.device.type == "mps" for t in t2.values() if isinstance(t, torch.Tensor)
     )
 
+    # fits_table.scan_torch(device="mps")
+    chunks = list(fits_table.scan_torch(path, hdu=1, batch_size=2, device="mps"))
+    assert len(chunks) == 2
+    for chunk in chunks:
+        assert all(
+            t.device.type == "mps"
+            for t in chunk.values()
+            if isinstance(t, torch.Tensor)
+        )
+
     # open_table_reader
     with torchfits.open_table_reader(path, hdu=1) as reader:
         rows = reader.read_torch(device=torch.device("mps"))

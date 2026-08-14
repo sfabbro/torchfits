@@ -155,25 +155,30 @@ class TestPerformance:
         finally:
             os.unlink(filepath)
 
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_gpu_transfer_performance(self):
-        """Test GPU transfer performance."""
+    def test_accelerator_transfer_performance(self):
+        """Test GPU/MPS transfer performance."""
+        if torch.cuda.is_available():
+            dev = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            dev = "mps"
+        else:
+            pytest.skip("No GPU/MPS accelerator available")
+
         shape = (2000, 2000)
         data = self.create_test_data(shape)
         filepath = self.create_fits_file(data)
 
         try:
-            # Test direct GPU loading
+            # Test direct accelerator loading
             start_time = time.time()
-            result_gpu, _ = torchfits.read(filepath, device="cuda", return_header=True)
-            gpu_read_time = time.time() - start_time
+            result_dev, _ = torchfits.read(filepath, device=dev, return_header=True)
+            dev_read_time = time.time() - start_time
 
-            assert result_gpu.device.type == "cuda"
-            assert result_gpu.shape == shape
+            assert result_dev.device.type == dev
+            assert result_dev.shape == shape
 
             # Should complete in reasonable time
-            assert gpu_read_time < 10.0  # 10 seconds max
-
+            assert dev_read_time < 10.0  # 10 seconds max
         finally:
             os.unlink(filepath)
 

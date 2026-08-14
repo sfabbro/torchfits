@@ -151,6 +151,12 @@ class TestMainAPI:
                 )
                 assert result_gpu.device.type == "cuda"
                 torch.testing.assert_close(result_cpu, result_gpu.cpu())
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                result_mps, _ = torchfits.read(
+                    filepath, device="mps", return_header=True
+                )
+                assert result_mps.device.type == "mps"
+                torch.testing.assert_close(result_cpu, result_mps.cpu())
         finally:
             os.unlink(filepath)
 
