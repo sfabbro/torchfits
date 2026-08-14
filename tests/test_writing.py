@@ -316,3 +316,20 @@ def test_write_cuda_tensor_copies_to_host_before_fits_write():
     finally:
         if os.path.exists(filename):
             os.remove(filename)
+
+
+@pytest.mark.skipif(
+    not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+    reason="MPS is not available",
+)
+def test_write_mps_tensor_copies_to_host_before_fits_write():
+    filename = "test_write_mps_tensor_host_copy.fits"
+    data = torch.arange(16, dtype=torch.float32, device="mps").reshape(4, 4)
+    try:
+        torchfits.write(filename, data, overwrite=True)
+        out = torchfits.read(filename, hdu=0)
+        assert out.device.type == "cpu"
+        assert torch.equal(out, data.cpu())
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)

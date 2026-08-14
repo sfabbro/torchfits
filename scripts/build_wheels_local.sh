@@ -51,7 +51,6 @@ if [[ ! -d extern/cfitsio ]]; then
 fi
 
 PIXI_PY="$(pixi run python -c 'import sys; print(sys.executable)')"
-PIXI_PREFIX="$(pixi run python -c 'import sys; print(sys.prefix)')"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/logs"
@@ -84,9 +83,10 @@ build_cell() {
       "torch>=$lane,$(next_minor "$lane")" \
       --extra-index-url https://download.pytorch.org/whl/cpu
     uv pip install --python "$copy/.venv/bin/python" --quiet \
-      "numpy" "nanobind" "scikit-build-core"
+      "numpy" "nanobind" "scikit-build-core" "cmake" "ninja"
     echo "== $lane / py$py: building wheel =="
-    (cd "$copy" && CMAKE_PREFIX_PATH="$PIXI_PREFIX" MACOSX_DEPLOYMENT_TARGET=11.0 \
+    (cd "$copy" && unset PREFIX CONDA_PREFIX CMAKE_PREFIX_PATH && \
+      MACOSX_DEPLOYMENT_TARGET=11.0 \
       ./.venv/bin/python -m pip wheel . \
       --no-deps --no-build-isolation -w "$ROOT/$OUT_DIR")
   } >"$log" 2>&1; then
@@ -99,7 +99,7 @@ build_cell() {
 }
 
 export -f build_cell next_minor
-export ROOT OUT_DIR WORK PIXI_PY PIXI_PREFIX PRERELEASE
+export ROOT OUT_DIR WORK PIXI_PY PRERELEASE
 
 cells=()
 for lane in $(echo "$LANES" | tr ',' ' '); do

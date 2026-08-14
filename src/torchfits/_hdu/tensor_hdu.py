@@ -7,7 +7,7 @@ import threading
 from typing import Any, Iterator, Optional, Tuple, cast
 
 from torch import Tensor
-
+from .._io_engine.device import to_device
 from .header import Header
 from .dataview import DataView, _BITPIX_TO_DTYPE
 
@@ -49,7 +49,7 @@ class TensorHDU:
 
     def to_tensor(self, device: str = "cpu") -> Tensor:
         if self._data is not None:
-            return self._data.to(device)
+            return to_device(self._data, device)
 
         with self._io_lock:
             if self._closed or self._file_handle is None:
@@ -60,7 +60,7 @@ class TensorHDU:
 
             handle = self._file_handle
             hdu_index = self._hdu_index
-            return cast(Tensor, cpp.read_full(handle, hdu_index).to(device))
+            return to_device(cast(Tensor, cpp.read_full(handle, hdu_index)), device)
 
     def chunks(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
         with self._io_lock:

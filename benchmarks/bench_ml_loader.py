@@ -154,7 +154,7 @@ def bench_loader(
     total_pixels = 0
     for _ in range(n_epochs):
         for batch in loader:
-            if device == "cuda":
+            if device != "cpu":
                 batch = batch.to(device, non_blocking=True)
             total_pixels += batch.numel()
 

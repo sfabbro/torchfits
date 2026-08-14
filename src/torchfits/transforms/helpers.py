@@ -174,7 +174,7 @@ def _upcast_for_precision(x: torch.Tensor, *, precision: str = "auto") -> torch.
     if x.dtype == torch.float64:
         return x
     if precision == "float64":
-        return x.double()
+        return x.float() if x.device.type == "mps" else x.double()
     if x.dtype in (torch.float16, torch.bfloat16):
         return x.float()
     if x.dtype == torch.float32:

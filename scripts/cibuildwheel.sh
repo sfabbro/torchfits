@@ -19,8 +19,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 if ! command -v cibuildwheel >/dev/null 2>&1; then
-  python3 -m pip install --user 'cibuildwheel>=4.1.1,<5'
-  export PATH="${HOME}/.local/bin:${PATH}"
+  if command -v uvx >/dev/null 2>&1; then
+    exec uvx --with 'cibuildwheel>=4.1.1,<5' cibuildwheel "$@"
+  elif command -v pipx >/dev/null 2>&1; then
+    exec pipx run 'cibuildwheel>=4.1.1,<5' "$@"
+  else
+    python3 -m pip install --user --break-system-packages 'cibuildwheel>=4.1.1,<5' 2>/dev/null \
+      || python3 -m pip install --user 'cibuildwheel>=4.1.1,<5'
+    export PATH="${HOME}/.local/bin:${PATH}"
+  fi
 fi
-
 cibuildwheel "$@"

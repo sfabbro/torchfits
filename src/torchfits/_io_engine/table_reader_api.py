@@ -6,6 +6,8 @@ from typing import Any, Optional
 
 import torch
 
+from .device import to_device, validate_device
+
 
 class TableReaderHandle:
     """Persistent table reader for repeated column/row reads on one HDU.
@@ -72,15 +74,14 @@ class TableReaderHandle:
         device: str = "cpu",
     ) -> dict[str, Any]:
         """Read rows for ``columns`` (all columns if ``None``) as tensors."""
-        if device not in ("cpu", "cuda", "mps") and not str(device).startswith("cuda:"):
-            raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+        dev_str = validate_device(device)
         reader = self._ensure_open()
         col_names = list(columns) if columns is not None else []
         data = dict(reader.read_rows(col_names, int(start_row), int(num_rows)))
-        if device == "cpu":
+        if dev_str == "cpu":
             return data
         return {
-            key: value.to(device=device) if isinstance(value, torch.Tensor) else value
+            key: to_device(value, device) if isinstance(value, torch.Tensor) else value
             for key, value in data.items()
         }
 

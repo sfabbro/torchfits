@@ -13,6 +13,7 @@ from typing import Any
 import torch
 
 from ..hdu import Header
+from .device import to_device, validate_device
 from ._read_pipeline import (
     _coerce_bit_table_columns,
     _coerce_unsigned_table_columns,
@@ -72,8 +73,7 @@ def read_fallback(
         raise ValueError("start_row must be >= 1 (FITS uses 1-based indexing)")
     if num_rows < -1 or num_rows == 0:
         raise ValueError("num_rows must be > 0 or -1 for all rows")
-    if device not in ["cpu", "cuda", "mps"] and not device.startswith("cuda:"):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+    validate_device(device)
 
     try:
         file_handle, cached_handle = get_cached_handle(path, handle_cache_capacity)
@@ -225,8 +225,8 @@ def read_fallback_image(
     elif bf16:
         data = data.to(torch.bfloat16)
 
-    if device != "cpu":
-        data = data.to(device)
+    if str(device) != "cpu":
+        data = to_device(data, device)
 
     if return_header:
         if header is None:
@@ -357,16 +357,16 @@ def read_fallback_table(
             cache_capacity,
         )
 
-    if device != "cpu":
+    if str(device) != "cpu":
         new_data: dict[str, Any] = {}
         for key, value in table_data.items():
             if isinstance(value, torch.Tensor):
-                new_data[key] = value.to(device)
+                new_data[key] = to_device(value, device)
             elif isinstance(value, list):
                 new_list = []
                 for item in value:
                     if isinstance(item, torch.Tensor):
-                        new_list.append(item.to(device))
+                        new_list.append(to_device(item, device))
                     else:
                         new_list.append(item)
                 new_data[key] = new_list

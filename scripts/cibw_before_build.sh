@@ -13,5 +13,7 @@ python -m pip install \
   "scikit-build-core>=1.0.3" \
   "nanobind>=2.13.0" \
   "numpy>=1.20.0" \
+  "cmake>=3.21" \
+  "ninja>=1.10" \
   "${PIN}" \
   --extra-index-url https://download.pytorch.org/whl/cpu

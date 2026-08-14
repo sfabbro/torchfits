@@ -24,6 +24,7 @@ from typing import Any, Callable, Iterator, Sequence
 import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 
+from .._io_engine.device import to_device
 from .datasets import (
     FitsCubeDataset,
     FitsImageDataset,
@@ -137,12 +138,12 @@ def _resolve_table_mmap(mmap: bool | str) -> bool:
 
 
 def _move_table_chunk(chunk: dict[str, Any], device: str) -> dict[str, Any]:
-    if device == "cpu":
+    if str(device) == "cpu":
         return chunk
     moved: dict[str, Any] = {}
     for key, value in chunk.items():
         if isinstance(value, torch.Tensor):
-            moved[key] = value.to(device)
+            moved[key] = to_device(value, device)
         else:
             moved[key] = value
     return moved
@@ -195,8 +196,8 @@ def _eager_table_columns(
             result[col_name] = torch.as_tensor(
                 col.to_numpy(zero_copy_only=False).copy()
             )
-            if device != "cpu":
-                result[col_name] = result[col_name].to(device)
+            if str(device) != "cpu":
+                result[col_name] = to_device(result[col_name], device)
         else:
             result[col_name] = col.to_pylist()
     return result
@@ -244,7 +245,7 @@ def _row_from_record_batch(
         tensor_col = tensor_cols.get(name)
         if tensor_col is not None:
             value = tensor_col[row_idx]
-            row[name] = value.to(device) if device != "cpu" else value
+            row[name] = to_device(value, device) if str(device) != "cpu" else value
         else:
             row[name] = batch.column(name)[row_idx].as_py()
     return row
@@ -407,8 +408,8 @@ class FitsCutoutDataset(Dataset[Any]):
         # HTTP(S) uncompressed 2D uses Range cutouts; compressed/vos fall back
         # inside read_subset. Do not force full prefetch here.
         image = read_subset(path, hdu, x1, y1, x2, y2)
-        if self.device != "cpu":
-            image = image.to(self.device)
+        if str(self.device) != "cpu":
+            image = to_device(image, self.device)
         if self.add_channel_dim and image.ndim == 2:
             image = image.unsqueeze(0)
         if self.transform is not None:

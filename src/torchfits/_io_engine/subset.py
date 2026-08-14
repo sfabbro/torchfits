@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional, Tuple, Type, cast
 
 from torch import Tensor
 
+from .device import to_device, validate_device
 from .http_subset import HttpRangeUnsupported, read_subset_http
 from torchfits.http_util import HttpRangeNotSatisfied
 
@@ -15,8 +16,6 @@ def _remote_helpers() -> tuple[
     Callable[[str], bool],
     Callable[..., str],
 ]:
-    # Lazy: avoid importing data.Dataset package at subset import time
-    # (circular with FitsCutoutDataset -> read_subset).
     from torchfits.data.remote import is_http_url, is_vos_path, resolve_local_path
 
     return is_http_url, is_vos_path, resolve_local_path
@@ -83,9 +82,7 @@ class SubsetReader:
             raise ValueError("hdu must be an integer or string")
         if isinstance(hdu, int) and hdu < 0:
             raise ValueError("hdu must be a non-negative integer")
-        if device not in ["cpu", "cuda", "mps"] and not str(device).startswith("cuda:"):
-            raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
-
+        validate_device(device)
         self._http_url: str | None = None
         self._http_hdu: int | str = hdu
         self._device = device
@@ -148,8 +145,8 @@ class SubsetReader:
                 )
         else:
             out = cast(Tensor, self._reader.read(int(x1), int(y1), int(x2), int(y2)))
-        if self._device != "cpu":
-            out = out.to(self._device)
+        if str(self._device) != "cpu":
+            out = to_device(out, self._device)
         return out
 
     def close(self) -> None:

@@ -10,25 +10,12 @@ from torch import Tensor
 import torchfits._C as _cpp
 
 from ..hdu import Header
+from .device import (
+    batch_to_device as batch_to_device,
+    to_device as to_device,
+    validate_device as validate_device,
+)
 from .paths import guard_fits_path
-
-
-def batch_to_device(
-    tensors: list[torch.Tensor], device: str | torch.device
-) -> list[torch.Tensor]:
-    """Move a list of tensors to a device, stacking when shapes match."""
-    if not tensors:
-        return []
-    if len(tensors) == 1:
-        return [tensors[0].to(device, non_blocking=True)]
-
-    first = tensors[0]
-    shape = first.shape
-    dtype = first.dtype
-
-    if all(t.shape == shape and t.dtype == dtype for t in tensors):
-        return list(torch.stack(tensors).to(device, non_blocking=True).unbind(0))
-    return [t.to(device, non_blocking=True) for t in tensors]
 
 
 def validate_read_image_args(
@@ -54,8 +41,7 @@ def validate_read_image_args(
         )
     if not isinstance(mmap, bool):
         raise ValueError("read_image requires explicit mmap=True/False")
-    if device not in ["cpu", "cuda", "mps"] and not device.startswith("cuda:"):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+    validate_device(device)
 
 
 def dispatch_read_image_cpp(
@@ -99,8 +85,8 @@ def read_image(
     elif bf16:
         data = data.to(torch.bfloat16)
 
-    if device != "cpu" and data.device.type == "cpu":
-        data = data.to(device)
+    if str(device) != "cpu" and data.device.type == "cpu":
+        data = to_device(data, device)
 
     if return_header:
         try:
@@ -125,8 +111,7 @@ def read_hdus(
         raise ValueError("path must be a string")
     if not isinstance(hdus, (list, tuple)) or len(hdus) == 0:
         raise ValueError("hdus must be a non-empty list/tuple of HDU indices or names")
-    if device not in ["cpu", "cuda", "mps"] and not str(device).startswith("cuda:"):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+    validate_device(device)
     if not isinstance(mmap, bool):
         raise ValueError("mmap must be a bool for read_hdus")
 
@@ -145,7 +130,7 @@ def read_hdus(
         raise ValueError("each item in hdus must be an int or str")
 
     data = _cpp.read_hdus_batch(path, resolved_hdus, mmap)
-    if device != "cpu":
+    if str(device) != "cpu":
         data = batch_to_device(data, device)
 
     if not return_header:

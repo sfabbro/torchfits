@@ -9,7 +9,7 @@ from typing import Any, Callable, cast
 
 from torch import Tensor
 
-from .image import batch_to_device
+from .device import batch_to_device, validate_device
 
 
 def read_batch(
@@ -26,8 +26,7 @@ def read_batch(
     if not file_paths:
         return []
 
-    if device not in ["cpu", "cuda", "mps"] and not device.startswith("cuda:"):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+    validate_device(device)
 
     from .paths import guard_fits_path
 
@@ -40,7 +39,7 @@ def read_batch(
             import torchfits._C as cpp
 
             tensors = cpp.read_images_batch(list(file_paths), hdu)
-            if device != "cpu":
+            if str(device) != "cpu":
                 tensors = batch_to_device(tensors, device)
             return cast(list[Tensor], tensors)
     except read_exc_types as exc:

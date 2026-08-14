@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional, Union
 import torch
 
 from .hdu_api import _resolve_hdu_index, autodetect_hdu
+from .device import to_device
 
 
 def _resolve_mmap(mmap: Union[bool, str]) -> bool:
@@ -16,13 +17,20 @@ def _resolve_mmap(mmap: Union[bool, str]) -> bool:
     return True
 
 
-def _move_table_dict(data: dict[str, Any], device: str) -> dict[str, Any]:
-    if device == "cpu":
+def _move_table_dict(
+    data: dict[str, Any], device: str | torch.device
+) -> dict[str, Any]:
+    if str(device) == "cpu":
         return data
     out: dict[str, Any] = {}
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
-            out[key] = value.to(device=device)
+            out[key] = to_device(value, device)
+        elif isinstance(value, list):
+            out[key] = [
+                to_device(item, device) if isinstance(item, torch.Tensor) else item
+                for item in value
+            ]
         else:
             out[key] = value
     return out

@@ -48,9 +48,11 @@ def lupton_rgb(
     if abs(q) < _LUPTON_Q_EPS:
         q = _LUPTON_Q_FLOOR
 
-    red = torch.as_tensor(r, dtype=torch.float64) - float(minimum)
-    green = torch.as_tensor(g, dtype=torch.float64) - float(minimum)
-    blue = torch.as_tensor(b, dtype=torch.float64) - float(minimum)
+    r_t = torch.as_tensor(r)
+    work_dtype = torch.float32 if r_t.device.type == "mps" else torch.float64
+    red = torch.as_tensor(r, dtype=work_dtype) - float(minimum)
+    green = torch.as_tensor(g, dtype=work_dtype) - float(minimum)
+    blue = torch.as_tensor(b, dtype=work_dtype) - float(minimum)
     intensity = (red + green + blue) / 3.0
 
     # LuptonAsinhStretch: asinh(Q*I/stretch) * (frac / asinh(frac*Q)), frac=0.1

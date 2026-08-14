@@ -13,6 +13,7 @@ from torch import Tensor
 
 from ..fits_schema import bit_column_names, unsigned_column_dtypes_from_header
 from ..hdu import Header
+from .device import to_device, validate_device
 from .options import ReadOptions
 from .caches import (
     cache_stats,
@@ -158,8 +159,7 @@ def _validate_single_path_params(
         )
     if isinstance(hdu, int) and hdu < 0:
         raise ValueError("HDU index must be a non-negative integer")
-    if device not in ["cpu", "cuda", "mps"] and not device.startswith("cuda:"):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+    validate_device(device)
     if isinstance(mmap, str) and mmap.strip().lower() != "auto":
         raise ValueError("mmap must be bool or 'auto'")
     if not isinstance(mmap, (bool, str)):
@@ -198,6 +198,7 @@ def read_unified(
     """Unified root FITS read dispatcher implementation."""
     # --- parse options ---
     opts = _parse_read_options(options, kwargs)
+    device = str(device)
 
     fp16 = opts.fp16
     bf16 = opts.bf16
@@ -691,7 +692,7 @@ def _read_generic_fast_path(
                 if debug_scale:
                     print("TORCHFITS_DEBUG_SCALE: thin_device_logical")
                 data = cpp_module.read_full(path, hdu, effective_mmap)
-                data = data.to(device)
+                data = to_device(data, device)
             else:
                 # CPU logical scale is applied inside read_full; do not detour
                 # through read_full_raw_with_scale (extra host ops vs fitsio).
@@ -721,8 +722,8 @@ def _read_generic_fast_path(
         elif bf16:
             data = data.to(torch.bfloat16)
 
-        if device != "cpu" and data.device.type == "cpu":
-            data = data.to(device)
+        if str(device) != "cpu" and data.device.type == "cpu":
+            data = to_device(data, device)
 
         return cast(Tensor, data)
     except ValueError:

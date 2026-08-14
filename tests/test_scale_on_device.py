@@ -16,9 +16,16 @@ def test_read_int8_fits_matches_fitsio(tmp_path):
 
     expected = fitsio.read(str(path))
     if torch.cuda.is_available():
-        got = torchfits.read(str(path), device="cuda", scale_on_device=True)
+        dev = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        dev = "mps"
+    else:
+        dev = None
+
+    if dev is not None:
+        got = torchfits.read(str(path), device=dev, scale_on_device=True)
         assert got.dtype == torch.int8
-        assert got.device.type == "cuda"
+        assert got.device.type == dev
         assert got.cpu().numpy().tolist() == expected.tolist()
     else:
         got = torchfits.read(str(path), scale_on_device=True)
@@ -26,14 +33,18 @@ def test_read_int8_fits_matches_fitsio(tmp_path):
         assert got.numpy().tolist() == expected.tolist()
 
 
-def test_read_uint16_fits_native_dtype_cuda(tmp_path):
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
+def test_read_uint16_fits_native_dtype_accelerator(tmp_path):
+    if torch.cuda.is_available():
+        dev = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        dev = "mps"
+    else:
+        pytest.skip("No GPU/MPS accelerator available")
     data = np.array([[0, 32768, 65535]], dtype=np.uint16)
     path = tmp_path / "uint16.fits"
     fits.PrimaryHDU(data).writeto(path, overwrite=True)
 
-    got = torchfits.read(str(path), device="cuda", scale_on_device=True)
+    got = torchfits.read(str(path), device=dev, scale_on_device=True)
     assert got.dtype == torch.uint16
-    assert got.device.type == "cuda"
+    assert got.device.type == dev
     assert got.cpu().numpy().tolist() == data.tolist()
