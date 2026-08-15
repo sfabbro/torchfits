@@ -5,7 +5,8 @@ Supported combinations for **torchfits** wheels and source builds.
 | Component | Wheels | Source builds |
 |-----------|--------|----------------|
 | Python | **3.10 – 3.14** | **3.10+** |
-| PyTorch | **2.13.x** on the current rc5 wheel lane | **≥ 2.10** when building from source with `--no-deps` |
+| PyTorch | **2.11.x, 2.12.x, 2.13.x** (default PyPI release tracks 2.13.x; multi-lane wheels for 2.11/2.12 available on GitHub Releases) | **≥ 2.10** when building from source with `--no-deps` |
+| CUDA Flavors | **cu126, cu128, cu129, cu130** and **CPU-only (+cpu)** | all supported PyTorch CUDA builds |
 | NumPy | **≥ 1.20** | same |
 | PyArrow | **≥ 5.0** | same |
 | Platforms | **Linux x86_64 + aarch64**, **macOS arm64** | git checkout + `extern/vendor.sh` |
@@ -13,38 +14,37 @@ Supported combinations for **torchfits** wheels and source builds.
 Optional: Polars / Pandas / DuckDB via env; astropy / fitsio for test / bench only
 (not imported by runtime I/O).
 
-## Release lanes
+## Release lanes & multi-lane wheels
 
-Each torchfits release targets **one PyTorch minor** — the wheel "lane" —
-because PyTorch has no stable C++ ABI across minors; the extension embeds the
-torch major.minor it was built with and refuses to import under a different
-minor.
+Each torchfits wheel is compiled against **one PyTorch minor** — the wheel "lane" —
+because PyTorch has no stable C++ ABI across minors; the C++ extension embeds the
+torch ABI tag it was built with and refuses to import under a different minor.
 
-| PyTorch lane | torchfits release |
-|---|---|
-| **2.13.x** | **1.0.0** lane (**1.0.0** cut, not yet released) |
+| PyTorch lane | Wheel availability | Notes |
+|---|---|---|
+| **2.13.x** | **Default PyPI release** (`torchfits 1.0.0`) | Default `pip install torchfits` line |
+| **2.12.x** | **GitHub Releases / Wheel Index** (`1.0.0+torch212`) | Prebuilt wheel for PyTorch 2.12 environments |
+| **2.11.x** | **GitHub Releases / Wheel Index** (`1.0.0+torch211`) | Prebuilt wheel for PyTorch 2.11 environments |
 
-Install the pair together, e.g. `pip install torchfits "torch>=2.13,<2.14"` —
-see [Install](install.md). The lane map lives in `scripts/torch_lanes.json`
-(single source of truth; `pixi run check-lane` verifies all files agree).
-Additional lanes are added only when a real backport release is cut, with that
-release's actual version.
+The release lane map lives in `scripts/torch_lanes.json` (verified via
+`pixi run check-lane`).
 
 ## Wheels vs source
 
-- **PyPI wheels** are compiled against the lane's PyTorch minor (CPython
-  3.10–3.14). `pip install --pre torchfits` takes a wheel; there is no sdist
-  on PyPI. Install the matching torch first (`torch>=2.13,<2.14`) only when
-  you must pin the minor yourself.
+- **PyPI wheels** are compiled against PyTorch 2.13 (CPython 3.10–3.14). Plain
+  `pip install torchfits` automatically installs or upgrades torch to 2.13.
+  There is no sdist on PyPI, so pip never compiles.
+- **Prebuilt wheels for PyTorch 2.11 / 2.12:** install the corresponding lane
+  wheel directly from GitHub Releases or via `--find-links` to run on PyTorch 2.11
+  or 2.12 without upgrading torch or compiling.
 - **Other PyTorch minors (≥ 2.10):** from a git checkout, pre-install that
   torch and the build frontend (`scikit-build-core`, `nanobind`, CMake, Ninja,
   C++17 compiler, and NumPy), then build with `pip install --no-deps
   --no-build-isolation .` so pip does not replace the selected torch minor.
-- **CUDA / CPU-only installs:** install recipes pin the wheel ABI lane
-  (`torch>=2.13,<2.14`). `torchfits[cpu]` / `torchfits[cuda]` extras and the
-  `--extra-index-url` one-liners select the PyTorch build (see
-  [Install](install.md)); CUDA builds also run on GPU-less machines via CPU
-  fallback.
+- **CUDA / CPU-only installs:** a single CPU-linked torchfits wheel works across
+  all CUDA flavors (`cu126`, `cu128`, `cu129`, `cu130`) as well as CPU-only
+  (`+cpu`) builds of that PyTorch lane (see [Install](install.md)); CUDA builds
+  also run seamlessly on GPU-less machines via CPU fallback.
 
 ## Downstream guidance
 

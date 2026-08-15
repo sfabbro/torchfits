@@ -113,6 +113,20 @@ pip install --pre 'torchfits[cuda]'   # Linux: torch 2.13.0+cu129; macOS: no-op 
 
 These CUDA builds also run on machines **without** a GPU — see above.
 
+### Installing for other PyTorch lanes (PyTorch 2.11 / 2.12) without compiling
+
+While the default PyPI wheel targets the PyTorch 2.13 lane, prebuilt wheels for **PyTorch 2.11** and **PyTorch 2.12** across all Python versions (3.10–3.14) on Linux and macOS are published alongside the release assets on GitHub Releases.
+
+If your environment has PyTorch 2.11 or 2.12 installed and you want to keep that version without compiling from source, install the matching prebuilt wheel directly:
+
+```bash
+# For PyTorch 2.12 (e.g. Python 3.11):
+pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch212-cp311-cp311-linux_x86_64.whl
+
+# For PyTorch 2.11 (e.g. Python 3.11):
+pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch211-cp311-cp311-linux_x86_64.whl
+```
+
 ### Why the `--extra-index-url` recipes “just work”
 
 PyTorch’s own wheels use PEP 440 **local versions** (`2.13.0+cpu`,

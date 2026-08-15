@@ -10,10 +10,9 @@ because PyTorch has no stable C++ ABI across minors. Lanes live in
 
 | PyTorch lane | torchfits release |
 |---|---|
-| 2.13.x | 1.0.0 (current cut, not yet released) |
-
-The repo tracks the current lane. A new lane is added to the map only when a
-real backport release is cut, with that release's actual version.
+| **2.13.x** | **1.0.0** (primary PyPI release lane) |
+| **2.12.x** | **1.0.0+torch212** (auxiliary prebuilt release wheel) |
+| **2.11.x** | **1.0.0+torch211** (auxiliary prebuilt release wheel) |
 
 ## 1. Version sync
 

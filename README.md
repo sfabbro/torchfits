@@ -21,10 +21,10 @@ pip install --pre torchfits
 ```
 
 One command; no torch pin needed — the wheel metadata installs torch 2.13.x
-for you (add `--pre` only while the 1.0 line is a release candidate). CPU-only
-or CUDA flavors: [install.md](docs/install.md).
+for you (add `--pre` only while the 1.0 line is a release candidate). Multi-lane
+wheels for PyTorch 2.11 and 2.12, plus CPU-only or CUDA flavors: [install.md](docs/install.md).
 
-Requires Python 3.10–3.14. Wheels: Linux x86_64 + aarch64, macOS arm64
+Requires Python 3.10–3.14. Prebuilt wheels: Linux x86_64 + aarch64, macOS arm64
 (CFITSIO vendored; pip does not compile).
 
 ## At a glance
