@@ -18,10 +18,12 @@ pip install torchfits
 
 ### 2. CPU-only install (Minimal footprint)
 
-On headless servers, CI runners, or containers where CUDA runtime libraries are not needed, use the lightweight CPU index:
+On headless servers, CI runners, or containers where CUDA runtime libraries are not needed, use the lightweight CPU index with `[cpu]` extra:
 
 ```bash
-pip install torchfits --extra-index-url https://download.pytorch.org/whl/cpu
+pip install "torchfits[cpu]" --extra-index-url https://download.pytorch.org/whl/cpu
+# Or explicitly pinning the CPU PyTorch build:
+pip install torchfits "torch==2.13.0+cpu" --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### 3. Specific CUDA toolkit versions
@@ -29,14 +31,16 @@ pip install torchfits --extra-index-url https://download.pytorch.org/whl/cpu
 To match a specific CUDA version installed on your system (e.g. `cu126`, `cu128`, `cu129`, `cu130`):
 
 ```bash
-pip install torchfits --extra-index-url https://download.pytorch.org/whl/cu129
+pip install "torchfits[cuda]" --extra-index-url https://download.pytorch.org/whl/cu129
+# Or explicitly pinning the CUDA PyTorch build:
+pip install torchfits "torch==2.13.0+cu129" --extra-index-url https://download.pytorch.org/whl/cu129
 ```
 
 ---
 
 ## PyTorch Version Compatibility
 
-The default PyPI release matches **PyTorch 2.13.x**. If you have an existing environment with **PyTorch 2.11** or **PyTorch 2.12** and prefer not to upgrade PyTorch, prebuilt wheels are published directly on [GitHub Releases](https://github.com/astroai/torchfits/releases):
+The default PyPI release matches **PyTorch 2.13.x** (`torch>=2.13,<2.14`). If you have an existing environment with **PyTorch 2.11** or **PyTorch 2.12** and prefer not to upgrade PyTorch, prebuilt wheels are published directly on [GitHub Releases](https://github.com/astroai/torchfits/releases):
 
 ```bash
 # For PyTorch 2.12 (e.g. Python 3.11 on Linux x86_64):
