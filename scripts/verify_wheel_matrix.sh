@@ -43,16 +43,15 @@ verify_cell() {
 import json, re, sys
 v = sys.stdin.read().strip()
 lanes = json.load(open("scripts/torch_lanes.json"))
-lane = next((l for l, c in lanes.items() if c["torchfits_version"] == v), "")
+lane = ""
+m = re.search(r"\+torch(\d)(\d+)", v)
+if m:
+    lane = f"{m.group(1)}.{m.group(2)}"
 if not lane:
-    # Prerelease wheels (e.g. 1.0.0rc5) carry a PEP 440 suffix on the lane
-    # version; strip it before matching torch_lanes.json.
-    base = re.sub(r"(rc|a|b|\.dev0\+\S*)\d*$", "", v) if v else ""
+    lane = next((l for l, c in lanes.items() if c["torchfits_version"] == v), "")
+if not lane:
+    base = re.sub(r"(rc|a|b)\d*$", "", v) if v else ""
     lane = next((l for l, c in lanes.items() if c["torchfits_version"] == base), "")
-if not lane:
-    m = re.fullmatch(r".*\.dev0\+torch(\d)(\d+)", v)
-    if m:
-        lane = f"{m.group(1)}.{m.group(2)}"
 print(lane)')"
   py="$(basename "$wheel" | sed -n 's/^torchfits-[^-]*-cp\([0-9][0-9][0-9]\)-\?.*/\1/p' | sed 's/^3/3./')"
   if [[ -z "$lane" || -z "$py" ]]; then
@@ -70,8 +69,8 @@ print(lane)')"
     uv pip install --python "$venv/bin/python" --quiet \
       "$ROOT/$WHEEL_DIR/$(basename "$wheel")" \
       "torch>=$lane,$(next_minor "$lane")" \
+      pytest numpy pyarrow \
       --extra-index-url https://download.pytorch.org/whl/cpu
-    uv pip install --python "$venv/bin/python" --quiet pytest
     TORCH_LIB="$("$venv/bin/python" -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')"
     export LD_LIBRARY_PATH="$TORCH_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     echo "== $(basename "$wheel"): import + CLI + release smoke =="
