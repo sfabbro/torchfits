@@ -188,6 +188,103 @@ def test_table_write_rich_types_roundtrip():
             os.remove(filename)
 
 
+def test_table_write_vla_object_column_roundtrip(tmp_path):
+    path = str(tmp_path / "vla_object.fits")
+    col = np.empty(3, dtype=object)
+    col[0] = np.array([1, 2], dtype=np.int32)
+    col[1] = np.array([3], dtype=np.int32)
+    col[2] = np.array([4, 5, 6], dtype=np.int32)
+    torchfits.write(path, {"VLA": col}, overwrite=True)
+    with torchfits.open(path) as hdul:
+        vla = hdul[1].get_vla_column("VLA")
+        assert [v.tolist() for v in vla] == [[1, 2], [3], [4, 5, 6]]
+
+
+def test_table_write_vla_readonly_items_roundtrip(tmp_path):
+    path = str(tmp_path / "vla_readonly.fits")
+    ro = np.arange(4, dtype=np.int32)
+    ro.setflags(write=False)
+    torchfits.write(path, {"VLA": [ro[:2], ro[2:]]}, overwrite=True)
+    with torchfits.open(path) as hdul:
+        vla = hdul[1].get_vla_column("VLA")
+        assert [v.tolist() for v in vla] == [[0, 1], [2, 3]]
+
+
+def test_table_write_vla_all_none_roundtrip(tmp_path):
+    path = str(tmp_path / "vla_none.fits")
+    torchfits.write(path, {"VLA": [None, None]}, overwrite=True)
+    with torchfits.open(path) as hdul:
+        vla = hdul[1].get_vla_column("VLA")
+        assert len(vla) == 2
+        assert all(len(v) == 0 for v in vla)
+
+
+def test_table_write_vla_all_empty_typed_roundtrip(tmp_path):
+    path = str(tmp_path / "vla_all_empty.fits")
+    torchfits.write(path, {"VLA": [np.array([], dtype=np.int16)] * 2}, overwrite=True)
+    with torchfits.open(path) as hdul:
+        vla = hdul[1].get_vla_column("VLA")
+        assert all(v.tolist() == [] for v in vla)
+
+
+def test_table_write_vla_mixed_dtype_rejected(tmp_path):
+    path = str(tmp_path / "vla_mixed.fits")
+    table = {
+        "VLA": [np.array([1, 2], dtype=np.int32), np.array([3, 4, 5], dtype=np.int64)]
+    }
+    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+        torchfits.write(path, table, overwrite=True)
+    assert not os.path.exists(path)
+
+
+def test_table_write_vla_bool_uint8_mix_rejected(tmp_path):
+    path = str(tmp_path / "vla_bool_u8.fits")
+    table = {"VLA": [np.array([True, False]), np.array([200, 7, 9], dtype=np.uint8)]}
+    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+        torchfits.write(path, table, overwrite=True)
+
+
+def test_table_write_vla_string_items_rejected(tmp_path):
+    path = str(tmp_path / "vla_str.fits")
+    table = {"VLA": [np.array([1, 2], dtype=np.int32), "oops"]}
+    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+        torchfits.write(path, table, overwrite=True)
+
+
+def test_table_write_vla_2d_items_rejected(tmp_path):
+    path = str(tmp_path / "vla_2d.fits")
+    table = {"VLA": [np.zeros((2, 3), dtype=np.int32), np.ones((4, 5), dtype=np.int32)]}
+    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+        torchfits.write(path, table, overwrite=True)
+
+
+def test_hdulist_write_vla_mixed_dtype_rejected(tmp_path):
+    """The ungated HDUList table path is protected by the C++ writer's
+    per-row dtype check (defense in depth behind the dict-write gate)."""
+    path = str(tmp_path / "vla_mixed_hdulist.fits")
+    table_hdu = torchfits.TableHDU(
+        {
+            "VLA": [
+                np.array([1, 2], dtype=np.int32),
+                np.array([3, 4], dtype=np.int64),
+            ]
+        }
+    )
+    with pytest.raises(RuntimeError, match="single dtype"):
+        torchfits.write(path, torchfits.HDUList([table_hdu]), overwrite=True)
+    assert not os.path.exists(path)
+
+
+def test_table_write_object_string_bytes_decoded(tmp_path):
+    path = str(tmp_path / "bytes_col.fits")
+    col = np.empty(2, dtype=object)
+    col[0] = b"hello"
+    col[1] = None
+    torchfits.write(path, {"S": col}, overwrite=True)
+    with torchfits.open(path) as hdul:
+        assert hdul[1].get_string_column("S") == ["hello", ""]
+
+
 def test_table_write_complex_tensor_roundtrip():
     filename = "test_write_complex_tensor_table.fits"
     table = {

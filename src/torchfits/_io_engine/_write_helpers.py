@@ -260,6 +260,102 @@ def _delete_header_key_if_supported(path: str, hdu: int, key: str) -> None:
     _invalidate_path_caches(path)
 
 
+def _vla_item_signature(item: Any) -> tuple[Any, ...] | None:
+    """Return a comparable dtype signature for a ragged/VLA column item.
+
+    Signatures are ``(kind, itemsize)`` tuples (plus ``("str",)``/``("none",)``
+    markers) so callers can enforce a single dtype per VLA column — the C++
+    writer infers the CFITSIO column type from the first non-empty row and
+    reinterprets any mismatching row buffer byte-wise otherwise. ``None``
+    means the item type is unsupported.
+    """
+    import numpy as np
+
+    if item is None:
+        return ("none",)
+    if isinstance(item, (str, bytes, np.str_, np.bytes_)):
+        return ("str",)
+    if isinstance(item, Tensor):
+        mapping = {
+            torch.bool: ("b", 1),
+            torch.uint8: ("u", 1),
+            torch.int16: ("i", 2),
+            torch.int32: ("i", 4),
+            torch.int64: ("i", 8),
+            torch.float32: ("f", 4),
+            torch.float64: ("f", 8),
+            torch.complex64: ("c", 8),
+            torch.complex128: ("c", 16),
+        }
+        if item.dim() > 1:
+            return None
+        return mapping.get(item.dtype)
+    if isinstance(item, (list, tuple, np.ndarray)):
+        try:
+            arr = np.asarray(item)
+        except Exception:
+            return None
+        if arr.ndim > 1 or arr.dtype == np.object_:
+            return None
+        kind = arr.dtype.kind
+        itemsize = arr.dtype.itemsize
+        if kind == "b":
+            return ("b", 1)
+        if kind == "c" and itemsize in (8, 16):
+            return ("c", itemsize)
+        if kind == "u" and itemsize == 1:
+            return ("u", 1)
+        if kind == "i" and itemsize in (2, 4, 8):
+            return ("i", itemsize)
+        if kind == "f" and itemsize in (4, 8):
+            return ("f", itemsize)
+    return None
+
+
+def _vla_column_items_ok(items: Any) -> bool:
+    """Validate ragged/VLA column items: supported types, 1-D, uniform dtype.
+
+    String items are only allowed when *every* non-None item is a string
+    (CFITSIO has no string VLA); array items must all share one dtype so the
+    C++ writer never reinterprets a row buffer under a foreign type.
+    """
+    saw_str = False
+    saw_data = False
+    sig: tuple[Any, ...] | None = None
+    for item in items:
+        s = _vla_item_signature(item)
+        if s is None:
+            return False
+        if s == ("none",):
+            continue
+        if s == ("str",):
+            saw_str = True
+            if saw_data:
+                return False
+            continue
+        saw_data = True
+        if saw_str:
+            return False
+        if sig is None:
+            sig = s
+        elif s != sig:
+            return False
+    return True
+
+
+def _decode_col_string(x: Any) -> str:
+    """Decode an object/string-column entry to a plain str for the C++ writer."""
+    import numpy as np
+
+    if x is None:
+        return ""
+    if isinstance(x, bytes):
+        return x.decode("ascii", "replace")
+    if isinstance(x, np.bytes_):
+        return bytes(x).decode("ascii", "replace")
+    return str(x)
+
+
 def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
     """Return True when all table columns can use the fast C++ writer."""
     import numpy as np
@@ -295,49 +391,7 @@ def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
             if arr.dtype != np.object_:
                 value = arr
             else:
-                for item in value:
-                    if item is None:
-                        continue
-                    if isinstance(item, (str, bytes, np.str_, np.bytes_)):
-                        continue
-                    if isinstance(item, torch.Tensor):
-                        t = item.detach()
-                        if t.dim() > 2:
-                            return False
-                        if t.is_complex():
-                            if t.dtype not in {torch.complex64, torch.complex128}:
-                                return False
-                            continue
-                        if t.dtype not in {
-                            torch.bool,
-                            torch.uint8,
-                            torch.int16,
-                            torch.int32,
-                            torch.int64,
-                            torch.float32,
-                            torch.float64,
-                        }:
-                            return False
-                        continue
-                    arr_item = np.asarray(item)
-                    if arr_item.ndim > 2:
-                        return False
-                    if np.iscomplexobj(arr_item):
-                        if arr_item.dtype not in (np.complex64, np.complex128):
-                            return False
-                        continue
-                    kind = arr_item.dtype.kind
-                    itemsize = arr_item.dtype.itemsize
-                    if kind in {"U", "S"}:
-                        continue
-                    if kind == "b":
-                        continue
-                    if kind == "u" and itemsize == 1:
-                        continue
-                    if kind == "i" and itemsize in (2, 4, 8):
-                        continue
-                    if kind == "f" and itemsize in (4, 8):
-                        continue
+                if not _vla_column_items_ok(value):
                     return False
                 continue
 
@@ -348,11 +402,9 @@ def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
         if np.iscomplexobj(value):
             if value.dtype not in (np.complex64, np.complex128):
                 return False
+            continue
         if value.dtype == np.object_:
-            if value.ndim == 1 and all(
-                isinstance(x, (str, bytes, np.str_, np.bytes_)) or x is None
-                for x in value
-            ):
+            if value.ndim == 1 and _vla_column_items_ok(value):
                 continue
             return False
         if value.dtype.kind in {"U", "S"}:
@@ -376,31 +428,49 @@ def _normalize_vla_item(item: Any) -> np.ndarray:
     """Normalize a single VLA item."""
     import numpy as np
 
-    if isinstance(item, torch.Tensor):
+    if isinstance(item, Tensor):
         t = item.detach()
         if t.device.type != "cpu":
             t = t.cpu()
         if t.dim() == 0:
             t = t.reshape(1)
-        return np.ascontiguousarray(t.numpy())
+        out = np.ascontiguousarray(t.numpy())
     elif isinstance(item, np.ndarray):
-        return np.ascontiguousarray(item)
+        out = np.ascontiguousarray(item)
     elif item is None:
         return np.asarray([], dtype=np.float32)
+    elif isinstance(item, (str, bytes, np.str_, np.bytes_)):
+        raise ValueError(
+            "VLA columns accept numeric/bool/complex array items, not strings; "
+            "mixed string/array columns are not writable"
+        )
     else:
-        return np.asarray(item)
+        out = np.asarray(item)
+        if out.ndim == 0:
+            out = out.reshape(1)
+        out = np.ascontiguousarray(out)
+    if not out.flags.writeable:
+        out = out.copy()
+    return out
 
 
 def _normalize_list_sequence(items: list[Any]) -> Any:
     """Normalize a list or tuple sequence."""
     import numpy as np
 
-    if items and all(
-        isinstance(item, (str, bytes, np.str_, np.bytes_)) or item is None
-        for item in items
-    ):
-        return items
-    if any(isinstance(item, (list, tuple, np.ndarray, torch.Tensor)) for item in items):
+    if not items:
+        return np.asarray(items)
+    has_str = any(isinstance(item, (str, bytes, np.str_, np.bytes_)) for item in items)
+    has_array = any(
+        isinstance(item, (list, tuple, np.ndarray, Tensor)) for item in items
+    )
+    if has_str and has_array:
+        raise ValueError(
+            "Mixed string and array items in one table column are not writable"
+        )
+    if has_str:
+        return [_decode_col_string(item) for item in items]
+    if has_array or all(item is None for item in items):
         return [_normalize_vla_item(item) for item in items]
     return np.asarray(items)
 
@@ -413,11 +483,13 @@ def _normalize_ndarray_column(value: np.ndarray) -> Any:
         if value.ndim == 1 and all(
             isinstance(x, (str, bytes, np.str_, np.bytes_)) or x is None for x in value
         ):
-            return [str(x) if x is not None else "" for x in value]
-        return list(value)
+            return [_decode_col_string(x) for x in value]
+        return [_normalize_vla_item(item) for item in value]
     if value.dtype.kind in {"U", "S"}:
         return value.astype(str).tolist()
-    return value
+    if not value.flags.writeable:
+        return np.ascontiguousarray(value).copy()
+    return np.ascontiguousarray(value)
 
 
 def _unsigned_table_storage_for_fits_write(value: Any) -> tuple[Any, str, float] | None:

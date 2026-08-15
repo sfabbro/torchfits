@@ -1162,14 +1162,27 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                 if (arr.ndim() > 1) {
                     throw std::runtime_error("VLA column rows must be 1D");
                 }
-                if (!dtype_set && arr.size() > 0) {
-                    dt = arr.dtype();
-                    dtype_set = true;
+                if (arr.size() > 0) {
+                    if (!dtype_set) {
+                        dt = arr.dtype();
+                        dtype_set = true;
+                    } else if (arr.dtype().code != dt.code || arr.dtype().bits != dt.bits) {
+                        // The column datatype is inferred from the first
+                        // non-empty row; a wider/narrower row buffer would be
+                        // reinterpreted byte-wise (or read out of bounds).
+                        throw std::runtime_error(
+                            "VLA column rows must share a single dtype");
+                    }
                 }
                 col.vla_rows.push_back(arr);
             }
             if (!dtype_set) {
-                throw std::runtime_error("VLA column has no data to infer dtype");
+                if (col.vla_rows.empty()) {
+                    throw std::runtime_error("VLA column has no data to infer dtype");
+                }
+                // All rows are empty but typed (e.g. explicit empty arrays or
+                // None-normalized rows): any row's dtype names the column type.
+                dt = col.vla_rows[0].dtype();
             }
             auto code = dtype_to_code(dt);
             col.datatype = code.second;
