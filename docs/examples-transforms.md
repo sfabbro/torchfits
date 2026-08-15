@@ -1,32 +1,14 @@
-# Transform gallery
+# Astronomical Transform Gallery
 
-Curated before/after figures. Full API:
-[Transforms reference](api-transforms.md). Compose example:
-[`example_transforms.py`](published-examples/example_transforms.py).
+Visual demonstrations of contrast stretches, background estimation, normalizations, multi-band RGB synthesis, and tabular sigma-clipping transforms provided by `torchfits.transforms`.
 
-```bash
-pixi run python examples/gallery_images.py
-pixi run python examples/gallery_tables_lc.py
-# copy only the allowlisted PNGs below into docs/assets/gallery/
-```
-
-**Gallery PNG allowlist** (copy from `examples/output/` when refreshing):
-
-- `image_compose_pipeline.png`
-- `lightcurve_sigma_clip.png`, `lightcurve_asymmetric_sigma_clip.png`
-- `table_fits_scale_columns.png`
-- `lupton_rgb_sdss.png` (from `example_lupton_rgb_sdss.py`)
-
-Public samples: `bash scripts/fetch_example_samples.sh`.
-`TORCHFITS_EXAMPLE_FAST=1` uses synthetic fallbacks for the gallery scripts
-when the cache is empty; `example_lupton_rgb_sdss.py` skips cleanly instead.
+For class signatures and parameter definitions, see the [Transforms API Reference](api-transforms.md).
 
 ---
 
-## Image pipeline (Compose)
+## 1. Compound Astronomical Imaging Pipelines (`Compose`)
 
-HorseHead alone has limited stretch contrast; the useful story is a
-**Compose** of background → arcsinh → zscale:
+Raw astronomical imaging spans wide dynamic ranges (from faint diffuse emission at the sky noise floor to saturated stellar cores). A standard pipeline chains background subtraction, non-linear contrast stretching, and dynamic range normalization:
 
 ```python
 import torchfits
@@ -37,52 +19,133 @@ from torchfits.transforms import (
     ZScaleNormalize,
 )
 
-tensor = torchfits.read_tensor(
-    "horsehead.fits", hdu=0
-).float()  # transforms need float input
-pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
-out = pipeline(tensor)
+# Read raw FITS image
+image = torchfits.read_tensor("horsehead.fits", hdu=0).float()
+
+# Chain background estimation, arcsinh contrast expansion, and IRAF-style ZScale
+pipeline = Compose(
+    [
+        BackgroundSubtract(),
+        ArcsinhStretch(factor=0.1),
+        ZScaleNormalize(),
+    ]
+)
+
+# Process image tensor
+processed = pipeline(image)
+
+# Invert transform if needed
+restored = pipeline.inverse(processed)
 ```
 
-![Compose: background → arcsinh → zscale](assets/gallery/image_compose_pipeline.png)
+![Compound Pipeline: Background Subtraction → Arcsinh Stretch → ZScale Normalization](assets/gallery/image_compose_pipeline.png)
 
-Script: [`example_transforms.py`](published-examples/example_transforms.py).
-Cutouts live under [Examples → Cutout](examples.md#cutout), not here.
+Corresponding script: [`example_transforms.py`](published-examples/example_transforms.py).
 
 ---
 
-## Tables / light curves
+## 2. Multi-Band Color Synthesis (`lupton_rgb`)
+
+Astronomical color images combine multiple narrowband or broadband filter exposures into an RGB representation. The Lupton (2004) algorithm preserves color ratios across faint and bright regions while preventing saturation burn-out in stellar cores:
 
 ```python
-from torchfits.transforms import AsymmetricSigmaClip, SigmaClip
-
-clean = AsymmetricSigmaClip(n_low=3.0, n_high=3.0)(flux)
-sym = SigmaClip(n_sigma=3.0)(flux)
-```
-
-![Light-curve sigma clip](assets/gallery/lightcurve_sigma_clip.png)
-
-![Asymmetric sigma clip](assets/gallery/lightcurve_asymmetric_sigma_clip.png)
-
-![FITS scale columns](assets/gallery/table_fits_scale_columns.png)
-
----
-
-## Lupton asinh RGB (real SDSS)
-
-`lupton_rgb` matches Astropy's Lupton asinh mapping (per-pixel peak clip). On
-this reprojected SDSS g/r/i sample the object fluxes are faint, so the gallery
-uses `Q=8, stretch=0.15` (Astropy's default stretch is `5`; tutorials often
-use `0.5`). Astropy convention maps the reddest band (i) to the R channel:
-
-```python
+import torchfits
 from torchfits.transforms import lupton_rgb
 
-rgb = lupton_rgb(r=i, g=r, b=g, Q=8.0, stretch=0.15)
+# Load aligned filter bands (e.g. SDSS i, r, g)
+i_band = torchfits.read_tensor("sdss_i.fits", hdu=0)
+r_band = torchfits.read_tensor("sdss_r.fits", hdu=0)
+g_band = torchfits.read_tensor("sdss_g.fits", hdu=0)
+
+# Map reddest filter (i) to Red, middle (r) to Green, bluest (g) to Blue
+rgb_tensor = lupton_rgb(
+    r=i_band,
+    g=r_band,
+    b=g_band,
+    q=8.0,
+    stretch=0.15,
+)
+print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [3, H, W]
 ```
 
-![Lupton RGB from SDSS g/r/i](assets/gallery/lupton_rgb_sdss.png)
+![Lupton RGB synthesis from SDSS g/r/i filters](assets/gallery/lupton_rgb_sdss.png)
 
-Script: [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py).
+Corresponding script: [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py).
 
-CLI synthetic RGB (no network) is under [CLI recipes](cli-recipes.md).
+---
+
+## 3. Time-Series & Light Curve Outlier Rejection
+
+Photometric time series often contain non-Gaussian outliers caused by cosmic rays, satellite trails, flares, or instrumental glitches. The `torchfits.transforms` module provides symmetric and asymmetric sigma-clipping:
+
+```python
+import torch
+from torchfits.transforms import AsymmetricSigmaClip, SigmaClip
+
+# Sample photometric flux series
+flux = torch.tensor([...], dtype=torch.float32)
+
+# Symmetric rejection (e.g. 3-sigma outlier mask)
+clipped_symmetric = SigmaClip(sigma=3.0)(flux)
+
+# Asymmetric rejection (e.g. strict lower clipping for dips, relaxed upper clipping for flares)
+clipped_asymmetric = AsymmetricSigmaClip(low_sigma=2.5, high_sigma=5.0)(flux)
+```
+
+### Symmetric Sigma Clipping
+![Light-curve symmetric sigma clipping](assets/gallery/lightcurve_sigma_clip.png)
+
+### Asymmetric Sigma Clipping (Flare / Transit isolation)
+![Light-curve asymmetric sigma clipping](assets/gallery/lightcurve_asymmetric_sigma_clip.png)
+
+Corresponding script: [`example_time_series.py`](published-examples/example_time_series.py).
+
+---
+
+## 4. FITS Header-Driven Linear Calibration
+
+When FITS tables or arrays encode physical quantities using standard `BSCALE` and `BZERO` keywords ($y = \text{BZERO} + x \times \text{BSCALE}$):
+
+```python
+from torchfits.transforms import LinearScale
+
+# Linear scaling transform
+scaler = LinearScale(scale=0.0036, zero=32768.0)
+physical_flux = scaler(raw_counts)
+```
+
+![FITS Scale Columns](assets/gallery/table_fits_scale_columns.png)
+
+---
+
+## 5. Building Custom Transforms
+
+You can create custom transforms by subclassing `FITSTransform`. This integrates directly into `Compose`, PyTorch `Dataset` classes, and GPU training pipelines:
+
+```python
+import torch
+from torchfits.transforms import FITSTransform
+
+
+class SkyNoiseInjector(FITSTransform):
+    """Add synthetic Gaussian sky noise for data augmentation."""
+
+    def __init__(self, std: float = 0.05):
+        super().__init__()
+        self.std = std
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        noise = torch.randn_like(tensor) * self.std
+        return tensor + noise
+
+
+# Chain custom transform in a pipeline
+aug_pipeline = Compose(
+    [
+        SkyNoiseInjector(std=0.02),
+        ZScaleNormalize(),
+    ]
+)
+```
+
+Corresponding script: [`example_custom_transform.py`](published-examples/example_custom_transform.py).

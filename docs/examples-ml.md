@@ -24,7 +24,6 @@ Train a tiny CNN on real FITS: Galaxy Zoo 1 labels + Legacy Survey cutouts.
 bash scripts/fetch_example_samples.sh   # caches GalaxyZoo1_DR_table2.fits
 # first run also downloads ~200 Legacy Survey cutouts (~10–20 MB)
 pixi run python examples/example_ml_galaxyzoo_legacy.py
-# copy examples/output/ml_gz_class_grid.png → docs/assets/gallery/ when refreshing
 ```
 
 ```python
@@ -80,7 +79,6 @@ simulation or synthetic ground truth.
 bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh   # 12 darks + 8 biases from CADC
 pixi run python examples/example_megacam_cr_denoise.py --mode both
-# copy examples/output/megacam_cr_denoise_dark.png → docs/assets/gallery/ when refreshing
 ```
 
 The example writes per-CCD metrics (`cr removed` measured at known CR
@@ -103,7 +101,6 @@ Public CFHTLS D1 IQ MegaPipe stacks (~20k×21k float32, ~1.74 GB/band,
 bash scripts/fetch_cfht_megapipe_sample.sh   # ~5.3 GB once
 # optional: MEGAPIPE_N_CUTOUTS=50 for a quick test run
 pixi run python examples/example_megapipe_cutout_collage.py
-# copy examples/output/megapipe_cutout_collage.png → docs/assets/gallery/ when refreshing
 ```
 
 The example:

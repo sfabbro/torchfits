@@ -1,253 +1,200 @@
-# Examples
+# Examples & Tutorial Scripts
 
-Short worked examples with representative outputs. Scripts live in `examples/`; docs
-builds copy them to [`published-examples/`](published-examples/README.md).
-API choice: [Python workflows](python-workflows.md).
+A curated catalog of runnable astronomical examples, from survey mosaic processing and IFU datacubes to X-ray event table filtering and neural network training.
+
+All example scripts live in the `examples/` directory of the repository, and are mirrored in [`published-examples/`](published-examples/README.md).
+
+To run the automated validation suite across all example scripts:
 
 ```bash
 pixi run python examples/test_examples.py
 ```
 
-| Start with | When |
-|---|---|
-| `read_tensor` / `table.read` | One file |
-| `torchfits.transforms` | Stretches / normalize for display |
-| `Fits*Dataset` + `make_loader` | Many files or rows |
+---
 
-## Scope
+## Sample Data Sources
 
-torchfits reads and writes FITS images and tables. WCS reprojection, source
-detection, and photometry stay in Astropy / photutils / reproject. Several
-examples follow an Astropy or survey tutorial through FITS I/O, then hand
-off arrays for WCS math elsewhere.
-
-## Sample sources
-
-Most examples run against public tutorial and survey files, fetched once into
-the resolved sample cache (or CFHT MegaCam data into
-`benchmarks_data/cfht_megacam/`):
+Most examples run against public astronomical survey and observatory data. Sample data can be downloaded into your local cache using the repository helper scripts:
 
 ```bash
-export TORCHFITS_SAMPLE_CACHE="${TORCHFITS_SAMPLE_CACHE:-$PWD/.torchfits-samples}"
-bash scripts/fetch_example_samples.sh              # astropy tutorial samples
-bash scripts/fetch_example_samples.sh --with-manga  # + ~200MB MaNGA LOGCUBE
-bash scripts/fetch_cfht_megacam_sample.sh           # CFHT MegaCam MEF (CADC)
-bash scripts/fetch_cfht_megapipe_sample.sh          # CFHTLS MegaPipe mosaics (~5.3 GB)
+# Fetch Astropy tutorial samples (HorseHead, M13, Chandra, SDSS)
+bash scripts/fetch_example_samples.sh
+
+# Fetch SDSS MaNGA DR17 LOGCUBE (~200 MB)
+bash scripts/fetch_example_samples.sh --with-manga
+
+# Fetch CFHT MegaCam 36-CCD MEF exposures (CADC)
+bash scripts/fetch_cfht_megacam_sample.sh
+
+# Fetch CFHT MegaPipe survey mosaic stacks (~5.3 GB)
+bash scripts/fetch_cfht_megapipe_sample.sh
 ```
-
-`TORCHFITS_EXAMPLE_FAST=1` (set in CI) skips network downloads. Python examples
-use synthetic fallbacks or a clean `SKIP:` exit where no fallback exists;
-repository shell demos that require a named sample need that sample cached.
-
-| Source | Sample(s) | Script |
-|---|---|---|
-| Learn Astropy — FITS images (HorseHead) | `horsehead` | [`example_image.py`](published-examples/example_image.py), [`example_image_cutouts.py`](published-examples/example_image_cutouts.py) |
-| Learn Astropy — M13 blue frame stacking | `m13_blue_0001..5` | [`example_m13_stack.py`](published-examples/example_m13_stack.py) |
-| Learn Astropy — FITS-Header (MEF) | `fits_header_mef` | [`example_mef_header.py`](published-examples/example_mef_header.py) |
-| Learn Astropy — FITS tables (Chandra events) | `chandra_events` | [`example_table.py`](published-examples/example_table.py) |
-| Learn Astropy — FITS cubes | `radio_cube_c14` | [`example_image_cube.py`](published-examples/example_image_cube.py) |
-| Astropy photometry tutorial | `spitzer_example` | [`example_cutout_wcs_write.py`](published-examples/example_cutout_wcs_write.py) |
-| Astropy visualization — reprojected SDSS g/r/i | `sdss_lupton_g/r/i` | [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py) |
-| SDSS MaNGA DR17 LOGCUBE | `manga_logcube` | [`example_manga_logcube.py`](published-examples/example_manga_logcube.py) |
-| CFHT MegaCam (CADC) | MEF `.fits.fz` exposures | [`example_megacam_mef_cutouts.py`](published-examples/example_megacam_mef_cutouts.py) |
-| Galaxy Zoo 1 + Legacy Survey cutouts | `galaxy_zoo1_table2` + LS FITS stamps | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) |
-| CFHT MegaPipe D1 IQ mosaics | `benchmarks_data/cfht_megapipe/` | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) |
 
 ---
 
-## Read a tensor (IMAGE HDU)
+## 1. Survey Mosaics & Multi-Extension FITS (MEF)
+
+Astronomical cameras (such as CFHT MegaCam, Subaru Hyper Suprime-Cam, and DECam) produce Multi-Extension FITS files comprising dozens of individual CCDs.
+
+### Extracting Cutouts from Multi-CCD Exposures
+
+Extract postage stamps across individual CCD extensions (`EXTNAME="CCD01"`, `CCD02`, ...) using high-throughput subset readers:
 
 ```python
 import torchfits
 
-tensor = torchfits.read_tensor("image.fits", hdu=0)
-header = torchfits.read_header("image.fits", hdu=0)
-print(tensor.shape, tensor.dtype)
-print(header["OBJECT"], header["BITPIX"])
+# Reusable reader handle for fast repeated extractions on a 36-CCD exposure
+with torchfits.open_subset_reader("megacam_exposure.fits.fz", hdu="CCD01") as reader:
+    stamp1 = reader.read_subset(100, 100, 228, 228)
+    stamp2 = reader.read_subset(500, 500, 628, 628)
 ```
 
-```text
-torch.Size([8, 8]) torch.float32
-M31 -32
+- **Script:** [`example_megacam_mef_cutouts.py`](published-examples/example_megacam_mef_cutouts.py)
+- **Gigapixel Collage Demo:** [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py)
+
+### Cutouts with World Coordinate System (WCS) Updates
+
+When extracting a sub-region from an image, the reference pixel coordinates (`CRPIX1`, `CRPIX2`) in the FITS header must be translated to preserve astrometric calibration:
+
+```python
+import torchfits
+
+# Extract cutout and compute translated WCS reference pixel coordinates
+cutout, header = torchfits.read("spitzer_irac.fits", return_header=True)
+header["CRPIX1"] -= 100
+header["CRPIX2"] -= 100
+
+torchfits.write(
+    "spitzer_cutout.fits", cutout[100:356, 100:356], header=header, overwrite=True
+)
 ```
 
-Script: [`example_image.py`](published-examples/example_image.py).
+- **Script:** [`example_cutout_wcs_write.py`](published-examples/example_cutout_wcs_write.py)
 
 ---
 
-## Pack float → int16 (opt-in)
+## 2. Spectroscopy & 3D Datacubes
 
-Default write keeps native float. When size forces `BITPIX=16` /
-`TFORM=I`, use percentile bulk packing instead of global min→max:
+### SDSS MaNGA IFU Datacubes
+
+SDSS-IV MaNGA (Mapping Nearby Galaxies at APO) packages 3D integral field unit (IFU) spectroscopy into multi-extension FITS datacubes containing flux, inverse variance, mask planes, and wavelength grids:
 
 ```python
+import torchfits
+
+# Read 3D spectral flux cube [Wavelength, Y, X]
+flux_cube = torchfits.read_tensor("manga_logcube.fits", hdu="FLUX")
+ivar_cube = torchfits.read_tensor("manga_logcube.fits", hdu="IVAR")
+wave_grid = torchfits.read_tensor("manga_logcube.fits", hdu="WAVE")
+
+print(f"Datacube shape: {flux_cube.shape}")  # [4563, 74, 74]
+```
+
+- **Script:** [`example_manga_logcube.py`](published-examples/example_manga_logcube.py)
+- **Radio Cube Script:** [`example_image_cube.py`](published-examples/example_image_cube.py)
+
+---
+
+## 3. Astronomical Event Tables & Catalogs
+
+### Chandra X-Ray Event Lists
+
+High-energy astrophysics instruments record individual photon arrival events. Query and filter multi-million photon event files using C++ pushdown predicates directly into PyArrow:
+
+```python
+import torchfits
+
+# Filter Chandra X-ray events by energy band (e.g. hard X-ray band > 5 keV)
+events = torchfits.table.read(
+    "chandra_events.fits",
+    hdu="EVENTS",
+    columns=["time", "x", "y", "energy"],
+    where="energy > 5000",
+)
+print(f"Selected {events.num_rows} hard X-ray photons.")
+```
+
+- **Script:** [`example_table.py`](published-examples/example_table.py)
+- **Dataframe Interop Script:** [`example_table_interop.py`](published-examples/example_table_interop.py)
+- **DuckDB & Polars Analytics:** [`example_table_recipes.py`](published-examples/example_table_recipes.py)
+
+---
+
+## 4. Multi-Exposure Coaddition & Image Stacking
+
+Combine dithered telescope exposures into a high signal-to-noise coadded image tensor:
+
+```python
+import glob
 import torch
 import torchfits
 
-tensor = torch.zeros((8, 8), dtype=torch.float32)
-ids = torch.tensor([1, 2], dtype=torch.int32)
-flux = torch.tensor([1.5, 2.5], dtype=torch.float32)
+# Stack multiple raw exposures (e.g. Messier 13 globular cluster frames)
+frames = [torchfits.read_tensor(f, hdu=0).float() for f in glob.glob("m13_blue_*.fits")]
+stacked_image = torch.stack(frames, dim=0).mean(dim=0)
 
-torchfits.write_tensor("packed.fits", tensor, quantize="robust", overwrite=True)
-torchfits.table.write(
-    "table.fits",
-    {"ID": ids, "FLUX": flux},
-    quantize={"FLUX": "robust"},
-    overwrite=True,
-)
+torchfits.write("m13_coadd.fits", stacked_image, overwrite=True)
 ```
 
-Script: [`example_quantize_int16.py`](published-examples/example_quantize_int16.py).
-API: [Core I/O `write`](api-core-io.md#write), [Tables `table.write`](api-tables.md#tablewrite).
+- **Script:** [`example_m13_stack.py`](published-examples/example_m13_stack.py)
 
 ---
 
-## Filter a table
+## 5. Storage Optimization: Robust 16-Bit Quantization
+
+When storage budgets or bandwidth require compressing 32-bit floating-point astronomical images and table columns into 16-bit integers (`BITPIX=16`, `TFORM=I`), standard global min-max scaling loses dynamic range to cosmic rays and noise spikes. The `quantize="robust"` parameter automatically uses percentile-based bulk packing:
 
 ```python
-df = torchfits.table.read(
-    "catalog.fits",
-    hdu=1,
-    columns=["ra", "dec", "flux"],
-    where="flux >= 2.0",
-)
-cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["ra", "flux"])
-print(df.num_rows, df.column("flux").to_pylist())
-print(cols["ra"].tolist())
+import torchfits
+
+image_float = torchfits.read_tensor("raw_float.fits")
+
+# Pack into 16-bit integer FITS with automatically calibrated BSCALE and BZERO
+torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=True)
 ```
 
-```text
-2 [2.0, 3.0]
-[200.0, 201.0, 202.0]
-```
-
-Script: [`example_table.py`](published-examples/example_table.py), which also
-filters the real Chandra events table (`energy > 5000`) when cached.
+- **Script:** [`example_quantize_int16.py`](published-examples/example_quantize_int16.py)
 
 ---
 
-## Cutout
+## 6. Complete Example Scripts Directory
 
-CLI users: CFITSIO path sections (1-based inclusive). Python /
-`--box`: 0-based half-open (same as `read_subset`). Do not mix the two.
+### Image & Datacube Processing
 
-```python
-import os
-
-sample = os.path.join(os.environ["TORCHFITS_SAMPLE_CACHE"], "horsehead.fits")
-cut = torchfits.read_subset(sample, 0, 100, 100, 356, 356)
-print(cut.shape, float(cut.float().mean()))
-```
-
-```text
-torch.Size([256, 256]) 8402.1416015625  # sample-dependent value
-```
-
-```bash
-torchfits cutout "$TORCHFITS_SAMPLE_CACHE/horsehead.fits[101:356,101:356]" cutout.fits
-torchfits cutout "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" cutout.fits --box 100,100,356,356
-torchfits info cutout.fits --hdu 0
-```
-
-```text
-dtype='int16' file='cutout.fits' hdu=0 name='PRIMARY' shape='(256, 256)' type='IMAGE'
-```
-
-![HorseHead full vs cutout](assets/gallery/image_cutout.png)
-
-Script: [`example_image_cutouts.py`](published-examples/example_image_cutouts.py).
-
----
-
-## Transforms
-
-Stretch / normalize for viz or model input. Skip when you need raw stored values.
-
-```python
-from torchfits.transforms import (
-    ArcsinhStretch,
-    BackgroundSubtract,
-    Compose,
-    ZScaleNormalize,
-)
-
-pipeline = Compose([BackgroundSubtract(), ArcsinhStretch(a=0.1), ZScaleNormalize()])
-out = pipeline(tensor)
-restored = pipeline.inverse(out)
-```
-
-![Compose pipeline](assets/gallery/image_compose_pipeline.png)
-
-Full gallery (Lupton RGB, light-curve clip): [Transform gallery](examples-transforms.md).
-Script: [`gallery_images.py`](published-examples/gallery_images.py).
-Custom subclass: [`example_custom_transform.py`](published-examples/example_custom_transform.py).
-
----
-
-## Datasets / training
-
-User Guide walkthrough (Galaxy Zoo + Legacy Survey FITS cutouts, MegaPipe
-collage, `make_loader` vs `DataLoader`): [ML with FITS](examples-ml.md).
-
-API reference: [Data module](api-data.md).
-
----
-
-## CLI on real data (HorseHead)
-
-```bash
-torchfits info "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" --hdu 0
-torchfits stats "$TORCHFITS_SAMPLE_CACHE/horsehead.fits" --hdu 0 --format jsonl
-```
-
-```text
-dtype='int16' file='horsehead.fits' hdu=0 name='PRIMARY' shape='(893, 891)' type='IMAGE'
-{"hdu": 0, "name": "PRIMARY", "shape": [893, 891], "dtype": "int16",
- "min": ..., "max": ..., "mean": ..., "std": ..., "median": ...}
-```
-
-Recipes: [CLI recipes](cli-recipes.md). Shell demo:
-[`cli/imstat_imarith.sh`](published-examples/cli/imstat_imarith.sh).
-
----
-
-## More scripts
-
-### Arrays and tensors
-
-| Script | Demonstrates |
+| Script | Purpose & Key APIs |
 |---|---|
-| [`example_image.py`](published-examples/example_image.py) | read / write round-trip |
-| [`example_quantize_int16.py`](published-examples/example_quantize_int16.py) | `quantize="robust"` image + table packing |
-| [`example_image_cutouts.py`](published-examples/example_image_cutouts.py) | `read_subset`, `open_subset_reader` |
-| [`example_image_cube.py`](published-examples/example_image_cube.py) | 3D cubes |
-| [`example_image_mef.py`](published-examples/example_image_mef.py) | MEF `open` / `read_hdus` |
-| [`example_m13_stack.py`](published-examples/example_m13_stack.py) | stack multiple exposures into a mean image |
-| [`example_mef_header.py`](published-examples/example_mef_header.py) | inspect a multi-extension header by EXTNAME |
-| [`example_cutout_wcs_write.py`](published-examples/example_cutout_wcs_write.py) | cutout + `CRPIX*` translation on write-back |
-| [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py) | Lupton asinh RGB from real SDSS g/r/i; decompresses `.fits.bz2` via stdlib `bz2` (CFITSIO builds commonly lack bzip2 support) |
-| [`example_manga_logcube.py`](published-examples/example_manga_logcube.py) | named HDUs (`FLUX`/`IVAR`/`MASK`/`WAVE`); axis order is `(wave, y, x)` |
-| [`example_megacam_mef_cutouts.py`](published-examples/example_megacam_mef_cutouts.py) | cutouts from a real CFHT MegaCam MEF; fetch via `bash scripts/fetch_cfht_megacam_sample.sh` |
+| [`example_image.py`](published-examples/example_image.py) | Basic read and write round-trip for 2D images |
+| [`example_image_cutouts.py`](published-examples/example_image_cutouts.py) | Bounding box cutouts with `read_subset` and `open_subset_reader` |
+| [`example_image_cube.py`](published-examples/example_image_cube.py) | 3D radio and spectral data cube slicing |
+| [`example_image_mef.py`](published-examples/example_image_mef.py) | Multi-extension inspection and named HDU extraction |
+| [`example_m13_stack.py`](published-examples/example_m13_stack.py) | Multi-frame exposure stacking and median coaddition |
+| [`example_mef_header.py`](published-examples/example_mef_header.py) | Navigating complex headers across multi-CCD files |
+| [`example_cutout_wcs_write.py`](published-examples/example_cutout_wcs_write.py) | Extracting sub-regions and updating `CRPIX` astrometry keywords |
+| [`example_manga_logcube.py`](published-examples/example_manga_logcube.py) | SDSS MaNGA IFU datacubes (`FLUX`, `IVAR`, `MASK`, `WAVE`) |
+| [`example_megacam_mef_cutouts.py`](published-examples/example_megacam_mef_cutouts.py) | Parallel cutouts from CFHT MegaCam 36-CCD mosaics |
+| [`example_quantize_int16.py`](published-examples/example_quantize_int16.py) | Robust 16-bit quantization for images and table columns |
 
-### Tables
+### Tables & Catalogs
 
-| Script | Demonstrates |
+| Script | Purpose & Key APIs |
 |---|---|
-| [`example_table.py`](published-examples/example_table.py) | Arrow dataframe, tensors, mutations |
-| [`example_table_interop.py`](published-examples/example_table_interop.py) | Pandas / Arrow / Polars |
-| [`example_polars.py`](published-examples/example_polars.py) | `read_polars` / `scan_polars` |
-| [`example_table_recipes.py`](published-examples/example_table_recipes.py) | scanner, DuckDB |
+| [`example_table.py`](published-examples/example_table.py) | Arrow tables, tensor dictionary loading, and Chandra event filtering |
+| [`example_table_interop.py`](published-examples/example_table_interop.py) | Zero-copy conversion between PyArrow, Pandas, and Polars |
+| [`example_polars.py`](published-examples/example_polars.py) | `read_polars` and out-of-core `scan_polars` streaming |
+| [`example_table_recipes.py`](published-examples/example_table_recipes.py) | SQL pushdown, DuckDB querying, and Arrow record batch iterators |
 
-### Training / time series
+### Machine Learning & Preprocessing
 
-| Script | Demonstrates |
+| Script | Purpose & Key APIs |
 |---|---|
-| [`example_time_series.py`](published-examples/example_time_series.py) | FITS table light curve + asymmetric sigma clip |
-| [`example_custom_transform.py`](published-examples/example_custom_transform.py) | subclassing `FITSTransform`, `Compose`, Dataset wiring |
-| [`example_make_loader_vs_dataloader.py`](published-examples/example_make_loader_vs_dataloader.py) | `make_loader` vs plain `DataLoader` |
-| [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | GZ1 labels + Legacy Survey FITS cutouts → Dataset → tiny CNN ([ML guide](examples-ml.md)) |
-| [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | MegaPipe mosaic cutouts + Lupton collage + timing ([ML guide](examples-ml.md)) |
-| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | Noise2Noise CR cleaning on real MegaCam darks; honest transfer metrics ([ML guide](examples-ml.md), [denoise pipeline](denoise-pipeline.md)) |
+| [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | Galaxy Zoo 1 morphology classification on Legacy Survey cutouts |
+| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | Self-supervised Noise2Noise cosmic ray removal on CFHT darks |
+| [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | Gigapixel mosaic cutout extraction and Lupton RGB collage |
+| [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py) | Lupton asinh RGB synthesis from SDSS $g, r, i$ filter frames |
+| [`example_transforms.py`](published-examples/example_transforms.py) | Composite stretch and normalization pipelines (`Compose`) |
+| [`example_time_series.py`](published-examples/example_time_series.py) | Light curve filtering with symmetric and asymmetric sigma clipping |
+| [`example_custom_transform.py`](published-examples/example_custom_transform.py) | Implementing custom `FITSTransform` subclasses |
+| [`example_make_loader_vs_dataloader.py`](published-examples/example_make_loader_vs_dataloader.py) | Benchmark comparing `make_loader` cache warmup vs `DataLoader` |
 | [`example_image_dataset.py`](published-examples/example_image_dataset.py) | Minimal `FitsImageDataset` + `make_loader` ([ML guide](examples-ml.md)) |
 | [`example_data_catalogs.py`](published-examples/example_data_catalogs.py) | Table + cutout datasets ([ML guide](examples-ml.md)) |
 
