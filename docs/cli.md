@@ -405,19 +405,19 @@ torchfits probe vos:username/data/sample.fits
 
 | torchfits command | Closest classic tools | Purpose & Description |
 |---|---|---|
-| `info` | [`fitsinfo`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsinfo) | Overview of HDU extensions, dimensions, and data types |
-| `header` | [`fitsheader`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsheader), [`dfits` / `fitsort`](https://www.eso.org/sci/software/eclipse/eug/eug/node13.html) | Dump header cards; filter by keyword; multi-file summary tables |
-| `verify` | [`fitscheck`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitscheck), [`fitsverify`](https://heasarc.gsfc.nasa.gov/docs/software/ftools/fitsverify/) | Check `DATASUM` and `CHECKSUM` keyword integrity |
-| `diff` | `fitsdiff` | Compare headers and image statistics between two FITS files |
-| `stats` | [`imstat`](https://iraf.net/irafdocs/imstat.php), [`aststatistics`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-aststatistics.html) | Compute min, max, mean, standard deviation, and median pixel values |
-| `table` | [`asttable`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-asttable.html), `tablist` | Preview binary/ASCII table schema and row values |
-| `cutout` | [`astcrop`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astcrop.html), CFITSIO sections | Extract sub-regions using pixel ranges (`[x1:x2, y1:y2]`) or bounding boxes |
-| `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) | Export tables to Parquet/CSV/Arrow with SQL filters; render 3-band Lupton RGB PNGs |
-| `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) | Lossless copy of single or multi-extension FITS files |
-| `arith` | [`imarith`](https://iraf.net/irafdocs/imarith.php) | Perform scalar or image-to-image addition, subtraction, multiplication, division |
-| `compress` / `decompress` | [`fpack` / `funpack`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) | Lossless / lossy tile compression (Rice, Gzip, Hcompress) and expansion |
-| `transform` | `imfunction` | Apply astronomical stretches (Arcsinh, Sqrt, Log) and ZScale / percentile scaling |
-| `setkey` | `hedit`, `modhead` | Insert, update, rename, or delete header keywords across single or multiple files |
+| `info` | [`fitsinfo`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsinfo) (Astropy) | Overview of HDU extensions, dimensions, and data types |
+| `header` | [`fitsheader`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsheader) (Astropy), [`dfits` / `fitsort`](https://www.eso.org/sci/software/eclipse/eug/eug/node13.html) (ESO Eclipse) | Dump header cards; filter by keyword; multi-file summary tables |
+| `verify` | [`fitscheck`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitscheck) (Astropy), [`fitsverify`](https://heasarc.gsfc.nasa.gov/docs/software/ftools/fitsverify/) (NASA HEASARC) | Check `DATASUM` and `CHECKSUM` keyword integrity |
+| `diff` | [`fitsdiff`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsdiff) (Astropy) | Compare headers and image statistics between two FITS files |
+| `stats` | [`imstat`](https://iraf.net/irafdocs/imstat.php) (IRAF), [`aststatistics`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-aststatistics.html) (Gnuastro) | Compute min, max, mean, standard deviation, and median pixel values |
+| `table` | [`asttable`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-asttable.html) (Gnuastro), `tablist` (NASA HEASARC FTOOLS) | Preview binary/ASCII table schema and row values |
+| `cutout` | [`astcrop`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astcrop.html) (Gnuastro), CFITSIO image sections | Extract sub-regions using pixel ranges (`[x1:x2, y1:y2]`) or bounding boxes |
+| `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html) (Gnuastro), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) (Starlink) | Export tables to Parquet/CSV/Arrow with SQL filters; render 3-band Lupton RGB PNGs |
+| `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (CFITSIO) | Lossless copy of single or multi-extension FITS files |
+| `arith` | [`imarith`](https://iraf.net/irafdocs/imarith.php) (IRAF) | Perform scalar or image-to-image addition, subtraction, multiplication, division |
+| `compress` / `decompress` | [`fpack` / `funpack`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (NASA HEASARC) | Lossless / lossy tile compression (Rice, Gzip, Hcompress) and expansion |
+| `transform` | [`imfunction`](https://iraf.net/irafdocs/imfunction.php) (IRAF) | Apply astronomical stretches (Arcsinh, Sqrt, Log) and ZScale / percentile scaling |
+| `setkey` | [`hedit`](https://iraf.net/irafdocs/hedit.php) (IRAF), `modhead` (WCSTools) | Insert, update, rename, or delete header keywords across single or multiple files |
 | `probe` | HTTP Range peek | Inspect remote FITS headers over HTTP(S) or VOSpace without downloading whole files |
 
 For practical examples, see [CLI recipes](cli-recipes.md).
