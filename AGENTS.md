@@ -16,6 +16,12 @@ chat scrollback. Deferred product work: [`.cursor/post-1.0-backlog.md`](.cursor/
 ## Humans / coding agents
 
 - Docs must match the public façade (`docs/api*.md`); env vars must exist in `src/`.
+- **Documentation Standards:**
+  - **Human-First & Direct:** Prioritize clear, copy-pasteable Python and CLI recipes over boilerplate or speculative notes.
+  - **Zero AI / Developer Jargon:** Avoid internal terminology ("lanes", "tax", "smoke", "inventory", "coding agents") in user-facing documentation.
+  - **Faithful to Code & Faustian Rigor:** All documented signatures, flags, exit codes, and examples must match `src/torchfits/` implementations.
+  - **Mermaid Best Practices:** Always quote labels with special characters (`id["Label (info)"]`) to prevent syntax rendering glitches.
+  - **Verification:** Run `pixi run docs-contract`, `pixi run docs-links`, and `pixi run preflight-push` on any docs change.
 - Prefer smallest correct diffs; no new dependencies without a clear need.
 - Pre-tag public-API audit: [`.cursor/skills/release-api-freeze-review/SKILL.md`](.cursor/skills/release-api-freeze-review/SKILL.md).
 
