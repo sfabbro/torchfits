@@ -264,7 +264,7 @@ cache precedence. CI sets `TORCHFITS_EXAMPLE_FAST=1` to skip downloads.
 ### Out of gallery
 
 These live under `examples/` but are not part of the published gallery /
-`docs-contract` smoke set (CLI demos or specialized shapes):
+`docs-contract` verification suite (CLI demos or specialized shapes):
 
 - `examples/desi_shaped_spectrum.py` — DESI-shaped spectrum demo ([API data](api-data.md))
-- `examples/cli/make_rgb_demo.py` — RGB collage fixture for CLI recipes ([CLI recipes](cli-recipes.md))
+- `examples/cli/make_rgb_demo.py` — RGB collage generator for CLI recipes ([CLI recipes](cli-recipes.md))

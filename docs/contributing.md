@@ -96,7 +96,7 @@ pixi run -e test -- pip install -e . --no-build-isolation
 ```
 
 Or `pixi run dev` when you want the default-env editable install used by
-example smoke tasks.
+example verification tasks.
 
 ### C++ code conventions
 

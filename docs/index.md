@@ -7,12 +7,11 @@ title: FITS I/O for tensors and tables
 
 torchfits is FITS I/O for PyTorch with a C++ engine: images as tensors,
 catalogs as Arrow tables, cutouts in one call, and `where=` filters evaluated
-on the C++ side. It ships as prebuilt wheels (Linux x86_64 + aarch64, macOS
-arm64, CPython 3.10–3.14) with CFITSIO vendored in. pip does not compile.
+directly in C++. It ships as prebuilt binary wheels (Linux x86_64 + aarch64, macOS
+Apple Silicon arm64, CPython 3.10–3.14) with CFITSIO vendored in (no compiler needed).
 
 [Parity](parity.md) lists what torchfits covers today, and
-[Benchmarks](benchmarks.md) documents the performance picture — known slower
-cases included.
+[Benchmarks](benchmarks.md) documents the performance picture across CPU and GPU hardware.
 
 ## Browse
 
@@ -80,9 +79,6 @@ torchfits header image.fits
 ```
 
 ## Why torchfits?
-
-torchfits cuts **1.0.0** next (not yet released; **1.0.0rc5** is on PyPI) —
-see [Changelog](changelog.md).
 
 | | astropy / fitsio | torchfits |
 |---|---|---|

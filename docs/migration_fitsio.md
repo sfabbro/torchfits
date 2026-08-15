@@ -41,7 +41,7 @@ patterns.
 | Rename column | `f[1].rename_column(old, new)` | `torchfits.table.rename_columns(path, {old: new}, hdu=1)` |
 | Drop column | `f[1].delete_column(name)` | `torchfits.table.drop_columns(path, [name], hdu=1)` |
 
-## Predicate pushdown
+## Table filtering
 
 | Operation | fitsio | torchfits |
 |-----------|--------|-----------|
@@ -66,12 +66,7 @@ patterns.
 | 50× repeated 100×100 cutouts (CPU) | 3.21 ms | 467 μs (**~6.9× faster**) |
 | Table read (100k rows, 8 cols, mixed) | 10.36 ms | 2.56 ms (**~4.0× faster**) |
 
-*CPU medians from the rc5 re-soak (`exhaustive_cpu_20260806_012620` via
-[Benchmarks](benchmarks.md) host scorecard); the CUDA row from the Round-3 CUDA
-scorecard (`exhaustive_cuda_20260719_144457`). Absolute highlight times refresh
-with each soak — prefer
-`docs/benchmarks.md#performance-highlights` over this migration snapshot when
-numbers disagree.*
+*Median timings from benchmark test runs. For exhaustive comparisons and methodology, see [Benchmarks](benchmarks.md#performance-highlights).*
 
 ## Key Behavioral Differences
 

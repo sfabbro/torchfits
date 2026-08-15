@@ -1,22 +1,16 @@
 # Quick Start
 
-Get up and running with torchfits in minutes. Current cut is **1.0.0** (not yet released; **1.0.0rc5** is the PyPI line,
-built for the PyTorch 2.13 lane); see [Changelog](changelog.md) for release notes.
+Get up and running with torchfits in minutes.
 
 ## Install
 
-One bare command — torchfits wheels are ABI-matched to PyTorch 2.13.x (Linux
-x86_64 and aarch64, macOS arm64, CPython 3.10–3.14), and the wheel metadata
-pins that range, so pip installs or upgrades torch for you. The 1.0 line is
-still a release candidate on PyPI, so add `--pre` until the final tag:
+Install the prebuilt binary wheel:
 
 ```bash
-pip install --pre torchfits
+pip install torchfits
 ```
 
-Pre-built wheels, no system CFITSIO needed (it's vendored). Prefer a CUDA /
-CPU / MPS flavor, or must keep a specific torch minor? See
-[Installation](install.md).
+Prebuilt binary wheels include vendored CFITSIO (no C++ compiler or system libraries needed). For CPU-only installs, custom CUDA builds, or existing PyTorch 2.11/2.12 environments, see [Installation](install.md).
 
 ## Shell tools
 

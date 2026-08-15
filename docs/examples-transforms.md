@@ -1,7 +1,7 @@
 # Transform gallery
 
 Curated before/after figures. Full API:
-[Transforms reference](api-transforms.md). Compose smoke test:
+[Transforms reference](api-transforms.md). Compose example:
 [`example_transforms.py`](published-examples/example_transforms.py).
 
 ```bash

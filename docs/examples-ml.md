@@ -101,7 +101,7 @@ Public CFHTLS D1 IQ MegaPipe stacks (~20k×21k float32, ~1.74 GB/band,
 
 ```bash
 bash scripts/fetch_cfht_megapipe_sample.sh   # ~5.3 GB once
-# optional: MEGAPIPE_N_CUTOUTS=50 for a quick local smoke
+# optional: MEGAPIPE_N_CUTOUTS=50 for a quick test run
 pixi run python examples/example_megapipe_cutout_collage.py
 # copy examples/output/megapipe_cutout_collage.png → docs/assets/gallery/ when refreshing
 ```

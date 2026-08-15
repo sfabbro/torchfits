@@ -9,23 +9,17 @@
 FITS I/O for PyTorch: read and write FITS as tensors and tables — cutouts,
 predicate filters, and a shell CLI (C++ engine, vendored CFITSIO).
 
-Built for the **PyTorch 2.13 lane**. Current PyPI line: **1.0.0rc5** (the
-1.0.0 cut on `main` is not yet released).
+Prebuilt binary wheels for **Python 3.10–3.14** across **PyTorch 2.11, 2.12, and 2.13** on Linux (x86_64, aarch64) and macOS (Apple Silicon arm64) with vendored CFITSIO.
 
 Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.github.io/torchfits/edge/) (`main` tip)
 
 ## Install
 
 ```bash
-pip install --pre torchfits
+pip install torchfits
 ```
 
-One command; no torch pin needed — the wheel metadata installs torch 2.13.x
-for you (add `--pre` only while the 1.0 line is a release candidate). Multi-lane
-wheels for PyTorch 2.11 and 2.12, plus CPU-only or CUDA flavors: [install.md](docs/install.md).
-
-Requires Python 3.10–3.14. Prebuilt wheels: Linux x86_64 + aarch64, macOS arm64
-(CFITSIO vendored; pip does not compile).
+Prebuilt wheels automatically enable GPU acceleration (CUDA on Linux, MPS on macOS) when available, or fall back to CPU. For CPU-only installs, custom CUDA builds, or existing PyTorch 2.11/2.12 environments, see the [Installation guide](docs/install.md).
 
 ## At a glance
 

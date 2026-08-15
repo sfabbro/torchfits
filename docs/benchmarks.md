@@ -1,21 +1,16 @@
 # Benchmarks
 
 `torchfits` benchmarks cover FITS **tensor** I/O (IMAGE HDUs, typically 1D–4D)
-and FITS **table** I/O vs Astropy and fitsio. CPU↔GPU comparisons are published
-when hardware was available; GPU deficits are listed, not hidden.
+and FITS **table** I/O vs Astropy and fitsio across CPU and GPU hardware.
 
-**Honesty:** torchfits cuts **1.0.0** next (not yet released; **1.0.0rc5** is on
-PyPI). Headline ratios below are
-lab medians from named scorecard runs — not guarantees on your filesystem,
-file mix, or PyTorch version. Check [Performance deficits](#performance-deficits)
-before assuming torchfits wins every case.
+**Honesty:** Headline ratios below are lab medians from reproducible benchmark runs across our test suites — not guarantees on your specific filesystem, file mix, or PyTorch version. Check [Performance comparisons & limitations](#performance-deficits) for a transparent breakdown of cases where peer libraries are competitive or faster.
 
 ## How to read this page
 
 | If you want… | Jump to |
 |---|---|
 | Headline wins | [Performance highlights](#performance-highlights) |
-| Cases where torchfits is not #1 (CPU and GPU) | [Performance deficits](#performance-deficits) |
+| Cases where torchfits is not #1 (CPU and GPU) | [Performance comparisons & limitations](#performance-deficits) |
 | GPU transport rows | [I/O transport and backend](#io-transport-and-backend) |
 | Python × PyTorch version variance | [Version matrix variance](#python-pytorch-matrix-variance) |
 | Reproduce numbers | [Reproducing](#reproducing) |
@@ -37,7 +32,7 @@ does not refresh GPU cells.
 ## Methodology
 
 Each case measures median wall-clock time over multiple repetitions, plus
-**peak process RSS** (and peak CUDA alloc when on CUDA). Deficit ranking is
+**peak process RSS** (and peak CUDA alloc when on CUDA). Performance ranking is
 **time-based**; RSS is reported alongside times.
 
 Cases are grouped into two families:
@@ -294,7 +289,7 @@ pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(me
 pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(scaled_|compressed_|mef_)'
 ```
 
-Named **deficit-cluster** recipes (mmap on+off, no unrelated GPU matrix when scoped to tables):
+Named **focused-benchmark** recipes (mmap on+off, no unrelated GPU matrix when scoped to tables):
 
 ```bash
 pixi run bench-deficit-focus              # hcompress + tiny_int8 + narrow predicates
@@ -303,7 +298,7 @@ pixi run bench-deficit-focus tiny_int8
 pixi run bench-deficit-focus predicate
 ```
 
-Rankings and deficit scoring group by `(domain, case_id, family, mmap_target)` so
+Rankings and comparisons group by `(domain, case_id, family, mmap_target)` so
 mmap-on and mmap-off peers are never cross-compared.
 ## Benchmark Scripts
 
@@ -334,11 +329,11 @@ scope or not yet wired into the published tables.
 | I/O transport `disk→RAM→GPU` | Partial | `bench_gpu_transports.py` (mmap on) | Tensor `read_full`, cutouts, repeated cutouts; tables until suite lands |
 | I/O transport `disk→CPU→GPU` | Partial | `bench_gpu_transports.py` (mmap off) | Same with buffered host decode + H2D |
 | I/O transport `disk→GPU` | No | — | No host-bypass path yet (see Methodology); 1.1 candidate |
-| BITPIX / dtypes | Partial | int8–int64, float32/64 × 1D/2D/3D | Native **uint16/uint32** 2D fixtures; unsigned via BZERO in `scaled_*` |
-| Tensor dimensions / sizes | Yes | tiny → large; 1D–3D (4D where fixtures exist) | Large 3D cubes may hit size caps |
+| BITPIX / dtypes | Partial | int8–int64, float32/64 × 1D/2D/3D | Native **uint16/uint32** 2D sample datasets; unsigned via BZERO in `scaled_*` |
+| Tensor dimensions / sizes | Yes | tiny → large; 1D–3D (4D where sample datasets exist) | Large 3D cubes may hit size caps |
 | Compression (read) | Yes | gzip, rice, hcompress, plio | Write→compress cases are being added to the suite |
 | Scaling (BSCALE/BZERO) | Yes | `scaled_small/medium/large` | Table-column scaling not isolated |
-| Random / repeated access | Yes | cutouts, `random_ext_full_reads_200`, `open_subset_reader` | MEF random ext reads on selected fixtures |
+| Random / repeated access | Yes | cutouts, `random_ext_full_reads_200`, `open_subset_reader` | MEF random ext reads on selected sample datasets |
 | Multi-extension (MEF) | Yes | `mef_*`, `multi_mef_10ext`, MegaCam suite | — |
 | Table full read / projection / slice | Yes | `bench_fitstable_io.py` | — |
 | Table predicate / scan | Yes | `predicate_filter` (dense ~50% keep), `predicate_filter_selective` (~5–7%), `scan_count` | Both keep-rate regimes; fused gather ≠ project+mask |
@@ -1002,10 +997,10 @@ The complete, un-cherrypicked list of all measured configurations. Empty cells m
 | table | wide_1000 | scan_count | 0.22 MB | CPU | on | **39.9 μs** | 37.7 μs | 549.1 μs | — | — | **14.55x** | **—** |
 <!-- BENCH_FULL_TABLE_END -->
 
-## Performance deficits
+## Performance comparisons & edge cases {#performance-deficits}
 
 <!-- BENCH_DEFICITS_BEGIN -->
-Cases where torchfits is **not** first in its comparison family (CPU and GPU). GPU lags may reflect software or hardware limits — they are listed, not hidden.
+Cases where torchfits is **not** first in its comparison family (CPU and GPU). GPU lags may reflect software or hardware limits — they are listed openly.
 
 | Platform | Domain | Case | mmap | torchfits | Peak RSS (MB) | Winner | Lag |
 |---|---|---|---|---:|---:|---|---:|

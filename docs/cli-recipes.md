@@ -116,8 +116,8 @@ torchfits convert "$EV" -o /tmp/bright.parquet -e 1 -w "energy > 500" -c time,en
 
 ## Color RGB preview (3 bands)
 
-HorseHead is single-band — a grayscale `--bands 0,0,0` export is only a
-smoke test. For a real Lupton RGB:
+HorseHead is single-band — a grayscale `--bands 0,0,0` export provides a
+quick check. For a true multi-band Lupton RGB:
 
 ```bash
 pixi run python examples/cli/make_rgb_demo.py /tmp

@@ -10,7 +10,7 @@ Inventory commands (`info`, `header`, `verify`, `stats`, `table`, `probe`) take
 paths on the command line or from stdin / `--stdin`. Mutation commands
 (`copy`, `cutout`, `arith`, …) take explicit input/output paths.
 
-For lane and CPU/CUDA flavor details, see [Installation](install.md). Common
+For CPU/CUDA flavor details and version compatibility, see [Installation](install.md). Common
 shorts (where applicable):
 
 | Short | Long | Notes |
@@ -35,7 +35,7 @@ shell pipelines and one-shot inspection.
 ## Install and help
 
 ```bash
-pip install torchfits   # wheels pin the torch 2.13.x lane — no torch flag needed
+pip install torchfits
 torchfits --help
 torchfits info --help
 torchfits convert --help

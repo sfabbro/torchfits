@@ -62,7 +62,7 @@ For runnable workflows, start with [Examples](examples.md).
 ## Performance notes
 
 See [Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
-for the live table. Snapshot (rc5 CPU exhaustive + Round-3 CUDA):
+for full details and live tables:
 
 | Metric | astropy | torchfits |
 |--------|---------|-----------|
