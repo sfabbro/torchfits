@@ -1,12 +1,8 @@
 # API Reference
 
-FITS I/O for images (tensors), tables (Arrow / Polars / column tensors),
-headers, and compression. Datasets and transforms live under
-`torchfits.data` / `torchfits.transforms`. Current line: **1.0.0**
-(cut, not yet released).
+Complete Python API reference for `torchfits` — covering tensor image I/O, tabular catalog dataframes, multi-extension files, headers, PyTorch dataset loaders, and astronomical stretch transforms.
 
-Job-oriented patterns: [Python workflows](python-workflows.md). This page
-lists signatures, defaults, and edge cases.
+For step-by-step code tutorials, see [Python Workflows](python-workflows.md) and [Astronomical Examples](examples.md).
 
 ---
 
