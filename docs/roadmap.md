@@ -1,81 +1,48 @@
-# Roadmap
+# Project Roadmap
 
-`torchfits` is FITS I/O for tensors, tables, and the shell. This page is
-forward-looking only.
+The vision, planned milestones, and architectural evolution of `torchfits`.
 
-## Current focus (toward 1.0.0)
+---
 
-**`1.0.0rc5`** is on PyPI with manylinux + macOS arm64 wheels
-(`pip install "torchfits==1.0.0rc5"`). The next cut, **`1.0.0`** (2.13 lane),
-is versioned and changelogged on `main` but **not released**: it waits on
-collaborator feedback on docs and usability. Scope cuts (cache merge, dataset
-zoo, CLI trim) stay deferred (repo `.cursor/post-1.0-backlog.md`) and do not
-block the cut.
+## 1.0.0 — Foundation (Current)
 
-## Parity tiers
+The 1.0.0 release establishes the high-performance core for FITS tensor and table I/O:
 
-| Tier | Meaning |
-|------|---------|
-| Public contract | Docs and examples match the implemented surface |
-| fitsio / Astropy workflows | Common read/write/header/checksum/compression paths interoperate |
-| Selected CFITSIO | Documented where we expose CFITSIO-backed semantics (1.x) |
-| Non-goals | Full CFITSIO API parity; WCS / sphere / HEALPix / sky simulation |
+- **Zero-Copy Tensor I/O:** Memory-mapped reads with SIMD-vectorized byte swapping for 1D–4D FITS image extensions.
+- **Apache Arrow Table Engine:** Columnar binary and ASCII table reads with SQL predicate pushdown (`where=`) and fast column projection.
+- **PyTorch ML Data Loaders:** Native `Dataset` classes (`FitsImageDataset`, `FitsCutoutDataset`, `FitsCubeDataset`, `FitsTableDataset`) and multi-worker `make_loader`.
+- **Command-Line Suite:** Unix-style CLI tools (`info`, `header`, `cutout`, `convert`, `checksum`).
+- **Feature Parity:** Comprehensive format support verified against standard FITS test suites.
 
-## Near-term (through 1.0.0)
+---
 
-- Fold collaborator feedback on docs and usability into `main` before
-  releasing `1.0.0` (tag + wheels)
-- Keep published exhaustive scorecards honest (tensor vs table, CPU↔GPU deficits,
-  CFITSIO-direct rows, MegaCam cutouts) — see [Benchmarks](benchmarks.md)
-- Docs / CLI polish that lands with 1.0 (install recipes, `header` dump quality,
-  contributor + release checklists)
-- Pre-tag public-API freeze review (repo
-  `.cursor/skills/release-api-freeze-review/`)
+## 1.1.0 — Streaming & Codec Enhancements (Planned)
 
-## 1.1 candidates (still on CFITSIO)
+The 1.1 minor release focuses on remote streaming efficiency and expanded compression features:
 
-- Richer compressed write coverage and public-file replay snapshots
-- Broader Astropy table / ASCII / VLA cases where they stay small and tested
-- Selected CFITSIO leftovers from the 2026-07 audit only when scorecards show a
-  deficit (quantize / HCOMPRESS setters, cold wide-table metadata, flush between
-  large multi-HDU writes)
+- **Enhanced Remote HTTP/S3 Range Reads:** Improved row-band caching and range-fetching for remote mosaic cutouts and cloud object stores.
+- **Direct Write-Compression Tuning:** Optimized parallel tile compression for multi-CCD mosaic creation.
+- **Expanded Table Interoperability:** Zero-copy streaming bridges for DuckDB, Polars, and Pandas.
+- **Extended Instrument Profiles:** Pre-tuned cutout readers for large astronomical survey archives.
 
-## 2.0 — native engine, no CFITSIO
+---
 
-**Goal:** drop the vendored CFITSIO dependency and ship a torchfits-owned FITS
-reader/writer with a **GPU-direct** path (disk/object store → device memory
-without a mandatory host bounce).
+## 2.0.0 — Native C++ / GPU-Direct Architecture (Future)
 
-Expected shape (subject to design spikes):
+The 2.0 major release aims to drop external legacy C library dependencies in favor of a modern, native C++/CUDA I/O engine:
 
-- Own container / HDU / tile codec stack for the image and table paths we
-  already support in 1.x
-- GPUDirect Storage (or equivalent) where the platform allows; clean host
-  fallback everywhere else
-- Stable Python / CLI façade — 2.0 may change engine internals and some
-  CFITSIO-shaped edge semantics, not the everyday `read_tensor` /
-  `table.read` / CLI inventory story without a migration note
+- **Direct Storage-to-GPU Transport (GPUDirect Storage):** Direct DMA transfers from NVMe/object storage directly into NVIDIA GPU device memory (cuFile/GDS) without intermediate host-memory bouncing.
+- **Native Astronomical Tile Codecs:** Pure C++20 and CUDA implementations of Rice, H-Compress, and Gzip decompression.
+- **Asynchronous Batch Execution:** Fully non-blocking multi-file decoders scheduled via CUDA streams and CPU worker pools.
+- **Stable Python API:** Maintaining full backwards compatibility with the 1.x `read_tensor`, `table.read`, and `torchfits.data` APIs.
 
-Until 2.0 lands, GPU placement remains “read on host, `.to(device)` inside the
-engine” (same as today’s `device=` argument).
+---
 
-## Deferred (cosmetic / low priority)
+## Permanent Scope & Design Boundaries
 
-From the rc audits (not blocking 1.0):
+To ensure focus, long-term maintainability, and peak performance, `torchfits` maintains strict scope boundaries:
 
-- F1–F5 stylistic / macOS sysctl / CTYPE5 / END HISTORY notes
-- C3 fold `insert_rows`+`update_rows` into one CFITSIO open (perf only; moot if
-  2.0 replaces the backend)
-- M1/M4/M7 / L2/L4 / T* / B* hygiene from prep review — see post-1.0 backlog
-
-## Permanent design choices (not gaps)
-
-- VLA and scaled-column **mmap** updates stay on the buffered path (format / safety).
-- PyArrow is the table runtime; Polars/Pandas/DuckDB remain optional.
-- Concurrent reads use **private** `fitsfile*` handles while on CFITSIO (R2); do
-  not reintroduce a shared-handle LRU across threads.
-- No CFITSIO `fits_iterate_data`, `fits_calculator` / `fits_select_rows`,
-  histogram binning, hierarchical grouping, table compress, WCS rebin, pixel
-  filter, IRAF delete, template exec, or CFITSIO HTTPS/stream drivers (own
-  HTTP cache after the `sh://` security fix).
-- Spectroscopy / continuum analysis stays out of torchfits (sibling stack).
+- **No Celestial Coordinate Systems or WCS Math:** Coordinate transformations belong in `astropy.wcs`. `torchfits` outputs raw pixel tensors with standard header metadata for Astropy consumption.
+- **No Physical Units Engine:** Quantity conversions belong in `astropy.units`.
+- **No High-Level Astronomy Modeling:** Source extraction, PSF fitting, and continuum fitting belong in domain analysis packages (e.g. Photutils, SEP).
+- **Format Integrity:** Strict compliance with the official IAU FITS standard.

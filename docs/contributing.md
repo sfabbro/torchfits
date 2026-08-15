@@ -12,7 +12,7 @@ pixi run test             # full unit suite
 
 The project uses [pixi](https://pixi.sh/) for environment management,
 [ruff](https://github.com/astral-sh/ruff) for linting, and
-[pytest](https://docs.pytest.org/) for testing. Agent conventions live in
+[pytest](https://docs.pytest.org/) for testing. Detailed coding guidelines live in
 [`AGENTS.md`](https://github.com/astroai/torchfits/blob/main/AGENTS.md).
 
 ## Verify tiers
