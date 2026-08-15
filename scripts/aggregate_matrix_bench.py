@@ -80,31 +80,37 @@ def parse_manifest_or_name(run_dir: Path) -> dict[str, str]:
 
 
 def load_run_results(run_dir: Path) -> dict[str, float]:
-    """Load case_id -> median_time_ms from a results.csv file."""
+    """Load case_id -> median_time_ms from a results.csv file for torchfits."""
     csv_file = run_dir / "results.csv"
     if not csv_file.is_file():
-        return {}
+        # Check subdirectories
+        matches = list(run_dir.glob("**/results.csv"))
+        if matches:
+            csv_file = matches[0]
+        else:
+            return {}
 
     results: dict[str, float] = {}
     with open(csv_file, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            lib = row.get("library", "")
+            status = row.get("status", "")
+            if lib != "torchfits" or status != "OK":
+                continue
             case_id = row.get("case_id") or row.get("name") or row.get("case")
             if not case_id:
                 continue
-            time_val = (
-                row.get("median_ms")
-                or row.get("median_time_ms")
-                or row.get("time_ms")
-                or row.get("median_s")
-                or row.get("median")
-            )
-            if time_val is not None:
+            time_s = row.get("time_s")
+            time_ms = row.get("median_ms") or row.get("time_ms")
+            if time_s is not None:
                 try:
-                    val = float(time_val)
-                    if "median_s" in row or ("median" in row and val < 1.0):
-                        val *= 1000.0
-                    results[case_id] = val
+                    results[case_id] = float(time_s) * 1000.0
+                except ValueError:
+                    pass
+            elif time_ms is not None:
+                try:
+                    results[case_id] = float(time_ms)
                 except ValueError:
                     pass
     return results

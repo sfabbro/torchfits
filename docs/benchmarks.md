@@ -17,6 +17,7 @@ before assuming torchfits wins every case.
 | Headline wins | [Performance highlights](#performance-highlights) |
 | Cases where torchfits is not #1 (CPU and GPU) | [Performance deficits](#performance-deficits) |
 | GPU transport rows | [I/O transport and backend](#io-transport-and-backend) |
+| Python × PyTorch version variance | [Version matrix variance](#python-pytorch-matrix-variance) |
 | Reproduce numbers | [Reproducing](#reproducing) |
 | Every measured configuration | [Exhaustive benchmark results](#exhaustive-benchmark-results) |
 | Raw CSV | [Published CSVs](#published-csvs) |
@@ -107,6 +108,76 @@ host, mmap-on, median of 3 interleaved runs: `large_uint16_2d`
 tensor peer `fitsio` + `torch.from_numpy`), `medium_uint16_2d`
 1.830 → 0.408 ms, `small_uint16_2d` 0.178 → 0.124 ms. Bitwise-verified against
 the CFITSIO path on full-range uint16 data; parity suite and `ci-local` green.
+
+## Python & PyTorch Matrix Variance
+
+The headline benchmarks on this page are reported using the Pareto-optimal (champion) environment combination measured across our CANFAR exhaustive matrix: **PyTorch 2.12 + Python 3.11**.
+
+Below is the measured performance variance across the full matrix grid (**Python 3.10–3.14** × **PyTorch 2.10–2.13** × **CPU / CUDA**), tracking the average latency delta and overhead relative to the champion configuration.
+
+### Summary: Average Performance Overhead vs Champion
+
+- **CPU Host Workloads:**
+  - **Optimal Baseline:** PyTorch 2.12 + Python 3.11 (Geometric-mean latency: **0.106 ms**)
+  - **Average Python Variance:** Across all Python versions (3.10–3.14), average latency penalty is **+9.5%** (+7.6% on 3.10, +11.2% on 3.11, +10.5% on 3.12, +8.4% on 3.13, +12.8% on 3.14).
+  - **Average PyTorch Variance:** Across PyTorch minor versions (2.10–2.13), average latency penalty is **+9.8%** (+10.7% on 2.10, +12.3% on 2.11, +7.4% on 2.12, +9.9% on 2.13).
+
+- **CUDA Workloads (NVIDIA GPU):**
+  - **Optimal Baseline:** PyTorch 2.12 + Python 3.11 (Geometric-mean latency: **0.187 ms**)
+  - **Average Python Variance:** Across all Python versions (3.10–3.14), average latency penalty is **+5.8%** (+8.6% on 3.10, +4.0% on 3.11, +5.0% on 3.12, +4.9% on 3.13, +6.3% on 3.14).
+  - **Average PyTorch Variance:** Across PyTorch minor versions (2.10–2.13), average latency penalty is **+5.7%** (+3.7% on 2.10, +4.3% on 2.11, +3.9% on 2.12, +11.0% on 2.13).
+
+### Full Matrix Benchmark Comparison
+
+#### CPU Transport Matrix
+
+| PyTorch | Python | Device | Geom Mean (ms) | Delta vs Best | Relative Perf |
+|---|---|---|---:|---:|---:|
+| 2.12 | 3.11 | CPU | 0.106 | **Baseline (Best)** | **1.00×** |
+| 2.10 | 3.10 | CPU | 0.108 | +2.0% slower | 1.02× |
+| 2.13 | 3.12 | CPU | 0.111 | +5.0% slower | 1.05× |
+| 2.11 | 3.10 | CPU | 0.113 | +6.4% slower | 1.06× |
+| 2.11 | 3.13 | CPU | 0.113 | +6.4% slower | 1.06× |
+| 2.12 | 3.13 | CPU | 0.113 | +6.6% slower | 1.07× |
+| 2.12 | 3.10 | CPU | 0.114 | +7.3% slower | 1.07× |
+| 2.13 | 3.13 | CPU | 0.114 | +7.3% slower | 1.07× |
+| 2.12 | 3.14 | CPU | 0.114 | +7.4% slower | 1.07× |
+| 2.13 | 3.14 | CPU | 0.115 | +8.6% slower | 1.09× |
+| 2.10 | 3.12 | CPU | 0.116 | +8.9% slower | 1.09× |
+| 2.10 | 3.14 | CPU | 0.117 | +10.2% slower | 1.10× |
+| 2.11 | 3.11 | CPU | 0.119 | +11.7% slower | 1.12× |
+| 2.11 | 3.12 | CPU | 0.119 | +11.9% slower | 1.12× |
+| 2.10 | 3.13 | CPU | 0.120 | +13.2% slower | 1.13× |
+| 2.13 | 3.11 | CPU | 0.121 | +13.9% slower | 1.14× |
+| 2.13 | 3.10 | CPU | 0.122 | +14.9% slower | 1.15× |
+| 2.12 | 3.12 | CPU | 0.123 | +16.0% slower | 1.16× |
+| 2.10 | 3.11 | CPU | 0.126 | +19.2% slower | 1.19× |
+| 2.11 | 3.14 | CPU | 0.132 | +24.9% slower | 1.25× |
+
+#### CUDA Transport Matrix
+
+| PyTorch | Python | Device | Geom Mean (ms) | Delta vs Best | Relative Perf |
+|---|---|---|---:|---:|---:|
+| 2.12 | 3.11 | CUDA | 0.187 | **Baseline (Best)** | **1.00×** |
+| 2.10 | 3.14 | CUDA | 0.189 | +1.1% slower | 1.01× |
+| 2.10 | 3.13 | CUDA | 0.190 | +1.8% slower | 1.02× |
+| 2.10 | 3.12 | CUDA | 0.190 | +1.8% slower | 1.02× |
+| 2.12 | 3.13 | CUDA | 0.191 | +1.9% slower | 1.02× |
+| 2.11 | 3.12 | CUDA | 0.193 | +3.1% slower | 1.03× |
+| 2.11 | 3.14 | CUDA | 0.193 | +3.3% slower | 1.03× |
+| 2.12 | 3.12 | CUDA | 0.195 | +4.1% slower | 1.04× |
+| 2.11 | 3.11 | CUDA | 0.196 | +5.0% slower | 1.05× |
+| 2.11 | 3.13 | CUDA | 0.197 | +5.1% slower | 1.05× |
+| 2.10 | 3.11 | CUDA | 0.197 | +5.2% slower | 1.05× |
+| 2.11 | 3.10 | CUDA | 0.197 | +5.2% slower | 1.05× |
+| 2.12 | 3.10 | CUDA | 0.197 | +5.4% slower | 1.05× |
+| 2.13 | 3.11 | CUDA | 0.198 | +5.8% slower | 1.06× |
+| 2.12 | 3.14 | CUDA | 0.202 | +8.1% slower | 1.08× |
+| 2.10 | 3.10 | CUDA | 0.203 | +8.8% slower | 1.09× |
+| 2.13 | 3.12 | CUDA | 0.207 | +10.8% slower | 1.11× |
+| 2.13 | 3.13 | CUDA | 0.207 | +10.9% slower | 1.11× |
+| 2.13 | 3.14 | CUDA | 0.211 | +12.6% slower | 1.13× |
+| 2.13 | 3.10 | CUDA | 0.215 | +15.1% slower | 1.15× |
 
 ## Published CSVs
 
