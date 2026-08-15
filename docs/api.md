@@ -95,12 +95,15 @@ and [Transforms](api-transforms.md). Runnable scripts are indexed in
 | General N-D image, map-style | `FitsTensorDataset(paths, hdu=0, label_key=None)` | [Data](api-data.md#fitstensordataset) |
 | General N-D image, iterable (multi-worker) | `FitsTensorIterableDataset(paths, shuffle=False)` | [Data](api-data.md#fitstensoriterabledataset) |
 | 2D image peer | `FitsImageDataset(paths, hdu=0)` | [Data](api-data.md#fitsimagedataset-fitscubedataset) |
-| 3D+ cube peer | `FitsCubeDataset(paths, hdu=0, slice_index=None)` | [Data](api-data.md#fitsimagedataset-fitscubedataset) |
 | 2D image iterable peer | `FitsImageIterableDataset(paths, shuffle=False)` | [Data](api-data.md#fitstensoriterabledataset) |
-| 1D / multi-arm spectrum | `FitsSpectrumDataset(paths, hdu=0, layout="dict")` | [Data](api-data.md#fitsspectrumdataset) |
+| 3D+ cube peer | `FitsCubeDataset(paths, hdu=0, slice_index=None)` | [Data](api-data.md#fitsimagedataset-fitscubedataset) |
+| 3D+ cube iterable peer | `FitsCubeIterableDataset(paths, hdu=0, slice_index=None)` | [Data](api-data.md#fitscubeiterabledataset) |
+| 1D / multi-arm spectrum (map-style) | `FitsSpectrumDataset(paths, hdu=0, layout="dict")` | [Data](api-data.md#fitsspectrumdataset) |
+| 1D / multi-arm spectrum (iterable) | `FitsSpectrumIterableDataset(paths, hdu=0, layout="dict")` | [Data](api-data.md#fitsspectrumiterabledataset) |
 | Table map-style (fits in RAM) | `FitsTableDataset(path, hdu=1)` | [Data](api-data.md#fitstabledataset) |
 | Table streaming (large) | `FitsTableIterableDataset(path, hdu=1, batch_size=65536)` | [Data](api-data.md#fitstableiterabledataset) |
 | Cutout patches | `FitsCutoutDataset(cutouts)` | [Data](api-data.md#fitscutoutdataset) |
+| Survey mosaic staged cutouts | `FitsStagedCutoutIterableDataset(paths, cutouts_per_file=500)` | [Data](api-data.md#fitsstagedcutoutiterabledataset) |
 | DataLoader + cache defaults | `make_loader(dataset, batch_size=32)` | [Data](api-data.md#make_loader) |
 | Image stretches, normalizers, clip | `from torchfits.transforms import …` | [Transforms](api-transforms.md) |
 | Shell inspect / convert | `torchfits info|header|verify|…` | [CLI](cli.md) |

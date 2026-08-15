@@ -27,11 +27,16 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 from .._io_engine.device import to_device
 from .datasets import (
     FitsCubeDataset,
+    FitsCubeIterableDataset,
     FitsImageDataset,
     FitsImageIterableDataset,
     FitsSpectrumDataset,
+    FitsSpectrumIterableDataset,
+    FitsStagedCutoutIterableDataset,
     FitsTensorDataset,
     FitsTensorIterableDataset,
+    _buffered_shuffle,
+    _resolve_rank_and_world_size,
 )
 from .remote import is_remote_url, prefetch_urls, resolve_local_path
 
@@ -286,6 +291,10 @@ class FitsTableIterableDataset(IterableDataset[Any]):
         transform: Callable[..., Any] | None = None,
         device: str = "cpu",
         mmap: bool | str = "auto",
+        shuffle_buffer_size: int | None = None,
+        seed: int = 0,
+        rank: int | None = None,
+        world_size: int | None = None,
     ) -> None:
         self.path = resolve_local_path(path)
         self.hdu = hdu
@@ -295,11 +304,19 @@ class FitsTableIterableDataset(IterableDataset[Any]):
         self.transform = transform
         self.device = device
         self.mmap = mmap
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.seed = seed
+        self.rank = rank
+        self.world_size = world_size
 
-    def __iter__(self) -> Iterator[dict[str, Any]]:
+    def _generate(self) -> Iterator[dict[str, Any]]:
+        rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
         worker_info = torch.utils.data.get_worker_info()
         worker_id = 0 if worker_info is None else worker_info.id
         num_workers = 1 if worker_info is None else worker_info.num_workers
+
+        total_slots = world_size * num_workers
+        slot_id = rank * num_workers + worker_id
 
         if self.where is None:
             import torchfits.table
@@ -314,7 +331,7 @@ class FitsTableIterableDataset(IterableDataset[Any]):
                     device=self.device,
                 )
             ):
-                if batch_idx % num_workers != worker_id:
+                if batch_idx % total_slots != slot_id:
                     continue
                 if not chunk:
                     continue
@@ -341,7 +358,7 @@ class FitsTableIterableDataset(IterableDataset[Any]):
                 mmap=bool(self.mmap),
             )
         ):
-            if batch_idx % num_workers != worker_id:
+            if batch_idx % total_slots != slot_id:
                 continue
             tensor_cols = _tensor_columns_from_record_batch(batch)
             for row_idx in range(batch.num_rows):
@@ -349,6 +366,14 @@ class FitsTableIterableDataset(IterableDataset[Any]):
                 if self.transform is not None:
                     row = self.transform(row)
                 yield row
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        stream = self._generate()
+        if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
+            stream = _buffered_shuffle(
+                stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
+            )
+        return stream
 
     def __repr__(self) -> str:
         return (
@@ -589,10 +614,13 @@ __all__ = [
     "FitsImageDataset",
     "FitsImageIterableDataset",
     "FitsCubeDataset",
+    "FitsCubeIterableDataset",
     "FitsSpectrumDataset",
+    "FitsSpectrumIterableDataset",
     "FitsTableDataset",
     "FitsTableIterableDataset",
     "FitsCutoutDataset",
+    "FitsStagedCutoutIterableDataset",
     "fits_collate_fn",
     "make_loader",
 ]

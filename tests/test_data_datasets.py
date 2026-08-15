@@ -9,6 +9,27 @@ import pytest
 from astropy.io import fits
 
 
+@pytest.fixture(autouse=True)
+def _clean_prefetch_state():
+    import torchfits.data.remote as remote
+
+    with remote._prefetch_lock:
+        threads = list(remote._prefetch_threads.values())
+    for t in threads:
+        t.join(timeout=1.0)
+    with remote._prefetch_lock:
+        remote._prefetch_threads.clear()
+        remote._prefetch_errors.clear()
+    yield
+    with remote._prefetch_lock:
+        threads = list(remote._prefetch_threads.values())
+    for t in threads:
+        t.join(timeout=1.0)
+    with remote._prefetch_lock:
+        remote._prefetch_threads.clear()
+        remote._prefetch_errors.clear()
+
+
 @pytest.fixture
 def image_fits(tmp_path):
     path = tmp_path / "img.fits"
@@ -244,3 +265,73 @@ def test_multi_hdu_flux_ivar_companions(tmp_path):
     assert isinstance(payload, dict)
     assert payload["flux"].shape == (2, 4, 4)
     assert payload["ivar"].shape == (2, 4, 4)
+
+
+def test_fits_cube_iterable_dataset(tmp_path):
+    from torchfits.data import FitsCubeIterableDataset
+
+    path = tmp_path / "cube.fits"
+    data = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+    fits.PrimaryHDU(data).writeto(str(path), overwrite=True)
+
+    # 1. Full cube iterable
+    ds_full = FitsCubeIterableDataset([str(path)])
+    items_full = list(ds_full)
+    assert len(items_full) == 1
+    assert items_full[0].shape == (2, 3, 4)
+
+    # 2. Sliced cube iterable along leading axis
+    ds_sliced = FitsCubeIterableDataset([str(path)], slice_index=1)
+    items_sliced = list(ds_sliced)
+    assert len(items_sliced) == 1
+    assert items_sliced[0].shape == (3, 4)
+    assert np.allclose(items_sliced[0].numpy(), data[1])
+
+
+def test_fits_spectrum_iterable_dataset(desi_shaped_fits):
+    from torchfits.data import FitsSpectrumIterableDataset
+
+    path = str(desi_shaped_fits)
+    ds = FitsSpectrumIterableDataset(
+        [path, path],
+        hdu=["B_FLUX", "R_FLUX"],
+        ivar_hdu=["B_IVAR", "R_IVAR"],
+        row=0,
+        layout="dict",
+        shuffle_buffer_size=10,
+    )
+    items = list(ds)
+    assert len(items) == 2
+    assert set(items[0].keys()) == {"B_FLUX", "R_FLUX"}
+
+
+def test_rank_world_size_sharding(tmp_path):
+    from torchfits.data import FitsTensorIterableDataset
+    from torchfits.data.datasets import _resolve_rank_and_world_size
+
+    paths = [str(tmp_path / f"img_{i}.fits") for i in range(10)]
+    for p in paths:
+        fits.PrimaryHDU(np.ones((2, 2), dtype=np.float32)).writeto(p, overwrite=True)
+
+    # Sharding across rank 0 of 2 vs rank 1 of 2
+    ds_rank0 = FitsTensorIterableDataset(paths, rank=0, world_size=2)
+    ds_rank1 = FitsTensorIterableDataset(paths, rank=1, world_size=2)
+
+    items0 = list(ds_rank0)
+    items1 = list(ds_rank1)
+    assert len(items0) == 5
+    assert len(items1) == 5
+
+    # Check env var resolution
+    r, w = _resolve_rank_and_world_size(None, None)
+    assert r >= 0 and w >= 1
+
+
+def test_buffered_shuffle():
+    from torchfits.data.datasets import _buffered_shuffle
+
+    items = list(range(100))
+    shuffled = list(_buffered_shuffle(iter(items), buffer_size=20, seed=42))
+    assert len(shuffled) == 100
+    assert set(shuffled) == set(items)
+    assert shuffled != items  # Permuted

@@ -14,6 +14,8 @@ import hashlib
 import importlib
 import logging
 import threading
+import os
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Iterable
@@ -48,6 +50,31 @@ def is_remote_url(path: str) -> bool:
 
 def remote_cache_dir() -> Path:
     return remote_cache_root()
+
+
+def ephemeral_scratch_dir() -> Path:
+    """Return local fast scratch directory for staging (e.g. SLURM_TMPDIR or TMPDIR)."""
+    for env_var in ("SLURM_TMPDIR", "TMPDIR"):
+        val = os.environ.get(env_var, "").strip()
+        if val:
+            path = Path(val) / "torchfits_staging"
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+    fallback = Path(tempfile.gettempdir()) / "torchfits_staging"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def cleanup_downloaded_file(path: str | Path) -> bool:
+    """Safely unlink a staged/downloaded temporary file."""
+    try:
+        p = Path(path)
+        if p.is_file():
+            p.unlink(missing_ok=True)
+            return True
+    except OSError as exc:
+        _log.debug("cleanup_downloaded_file failed for %s: %s", path, exc)
+    return False
 
 
 def cache_path_for_url(url: str, *, cache_dir: Path | None = None) -> Path:

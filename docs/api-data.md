@@ -14,16 +14,20 @@ Typical stack: `read_tensor` / `table.read` → optional
 
 ## Choosing a Dataset
 
-| Your data | Catalog size | Use |
+| Your data | Access mode | Use |
 |---|---|---|
-| General N-D IMAGE (any rank) | Any | `FitsTensorDataset` (map) |
-| General N-D IMAGE, many workers | Any | `FitsTensorIterableDataset` |
-| 2D images / multi-band | Any | `FitsImageDataset` |
-| 3D+ cubes | Any | `FitsCubeDataset` |
-| 1D / multi-arm spectra | Any | `FitsSpectrumDataset` |
-| One table HDU | Fits in RAM | `FitsTableDataset` |
-| One table HDU | Too large for RAM | `FitsTableIterableDataset` |
-| Fixed `(path, hdu, x, y, size)` cutouts | Any | `FitsCutoutDataset` |
+| General N-D IMAGE (any rank) | Map-style (indexed) | `FitsTensorDataset` |
+| General N-D IMAGE | Streaming / multi-worker | `FitsTensorIterableDataset` |
+| 2D images / multi-band | Map-style (indexed) | `FitsImageDataset` |
+| 2D images / multi-band | Streaming / multi-worker | `FitsImageIterableDataset` |
+| 3D+ cubes | Map-style (indexed) | `FitsCubeDataset` |
+| 3D+ cubes | Streaming / channel slicing | `FitsCubeIterableDataset` |
+| 1D / multi-arm spectra | Map-style (indexed) | `FitsSpectrumDataset` |
+| 1D / multi-arm spectra | Streaming / multi-arm | `FitsSpectrumIterableDataset` |
+| One table HDU | In-memory catalog | `FitsTableDataset` |
+| One table HDU | Streaming catalog | `FitsTableIterableDataset` |
+| Fixed cutouts `(path, hdu, x, y, size)` | Map-style | `FitsCutoutDataset` |
+| Survey mosaics (remote/local) | Async staged cutouts | `FitsStagedCutoutIterableDataset` |
 
 **Channels:** flux bands / arms / CCDs stack as tensor channels. IVAR and
 mask are companion tensors (or dict fields) — pass `ivar_hdu=` / `mask_hdu=`
@@ -412,32 +416,122 @@ supply a custom `collate_fn`.
 
 ---
 
-## Worker Sharding
+---
 
-### Images (`FitsImageIterableDataset`)
+## `FitsCubeIterableDataset`
 
-File indices are partitioned by `worker_id`:
+Streaming peer for 3D+ datacubes (e.g. IFUs, velocity cubes, radio cubes).
+Optionally slices along the leading spectral/velocity axis on the fly via `slice_index=`.
 
+```python
+from torchfits.data import FitsCubeIterableDataset
+
+ds = FitsCubeIterableDataset(
+    "cubes/*.fits",
+    hdu=0,
+    slice_index=15,  # Extracts channel 15 on the fly
+    shuffle=True,
+    shuffle_buffer_size=100,  # In-flight reservoir shuffle
+)
 ```
-per_worker = total // num_workers
-remainder  = total %  num_workers
-start      = worker_id * per_worker + min(worker_id, remainder)
-size       = per_worker + (1 if worker_id < remainder else 0)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `str` or `list[str]` | *(required)* | FITS file paths, glob, or URLs |
+| `hdu` | `int` or `str` or `sequence` | `0` | Primary datacube HDU(s) |
+| `slice_index` | `int` or `None` | `None` | Optional index along leading channel/spectral axis |
+| `transform` | `callable` or `None` | `None` | Applied to each payload |
+| `shuffle` | `bool` | `False` | Shuffle file order per epoch |
+| `shuffle_buffer_size` | `int` or `None` | `None` | Rolling reservoir buffer for in-flight random mixing |
+| `rank` | `int` or `None` | `None` | Distributed worker rank |
+| `world_size` | `int` or `None` | `None` | Distributed world size |
+
+---
+
+## `FitsSpectrumIterableDataset`
+
+Streaming 1D multi-arm spectra from binary table columns (e.g. DESI, BOSS) or multi-HDU image extensions.
+
+```python
+from torchfits.data import FitsSpectrumIterableDataset
+
+ds = FitsSpectrumIterableDataset(
+    "spectra/*.fits",
+    hdu=["B_FLUX", "R_FLUX", "Z_FLUX"],
+    ivar_hdu=["B_IVAR", "R_IVAR", "Z_IVAR"],
+    layout="stack",  # 'dict', 'stack' [C, nwave], or 'concat'
+)
 ```
 
-Every file is seen exactly once per epoch. Shuffling permutes within each
-worker's shard using the fixed `seed=` — the permutation repeats identically
-every epoch (set a new `seed` per run for different orders).
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `str` or `list[str]` | *(required)* | File paths or URLs |
+| `hdu` | `int` or `str` or `sequence` | `0` | Primary spectrum HDU(s) |
+| `ivar_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion inverse variance HDU(s) |
+| `mask_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion mask HDU(s) |
+| `column` | `str` or `None` | `None` | Table column name for binary table spectra |
+| `ivar_column` | `str` or `None` | `None` | Table column for companion IVAR |
+| `row` | `int` or `None` | `None` | Optional row index within multi-spectrum HDUs |
+| `layout` | `str` | `"dict"` | Layout format: `"dict"`, `"stack"`, or `"concat"` |
+| `shuffle_buffer_size` | `int` or `None` | `None` | Reservoir shuffle buffer size |
 
-### Tables (`FitsTableIterableDataset`)
+---
 
-Scan batches are assigned to workers via `batch_idx % num_workers == worker_id`.
-Row order within a batch is preserved. Workers do not interleave individual
-rows.
+## `FitsStagedCutoutIterableDataset`
 
-!!! tip "Multi-worker tip"
-    Use `num_workers=2` or more for parallel reads. Each worker independently
-    opens files and reads data — no GIL contention on the I/O path. Add
-    `persistent_workers=True` (passed via `**loader_kwargs`) to keep workers
-    alive between epochs — this avoids re-opening file handles each epoch and
-    significantly speeds up epoch startup for mmap-backed datasets.
+Asynchronous staged cutout extraction for massive astronomical survey mosaics (CFHT MegaCam, HSC, Rubin LSST, MegaPipe).
+Downloads remote mosaics to fast ephemeral scratch (e.g. `$SLURM_TMPDIR`), samples $K$ random stamps rapidly using `open_subset_reader`, and automatically deletes the staged file upon completion.
+
+```python
+from torchfits.data import FitsStagedCutoutIterableDataset
+
+ds = FitsStagedCutoutIterableDataset(
+    paths=["https://archive.org/mosaic1.fits", "https://archive.org/mosaic2.fits"],
+    cutouts_per_file=500,  # 500 cutouts sampled per staged mosaic
+    cutout_size=(128, 128),
+    staging_dir=None,  # Auto-detects $SLURM_TMPDIR, $TMPDIR, or scratch
+    cleanup=True,  # Delete staged mosaic when finished sampling
+    shuffle_buffer_size=1000,  # Mix stamps across mosaics in-flight
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `str` or `list[str]` | *(required)* | Mosaic file paths or remote URLs |
+| `cutouts_per_file` | `int` | `100` | Number of cutouts to sample per mosaic |
+| `cutout_size` | `int` or `tuple[int, int]` | `128` | Output cutout dimensions `(H, W)` |
+| `hdu` | `int` or `str` | `0` | Image HDU index or name |
+| `staging_dir` | `str` or `Path` or `None` | `None` | Ephemeral scratch directory (defaults to `$SLURM_TMPDIR` / `$TMPDIR`) |
+| `cleanup` | `bool` | `True` | Automatically delete downloaded mosaic after sampling |
+| `cutout_generator` | `callable` or `None` | `None` | Custom spatial coordinate sampler `(height, width, ch, cw) -> (x1, y1, x2, y2)` |
+| `transform` | `callable` or `None` | `None` | Applied to each cutout tensor |
+| `shuffle_files` | `bool` | `False` | Shuffle mosaic order per epoch |
+| `shuffle_buffer_size` | `int` or `None` | `None` | In-flight reservoir shuffle across mosaic stamps |
+
+---
+
+## Distributed & Worker Sharding
+
+torchfits iterable datasets natively partition across both **multi-process DataLoader workers** and **multi-GPU / multi-node distributed training** (`rank` and `world_size`).
+
+### Automatic Coordinate Resolution
+When `rank` and `world_size` are omitted, torchfits automatically checks:
+1. Cluster environment variables: `RANK` & `WORLD_SIZE` (`torchrun`, DeepSpeed, FSDP) or `SLURM_PROCID` & `SLURM_NTASKS` (SLURM).
+2. `torch.distributed` process group (if initialized).
+3. Single-worker fallback (`rank=0, world_size=1`).
+
+### 2-Level Strided Sharding
+1. **Rank Sharding**: Datasets first partition files across distributed ranks: `files[rank::world_size]`. Each GPU or node processes a disjoint subset of files.
+2. **Worker Sharding**: Within each rank, the rank's subset is partitioned across DataLoader workers:
+   ```
+   per_worker = total // num_workers
+   remainder  = total %  num_workers
+   start      = worker_id * per_worker + min(worker_id, remainder)
+   size       = per_worker + (1 if worker_id < remainder else 0)
+   ```
+
+Every file is seen exactly once across the entire cluster without duplication.
+
+### Reservoir Shuffle Buffer
+Because streaming datasets do not load all samples into memory at once, setting `shuffle_buffer_size=N` enables an $O(N)$ streaming reservoir shuffle. Incoming items from the dataset stream are mixed with past items in a rolling buffer, yielding pseudo-random batches across files and mosaics.
+
