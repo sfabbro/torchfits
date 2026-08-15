@@ -1,98 +1,79 @@
-# Migration from astropy to torchfits
+# Migrating from Astropy to torchfits
 
-Side-by-side replacements for common **FITS I/O** tasks. torchfits covers
-tensor/dataframe FITS I/O — see [Parity](parity.md) for the full matrix. For
-torchfits-native job patterns, see [Python workflows](python-workflows.md).
-For runnable workflows, start with [Examples](examples.md).
+Side-by-side comparison and migration recipes for common astronomical FITS I/O tasks between `astropy.io.fits` and `torchfits`.
 
-## Reading an image
+For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see [Python Workflows](python-workflows.md) and [Examples](examples.md).
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Read image | `astropy.io.fits.getdata(path)` | `torchfits.read(path)` |
-| Read image as tensor | `torch.from_numpy(astropy.io.fits.getdata(path))` | `torchfits.read_tensor(path, hdu=0)` |
-| Read image with mmap | `astropy.io.fits.getdata(path, use_mmap=True)` | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
-| Read image to GPU | `torch.from_numpy(astropy.io.fits.getdata(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
-| Read image + header | `hdul = astropy.io.fits.open(path); data = hdul[0].data; hdr = hdul[0].header` | `data, header = torchfits.read(path, hdu=0, return_header=True)` |
+---
 
-## Reading a table
+## Reading Images & Datacubes
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Read all rows | `astropy.io.fits.getdata(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
-| Read with WHERE | `t = …; mask = t['RA'] > 0; t[mask]` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
-| Read subset of columns | `…[['RA','DEC']]` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
-| Columns as tensors | `torch.from_numpy(t[n])` per column | `torchfits.table.read_torch(path, hdu=1)` |
-| Polars | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
+| Task | `astropy.io.fits` | `torchfits` |
+|---|---|---|
+| **Read image array** | `astropy.io.fits.getdata(path)` | `torchfits.read(path)` |
+| **Read as PyTorch Tensor** | `torch.from_numpy(astropy.io.fits.getdata(path))` | `torchfits.read_tensor(path, hdu=0)` |
+| **Read with memory-mapping** | `astropy.io.fits.getdata(path, use_mmap=True)` | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
+| **Direct GPU placement** | `torch.from_numpy(astropy.io.fits.getdata(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
+| **Read image & header** | `hdul = astropy.io.fits.open(path); data = hdul[0].data; hdr = hdul[0].header` | `data, header = torchfits.read(path, hdu=0, return_header=True)` |
+| **Windowed cutout read** | `astropy.io.fits.open(path, memmap=True)[0].section[y1:y2, x1:x2]` | `torchfits.read_subset(path, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)` |
 
-`table.read_torch(..., where=)` accepts only simple compare / `BETWEEN` /
-`AND`. For `OR` / `IN` / `IS NULL`, use `table.read(..., where=...)`.
+---
 
-## Writing
+## Reading Tables & Catalogs
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Write tensor | `astropy.io.fits.PrimaryHDU(tensor.numpy()).writeto(path)` | `torchfits.write_tensor(path, tensor)` |
-| Write table | `astropy.io.fits.BinTableHDU(table).writeto(path)` | `torchfits.table.write(path, table_dict)` |
-| Write with header | `hdu = astropy.io.fits.PrimaryHDU(data); hdu.header['KEY'] = val; hdu.writeto(path)` | `torchfits.write(path, data, header={'KEY': val})` |
+| Task | `astropy.io.fits` | `torchfits` |
+|---|---|---|
+| **Read entire table** | `astropy.io.fits.getdata(path, ext=1)` | `torchfits.table.read(path, hdu=1)` *(Returns Arrow table)* |
+| **Filtered read (`WHERE`)** | `t = …; mask = t['RA'] > 0; t[mask]` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
+| **Column projection** | `t[['RA', 'DEC']]` | `torchfits.table.read(path, hdu=1, columns=["RA", "DEC"])` |
+| **Columns as PyTorch tensors** | `[torch.from_numpy(t[col]) for col in cols]` | `torchfits.table.read_torch(path, hdu=1)` |
+| **Stream row batches** | *(Manual chunking)* | `for batch in torchfits.table.scan(path, hdu=1, batch_size=50000): …` |
+| **Polars DataFrame** | *(Manual conversion)* | `torchfits.table.read_polars(path, hdu=1)` |
 
-## Multi-HDU access
+---
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Open MEF | `hdul = astropy.io.fits.open(path)` | `hdul = torchfits.open(path)` |
-| Read by EXTNAME | `hdul['SCI'].data` | `torchfits.read_hdus(path, hdus=['SCI'])` |
-| Read multiple HDUs | `[hdul[i].data for i in range(3)]` | `torchfits.read_hdus(path, hdus=[0, 1, 2])` |
+## Writing FITS Files
 
-## GPU transfer
+| Task | `astropy.io.fits` | `torchfits` |
+|---|---|---|
+| **Write image tensor** | `astropy.io.fits.PrimaryHDU(tensor.numpy()).writeto(path)` | `torchfits.write_tensor(path, tensor)` |
+| **Write table catalog** | `astropy.io.fits.BinTableHDU(table).writeto(path)` | `torchfits.table.write(path, table_dict)` |
+| **Write with header metadata** | `hdu = astropy.io.fits.PrimaryHDU(data); hdu.header['OBJECT'] = 'M31'; hdu.writeto(path)` | `torchfits.write(path, data, header={'OBJECT': 'M31'})` |
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Image to GPU | `torch.from_numpy(astropy.io.fits.getdata(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
-| Unsigned integer GPU (correct) | `torch.from_numpy(astropy.io.fits.getdata(path)).to(torch.int32).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` narrow H2D |
+---
 
-## Compression & checksums
+## Multi-Extension Files (MEF)
 
-| Operation | astropy | torchfits |
-|-----------|---------|-----------|
-| Read compressed | `astropy.io.fits.open(path)[1].data` | `torchfits.read(path, hdu=1)` (auto-detected) |
-| Verify checksums | manual | `torchfits.verify_checksums(path)` |
-| Write checksums | `hdul.writeto(path, checksum=True)` | `torchfits.write_checksums(path)` |
+| Task | `astropy.io.fits` | `torchfits` |
+|---|---|---|
+| **Open MEF container** | `hdul = astropy.io.fits.open(path)` | `with torchfits.open(path) as hdul: …` |
+| **Read HDU by `EXTNAME`** | `hdul['SCI'].data` | `torchfits.read_hdus(path, hdus=['SCI'])` |
+| **Read multiple HDUs at once** | `[hdul[i].data for i in range(3)]` | `torchfits.read_hdus(path, hdus=[0, 1, 2])` |
 
-## Performance notes
+---
 
-See [Benchmarks → Performance highlights](benchmarks.md#performance-highlights)
-for full details and live tables:
+## Compression & Checksums
 
-| Metric | astropy | torchfits |
-|--------|---------|-----------|
-| Large float32 image (16 MB, CPU) | 5.02 ms | 3.85 ms (**~1.3× faster**) |
-| Same read @ CUDA | 5.22 ms | 3.28 ms (**~1.6× faster**) |
-| Compressed Rice image (CPU) | 32.85 ms | 12.40 ms (**~2.6× faster**) |
-| 50× repeated 100×100 cutouts (CPU) | 50.85 ms | 0.47 ms (**~108× faster**) |
-| Table read (100k rows, 8 cols, mixed) | 34.81 ms | 2.56 ms (**~13.6× faster**) |
+| Task | `astropy.io.fits` | `torchfits` |
+|---|---|---|
+| **Read Rice-compressed (`.fz`)** | `astropy.io.fits.open(path)[1].data` | `torchfits.read(path, hdu=1)` *(Auto-decompressed)* |
+| **Write tile-compressed image** | `astropy.io.fits.CompImageHDU(data, compression_type='RICE_1').writeto(path)` | `torchfits.write(path, data, compress="rice")` |
+| **Verify FITS checksums** | *(Manual calculation)* | `torchfits.verify_checksums(path)` |
+| **Write standard checksums** | `hdul.writeto(path, checksum=True)` | `torchfits.write_checksums(path)` |
+
+---
 
 ## Key Behavioral Differences
 
-### 1. Data Scaling & Type Promotion
-* **Astropy**: Applies `BSCALE` / `BZERO` on the CPU when HDU data is loaded.
-  Integers may promote to `float64` when scaling yields floats.
-* **torchfits**: Scaling yields `float32` (on-device by default; pass
-  `scale_on_device=False` to read through the host pipeline). On
-  `read_tensor`, pass `raw_scale=True` for storage dtypes (e.g. the
-  signed-byte / pseudo-unsigned conventions expose `uint8` / `int16`).
+### 1. Data Scaling & Precision
+- **Astropy:** Applies `BSCALE`/`BZERO` scaling on the CPU when data is loaded, often promoting integer arrays to 64-bit float (`float64`).
+- **torchfits:** Fuses scaling directly into vectorized SIMD loops, outputting standard 32-bit float (`float32`) tensors ideal for PyTorch models and GPU memory efficiency. Use `raw_scale=True` to preserve raw storage integers without conversion.
 
-### 2. Table Representation
-* **Astropy**: `astropy.table.Table` or `numpy.recarray`.
-* **torchfits**: `table.read` → `pyarrow.Table`; `table.read_torch` → column
-  tensors; `table.read_polars` → Polars. VLAs become Arrow list columns.
+### 2. Tabular Data Representation
+- **Astropy:** Returns custom `astropy.table.Table` or NumPy record arrays (`numpy.recarray`).
+- **torchfits:** Returns zero-copy Apache Arrow tables (`pyarrow.Table`), PyTorch tensor dictionaries (`dict[str, torch.Tensor]`), or Polars DataFrames (`FITSPolarsFrame`), providing immediate compatibility with modern data science ecosystems.
 
-### 3. Thread-Safety & Multi-Processing
-* **Astropy**: `HDUList` handles are not thread-safe across concurrent opens
-  of the same file.
-* **torchfits**: Concurrent reads open a private CFITSIO handle per call.
-  Shared metadata and the raw `fd` use `pread` under mutexes. For multi-worker
-  Datasets, use `torchfits.data` with `make_loader`, and
-  `torchfits.cache.optimize_for_dataset(paths)` when the dataset exposes
-  `files`.
+### 3. Thread Safety & Multi-Worker Loaders
+- **Astropy:** `HDUList` instances are not thread-safe and can cause file descriptor corruption when shared across threads or PyTorch `DataLoader` worker processes.
+- **torchfits:** Every read opens an independent private C++ handle and releases the Python GIL during decoding, ensuring safe execution across multi-threaded pipelines and multi-worker `DataLoader` instances.
 

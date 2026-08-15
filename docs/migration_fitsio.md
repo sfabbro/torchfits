@@ -1,87 +1,62 @@
-# Migration from fitsio to torchfits
+# Migrating from fitsio to torchfits
 
-Side-by-side replacements for common FITS I/O. See
-[Benchmarks](benchmarks.md#performance-deficits) for cases where fitsio still
-wins, and [Python workflows](python-workflows.md) for torchfits-native
-patterns.
+Side-by-side comparison and migration recipes for common astronomical FITS I/O tasks between `fitsio` and `torchfits`.
 
-## Reading an image
+For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see [Python Workflows](python-workflows.md) and [Examples](examples.md).
 
-| Operation | fitsio | torchfits |
-|-----------|--------|-----------|
-| Read image | `fitsio.read(path)` | `torchfits.read(path)` |
-| Read image as tensor | `torch.from_numpy(fitsio.read(path))` | `torchfits.read_tensor(path, hdu=0)` |
-| Read image with mmap | *(fitsio has no mmap mode; use slice reads)* | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
-| Read image to GPU | `torch.from_numpy(fitsio.read(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
-| Read header | `fitsio.read_header(path)` | `torchfits.read_header(path, hdu=0)` |
+---
 
-## Reading a table
+## Reading Images & Datacubes
 
-| Operation | fitsio | torchfits |
-|-----------|--------|-----------|
-| Read all rows | `fitsio.read(path, ext=1)` | `torchfits.table.read(path, hdu=1)` |
-| Read with WHERE | `fitsio.FITS(path)[1].where("RA > 0")` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
-| Subset of columns | `fitsio.read(path, ext=1, columns=['RA','DEC'])` | `torchfits.table.read(path, hdu=1, columns=["RA","DEC"])` |
-| Columns as tensors | per-column `fitsio.read` + `torch.from_numpy` | `torchfits.table.read_torch(path, hdu=1)` |
-| Stream tensor chunks | iterate fitsio rows | `torchfits.table.scan_torch(path, hdu=1, batch_size=10000)` |
-| Polars | *(manual)* | `torchfits.table.read_polars(path, hdu=1)` |
+| Task | `fitsio` | `torchfits` |
+|---|---|---|
+| **Read image array** | `fitsio.read(path)` | `torchfits.read(path)` |
+| **Read as PyTorch Tensor** | `torch.from_numpy(fitsio.read(path))` | `torchfits.read_tensor(path, hdu=0)` |
+| **Read with memory-mapping** | *(Not supported in fitsio)* | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
+| **Direct GPU placement** | `torch.from_numpy(fitsio.read(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
+| **Read header only** | `fitsio.read_header(path)` | `torchfits.read_header(path, hdu=0)` |
+| **Windowed cutout read** | `fitsio.read(path, ext=0, rows=[y1, y2], cols=[x1, x2])` | `torchfits.read_subset(path, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)` |
 
-`table.read_torch(..., where=)` accepts only simple compare / `BETWEEN` /
-`AND`. For `OR` / `IN` / `IS NULL`, use `table.read(..., where=...)`.
+---
 
-## Writing
+## Reading Tables & Catalogs
 
-| Operation | fitsio | torchfits |
-|-----------|--------|-----------|
-| Write tensor | `fitsio.write(path, tensor.numpy())` | `torchfits.write_tensor(path, tensor)` |
-| Write table | `fitsio.write(path, table_dict)` | `torchfits.table.write(path, table_dict)` |
-| Append rows | `f.append(table_dict)` | `torchfits.table.append_rows(path, rows, hdu=1)` |
-| Update rows | `f[1].update(rows, row_slice)` | `torchfits.table.update_rows(path, rows, row_slice, hdu=1)` |
-| Insert column | `f[1].insert_column(name, values)` | `torchfits.table.insert_column(path, name, values, hdu=1)` |
-| Rename column | `f[1].rename_column(old, new)` | `torchfits.table.rename_columns(path, {old: new}, hdu=1)` |
-| Drop column | `f[1].delete_column(name)` | `torchfits.table.drop_columns(path, [name], hdu=1)` |
+| Task | `fitsio` | `torchfits` |
+|---|---|---|
+| **Read entire table** | `fitsio.read(path, ext=1)` | `torchfits.table.read(path, hdu=1)` *(Returns Arrow table)* |
+| **Filtered read (`WHERE`)** | `fitsio.FITS(path)[1].where("RA > 0")` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
+| **Column projection** | `fitsio.read(path, ext=1, columns=['RA', 'DEC'])` | `torchfits.table.read(path, hdu=1, columns=["RA", "DEC"])` |
+| **Columns as PyTorch tensors** | `[torch.from_numpy(col) for col in cols]` | `torchfits.table.read_torch(path, hdu=1)` |
+| **Stream tensor chunks** | *(Manual chunking)* | `for chunk in torchfits.table.scan_torch(path, hdu=1, batch_size=10000): …` |
+| **Polars DataFrame** | *(Manual conversion)* | `torchfits.table.read_polars(path, hdu=1)` |
 
-## Table filtering
+---
 
-| Operation | fitsio | torchfits |
-|-----------|--------|-----------|
-| Column filter | `fitsio.FITS(path)[1].where("MAG_G < 20")` | `torchfits.table.read(path, hdu=1, where="MAG_G < 20")` |
-| Compound predicate | `fitsio.FITS(path)[1].where("MAG_G < 20 AND DEC > 0")` | `torchfits.table.read(path, hdu=1, where="MAG_G < 20 AND DEC > 0")` |
-| IN list | `fitsio.FITS(path)[1].where("id IN (1,2,3)")` | `torchfits.table.read(path, hdu=1, where="id IN (1, 2, 3)")` |
+## Writing & Table Mutations
 
-## GPU transfer
+| Task | `fitsio` | `torchfits` |
+|---|---|---|
+| **Write image tensor** | `fitsio.write(path, tensor.numpy())` | `torchfits.write_tensor(path, tensor)` |
+| **Write table catalog** | `fitsio.write(path, table_dict)` | `torchfits.table.write(path, table_dict)` |
+| **Append rows to table** | `f.append(table_dict)` | `torchfits.table.append_rows(path, rows, hdu=1)` |
+| **Update rows in place** | `f[1].update(rows, row_slice)` | `torchfits.table.update_rows(path, rows, row_slice, hdu=1)` |
+| **Insert table column** | `f[1].insert_column(name, values)` | `torchfits.table.insert_column(path, name, values, hdu=1)` |
+| **Rename table columns** | `f[1].rename_column(old, new)` | `torchfits.table.rename_columns(path, {old: new}, hdu=1)` |
+| **Drop table columns** | `f[1].delete_column(name)` | `torchfits.table.drop_columns(path, [name], hdu=1)` |
 
-| Operation | fitsio | torchfits |
-|-----------|--------|-----------|
-| Image to GPU | `torch.from_numpy(fitsio.read(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
-| Narrow dtype GPU (uint16) | `torch.from_numpy(fitsio.read(path)).to(torch.uint16).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda", raw_scale=True)` |
-
-## Performance notes
-
-| Metric | fitsio | torchfits |
-|--------|--------|-----------|
-| Large float32 image (16 MB, CPU) | 5.02 ms | 3.85 ms (**~1.3× faster**) |
-| Same read @ CUDA | 5.22 ms | 3.28 ms (**~1.6× faster**) |
-| Compressed Rice image (CPU) | 12.57 ms | 12.40 ms (**~parity**) |
-| 50× repeated 100×100 cutouts (CPU) | 3.21 ms | 467 μs (**~6.9× faster**) |
-| Table read (100k rows, 8 cols, mixed) | 10.36 ms | 2.56 ms (**~4.0× faster**) |
-
-*Median timings from benchmark test runs. For exhaustive comparisons and methodology, see [Benchmarks](benchmarks.md#performance-highlights).*
+---
 
 ## Key Behavioral Differences
 
-### 1. Multi-Processing Fork Safety
-* **fitsio**: High-performance CFITSIO reads into NumPy; there is no true OS
-  `mmap` toggle (`memmap=` is ignored). Long-lived `FITS` handles across
-  `DataLoader` forks can still share CFITSIO state poorly — prefer reopen-per-
-  worker or torchfits datasets.
-* **torchfits**: Use `torchfits.data` datasets with `make_loader` for multi-worker loading. Map-style datasets are worker-safe (each worker reads independently); iterable datasets shard by `worker_id`. Since rc2, image/table reads use private CFITSIO handles per call — no shared-handle LRU across threads. Call `torchfits.cache.optimize_for_dataset(paths)` when the dataset exposes `files` (also invoked by `make_loader` by default) to size metadata caches before training.
+### 1. Multi-Processing & DataLoader Fork Safety
+- **fitsio:** Long-lived `fitsio.FITS` file handles shared across `torch.utils.data.DataLoader` worker forks can encounter CFITSIO state conflicts or descriptor issues.
+- **torchfits:** Native PyTorch `Dataset` implementations in `torchfits.data` (e.g. `FitsImageDataset`, `FitsCutoutDataset`) open independent private CFITSIO handles per call and release the GIL during decoding, ensuring safe execution across multi-worker data loaders.
 
-### 2. Table Mutations
-* **fitsio**: In-place updates can corrupt FITS tables if not handled carefully, and do not invalidate read buffers automatically.
-* **torchfits**: Functions under `torchfits.table` (like `append_rows`, `update_rows`, `insert_column`, `rename_columns`, `drop_columns`) perform parallel columns reconstruction and automatically invalidate all Python-side and C++ handle/meta caches, preventing stale reads.
+### 2. Table Mutations & Cache Invalidation
+- **fitsio:** In-place modifications to FITS tables require manual handle management and do not synchronize with read caches.
+- **torchfits:** In-place table operations in `torchfits.table` automatically invalidate internal metadata caches, ensuring immediate consistency for subsequent reads.
 
-### 3. Variable Length Arrays (VLAs)
-* **fitsio**: Reads VLA columns as NumPy arrays of object pointers (`object` dtype).
-* **torchfits**: Translates VLAs to standard PyArrow `ListArray` types, allowing high-performance, memory-contiguous vectorization on the CPU.
+### 3. Variable-Length Arrays (VLAs)
+- **fitsio:** Reads VLA columns as NumPy arrays with Python object pointers (`dtype=object`), incurring Python object overhead.
+- **torchfits:** Decodes VLAs directly into standard Apache Arrow `ListArray` structures, maintaining memory-contiguous CPU representations.
 
