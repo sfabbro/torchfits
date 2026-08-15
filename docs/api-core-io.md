@@ -206,10 +206,9 @@ sci, wht, msk = torchfits.read_hdus("mef.fits", hdus=["SCI", "WHT", "MASK"])
 
 ---
 
-## Table tensors (see [Tables](api-tables.md))
+## Table Tensors (see [Tables](api-tables.md))
 
-Root aliases `read_table` / `read_table_rows` / `stream_table` were removed in
-1.0. Use:
+For reading and streaming catalog columns directly as PyTorch tensors:
 
 | Need | API |
 |---|---|

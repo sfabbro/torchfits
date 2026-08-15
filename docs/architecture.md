@@ -137,19 +137,13 @@ roots under `cache_root()`. See
 
 Native in-process tiers:
 
-### L0 — Per-read `fitsfile*` (CFITSIO R2)
+### L0 — Per-Read `fitsfile*` (Thread Safety)
 
-Concurrent reads **do not** share one `fitsfile*` across threads. Each image /
-table / subset / HDU-name resolution opens a private handle (`fits_open_diskfile`
+Concurrent reads **do not** share `fitsfile*` handles across threads. Each image,
+table, cutout, or header resolution opens a private handle (`fits_open_diskfile`
 / `fits_open_file`) and closes it when the call (or owning `FITSFile` /
-`TableReader`) finishes. That matches CFITSIO User's Guide §2.4 rule R2
-(same file, independent handles). The old cross-thread LRU of borrowed
-`fitsfile*` pointers was removed for correctness under multi-worker DataLoaders
-and multi-HDU concurrent reads.
-
-Invalidate/clear entry points on the old handle-pool API are **no-ops**; live
-shared state is cleared via SharedReadMeta (`clear_shared_read_meta_cache` /
-per-path invalidate on write). `get_or_open_cached` raises if called.
+`TableReader`) finishes. This guarantees safe multi-threading across multi-worker
+DataLoaders and concurrent reads without lock contention.
 
 ### L1 — SharedReadMeta
 

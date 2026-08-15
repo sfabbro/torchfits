@@ -15,9 +15,7 @@ For step-by-step code tutorials, see [Python Workflows](python-workflows.md) and
 | Columns as tensors | `table.read_torch(path, hdu=1)` | scalar columns as tensors; VLA columns use list/tuple values | `"auto"` |
 | Polars | `table.read_polars(path, hdu=1)` | `FITSPolarsFrame` wrapper | (via `table.read`) |
 
-`table.read_arrow` is a synonym of `table.read`. Root `read_table` /
-`stream_table` / `read_table_rows` / `get_header` / `get_batch_info` were
-removed in 1.0 — use `table.*`, `read_header`, and `read_batch_info`.
+`table.read_arrow` is an alias for `table.read`.
 
 **Caches.** Clear in-process I/O metadata with `clear_file_cache()` /
 `get_cache_performance()`. Wipe everything (in-process + disk roots) with
@@ -171,25 +169,6 @@ Each entry has a quick-path row and a reference page above.
 | `TableHDURef` | Lazy file-backed table handle |
 | `Header` | Dict-like FITS header preserving card order and semantics |
 | `Card` | Single FITS header card: `Card(key, value, comment)` |
-
----
-
-## Removed names
-
-| Old | Use instead |
-|---|---|
-| `read_fast(...)` | `read(...)` or `read_tensor(...)` |
-| `read_image(...)` | `read_tensor(...)` |
-| `read_table(...)` (root) | `table.read_torch(...)` or `table.read(...)` |
-| `stream_table(...)` (root) | `table.scan_torch(...)` |
-| `read_table_rows(...)` (root) | `table.read_torch(..., start_row=<start_row>, num_rows=<num_rows>)` |
-| `get_header(...)` | `read_header(...)` |
-| `get_batch_info(...)` | `read_batch_info(...)` |
-| Root transform classes (e.g. `torchfits.ArcsinhStretch`) | `torchfits.transforms.*` |
-
-Transforms are not re-exported at the package root. Import them from
-`torchfits.transforms`. HDU helpers are available as root names and via
-`torchfits.hdu`.
 
 ---
 
