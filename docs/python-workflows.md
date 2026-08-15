@@ -1,177 +1,340 @@
-# Python workflows
+# Python Workflows
 
-Which torchfits API to use for common FITS jobs — between
-[Quick start](quickstart.md) (shortest path) and the
-[API Reference](api.md) (signatures and kwargs).
+Practical patterns and best practices for working with FITS files in Python with PyTorch, PyArrow, and modern data science tools.
 
-Coming from **Astropy** or **fitsio**? Skim the
-[Astropy](migration_astropy.md) / [fitsio](migration_fitsio.md) migration
-tables first, then use this page for torchfits-native patterns.
+If you are migrating from existing libraries, see also the [Astropy migration guide](migration_astropy.md) or [fitsio migration guide](migration_fitsio.md).
 
 ---
 
-## Choose by job
+## Workflow Selector
 
-| Job | Start with | Then see |
-|-----|------------|----------|
-| One image → tensor | `read_tensor` | [Images](#images-and-hdus) |
-| Image + header | `read(..., return_header=True)` | [Core I/O](api-core-io.md) |
-| Catalog filter / project | `table.read(..., where=)` | [Tables](#tables-as-dataframes) |
-| Columns as tensors | `table.read_torch` | [Tables](api-tables.md) |
-| Huge catalog, stream | `table.scan` / `scan_polars` | [Tables](api-tables.md) |
-| Many cutouts from one mosaic | `open_subset_reader` | [Cutouts](#cutouts-and-mefs) |
-| Multi-extension file | `open` / `read_hdus` | [Images](#images-and-hdus) |
-| Train on many files / rows | `Fits*Dataset` + `make_loader` | [Datasets](#datasets-and-loaders) |
-| Shell inspect / one-off | `torchfits` CLI | [CLI](cli.md) |
+| Goal | Primary API | Key Benefit | Full Reference |
+|---|---|---|---|
+| **Read image to Tensor** | `read_tensor(path, device="cuda")` | Direct decode to target device (CPU/CUDA/MPS) | [Images & HDUs](#images-and-hdus) |
+| **Read image + Header** | `read(path, return_header=True)` | Unified access to pixel tensor and card dictionary | [Headers](#headers) |
+| **Write Tensor to FITS** | `write(path, tensor, compress="RICE_1")` | Lossless / lossy tile compression & header preservation | [Writing Images](#writing-images) |
+| **Filter & load catalogs** | `table.read(path, where="MAG < 20")` | Zero-copy PyArrow table with SQL pushdown filtering | [Tables & Catalogs](#tables-as-dataframes) |
+| **Catalog columns as Tensors** | `table.read_torch(path, columns=[...])` | Dictionary of PyTorch tensors ready for model inputs | [Tables as Tensors](#tables-as-tensors) |
+| **Stream huge catalogs** | `table.scan(path, batch_size=50_000)` | Out-of-core chunked reader for datasets larger than RAM | [Streaming Large Catalogs](#streaming-large-catalogs) |
+| **Extract image cutouts** | `read_subset(path, x1, y1, x2, y2)` | Fast bounding box extraction without loading full frame | [Cutouts](#cutouts-and-mefs) |
+| **High-throughput cutouts** | `open_subset_reader(path)` | Reuses open file handle across thousands of crops | [Subset Reader](#reusable-subset-reader) |
+| **Multi-Extension FITS (MEF)** | `with torchfits.open(path) as hdul:` | Pythonic HDUList navigation by index or EXTNAME | [HDULists](#mef) |
+| **PyTorch DataLoader pipelines** | `FitsImageDataset` + `make_loader` | Multi-worker parallel data loading for deep learning | [Datasets & Loaders](#datasets-and-loaders) |
+| **Image stretches & transforms** | `torchfits.transforms` | Differentiable transforms (Arcsinh, ZScale, SigmaClip) | [Transforms](#transforms) |
+| **In-memory byte buffers** | `read_bytes(buffer)`, `write_bytes(tensor)` | Cloud/S3/HTTP microservice and Lambda I/O | [In-Memory Buffers](#in-memory-buffers) |
 
 ---
 
-## Images and HDUs
+## 1. Reading and Writing Images {#images-and-hdus}
+
+### Reading Images as PyTorch Tensors
+
+`torchfits.read_tensor` reads an IMAGE HDU directly into a `torch.Tensor`. Use the `device` argument to place tensors on GPU or Apple Silicon unified memory directly:
 
 ```python
 import torchfits
 
-# IMAGE HDU → tensor (mmap=True by default)
-tensor = torchfits.read_tensor("image.fits", hdu=0, device="cpu")
+# Read primary image HDU (HDU 0) onto CPU
+image = torchfits.read_tensor("science.fits", hdu=0)
+print(f"Shape: {image.shape}, Dtype: {image.dtype}, Device: {image.device}")
 
-# Same data + header cards
-data, header = torchfits.read("image.fits", hdu=0, return_header=True)
-print(header.get("OBJECT"))
+# Direct transfer to GPU (CUDA on Linux, MPS on macOS)
+gpu_image = torchfits.read_tensor("science.fits", hdu=0, device="cuda")
+
+# Select HDU by extension name (EXTNAME)
+sci_image = torchfits.read_tensor("mef_survey.fits", hdu="SCI")
 ```
 
-`hdu` is an integer index or an **EXTNAME** string (`"SCI"`, `"EVENTS"`, …).
-When several HDUs share a name, only the **first** match is returned — use a
-numeric index for the others.
+### Writing Images {#writing-images}
 
-!!! tip "mmap and devices"
-    Keep `mmap=True` for large local images. Prefer `mmap=False` when many
-    workers open the same files. `device="cuda"` / `"mps"` copies to the
-    accelerator after the host read.
+`torchfits.write` saves PyTorch tensors or NumPy arrays to FITS format, with optional tile compression and custom headers:
 
-`torchfits.read` without `return_header` returns a tensor for IMAGE HDUs, or
-a `dict[str, Tensor]` for table HDUs. For catalogs as dataframes, prefer
-`table.read` below instead of root `read`.
+```python
+import torch
+import torchfits
 
-More: [Core I/O](api-core-io.md) · [Examples](examples.md)
+tensor = torch.randn(1024, 1024, dtype=torch.float32)
+
+# Write uncompressed FITS
+torchfits.write("output.fits", tensor, overwrite=True)
+
+# Write tile-compressed FITS using RICE_1 (creates smaller, fast-reading files)
+torchfits.write("compressed.fits", tensor, compress="RICE_1", overwrite=True)
+```
 
 ---
 
-## Tables as dataframes
+## 2. Working with FITS Headers {#headers}
+
+Use `torchfits.read(..., return_header=True)` or `torchfits.read_header(...)` to access metadata:
 
 ```python
-df = torchfits.table.read(
+import torchfits
+
+# Read image data and header together
+image, header = torchfits.read("science.fits", hdu=0, return_header=True)
+
+# Inspect header cards
+print("Object:", header.get("OBJECT"))
+print("Exposure time:", header.get("EXPTIME", default=0.0))
+
+# Iterate over all cards
+for card in header.cards:
+    print(f"{card.key} = {card.value} / {card.comment}")
+
+# Read header only without loading pixel data
+header_only = torchfits.read_header("science.fits", hdu=0)
+```
+
+To update or set keywords when saving:
+
+```python
+header["OBSERVER"] = "Astronomer"
+header["HISTORY"] = "Calibrated with flat field"
+
+torchfits.write("calibrated.fits", image, header=header, overwrite=True)
+```
+
+---
+
+## 3. Catalogs and Tables {#tables-as-dataframes}
+
+### Tables as DataFrames (PyArrow, Pandas, Polars)
+
+`torchfits.table.read` decodes binary and ASCII tables into a zero-copy `pyarrow.Table`. You can apply column projections and SQL-like predicate filters directly at the C++ reader level:
+
+```python
+import torchfits
+
+# Read table with column selection and SQL pushdown filtering
+table = torchfits.table.read(
     "catalog.fits",
     hdu=1,
-    columns=["RA", "DEC", "MAG_G"],
-    where="MAG_G < 20",
+    columns=["RA", "DEC", "MAG_G", "MAG_R"],
+    where="MAG_G < 20.0 AND MAG_R > 15.0",
 )
-print(df.num_rows)  # number of rows in the pyarrow.Table
+print(f"Loaded {table.num_rows} rows.")
 
-cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
-# where= on read_torch: numeric comparisons / BETWEEN / AND only
+# Zero-copy export to Pandas or Polars
+df_pandas = table.to_pandas()
 
-for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
-    print(batch.num_rows)  # pyarrow.RecordBatch
+import polars as pl
+
+df_polars = pl.from_arrow(table)
 ```
 
-!!! warning "Two table shapes"
-    - `torchfits.table.read` → **Arrow** (`pyarrow.Table`)
-    - `torchfits.table.read_torch` / root `read` on a table HDU → **`dict[str, Tensor]`**
+### Tables as Tensors {#tables-as-tensors}
 
-    Pick one shape per code path: `table.read` returns Arrow; `read_torch` /
-root `read` on a table return column tensors.
-
-For catalogs larger than RAM, use `scan` / `scan_polars`. Building a full
-table only to call `.lazy()` loads everything first.
-
-More: [Tables](api-tables.md) · [Astropy migration](migration_astropy.md)
-
----
-
-## Cutouts and MEFs
-
-Python / `--box` windows are **0-based, half-open**
-`[x1, x2) × [y1, y2)` (NumPy slicing). Shell users can keep the familiar
-**CFITSIO path section** (`file.fits[1:256,1:256]`, 1-based inclusive).
-Do not mix the two coordinate systems on one call.
+If you are training models on tabular catalog features, `torchfits.table.read_torch` returns a dictionary of PyTorch tensors:
 
 ```python
-# One stamp
-stamp = torchfits.read_subset("mosaic.fits", hdu=0, x1=100, y1=100, x2=200, y2=200)
+import torchfits
 
-# Many stamps from one open (preferred for large mosaics)
-with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
-    a = reader.read_subset(0, 0, 64, 64)
-    b = reader.read_subset(128, 128, 192, 192)
+# Load table columns directly as a dictionary of PyTorch tensors
+tensors = torchfits.table.read_torch(
+    "catalog.fits",
+    hdu=1,
+    columns=["RA", "DEC", "FLUX"],
+    where="FLUX > 100",
+)
 
-# Multi-extension: by index or first matching EXTNAME
-with torchfits.open("mef.fits") as hdul:
-    primary = hdul[0].data
-    sci = hdul["SCI"]  # first EXTNAME == "SCI"
+ra_tensor = tensors["RA"]  # torch.Tensor
+flux_tensor = tensors["FLUX"]  # torch.Tensor
 ```
 
-Shell:
+### Streaming Large Catalogs {#streaming-large-catalogs}
 
-```bash
-torchfits cutout 'mosaic.fits[101:200,101:200]' stamp.fits
-torchfits cutout mosaic.fits stamp.fits --box 100,100,200,200
+For catalogs that exceed available RAM, `torchfits.table.scan` iterates over batches of rows without loading the entire catalog:
+
+```python
+import torchfits
+
+# Stream through a 100-million row catalog in chunks of 50,000 rows
+for batch in torchfits.table.scan(
+    "huge_survey.fits", hdu=1, batch_size=50_000, columns=["RA", "DEC"]
+):
+    # batch is a pyarrow.RecordBatch
+    process_chunk(batch)
 ```
-
-See [CLI](cli.md) and [CLI recipes](cli-recipes.md).
-
-More: [`read_subset`](api-core-io.md#read_subset) ·
-[`open_subset_reader`](api-core-io.md#open_subset_reader)
 
 ---
 
-## Datasets and loaders
+## 4. Fast Image Cutouts {#cutouts-and-mefs}
 
-`torchfits.data` builds PyTorch Datasets over many FITS files or rows.
+### Single Cutout
+
+`torchfits.read_subset` extracts a rectangular sub-region without reading unneeded pixel blocks:
+
+```python
+import torchfits
+
+# Coordinates use 0-based, half-open indexing [x1, y1, x2, y2)
+cutout = torchfits.read_subset(
+    "giant_mosaic.fits",
+    hdu=0,
+    x1=500,
+    y1=500,
+    x2=628,
+    y2=628,
+    device="cuda",
+)
+print(cutout.shape)  # torch.Size([128, 128])
+```
+
+### Reusable Subset Reader {#reusable-subset-reader}
+
+When extracting hundreds or thousands of stamps from the same mosaic (e.g. galaxy postage stamps from a survey image), use `open_subset_reader` to reuse the open file descriptor:
+
+```python
+import torchfits
+
+with torchfits.open_subset_reader("mosaic.fits", hdu=0) as reader:
+    # Extremely fast repeated extractions
+    stamp1 = reader.read_subset(100, 100, 228, 228)
+    stamp2 = reader.read_subset(500, 500, 628, 628)
+    stamp3 = reader.read_subset(1200, 800, 1328, 928)
+```
+
+---
+
+## 5. Multi-Extension FITS (HDUList) {#mef}
+
+`torchfits.open` provides a context manager for navigating Multi-Extension FITS files:
+
+```python
+import torchfits
+
+with torchfits.open("mef_observation.fits") as hdul:
+    print(f"Total HDUs: {len(hdul)}")
+
+    # Access HDUs by integer index
+    primary_header = hdul[0].header
+
+    # Access HDUs by extension name (EXTNAME)
+    science_data = hdul["SCI"].data  # Tensor or Arrow table
+    variance_data = hdul["VAR"].data
+
+    # Iterate through all extensions
+    for i, hdu in enumerate(hdul):
+        print(f"HDU {i}: {hdu.name} ({type(hdu).__name__})")
+```
+
+---
+
+## 6. Machine Learning Datasets and Loaders {#datasets-and-loaders}
+
+The `torchfits.data` module provides native PyTorch `Dataset` implementations optimized for multi-worker DataLoaders.
 
 ```python
 from torchfits.data import FitsImageDataset, make_loader
+from torchfits.transforms import Compose, ArcsinhStretch, ZScaleNormalize
 
-ds = FitsImageDataset("observations/*.fits", label_key="CLASS", mmap=False)
-loader = make_loader(ds, batch_size=32, num_workers=4)
+# Define preprocessing pipeline
+pipeline = Compose(
+    [
+        ArcsinhStretch(factor=0.05),
+        ZScaleNormalize(),
+    ]
+)
 
-for images, labels in loader:
-    break
+# Create Dataset across thousands of image files
+dataset = FitsImageDataset(
+    "data/survey/*.fits",
+    hdu=0,
+    label_key="CLASS_ID",
+    transform=pipeline,
+)
+
+# Build high-throughput DataLoader with multi-processing workers
+loader = make_loader(
+    dataset,
+    batch_size=64,
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True,
+)
+
+# Training loop
+for batch_images, batch_labels in loader:
+    # batch_images: [64, 1, H, W]
+    train_step(batch_images, batch_labels)
 ```
 
-| Dataset | Typical use | Item shape |
-|---------|-------------|------------|
-| `FitsImageDataset` | Many 2D images | `(tensor, label)` |
-| `FitsTableDataset` | Catalog in RAM | `(row_dict, label)` |
-| `FitsCutoutDataset` | Patches from a mosaic | tensor |
-| `FitsTableIterableDataset` | Huge catalog stream | `row_dict` |
+Available Datasets in `torchfits.data`:
 
-Walkthroughs: [ML with FITS](examples-ml.md).
-Reference: [Data module](api-data.md) · [Transforms](api-transforms.md)
+- `FitsImageDataset`: Load 2D/3D images from file lists or glob patterns.
+- `FitsCutoutDataset`: Extract on-the-fly random or coordinate-based cutouts from large survey mosaics.
+- `FitsTableDataset`: In-memory tabular dataset for catalogue-driven models.
+- `FitsTableIterableDataset`: Out-of-core streaming dataset for massive catalogs.
 
 ---
 
-## CLI vs Python
+## 7. Astronomical Transforms and Preprocessing {#transforms}
 
-| Prefer | When |
-|--------|------|
-| In-process Python API | Pipelines and many reads in one process |
-| `torchfits` CLI | Inspect, checksums, one-off cutouts, shell scripts |
+The `torchfits.transforms` module provides astronomical stretch, scaling, and normalization functions designed for tensors:
 
-Each CLI invocation pays a PyTorch/extension import, which can dominate tiny
-one-file operations. For tight loops, stay in Python.
+```python
+import torchfits
+from torchfits.transforms import (
+    ArcsinhStretch,
+    LogStretch,
+    SqrtStretch,
+    ZScaleNormalize,
+    PercentileClipNormalize,
+    SigmaClip,
+    lupton_rgb,
+    Compose,
+)
 
-Tour: [CLI](cli.md) · Recipes: [CLI recipes](cli-recipes.md)
+image = torchfits.read_tensor("galaxy.fits", hdu=0)
+
+# Apply Arcsinh contrast stretch
+stretched = ArcsinhStretch(factor=0.1)(image)
+
+# Apply IRAF-style ZScale normalization
+normalized = ZScaleNormalize()(image)
+
+# Chain transforms together into a single pipeline
+transform_pipeline = Compose(
+    [
+        SigmaClip(sigma=3.0),
+        LogStretch(),
+        PercentileClipNormalize(lower_pct=1.0, upper_pct=99.0),
+    ]
+)
+processed = transform_pipeline(image)
+
+# Combine 3 band images into a color Lupton RGB tensor
+r = torchfits.read_tensor("r.fits")
+g = torchfits.read_tensor("g.fits")
+b = torchfits.read_tensor("b.fits")
+rgb = lupton_rgb(r, g, b, q=8.0, stretch=0.5)
+```
 
 ---
 
-## What's next?
+## 8. In-Memory Buffers and Cloud I/O {#in-memory-buffers}
 
-1. [Quick start](quickstart.md) — install → first tensor in minutes  
-2. [Examples](examples.md) — runnable scripts and galleries  
-3. [API Reference](api.md) — full signatures  
-4. [Parity](parity.md) — supported vs out-of-scope vs Astropy / fitsio / CFITSIO  
+For web APIs, cloud microservices, AWS Lambda, or object storage streams (S3/GCS/HTTP):
 
-!!! tip "Optional: coding agents"
-    You can point an agent at this docs site or the repo for help on *your*
-    files. Skimming this page (or Quick start) first keeps the conversation
-    grounded in the real public API.
+```python
+import torch
+import torchfits
+
+# Serialize a tensor directly into an in-memory FITS byte buffer
+data = torch.ones((256, 256), dtype=torch.float32)
+fits_bytes = torchfits.write_bytes(data)
+
+# Read directly from an in-memory byte buffer without writing to disk
+tensor_from_bytes = torchfits.read_bytes(fits_bytes)
+print(tensor_from_bytes.shape)  # torch.Size([256, 256])
+```
+
+---
+
+## Next Steps
+
+- [Quick Start](quickstart.md): Step-by-step introduction to reading, writing, and transforming data.
+- [API Reference](api.md): Complete module documentation and parameter details.
+- [Transform Gallery](examples-transforms.md): Visual before/after gallery of astronomical transforms.
+- [CLI Reference](cli.md): Fast command-line inspection and batch processing.
