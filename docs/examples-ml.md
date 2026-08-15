@@ -29,7 +29,7 @@ Train a convolutional neural network on real astronomical survey data: Galaxy Zo
 ```bash
 # Fetch sample Galaxy Zoo catalog and download Legacy Survey cutouts
 bash scripts/fetch_example_samples.sh
-pixi run python examples/example_ml_galaxyzoo_legacy.py
+python examples/example_ml_galaxyzoo_legacy.py
 ```
 
 ### 1. Preprocessing Pipeline & Dataset Setup
@@ -126,7 +126,7 @@ Train a compact U-Net to remove cosmic rays and detector read noise from real CF
 # Fetch CFHT MegaCam calibration frames (12 darks + 8 biases from CADC)
 bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh
-pixi run python examples/example_megacam_cr_denoise.py --mode both
+python examples/example_megacam_cr_denoise.py --mode both
 ```
 
 ### Why Noise2Noise on Calibration Darks?
@@ -154,7 +154,7 @@ Extracting thousands of small postage stamps from multi-gigabyte survey mosaics 
 ```bash
 # Fetch CFHT MegaPipe survey mosaic
 bash scripts/fetch_cfht_megapipe_sample.sh
-pixi run python examples/example_megapipe_cutout_collage.py
+python examples/example_megapipe_cutout_collage.py
 ```
 
 ### Benchmarking Cutout Performance

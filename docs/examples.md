@@ -7,7 +7,7 @@ All example scripts live in the `examples/` directory of the repository, and are
 To run the automated validation suite across all example scripts:
 
 ```bash
-pixi run python examples/test_examples.py
+python examples/test_examples.py
 ```
 
 ---

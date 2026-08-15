@@ -207,7 +207,7 @@ bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh
 
 # 2. Run training and evaluation pipeline
-pixi run python examples/example_megacam_cr_denoise.py --mode both
+python examples/example_megacam_cr_denoise.py --mode both
 ```
 
 ### Remote GPU Cluster Execution (CANFAR / Slurm)
