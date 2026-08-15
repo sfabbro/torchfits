@@ -9,7 +9,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PYTHONS=(3.10 3.11 3.12 3.13 3.14)
-TORCHES=(2.10 2.11 2.12 2.13)
+TORCHES=("${TORCHES[@]:-2.11 2.12 2.13}")
 
 launch_leg() {
   local py="$1" torch="$2" cuda="$3" cu="$4" tag="$5"
@@ -25,12 +25,16 @@ launch_leg() {
   bash scripts/launch_canfar_gpu_bench.sh || echo "[FAIL] ${run_id}"
 }
 
-for torch in "${TORCHES[@]}"; do
+for torch in ${TORCHES}; do
   for py in "${PYTHONS[@]}"; do
     for cuda in 0 1; do
       if [[ "${cuda}" == "1" ]]; then
         if [[ "${torch}" == "2.13" ]]; then
           cu="cu129"
+        elif [[ "${torch}" == "2.12" ]]; then
+          cu="cu126"
+        elif [[ "${torch}" == "2.11" ]]; then
+          cu="cu128"
         else
           cu="cu128"
         fi

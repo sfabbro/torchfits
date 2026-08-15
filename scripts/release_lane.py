@@ -206,11 +206,6 @@ def render(
         # derives from the current release with a +torch<minor> local segment
         # (PEP 440), so backport-candidate wheels never collide with the real
         # release version and verify_wheel_matrix.sh can recover the lane.
-        if version is not None:
-            raise SystemExit(
-                f"lane {lane!r} is not a release lane in torch_lanes.json; "
-                "its version derives from the current release"
-            )
         if prerelease is not None:
             raise SystemExit(
                 f"lane {lane!r} is not a release lane in torch_lanes.json; "
@@ -223,7 +218,13 @@ def render(
             raise SystemExit("pyproject.toml has no version field")
         base = strip_prerelease(match.group(2))
         base_lane = lane_for_version(base, load_lanes())
-        version = f"{base}.dev0+torch{lane.replace('.', '')}"
+        expected_dev_version = f"{base}.dev0+torch{lane.replace('.', '')}"
+        if version is not None and version != expected_dev_version:
+            raise SystemExit(
+                f"lane {lane!r} is not a release lane in torch_lanes.json; "
+                f"expected version {expected_dev_version!r}, got {version!r}"
+            )
+        version = expected_dev_version
         cu_default = str(lanes[base_lane]["cu_default"])
     nxt = next_lane(lane)
 
