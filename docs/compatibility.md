@@ -52,13 +52,15 @@ torch ABI tag it was built with and requires a matching PyTorch minor version.
 | Tensor columns | Prefer `torchfits.table.read_torch` / `scan_torch` |
 | Root `read_table` / `stream_table` / `read_table_rows` / `get_header` / `get_batch_info` | **Removed** in 1.0 — use the explicit mappings in [API Reference](api.md#removed-names), plus `read_header` / `read_batch_info` |
 
-## Wheel install verification
+## Verification
 
-```bash
-bash scripts/clean_install_smoke.sh
+To verify that your installation matches your Python and PyTorch runtime:
+
+```python
+import torch
+import torchfits
+
+print("torchfits version:", torchfits.__version__)
+print("PyTorch version:", torch.__version__)
+print("CUDA GPU available:", torch.cuda.is_available())
 ```
-
-CI publishes the cibuildwheel matrix on tagged releases
-(`.github/workflows/build_wheels.yml`); local builds go through
-`scripts/build_wheels_local.sh` and are verified
-with `scripts/verify_wheel_matrix.sh`.
