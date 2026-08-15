@@ -1,60 +1,47 @@
-# Compatibility matrix
+# Environment & Platform Compatibility
 
-Supported combinations for **torchfits** wheels and source builds.
+Supported Python versions, PyTorch runtime ABIs, CUDA flavors, and operating systems for **torchfits**.
 
-| Component | Wheels | Source builds |
-|-----------|--------|----------------|
-| Python | **3.10 – 3.14** | **3.10+** |
-| PyTorch | **2.11.x, 2.12.x, 2.13.x** (default PyPI release tracks 2.13.x; prebuilt wheels for 2.11/2.12 available on GitHub Releases) | **≥ 2.10** when building from source with `--no-deps` |
-| CUDA Flavors | **cu126, cu128, cu129, cu130** and **CPU-only (+cpu)** | all supported PyTorch CUDA builds |
-| NumPy | **≥ 1.20** | same |
-| PyArrow | **≥ 5.0** | same |
-| Platforms | **Linux x86_64 + aarch64**, **macOS arm64** | git checkout + `extern/vendor.sh` |
+For supported FITS formats, HDU types, tile compression algorithms, and catalog features, see the [Feature Parity Matrix](parity.md).
 
-Optional: Polars / Pandas / DuckDB via env; astropy / fitsio for test / bench only
-(not imported by runtime I/O).
+---
 
-## PyTorch Version Compatibility
+## Supported Environments
 
-Each torchfits wheel is compiled against **one PyTorch minor version**
-because PyTorch has no stable C++ ABI across minor versions; the C++ extension embeds the
-torch ABI tag it was built with and requires a matching PyTorch minor version.
-
-| PyTorch version | Wheel availability | Notes |
+| Component | Prebuilt Wheels | Source Builds |
 |---|---|---|
-| **2.13.x** | **Default PyPI release** (`torchfits 1.0.0`) | Default `pip install torchfits` line |
-| **2.12.x** | **GitHub Releases** (`1.0.0+torch212`) | Prebuilt wheel for PyTorch 2.12 environments |
-| **2.11.x** | **GitHub Releases** (`1.0.0+torch211`) | Prebuilt wheel for PyTorch 2.11 environments |
+| **Python** | **3.10, 3.11, 3.12, 3.13, 3.14** | **3.10+** |
+| **PyTorch** | **2.13.x** (default on PyPI)<br>**2.12.x, 2.11.x** (GitHub Releases) | **≥ 2.10** (`pip install --no-deps --no-build-isolation .`) |
+| **Hardware & CUDA** | **CPU**, **CUDA 12.6, 12.8, 12.9, 13.0**, **Apple Silicon MPS** | All PyTorch-supported compute devices |
+| **Operating Systems** | **Linux** (`x86_64`, `aarch64`)<br>**macOS** (`arm64` Apple Silicon) | Linux, macOS |
+| **Core Libraries** | **NumPy ≥ 1.20**, **PyArrow ≥ 5.0** | Same |
 
-## Wheels vs source
+---
 
-- **PyPI wheels** are compiled against PyTorch 2.13 (CPython 3.10–3.14). Plain
-  `pip install torchfits` automatically installs or upgrades torch to 2.13.
-  There is no sdist on PyPI, so pip never compiles.
-- **Prebuilt wheels for PyTorch 2.11 / 2.12:** install the corresponding
-  wheel directly from GitHub Releases to run on PyTorch 2.11
-  or 2.12 without upgrading torch or compiling.
-- **Other PyTorch minors (≥ 2.10):** from a git checkout, pre-install that
-  torch and the build frontend (`scikit-build-core`, `nanobind`, CMake, Ninja,
-  C++17 compiler, and NumPy), then build with `pip install --no-deps
-  --no-build-isolation .` so pip does not replace the selected torch minor.
-- **CUDA / CPU-only installs:** a single CPU-linked torchfits wheel works across
-  all CUDA flavors (`cu126`, `cu128`, `cu129`, `cu130`) as well as CPU-only
-  (`+cpu`) builds of that PyTorch version (see [Install](install.md)); CUDA builds
-  also run seamlessly on GPU-less machines via CPU fallback.
+## PyTorch Minor Version ABI Matching
 
-## Downstream guidance
+Because PyTorch does not guarantee C++ ABI stability across minor version releases ($2.11 \to 2.12 \to 2.13$), each `torchfits` binary wheel embeds the specific PyTorch C++ ABI tag it was compiled against.
 
-| Consumer | Guidance |
-|----------|----------|
-| ML training (`Dataset` / `make_loader`) | Prefer prebuilt wheel + matching torch version, or rebuild torchfits from source for your torch minor |
-| Arrow catalogs | Prefer `torchfits.table.read` / `scan` |
-| Tensor columns | Prefer `torchfits.table.read_torch` / `scan_torch` |
-| Root `read_table` / `stream_table` / `read_table_rows` / `get_header` / `get_batch_info` | **Removed** in 1.0 — use the explicit mappings in [API Reference](api.md#removed-names), plus `read_header` / `read_batch_info` |
+| PyTorch Version | Wheel Distribution Channel | Installation Command |
+|---|---|---|
+| **PyTorch 2.13.x** | **Default PyPI Release** | `pip install torchfits` |
+| **PyTorch 2.12.x** | **GitHub Release Wheels** | `pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch212-cp311-cp311-manylinux_2_28_x86_64.whl` |
+| **PyTorch 2.11.x** | **GitHub Release Wheels** | `pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch211-cp311-cp311-manylinux_2_28_x86_64.whl` |
+| **PyTorch 2.10.x** | **Source Build** | `pip install --no-deps --no-build-isolation .` |
+
+---
+
+## CUDA & Accelerator Compatibility
+
+- **Universal CUDA / CPU Wheels:** A single `torchfits` wheel functions across all CUDA flavors (`cu126`, `cu128`, `cu129`, `cu130`) as well as CPU-only (`+cpu`) installations of the matching PyTorch minor version.
+- **Apple Silicon (MPS):** Native `arm64` wheels for macOS leverage Metal Performance Shaders (`device="mps"`).
+- **Graceful Fallback:** CUDA-built environments run seamlessly on CPU-only machines via automatic CPU fallback.
+
+---
 
 ## Verification
 
-To verify that your installation matches your Python and PyTorch runtime:
+To verify that your installation matches your current Python and PyTorch runtime:
 
 ```python
 import torch
@@ -63,4 +50,6 @@ import torchfits
 print("torchfits version:", torchfits.__version__)
 print("PyTorch version:", torch.__version__)
 print("CUDA GPU available:", torch.cuda.is_available())
+print("Apple MPS available:", torch.backends.mps.is_available())
 ```
+
