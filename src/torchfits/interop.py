@@ -96,6 +96,39 @@ def to_polars(
     )
 
 
+def to_astropy(
+    data: Dict[str, Any],
+    decode_bytes: bool = False,
+    encoding: str = "ascii",
+    strip: bool = True,
+    vla_policy: str = "list",
+) -> Any:
+    """Convert a dictionary of PyTorch tensors to an Astropy Table."""
+    import importlib
+
+    try:
+        astropy_table_mod = importlib.import_module("astropy.table")
+        Table = astropy_table_mod.Table
+    except ImportError:
+        raise ImportError("Astropy is required for to_astropy conversion.") from None
+
+    arrow_table = to_arrow(
+        data,
+        decode_bytes=decode_bytes,
+        encoding=encoding,
+        strip=strip,
+        vla_policy=vla_policy,
+    )
+    cols: dict[str, Any] = {}
+    for name in arrow_table.column_names:
+        chunked_arr = arrow_table[name]
+        try:
+            cols[name] = chunked_arr.to_numpy(zero_copy_only=False)
+        except Exception:
+            cols[name] = chunked_arr.to_pylist()
+    return Table(cols)
+
+
 def to_arrow(
     data: Dict[str, Any],
     decode_bytes: bool = False,

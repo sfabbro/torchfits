@@ -27,6 +27,7 @@ from ._write_helpers import (
     _is_skippable_empty_primary,
     _merge_fits_write_header,
     _normalize_cpp_table_data,
+    _normalize_table_input,
     _prepare_quantized_table_data_for_write,
     _prepare_unsigned_table_data_for_write,
     _unsigned_image_storage_for_fits_write,
@@ -159,6 +160,7 @@ def write(
         import torchfits._C as cpp
 
         hdus_to_write = []
+        data = _normalize_table_input(data)
 
         if compress:
             import numpy as np

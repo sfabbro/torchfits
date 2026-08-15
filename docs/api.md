@@ -60,6 +60,7 @@ For step-by-step code tutorials, see [Python Workflows](python-workflows.md) and
 | Stream dataframe batches | `table.scan(path, hdu=1, batch_size=65536)` | [Tables](api-tables.md#tablescan) |
 | Dataframe columns as tensors | `table.read_torch(path, hdu=1, columns=None)` | [Tables](api-tables.md#tableread_torch) |
 | Stream tensor-column chunks | `table.scan_torch(path, hdu=1, batch_size=65536)` | [Tables](api-tables.md#tablescan_torch) |
+| Astropy Table | `table.read_astropy(path, hdu=1)` | [Tables](api-tables.md#astropy) |
 | Native Polars dataframe | `table.read_polars(path, hdu=1)` | [Tables](api-tables.md#polars) |
 | Streaming Polars batches | `table.scan_polars(path, hdu=1)` | [Tables](api-tables.md#polars) |
 | DuckDB SQL | `table.duckdb_query(path, sql, hdu=1)` | [Tables](api-tables.md#duckdb) |
@@ -68,6 +69,7 @@ Destination-qualified spelling of `table.read` (same object): `table.read_arrow`
 
 | Goal | Entry point | Reference |
 |---|---|---|
+| Interop: Astropy | `to_astropy(table_dict, decode_bytes=True)` | [Tables](api-tables.md#astropy) |
 | Interop: Polars | `to_polars(table_dict, decode_bytes=True)` | [Tables](api-tables.md#polars) |
 | Interop: Arrow | `to_arrow(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
 | Interop: pandas | `to_pandas(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
@@ -151,7 +153,7 @@ The root `torchfits.__all__` (frozen surface for 1.0.0):
 - **Checksums / HDU mutation:** `verify_checksums`, `write_checksums`,
   `insert_hdu`, `replace_hdu`, `delete_hdu`
 - **Cache:** `get_cache_performance`, `clear_all_caches`, `clear_file_cache`
-- **Interop:** `to_pandas`, `to_arrow`, `to_polars`
+- **Interop:** `to_astropy`, `to_pandas`, `to_arrow`, `to_polars`
 - **HDU types:** `Header`, `Card`, `HDUList`, `TensorHDU`, `TableHDU`,
   `TableHDURef`
 - **Namespaces:** `table`, `cache`, `cpp`

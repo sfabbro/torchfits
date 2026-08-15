@@ -7,10 +7,11 @@ column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 |---|---|---|
 | Arrow table | `table.read` / `table.read_arrow` | `pyarrow.Table` |
 | Column → tensor map | `table.read_torch` | `dict[str, torch.Tensor]` (VLA columns use list/tuple values) |
+| Astropy Table | `table.read_astropy` | `astropy.table.Table` |
 | Polars | `table.read_polars` | `FITSPolarsFrame` wrapper around `pl.DataFrame` |
 
 Supports `where=` filters, column projection, streaming, mutations, and
-handoff to Polars, DuckDB, Pandas, and PyArrow.
+handoff to Astropy, Polars, DuckDB, Pandas, and PyArrow.
 
 ---
 
@@ -231,7 +232,7 @@ torchfits.table.write(path, data, *, schema=None, header=None,
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str` | *(required)* | Output path |
-| `data` | `dict[str, array-like]` | *(required)* | Column name to values |
+| `data` | `dict`, `Table`, or DataFrame | *(required)* | Column dictionary, Astropy Table, PyArrow Table, or DataFrame |
 | `header` | `dict` or `None` | `None` | FITS header key-value pairs |
 | `overwrite` | `bool` | `False` | Overwrite existing file |
 | `table_type` | `str` | `"binary"` | `"binary"` or `"ascii"` |
@@ -354,6 +355,23 @@ update/delete). `insert_rows` requires keyword `row=` (0-based insert index).
 ---
 
 ## Interop
+
+### Astropy
+
+Direct reading, conversion, and writing for `astropy.table.Table`:
+
+```python
+# Read directly into an Astropy Table (supports SQL WHERE filters)
+tbl = torchfits.table.read_astropy(
+    "catalog.fits", hdu=1, where="MAG_G < 20.0 AND DEC > 0"
+)
+
+# Convert an in-memory tensor dict to an Astropy Table
+tbl_from_tensors = torchfits.to_astropy(tensor_dict)
+
+# Write an Astropy Table directly to FITS
+torchfits.table.write("out.fits", tbl, overwrite=True)
+```
 
 ### Polars
 

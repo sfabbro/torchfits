@@ -43,6 +43,35 @@ def _host_tensor_for_fits_write(tensor: Tensor) -> Tensor:
     return tensor.contiguous()
 
 
+def _normalize_table_input(data: Any) -> Any:
+    """Normalize Table/DataFrame inputs (Astropy, Arrow, Polars, Pandas) into a columnar dict."""
+    if isinstance(data, dict):
+        return data
+    # Astropy Table / QTable
+    if hasattr(data, "colnames") and hasattr(data, "columns"):
+        return {str(col): data[col] for col in data.colnames}
+    # PyArrow Table / RecordBatch
+    if hasattr(data, "column_names") and hasattr(data, "column"):
+        cols: dict[str, Any] = {}
+        for name in data.column_names:
+            c = data[name]
+            try:
+                cols[name] = c.to_numpy(zero_copy_only=False)
+            except Exception:
+                cols[name] = c.to_pylist()
+        return cols
+    # Polars DataFrame
+    if hasattr(data, "columns") and hasattr(data, "to_dict"):
+        try:
+            return {col: data[col].to_numpy() for col in data.columns}
+        except Exception:
+            return dict(data.to_dict(as_series=False))
+    # Pandas DataFrame
+    if hasattr(data, "columns") and hasattr(data, "to_dict"):
+        return {col: data[col].to_numpy() for col in data.columns}
+    return data
+
+
 def _merge_fits_write_header(
     header: Optional[Dict[str, Any]], extra: Dict[str, Any]
 ) -> Header:
@@ -319,7 +348,13 @@ def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
         if np.iscomplexobj(value):
             if value.dtype not in (np.complex64, np.complex128):
                 return False
-            continue
+        if value.dtype == np.object_:
+            if value.ndim == 1 and all(
+                isinstance(x, (str, bytes, np.str_, np.bytes_)) or x is None
+                for x in value
+            ):
+                continue
+            return False
         if value.dtype.kind in {"U", "S"}:
             continue
         kind = value.dtype.kind
@@ -375,6 +410,10 @@ def _normalize_ndarray_column(value: np.ndarray) -> Any:
     import numpy as np
 
     if value.dtype == np.object_:
+        if value.ndim == 1 and all(
+            isinstance(x, (str, bytes, np.str_, np.bytes_)) or x is None for x in value
+        ):
+            return [str(x) if x is not None else "" for x in value]
         return list(value)
     if value.dtype.kind in {"U", "S"}:
         return value.astype(str).tolist()
@@ -508,8 +547,15 @@ def _normalize_cpp_table_data(table_dict: Dict[str, Any]) -> Dict[str, Any]:
     for name, value in table_dict.items():
         if isinstance(value, (list, tuple)):
             out[name] = _normalize_list_sequence(list(value))
-        elif isinstance(value, np.ndarray):
-            out[name] = _normalize_ndarray_column(value)
+        elif isinstance(value, torch.Tensor):
+            if value.device.type != "cpu":
+                value = value.detach().cpu()
+            out[name] = value
+        elif isinstance(value, np.ndarray) or hasattr(value, "__array__"):
+            arr = np.asarray(value)
+            if not arr.flags.writeable or not arr.flags.c_contiguous:
+                arr = np.ascontiguousarray(arr.copy())
+            out[name] = _normalize_ndarray_column(arr)
         else:
             out[name] = value
     return out

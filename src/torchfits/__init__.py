@@ -59,6 +59,7 @@ _ROOT_FUNCTIONS: dict[str, tuple[str, str]] = {
     "to_pandas": ("torchfits.interop", "to_pandas"),
     "to_arrow": ("torchfits.interop", "to_arrow"),
     "to_polars": ("torchfits.interop", "to_polars"),
+    "to_astropy": ("torchfits.interop", "to_astropy"),
 }
 
 _ROOT_OBJECTS: dict[str, tuple[str, str]] = {
@@ -109,6 +110,7 @@ __all__ = tuple(
         "to_pandas",
         "to_arrow",
         "to_polars",
+        "to_astropy",
         *_NAMESPACES,
     ]
 )

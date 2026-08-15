@@ -39,6 +39,16 @@ def main() -> None:
         arrow_table = torchfits.table.read(path, hdu=1, decode_bytes=True)
         print("table.read schema:", arrow_table.schema)
 
+        # Astropy Table reading & conversion
+        try:
+            astropy_table = torchfits.table.read_astropy(
+                path, hdu=1, where="RA > 10.15"
+            )
+            print("\ntable.read_astropy (filtered):")
+            print(astropy_table)
+        except ImportError:
+            print("Astropy not installed; skipping read_astropy")
+
         # Convert in-memory tensor dict to other formats
         try:
             df = torchfits.to_pandas(table_dict, decode_bytes=True, vla_policy="object")
@@ -64,7 +74,8 @@ def main() -> None:
         except ImportError:
             print("Polars not installed; skipping to_polars")
     finally:
-        os.unlink(path)
+        if os.path.exists(path):
+            os.unlink(path)
 
 
 if __name__ == "__main__":

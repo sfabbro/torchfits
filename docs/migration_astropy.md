@@ -24,6 +24,7 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 | Task | `astropy.io.fits` | `torchfits` |
 |---|---|---|
 | **Read entire table** | `astropy.io.fits.getdata(path, ext=1)` | `torchfits.table.read(path, hdu=1)` *(Returns Arrow table)* |
+| **Read as Astropy Table** | `astropy.table.Table.read(path)` | `torchfits.table.read_astropy(path, hdu=1, where=…)` |
 | **Filtered read (`WHERE`)** | `t = …; mask = t['RA'] > 0; t[mask]` | `torchfits.table.read(path, hdu=1, where="RA > 0")` |
 | **Column projection** | `t[['RA', 'DEC']]` | `torchfits.table.read(path, hdu=1, columns=["RA", "DEC"])` |
 | **Columns as PyTorch tensors** | `[torch.from_numpy(t[col]) for col in cols]` | `torchfits.table.read_torch(path, hdu=1)` |
@@ -37,7 +38,7 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 | Task | `astropy.io.fits` | `torchfits` |
 |---|---|---|
 | **Write image tensor** | `astropy.io.fits.PrimaryHDU(tensor.numpy()).writeto(path)` | `torchfits.write_tensor(path, tensor)` |
-| **Write table catalog** | `astropy.io.fits.BinTableHDU(table).writeto(path)` | `torchfits.table.write(path, table_dict)` |
+| **Write table catalog** | `astropy.io.fits.BinTableHDU(table).writeto(path)` | `torchfits.table.write(path, table)` *(Accepts dict, Astropy Table, Arrow, Polars, Pandas)* |
 | **Write with header metadata** | `hdu = astropy.io.fits.PrimaryHDU(data); hdu.header['OBJECT'] = 'M31'; hdu.writeto(path)` | `torchfits.write(path, data, header={'OBJECT': 'M31'})` |
 
 ---

@@ -99,7 +99,7 @@ torchfits.write("calibrated.fits", image, header=header, overwrite=True)
 
 ## 3. Catalogs and Tables {#tables-as-dataframes}
 
-### Tables as DataFrames (PyArrow, Pandas, Polars)
+### Tables as DataFrames & Astropy Tables
 
 `torchfits.table.read` decodes binary and ASCII tables into a zero-copy `pyarrow.Table`. You can apply column projections and SQL-like predicate filters directly at the C++ reader level:
 
@@ -121,6 +121,14 @@ df_pandas = table.to_pandas()
 import polars as pl
 
 df_polars = pl.from_arrow(table)
+
+# Or read directly into an Astropy Table
+astropy_table = torchfits.table.read_astropy(
+    "catalog.fits", hdu=1, where="MAG_G < 20.0"
+)
+
+# Write Astropy Tables or DataFrames directly back to FITS
+torchfits.table.write("filtered.fits", astropy_table, overwrite=True)
 ```
 
 ### Tables as Tensors {#tables-as-tensors}

@@ -304,6 +304,58 @@ def to_polars(
     return pl.from_arrow(data, rechunk=rechunk)
 
 
+def to_astropy(
+    data: str | Any | Iterable[Any],
+    **kwargs: Any,
+) -> Any:
+    """Convert FITS table path, Arrow Table, or record batches to an Astropy Table.
+
+    Args:
+        data: FITS file path, pyarrow.Table, or iterable of pyarrow.RecordBatch.
+        **kwargs: Additional I/O keyword arguments passed to :func:`read` when
+            data is a file path.
+
+    Returns:
+        astropy.table.Table: An Astropy Table containing the data.
+    """
+    import importlib
+
+    try:
+        astropy_table_mod = importlib.import_module("astropy.table")
+        Table = astropy_table_mod.Table
+    except ImportError as exc:
+        raise ImportError("astropy is required for to_astropy conversion") from exc
+
+    pa_table = _materialize_arrow_table(data, **kwargs)
+    cols: dict[str, Any] = {}
+    for name in pa_table.column_names:
+        chunked_arr = pa_table[name]
+        try:
+            cols[name] = chunked_arr.to_numpy(zero_copy_only=False)
+        except Exception:
+            cols[name] = chunked_arr.to_pylist()
+    return Table(cols)
+
+
+def read_astropy(
+    path: str,
+    hdu: int | str = 1,
+    **kwargs: Any,
+) -> Any:
+    """Read a FITS table directly into an Astropy Table.
+
+    Args:
+        path: FITS file path.
+        hdu: Table HDU index or EXTNAME (default 1).
+        **kwargs: Additional keyword arguments passed to :func:`read`
+            (e.g. ``columns``, ``where``, ``mmap``, ``decode_bytes``).
+
+    Returns:
+        astropy.table.Table: An Astropy Table containing the read data.
+    """
+    return to_astropy(path, hdu=hdu, **kwargs)
+
+
 def scan_polars(
     path: str,
     *,

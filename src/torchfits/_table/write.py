@@ -33,11 +33,15 @@ def write(
     ``TSCAL``/``TZERO``. Pass ``{\"col\": \"robust\"}`` (or per-column option
     dicts) to select columns. Default keeps native float ``TFORM``.
     """
+    from .._io_engine._write_helpers import _normalize_table_input
     from .._io_engine.paths import guard_fits_path
 
     guard_fits_path(path)
+    data = _normalize_table_input(data)
     if not isinstance(data, dict) or not data:
-        raise ValueError("data must be a non-empty dictionary")
+        raise ValueError(
+            "data must be a non-empty dictionary or table/dataframe object"
+        )
     table_kind = str(table_type).lower().strip()
     if table_kind not in {"binary", "ascii"}:
         raise ValueError("table_type must be 'binary' or 'ascii'")
