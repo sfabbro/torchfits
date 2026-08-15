@@ -227,6 +227,12 @@ def _write_hdus_with_optional_compression(
             hdu_dict["header"] = _sanitize_header_for_compressed_write(
                 hdu_dict.get("header", hdr)
             )
+        if algorithm and algorithm.upper() in {"P", "PLIO", "PLIO_1"}:
+            d = hdu_dict.get("data")
+            if isinstance(d, Tensor) and d.is_floating_point():
+                raise RuntimeError(
+                    "PLIO_1 compression algorithm does not support floating-point image data"
+                )
         payload.append(hdu_dict)
 
     _invalidate_path_caches(path)

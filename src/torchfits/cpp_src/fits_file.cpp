@@ -803,6 +803,12 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
             fits_set_quantize_level(fptr_, 0.0f, &status);
             if (status != 0) throw std::runtime_error("Failed to set compression quantization");
         }
+        if (compression_type == PLIO_1) {
+            nb::dlpack::dtype dt_plio = tensor.dtype();
+            if (dt_plio.code == (uint8_t)nb::dlpack::dtype_code::Float) {
+                throw std::runtime_error("PLIO_1 compression algorithm does not support floating-point image data");
+            }
+        }
         std::vector<long> tilesize(naxis, 1);
         tilesize[0] = naxes[0];
         if (compression_type == HCOMPRESS_1) {
