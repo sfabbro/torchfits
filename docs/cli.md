@@ -1,36 +1,29 @@
 # torchfits CLI
 
-After `pip install torchfits`, the `torchfits` command
-inspects and transforms FITS files from the shell. It wraps the same C++ engine as the Python API.
+After installing `torchfits`, the `torchfits` command line tool
+inspects and transforms FITS files directly from your shell, using the same high-performance C++ engine as the Python library.
 
-**Every flag is on `torchfits <cmd> --help`.** This page is a tour, not an
-exhaustive flag list.
+**Help is always available:** run `torchfits --help` or `torchfits <cmd> --help` to see every available flag and option.
 
-Inventory commands (`info`, `header`, `verify`, `stats`, `table`, `probe`) take
-paths on the command line or from stdin / `--stdin`. Mutation commands
-(`copy`, `cutout`, `arith`, …) take explicit input/output paths.
+- **Inspection commands** (`info`, `header`, `verify`, `stats`, `table`, `probe`) read file structures, headers, and metadata from command-line paths, file lists, or standard input (`--stdin`).
+- **File processing commands** (`copy`, `cutout`, `arith`, `convert`, `compress`, `decompress`, `setkey`, `transform`) execute transformations and write output files.
 
-For CPU/CUDA flavor details and version compatibility, see [Installation](install.md). Common
-shorts (where applicable):
+Common short flags:
 
 | Short | Long | Notes |
 |-------|------|-------|
-| `-e` | `--hdu` | HDU index; some inventory commands also accept lists (`-e` avoids clashing with `-h` help) |
-| `-f` | `--format` | inventory output: `text` / `json` / `jsonl` |
-| `-o` | `--out` | output path (also positional on copy/cutout/convert/compress) |
-| `-w` / `-c` | `--where` / `--columns` | `convert` table filter (STILTS-like) |
-| `-n` | `--rows` | `table` preview row count |
-| `-k` | `--keyword` / `--key` | **same short, different commands:** `header -k` filters cards; `setkey -k` sets a keyword |
+| `-e` | `--hdu` | HDU index (e.g. `-e 0`, `-e 1,2`; avoids clashing with `-h` help) |
+| `-f` | `--format` | Output format: `text` / `json` / `jsonl` |
+| `-o` | `--out` | Output file path (also positional in copy/cutout/convert/compress) |
+| `-w` / `-c` | `--where` / `--columns` | Table row filter condition and column selection |
+| `-n` | `--rows` | Number of preview rows for `table` |
+| `-k` | `--keyword` / `--key` | Header keyword filter in `header`, or target key in `setkey` |
 
-`probe --header-bytes` controls the remote header peek size; `--timeout` is the
-HTTP timeout.
+`probe --header-bytes` controls the remote header preview byte range; `--timeout` sets the network timeout in seconds.
 
-### Process tax (cold start)
+### Performance: Shell CLI vs Python API
 
-Each CLI invocation pays a PyTorch / extension import before any FITS work.
-That can dominate wall time for tiny files. Prefer the in-process Python API
-for tight loops ([Python workflows](python-workflows.md)); use the CLI for
-shell pipelines and one-shot inspection.
+Each shell command invocation initializes Python and loads the PyTorch runtime. For single inspection tasks or batch shell scripts, this startup time is negligible. However, for tight computational loops (e.g. reading thousands of cutouts in training loops), prefer using the in-process Python API ([Python workflows](python-workflows.md)).
 
 ## Install and help
 
@@ -157,7 +150,7 @@ Two syntaxes (pick one per invocation):
 - **`--box x1,y1,x2,y2`** — 0-based half-open (same as `read_subset`):
   `torchfits cutout img.fits -o out.fits --box 9,19,100,200`
 
-Smoke-tested: image pixel sections via path (`cutout` CLI / `read_tensor`).
+Supported: image pixel sections via path (`cutout` CLI / `read_tensor`).
 Out of scope for this command: path HDU selectors (`file.fits[1]`),
 binspec/histogram filenames, stacking a section with `--box`, and path
 filters for catalogs (use `table.read(..., where=)`).
@@ -292,23 +285,23 @@ compressed remotes download into the cache first (same as `read_subset`).
 
 ## Familiar-tool mapping
 
-| torchfits | Closest classic tools |
-|-----------|------------------------|
-| `info` | `fitsinfo`, CFITSIO structure dump |
-| `header` | `fitsheader`, `dfits` / `fitsort` |
-| `verify` | `fitscheck` / HEASARC `fitsverify` **checksum subset only** |
-| `stats` | `imstat`, `aststatistics` |
-| `table` | `tablist`, `asttable` |
-| `cutout` | `astcrop`, CFITSIO sections |
-| `convert` | `astconvertt` / STILTS-like filter+export; Lupton RGB preview |
-| `copy` | `fitscopy` / `imcopy` |
-| `arith` | `imarith` (scalar **or** image–image) |
-| `compress` / `decompress` | `fpack` / `funpack` |
-| `transform` | `imfunction`-style stretches / named transforms |
-| `setkey` | `modhead` / `hedit`-style set + rename + delete (MEF / `@list`) |
-| `probe` | local `info` + remote header peek |
+| torchfits command | Closest classic tools | Purpose & Description |
+|---|---|---|
+| `info` | [`fitsinfo`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsinfo) | Overview of HDU extensions, dimensions, and data types |
+| `header` | [`fitsheader`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitsheader), [`dfits` / `fitsort`](https://www.eso.org/sci/software/eclipse/eug/eug/node13.html) | Dump header cards; filter by keyword; multi-file summary tables |
+| `verify` | [`fitscheck`](https://docs.astropy.org/en/stable/io/fits/usage/scripts.html#fitscheck), [`fitsverify`](https://heasarc.gsfc.nasa.gov/docs/software/ftools/fitsverify/) | Check `DATASUM` and `CHECKSUM` keyword integrity |
+| `stats` | [`imstat`](https://iraf.net/irafdocs/imstat.php), [`aststatistics`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-aststatistics.html) | Compute min, max, mean, standard deviation, and median pixel values |
+| `table` | [`asttable`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-asttable.html), `tablist` | Preview binary/ASCII table schema and row values |
+| `cutout` | [`astcrop`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astcrop.html), CFITSIO sections | Extract sub-regions using pixel ranges (`[x1:x2, y1:y2]`) or bounding boxes |
+| `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) | Export tables to Parquet/CSV/Arrow with SQL filters; render 3-band Lupton RGB PNGs |
+| `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) | Lossless copy of single or multi-extension FITS files |
+| `arith` | [`imarith`](https://iraf.net/irafdocs/imarith.php) | Perform scalar or image-to-image addition, subtraction, multiplication, division |
+| `compress` / `decompress` | [`fpack` / `funpack`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) | Lossless / lossy tile compression (Rice, Gzip, Hcompress) and expansion |
+| `transform` | `imfunction` | Apply astronomical stretches (Arcsinh, Sqrt, Log) and ZScale / percentile scaling |
+| `setkey` | `hedit`, `modhead` | Insert, update, rename, or delete header keywords across single or multiple files |
+| `probe` | HTTP Range peek | Inspect remote FITS headers over HTTP(S) or VOSpace without downloading whole files |
 
-Step-by-step shell recipes (HorseHead, Chandra events): [CLI recipes](cli-recipes.md).
+For practical examples, see [CLI recipes](cli-recipes.md).
 
 ## Scripting notes
 
