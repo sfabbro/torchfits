@@ -3,7 +3,7 @@
 # {project} is passed as $1 (the mounted source tree).
 set -euo pipefail
 
-PROJECT="${1:?cibuildwheel test-command must pass {project}}"
+PROJECT="${1:?cibuildwheel test-command must pass project path}"
 PIN="$(grep -E '^torch>=' "${PROJECT}/constraints-wheel.txt" | head -1)"
 test -n "${PIN}"
 
