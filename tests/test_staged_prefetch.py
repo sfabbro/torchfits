@@ -110,7 +110,9 @@ def test_staged_cutout_remote_mock_and_cleanup(tmp_path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         import shutil
 
-        shutil.copy(str(real_mosaic), str(dest))
+        tmp = dest.with_suffix(dest.suffix + ".partial")
+        shutil.copy(str(real_mosaic), str(tmp))
+        tmp.replace(dest)
         return dest
 
     with mock.patch("torchfits.data.remote._download", side_effect=_mock_download):
