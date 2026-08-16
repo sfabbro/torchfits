@@ -6,12 +6,13 @@ A dark frame is an exposure with the shutter closed: its field is zero, so
 ANY two darks are perfect Noise2Noise twins (identical signal — nothing —
 with independent noise: read noise, dark current, hot pixels, cosmic rays).
 The same holds for any two biases (0 s darks: read noise only). Training
-``dark_a -> dark_b`` with L1 therefore converges to the blank frame — the
-net learns the detector's noise-to-zero map. Applied to a real science
-frame of the same detector/era, the same map suppresses CRs, hot pixels
-and read noise while leaving smooth astronomical structure (stars,
-galaxies, sky background) untouched — provided the noise statistics match
-(measured below, not assumed).
+``dark_a -> dark_b`` with L1 therefore converges toward the blank frame — the
+net learns a detector-specific noise-to-zero map. A dark can be cleaned all
+the way to that prediction. A science frame is different: replacing it with
+a blank prediction would erase stars and galaxies, so the example uses the
+net only as a conservative confidence check and repairs isolated sharp
+positive pixels with their local median. The source-preservation metrics are
+measured below rather than assumed.
 
 This example implements that design on public CFHT MegaCam calibration
 frames (``scripts/fetch_cfht_calib_frames.sh``) and evaluates the transfer
@@ -20,18 +21,21 @@ on the real science frames of ``scripts/fetch_cfht_megacam_sample.sh``:
 - training pairs: ``FitsCutoutDataset`` over two dark MEFs (shared cutout
   coords) + ``StackDataset`` + ``make_loader``, zero-mean normalized with
   pair-global median/MAD (the Noise2Noise convention)
-- CCD split: train on CCDs 1..30, hold out CCDs 31..40 of the same darks
-  for the convergence check (the net must not beat the noise floor)
-- transfer metrics on science (no ground truth exists — every number is
-  honest): CR-like fraction, sharp-outlier (CR+hot) fraction, faint-source
-  counts, bright-star aperture flux ratios, background level drift, and a
-  noise-injection probe (science + (dark_j - dark_k) must come back clean)
+- CCD split: train on CCDs 1..30, hold out CCDs 31..40 of the training
+  exposures for the convergence check, and reserve the final dark exposure
+  as a real test-set frame never seen during training
+- transfer metrics on science (no ground truth exists): isolated-CR removal,
+  sharp-outlier (CR+hot) fraction, faint-source counts, bright-star aperture
+  flux ratios, background drift, and a noise-injection probe
+- optional Astro-SCRAPPY comparison on the identical science and test-dark
+  windows (it is not a torchfits dependency and is skipped unless installed)
 - bias control: the same training/eval on bias pairs (read-noise-only)
 - optional ``--inject-stars``: flux-recovery appendix on synthetic Moffat
   stars dropped onto a real CCD (off by default)
 
 Data: CFHT MegaCam, 40 CCDs per MEF, 4644x2112 int16, ~230 MB / file.
-Skips cleanly when calibration frames are missing.
+The default run reserves one dark exposure for the test set and skips cleanly
+when calibration frames are missing.
 
 Runs in ``TORCHFITS_EXAMPLE_FAST=1`` (CI) as a one-epoch, few-patch smoke
 with bounded 1024x1024 eval/probe windows.
@@ -207,6 +211,13 @@ def _cr_removal(before: torch.Tensor, after: torch.Tensor) -> float:
     return 1.0 - float((m & after_m).sum().item() / m.sum().item())
 
 
+def _local_median(x: torch.Tensor, k: int = 3) -> torch.Tensor:
+    """Median of a local window, used only at isolated-pixel replacements."""
+    x = _as_batch(x)
+    values = F.unfold(x, kernel_size=k, padding=k // 2)
+    return values.median(dim=1).values.view_as(x)
+
+
 def _sharp_outliers(x: torch.Tensor) -> float:
     """1-2 px sharp outliers (CRs + hot pixels): >8 sigma over the box
     background AND >8 sigma above the 3x3 median — the tightest spike test.
@@ -282,27 +293,44 @@ def _clean_ccd(
     ccd: torch.Tensor,
     transform: SelfNorm,
     device: str,
+    *,
+    preserve_structure: bool = False,
 ) -> torch.Tensor:
-    """Denoise one full CCD through the trained net, back in raw ADU.
+    """Run the blank-field net on one CCD and return raw-ADU pixels.
 
-    Pads symmetrically (up to +7 px each side) so the net's conv borders
-    never land inside the reconstructed image; the interior metric margin
-    additionally guards against residual edge effects.
+    A blank-trained model is appropriate for a dark exposure, where the
+    expected image really is blank. It must *not* replace a science exposure
+    wholesale: that would erase stars and galaxies. For science, the model is
+    used as a conservative blank/noise estimate and only isolated, very sharp
+    positive excursions are replaced by their 3x3 local median. This keeps
+    ordinary astronomical structure and the sky background in the output.
     """
-    x = ccd.float().unsqueeze(0).unsqueeze(0)
-    med = x.median()
-    mad = (x - med).abs().median().clamp_min(1e-6)
-    x = (x - med) / mad
-    h, w = x.shape[-2], x.shape[-1]
+    del transform  # the inference path applies the same transform explicitly
+    raw = ccd.float().unsqueeze(0).unsqueeze(0)
+    med = raw.median()
+    mad = (raw - med).abs().median().clamp_min(1e-6)
+    normalized = (raw - med) / mad
+    h, w = normalized.shape[-2], normalized.shape[-1]
     pad_h = (8 - h % 8) % 8
     pad_w = (8 - w % 8) % 8
     pt, pl = pad_h // 2, pad_w // 2
     pb, pr = pad_h - pt, pad_w - pl
-    x = F.pad(x, (pl, pr, pt, pb), mode="reflect")
+    padded = F.pad(normalized, (pl, pr, pt, pb), mode="reflect")
     with torch.no_grad():
-        out = net(x.to(device)).cpu()
-    out = out[0, 0, pt : pt + h, pl : pl + w]
-    return out * mad + med
+        out = net(padded.to(device)).cpu()
+    prediction = out[0, 0, pt : pt + h, pl : pl + w] * mad + med
+    if not preserve_structure:
+        return prediction
+
+    # The learned blank prediction supplies a second, independent confidence
+    # check. The raw-image test rejects broad source structure; the network
+    # test rejects ordinary noise excursions around the estimated blank.
+    raw_mask = _cr_mask(raw)
+    net_mask = (raw - prediction.unsqueeze(0).unsqueeze(0)) > 4.0 * mad
+    mask = raw_mask & net_mask
+    repaired = raw.clone()
+    repaired[mask] = _local_median(raw)[mask]
+    return repaired[0, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -423,11 +451,7 @@ def train_blank(
 # ---------------------------------------------------------------------------
 
 
-def _ccd_metrics(
-    net: nn.Module, ccd: torch.Tensor, transform: SelfNorm, device: str
-) -> dict[str, Any]:
-    before = ccd.float()
-    cleaned = _clean_ccd(net, before, transform, device)
+def _metric_pair(before: torch.Tensor, cleaned: torch.Tensor) -> dict[str, Any]:
     fluxes_before = _star_fluxes(before)
     ratios = [
         _aperture_flux(cleaned, cy, cx) / f
@@ -448,6 +472,14 @@ def _ccd_metrics(
         "star_ratio_median": float(np.median(ratios)) if ratios else float("nan"),
         "star_n": len(ratios),
     }
+
+
+def _ccd_metrics(
+    net: nn.Module, ccd: torch.Tensor, transform: SelfNorm, device: str
+) -> dict[str, Any]:
+    before = ccd.float()
+    cleaned = _clean_ccd(net, before, transform, device, preserve_structure=True)
+    return _metric_pair(before, cleaned)
 
 
 def eval_science(
@@ -495,6 +527,115 @@ def eval_science(
     return rows
 
 
+def eval_dark(
+    net: nn.Module,
+    transform: SelfNorm,
+    files: list[Path],
+    max_hdus: int,
+    device: str,
+    side: int = 0,
+) -> list[dict[str, Any]]:
+    """Evaluate on a held-out, real dark exposure.
+
+    Unlike a science frame, a shutter-closed dark has a known blank-field
+    target. The net may therefore denoise the whole frame here. Keeping this
+    exposure out of training makes the result a genuine test-set check.
+    """
+    rows: list[dict[str, Any]] = []
+    for path in files:
+        _ndim, shape = torchfits.read_shape(str(path), 1)
+        x_lim, y_lim = int(shape[-1]), int(shape[-2])
+        for hdu in range(1, max_hdus + 1):
+            ccd = torchfits.read_subset(str(path), hdu, 0, 0, x_lim, y_lim).float()
+            if side > 0:
+                ccd = ccd[: min(side, ccd.shape[0]), : min(side, ccd.shape[1])]
+            cleaned = _clean_ccd(net, ccd, transform, device)
+            m = _metric_pair(ccd, cleaned)
+            m.update(
+                {
+                    "file": path.name,
+                    "hdu": hdu,
+                    "dark_rms_before": float((ccd - ccd.median()).std().item()),
+                    "dark_rms_after": float((cleaned - cleaned.median()).std().item()),
+                }
+            )
+            rows.append(m)
+            print(
+                f"  test dark hdu {hdu:02d} {path.name}: "
+                f"cr {m['cr_before']:.2e}->{m['cr_after']:.2e} "
+                f"(removed {100 * m['cr_removal']:.1f}%) "
+                f"rms {m['dark_rms_before']:.2f}->{m['dark_rms_after']:.2f}",
+                flush=True,
+            )
+    return rows
+
+
+def _astroscrappy_clean(ccd: torch.Tensor) -> tuple[torch.Tensor, int] | None:
+    """Run Astro-SCRAPPY when installed; return cleaned pixels and mask count."""
+    try:
+        import astroscrappy
+    except ImportError:
+        return None
+    image = np.ascontiguousarray(ccd.float().cpu().numpy(), dtype=np.float32)
+    readnoise = max(float(_robust_sigma(ccd - _box_bg(ccd)).item()), 0.5)
+    cleaned, mask = astroscrappy.detect_cosmics(
+        image,
+        sigclip=5.0,
+        sigfrac=0.3,
+        objlim=5.0,
+        gain=1.0,
+        readnoise=readnoise,
+        niter=4,
+        verbose=False,
+    )
+    return torch.from_numpy(np.asarray(cleaned, dtype=np.float32)), int(mask.sum())
+
+
+def eval_astroscrappy(
+    files: list[Path],
+    first_hdus: int,
+    other_hdus: int | None = None,
+    side: int = 0,
+    *,
+    label: str,
+) -> list[dict[str, Any]]:
+    """Evaluate the optional Astro-SCRAPPY baseline on the same raw windows."""
+    try:
+        import astroscrappy  # noqa: F401
+    except ImportError:
+        print(
+            "SKIP: Astro-SCRAPPY comparison requested but astroscrappy is not "
+            "installed (install it separately to enable the baseline).",
+            flush=True,
+        )
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for fi, path in enumerate(files):
+        _ndim, shape = torchfits.read_shape(str(path), 1)
+        x_lim, y_lim = int(shape[-1]), int(shape[-2])
+        n_hdus = first_hdus if fi == 0 else (other_hdus or first_hdus)
+        for hdu in range(1, n_hdus + 1):
+            ccd = torchfits.read_subset(str(path), hdu, 0, 0, x_lim, y_lim).float()
+            if side > 0:
+                ccd = ccd[: min(side, ccd.shape[0]), : min(side, ccd.shape[1])]
+            result = _astroscrappy_clean(ccd)
+            if result is None:  # import was checked above; defensive for loaders
+                continue
+            cleaned, mask_n = result
+            row = _metric_pair(ccd, cleaned)
+            row.update({"file": path.name, "hdu": hdu, "astroscrappy_mask_n": mask_n})
+            rows.append(row)
+            print(
+                f"  Astro-SCRAPPY {label} hdu {hdu:02d} {path.name}: "
+                f"cr {row['cr_before']:.2e}->{row['cr_after']:.2e} "
+                f"(removed {100 * row['cr_removal']:.1f}%) "
+                f"mask={mask_n}",
+                flush=True,
+            )
+    return rows
+
+
 def noise_injection_probe(
     net: nn.Module,
     transform: SelfNorm,
@@ -519,8 +660,8 @@ def noise_injection_probe(
     dj = torchfits.read_subset(str(darks[0]), hdu, 0, 0, x_lim, y_lim).float()
     dk = torchfits.read_subset(str(darks[1]), hdu, 0, 0, x_lim, y_lim).float()
     injected = ccd + (dj - dk)
-    cleaned = _clean_ccd(net, injected, transform, device)
-    baseline = _clean_ccd(net, ccd, transform, device)
+    cleaned = _clean_ccd(net, injected, transform, device, preserve_structure=True)
+    baseline = _clean_ccd(net, ccd, transform, device, preserve_structure=True)
     sigma_inj = float((cleaned - ccd).std().item())
     sigma_base = float((baseline - ccd).std().item())
     return {
@@ -558,7 +699,7 @@ def _inject_stars(
         truths.append(
             (cy, cx, _aperture_flux(synth, cy, cx) - _aperture_flux(ccd, cy, cx))
         )
-    cleaned = _clean_ccd(net, synth, transform, device)
+    cleaned = _clean_ccd(net, synth, transform, device, preserve_structure=True)
     ratios = [
         (_aperture_flux(cleaned, cy, cx) - _aperture_flux(ccd, cy, cx)) / f
         for cy, cx, f in truths
@@ -627,14 +768,14 @@ def _render_gallery(
     if best_n == 0:
         best_x, best_y = x_lim // 4, y_lim // 4
     raw = ccd[best_y : best_y + wins, best_x : best_x + wins]
-    cleaned = _clean_ccd(net, raw, transform, device)
+    cleaned = _clean_ccd(net, raw, transform, device, preserve_structure=True)
     path = save_image_before_after(
         raw,
         cleaned,
         f"megacam_cr_denoise_{tag}",
         titles=(
-            f"{science.name} hdu {hdu} (CRs before)",
-            f"{tag} net (CRs after)",
+            f"{science.name} hdu {hdu} (CR-like candidates)",
+            f"{tag} net (isolated-pixel repair)",
         ),
     )
     if path is not None:
@@ -663,6 +804,11 @@ def main() -> int:
     parser.add_argument("--eval-hdus", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--inject-stars", action="store_true")
+    parser.add_argument(
+        "--compare-astroscrappy",
+        action="store_true",
+        help="also run Astro-SCRAPPY when it is installed (optional)",
+    )
     parser.add_argument("--mode", choices=["dark", "bias", "both"], default="both")
     parser.add_argument(
         "--probe-size", type=int, default=0, help="probe window; 0 = full CCD"
@@ -681,9 +827,10 @@ def main() -> int:
     darks = sorted((args.calib_dir / "darks").glob("*.fits.fz"))
     biases = sorted((args.calib_dir / "biases").glob("*.fits.fz"))
     sciences = sorted((args.science_dir).glob("*o.fits.fz"))
-    if not darks or len(darks) < 2:
+    if not darks or len(darks) < 3:
         print(
-            "SKIP: need >=2 darks in benchmarks_data/cfht_megacam/calib/darks. "
+            "SKIP: need >=3 darks in benchmarks_data/cfht_megacam/calib/darks "
+            "(two for training and one held-out test exposure). "
             "Fetch via: bash scripts/fetch_cfht_calib_frames.sh"
         )
         return 0
@@ -692,63 +839,103 @@ def main() -> int:
         return 0
 
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu"
+    train_darks = darks[:-1]
+    test_darks = [darks[-1]]
     print(
-        f"darks={len(darks)} biases={len(biases)} science={len(sciences)} "
-        f"device={device}",
+        f"training_darks={len(train_darks)} test_dark={test_darks[0].name} "
+        f"biases={len(biases)} science={len(sciences)} device={device}",
         flush=True,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    for tag, files in (("dark", darks), ("bias", biases)):
-        if args.mode == "both" or args.mode == tag:
-            transform = SelfNorm()
-            print(
-                f"[{tag}->blank N2N] training on {len(files)} {tag} frames", flush=True
-            )
-            net, stats = train_blank(
-                files,
-                epochs=args.epochs,
-                n_pairs=args.n_pairs,
-                n_patches=args.n_patches,
-                patch=args.patch,
-                batch=args.batch,
-                lr=args.lr,
-                transform=transform,
-                device=device,
-                seed=args.seed,
-                tag=tag,
-            )
-            print(f"[{tag}] transfer evaluation on science", flush=True)
-            rows = eval_science(
+    astro_science: list[dict[str, Any]] = []
+    astro_dark: list[dict[str, Any]] = []
+    if args.compare_astroscrappy:
+        astro_science = eval_astroscrappy(
+            sciences[: args.full_eval_files],
+            args.full_hdus,
+            args.eval_hdus,
+            side=eval_side,
+            label="science",
+        )
+        astro_dark = eval_astroscrappy(
+            test_darks,
+            args.eval_hdus,
+            side=eval_side,
+            label="test dark",
+        )
+        if astro_science:
+            _write_products(args.out_dir, astro_science, "astroscrappy_science")
+        if astro_dark:
+            _write_products(args.out_dir, astro_dark, "astroscrappy_test_dark")
+
+    for tag, files in (("dark", train_darks), ("bias", biases)):
+        if args.mode != "both" and args.mode != tag:
+            continue
+        if len(files) < 2:
+            print(f"SKIP: need >=2 {tag} frames for paired training", flush=True)
+            continue
+        transform = SelfNorm()
+        print(f"[{tag}->blank N2N] training on {len(files)} {tag} frames", flush=True)
+        net, stats = train_blank(
+            files,
+            epochs=args.epochs,
+            n_pairs=args.n_pairs,
+            n_patches=args.n_patches,
+            patch=args.patch,
+            batch=args.batch,
+            lr=args.lr,
+            transform=transform,
+            device=device,
+            seed=args.seed,
+            tag=tag,
+        )
+        print(f"[{tag}] conservative transfer evaluation on science", flush=True)
+        rows = eval_science(
+            net,
+            transform,
+            sciences[: args.full_eval_files],
+            args.full_hdus,
+            args.eval_hdus,
+            device,
+            side=eval_side,
+        )
+        probe = noise_injection_probe(
+            net, transform, train_darks, sciences[0], 1, device, size=args.probe_size
+        )
+        test_dark_rows: list[dict[str, Any]] = []
+        if tag == "dark":
+            print("[dark] evaluation on held-out real dark exposure", flush=True)
+            test_dark_rows = eval_dark(
                 net,
                 transform,
-                sciences[: args.full_eval_files],
-                args.full_hdus,
+                test_darks,
                 args.eval_hdus,
                 device,
                 side=eval_side,
             )
-            probe = noise_injection_probe(
-                net, transform, darks, sciences[0], 1, device, size=args.probe_size
-            )
-            extra: dict[str, Any] = {}
-            if args.inject_stars:
-                extra.update(_inject_stars(net, transform, sciences[0], 1, device))
-            _write_products(args.out_dir, rows, tag)
-            if rows:
-                _render_gallery(
-                    net, transform, sciences[0], rows[0]["hdu"], device, tag
-                )
-            summary = {
-                "tag": tag,
-                "stats": stats,
-                "probe": probe,
-                **extra,
-            }
-            (args.out_dir / f"{tag}_summary.json").write_text(
-                json.dumps(summary, indent=2)
-            )
-            print(json.dumps(summary, indent=2), flush=True)
+            if test_dark_rows:
+                _write_products(args.out_dir, test_dark_rows, "dark_test")
+        extra: dict[str, Any] = {}
+        if args.inject_stars:
+            extra.update(_inject_stars(net, transform, sciences[0], 1, device))
+        _write_products(args.out_dir, rows, tag)
+        if rows:
+            _render_gallery(net, transform, sciences[0], rows[0]["hdu"], device, tag)
+        summary = {
+            "tag": tag,
+            "training_darks": [p.name for p in files] if tag == "dark" else [],
+            "test_dark": test_darks[0].name if tag == "dark" else None,
+            "stats": stats,
+            "science": rows,
+            "test_dark_metrics": test_dark_rows,
+            "astroscrappy_science": astro_science,
+            "astroscrappy_test_dark": astro_dark,
+            "probe": probe,
+            **extra,
+        }
+        (args.out_dir / f"{tag}_summary.json").write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2), flush=True)
     return 0
 
 

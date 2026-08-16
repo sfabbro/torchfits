@@ -1,227 +1,185 @@
-# Case Study: Cosmic Ray Denoising with Noise2Noise
+# Case Study: Conservative MegaCam Denoising with Noise2Noise
 
-An end-to-end demonstration of how `torchfits` coordinates deep learning workflows on raw astronomical multi-extension FITS data — from multi-CCD dataset ingestion and custom transforms to multi-worker PyTorch training and full-mosaic inference.
+This case study is a small, runnable example of an end-to-end `torchfits` and
+PyTorch workflow on real CFHT MegaCam multi-extension FITS files. It is not a
+claim that a model trained only on dark frames can reconstruct arbitrary
+astronomical scenes. The example makes that limitation explicit and uses the
+model conservatively on science data.
 
-The implementation lives in [`examples/example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py).
+The implementation is [`examples/example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py).
 
----
+## What the example demonstrates
 
-## Overview & Motivation
+The pipeline uses:
 
-Astronomical detectors (CCDs and infrared arrays) are constantly struck by high-energy cosmic rays, creating sharp, localized artifacts that corrupt photometry and morphology measurements.
-
-This case study demonstrates how `torchfits` enables an end-to-end deep learning project on raw astronomical FITS data without intermediate file conversions:
-
-1. **Direct FITS Ingestion:** Stream calibration darks and multi-CCD science exposures directly from the Canadian Astronomy Data Centre (CADC) archive.
-2. **Paired Cutout Pipelines:** Extract thousands of training patches across multiple CCD extensions using `FitsCutoutDataset`.
-3. **Custom Preprocessing:** Implement per-patch robust background normalization using `FITSTransform`.
-4. **High-Throughput Training:** Stream batches to PyTorch with `make_loader` and multi-processing workers.
-5. **Full-Frame Mosaic Inference:** Apply the trained model across all 36 CCDs of a science exposure and save cleaned FITS products with updated headers.
+1. `FitsCutoutDataset` to read coordinated patches from compressed calibration
+   MEFs without converting them to another file format.
+2. A custom `FITSTransform` that performs robust per-patch median/MAD
+   normalization.
+3. `StackDataset` and `make_loader` to create paired PyTorch batches.
+4. A compact fully convolutional network trained with an L1 Noise2Noise loss.
+5. Direct full-CCD reads, inference, metrics, JSON summaries, Markdown tables,
+   and an optional before/after rendering.
 
 ```mermaid
 flowchart LR
-    subgraph Data["1. Data Ingestion"]
-        D1["Dark Exposure A<br/>(Noise n_1)"]
-        D2["Dark Exposure B<br/>(Noise n_2)"]
-    end
-
-    subgraph Training["2. PyTorch Training Loop"]
-        DS["FitsCutoutDataset<br/>(Paired Patches)"]
-        TF["SelfNorm Transform<br/>(Robust Median/MAD)"]
-        ML["make_loader<br/>(Multi-Worker)"]
-        UNet["Compact U-Net<br/>(L1 Loss to Blank)"]
-    end
-
-    subgraph Inference["3. Science Mosaic Inference"]
-        SCI["Raw Science Frame<br/>(36-CCD MegaCam MEF)"]
-        CLEAN["Cleaned FITS Product<br/>(CRs Removed, Stars Intact)"]
-    end
-
-    D1 --> DS
-    D2 --> DS
-    DS --> TF --> ML --> UNet
-    SCI --> UNet --> CLEAN
+    D1["Training dark A"] --> P["FitsCutoutDataset + StackDataset"]
+    D2["Training dark B"] --> P
+    P --> T["SelfNorm median/MAD"] --> L["make_loader"] --> N["Blank-field U-Net"]
+    N --> DT["Held-out dark test"]
+    S["Science CCD"] --> N
+    N --> C["Conservative CR repair"]
+    C --> M["Source/background metrics"]
 ```
 
----
+## Why train on darks?
 
-## Why Noise2Noise on Calibration Darks?
+With the shutter closed, the intended astronomical image is a blank field.
+The detector still contributes dark current, hot pixels, read noise, and
+cosmic-ray events. Two exposures are therefore noisy observations of the same
+blank-field geometry, with independent read noise and event locations. The
+network is trained on paired patches from two different darks and learns a
+detector-specific noise-to-blank prediction.
 
-Standard supervised denoising requires paired "noisy" and "clean ground-truth" images. In observational astronomy, clean ground-truth images of deep fields do not exist.
+This is a useful calibration experiment, but it is not a clean ground truth
+for a live astronomical field. In particular, a blank-field prediction must
+not be written over a science exposure: that would remove stars, galaxies,
+and diffuse structure along with the artifacts.
 
-The **Noise2Noise** framework (Lehtinen et al. 2018) proves that a neural network can learn to denoise without ground-truth images, provided it is trained on pairs of noisy images $(x, y)$ that share the same underlying signal with zero-mean independent noise:
+The default run uses the final dark file as a held-out test exposure. The
+remaining darks are used for training; CCDs 31--40 within those training files
+remain a separate convergence check. The held-out dark gives the model a real
+exposure it never saw during optimization.
 
-$$\mathbb{E}[y \mid x] = \text{True Signal}$$
+Biases can be used with `--mode bias` as a read-noise-only control. The default
+`--mode both` runs both the dark and bias experiments when both sets are
+available.
 
-In astronomy, unilluminated **calibration dark frames** taken with the shutter closed have an underlying signal of exactly zero ($\text{Signal} = 0$). Any two dark exposures taken during the same observing run share identical detector characteristics and cosmic ray event rates with statistically independent read noise:
+## The two inference policies
 
-$$\mathbb{E}[y_{\text{dark}, 2} \mid x_{\text{dark}, 1}] = 0 \quad (\text{Clean Blank Frame})$$
+### Held-out dark: full blank-field prediction
 
-By training a neural network on paired raw calibration darks, the model learns the detector's **noise-to-blank transfer function**, suppressing cosmic rays, hot pixels, and read noise without requiring synthetic simulations or dithered science alignments.
+A dark has a known blank astronomical field, so the network prediction is
+used for the whole test CCD. Detector dark current means this is still a
+calibration proxy rather than pixel-perfect ground truth. The generated
+`dark_test_metrics.md` and `dark_summary.json` report:
 
----
+- CR-like and sharp-outlier fractions before and after cleaning;
+- median-centred dark RMS before and after cleaning; and
+- the held-out file and HDU used for the test.
 
-## Data Sources: CFHT MegaCam
+These are real dark-exposure measurements, not synthetic injected-noise
+scores.
 
-The case study trains and evaluates on public [Canada-France-Hawaii Telescope (CFHT)](https://www.cfht.hawaii.edu/) MegaCam exposures retrieved from the CADC archive:
+### Science: conservative isolated-pixel repair
 
-| Dataset | Exposures | Purpose |
-|---|---|---|
-| **Calibration Darks** | 12 exposures $\times$ 250 s (`2366052d`–`2584041d`) | Training set: paired dark frames with real cosmic ray hits |
-| **Calibration Biases** | 8 exposures $\times$ 0 s (`2360150b`–`2586437b`) | Control set: pure read noise without dark current or CRs |
-| **Science Exposures** | 5 exposures $\times$ 200 s (`2366188o.fits.fz`) | Inference target: 36-CCD wide-field science mosaics |
+For a science CCD the network is used as a second confidence check, not as a
+replacement image. A pixel is repaired only when it satisfies both parts of
+the conservative CR-like test:
 
-Helper scripts download and cache these samples automatically:
+1. it is more than `5 * robust_sigma` above a 7x7 box background; and
+2. it is more than `5 * robust_sigma` above the median of its 3x3
+   neighbourhood.
+
+The neural blank prediction must also place the pixel more than `4 * MAD`
+above the predicted blank level. Selected pixels are replaced by their local
+3x3 median; all other science pixels are copied unchanged. This intentionally
+favors source preservation over aggressive read-noise smoothing.
+
+The science report measures the before/after CR-like fraction, sharp-outlier
+fraction, faint-structure proxy, background median, and aperture flux ratios at
+bright local maxima. There is no clean science target, so these metrics are
+reported as diagnostics rather than as accuracy or PSNR.
+
+The noise-injection probe adds a difference of two training darks to a science
+window and checks how much the conservative path changes. It is a stress test,
+not a substitute for a calibrated science reduction.
+
+## Optional Astro-SCRAPPY comparison
+
+Astro-SCRAPPY is a useful classical baseline for isolated cosmic-ray removal.
+It is intentionally **not** a `torchfits` dependency. When the optional
+package is available, pass `--compare-astroscrappy` to run it on the same
+science and held-out-dark windows:
 
 ```bash
-# Fetch MegaCam science and calibration frames
+python examples/example_megacam_cr_denoise.py \
+  --mode dark \
+  --compare-astroscrappy
+```
+
+The script uses `sigclip=5`, `sigfrac=0.3`, `objlim=5`, four iterations, and a
+robust read-noise estimate from each input window. The exact baseline outputs
+are written to `astroscrappy_science_metrics.md` and
+`astroscrappy_test_dark_metrics.md`, and are included in the dark summary JSON.
+If Astro-SCRAPPY is not installed, the command prints a clear skip message and
+the torchfits path still runs.
+
+The comparison is deliberately on the same raw windows and uses the same
+CR-like diagnostics. It does not imply that either method has identified every
+cosmic-ray event: without a labeled science exposure, the mask is a proxy.
+
+## Data and execution
+
+The fetch scripts cache public CFHT files under
+`benchmarks_data/cfht_megacam/`:
+
+```bash
 bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh
+python examples/example_megacam_cr_denoise.py \
+  --mode both \
+  --compare-astroscrappy
 ```
 
----
+For a bounded smoke run, set `TORCHFITS_EXAMPLE_FAST=1`. It limits training to
+one epoch, one CCD, and 1024x1024 evaluation windows while exercising the same
+FITS dataset, transform, loader, inference, and reporting paths.
 
-## Implementation Walkthrough
+Useful options include:
 
-### 1. Robust Normalization Transform (`FITSTransform`)
-
-MegaCam CCDs exhibit varying baseline bias levels (1090–1330 ADU). A custom `FITSTransform` normalizes each patch using its own median and Median Absolute Deviation (MAD), ensuring cosmic rays remain sparse outliers while background noise maps to standard $\mathcal{N}(0, 1)$:
-
-```python
-import torch
-from torchfits.transforms import FITSTransform
-
-
-class PatchSelfNorm(FITSTransform):
-    """Robust per-patch median and MAD normalization."""
-
-    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
-        median = tensor.median()
-        mad = (tensor - median).abs().median()
-        scale = max(mad * 1.4826, 1.0)
-        return (tensor - median) / scale
+```text
+--mode {dark,bias,both}       Which calibration experiment to run
+--eval-hdus N                 Number of HDUs per evaluation file
+--full-eval-files N           Number of science files to inspect
+--compare-astroscrappy       Run the optional classical baseline
+--inject-stars                Add the synthetic flux-recovery appendix
+--out-dir PATH                Directory for Markdown, JSON, and figures
 ```
 
-### 2. Paired Cutout Dataset & Loader
+The full run can take substantial time because a MegaCam MEF contains many
+large CCD extensions. Use `--eval-hdus` and `--full-eval-files` to start with a
+small, reproducible subset.
 
-Using `torchfits.data.FitsCutoutDataset`, we extract coordinated $64 \times 64$ patches from paired dark exposures and stream them through `make_loader`:
+## Reading the rendering
 
-```python
-from torch.utils.data import StackDataset
-from torchfits.data import FitsCutoutDataset, make_loader
+The optional gallery image is a 512x512 crop selected because it contains the
+largest number of CR-like pixels according to the diagnostic mask. It is **not**
+a promised stellar cluster or a representative full-field photograph; a crop
+from a sparse part of an exposure can look nearly empty. The figure is for
+showing localized pixel changes, not for judging photometry.
 
-# Build paired cutout datasets with matching random coordinates
-ds_dark1 = FitsCutoutDataset(
-    "dark_01.fits.fz", cutouts=patch_boxes, transform=PatchSelfNorm()
-)
-ds_dark2 = FitsCutoutDataset(
-    "dark_02.fits.fz", cutouts=patch_boxes, transform=PatchSelfNorm()
-)
+Each panel is independently stretched between its 1st and 99th percentiles,
+so the displayed brightness is not a calibrated comparison. For quantitative
+interpretation, use the Markdown metrics and the aperture-flux/background
+values in the JSON summary. A “cosmic ray removed” value means that a pixel
+flagged by the before-image proxy is no longer flagged by the same proxy after
+cleaning; it is not a count of visually obvious streaks and it is not a
+supervised detection accuracy.
 
-# Combine into paired input-target dataset
-paired_dataset = StackDataset(ds_dark1, ds_dark2)
+## Limitations
 
-# High-performance DataLoader
-loader = make_loader(paired_dataset, batch_size=32, shuffle=True, num_workers=4)
-```
+- Dark-to-blank training does not model the morphology or flux distribution of
+  stars and galaxies.
+- The science path repairs only isolated sharp positive excursions. It is not a
+  general-purpose denoiser and does not promise to remove trails or extended
+  artifacts.
+- CR-like masks are heuristic because no clean version of the science frame is
+  available.
+- Astro-SCRAPPY and the neural path use different algorithms and should be
+  compared with the reported source/background diagnostics, not with a single
+  visual impression.
 
-### 3. Training the U-Net
-
-A compact 4-level U-Net with skip connections is trained with an L1 loss, which is robust to sparse cosmic ray outliers in both input and target patches:
-
-```python
-import torch
-
-model = CompactUNet(in_channels=1, out_channels=1).cuda()
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-criterion = torch.nn.L1Loss()
-
-for epoch in range(4):
-    for (dark_a,), (dark_b,) in loader:
-        x = dark_a.cuda()
-        y = dark_b.cuda()
-
-        optimizer.zero_grad()
-        prediction = model(x)
-        loss = criterion(prediction, y)
-        loss.backward()
-        optimizer.step()
-```
-
-### 4. Mosaic Inference & Product Export
-
-Once trained, the model evaluates full-frame science CCDs using `torchfits.read_tensor` and exports cleaned FITS images with `torchfits.write`:
-
-```python
-import torchfits
-
-with torchfits.open("science_exposure.fits.fz") as hdul:
-    for ccd_idx, hdu in enumerate(hdul):
-        raw_pixels = hdu.to_tensor(device="cuda")
-
-        # Normalize, run inference, and denormalize
-        cleaned_pixels = run_tiled_inference(model, raw_pixels)
-
-        # Save cleaned CCD to output file
-        torchfits.write(
-            f"cleaned_ccd_{ccd_idx:02d}.fits", cleaned_pixels, header=hdu.header
-        )
-```
-
----
-
-## Visual Results
-
-![MegaCam Cosmic Ray Cleaning: Before vs After](assets/gallery/megacam_cr_denoise.png)
-
-*Comparison on a dense star field in CFHT MegaCam science exposure `2366188o`. Cosmic ray streaks and hot pixels are suppressed while point sources and background sky levels are preserved.*
-
----
-
-## Quantitative Performance & Metrics
-
-Across 40 CCDs of CFHT MegaCam science exposure `2366188o`:
-
-| Evaluation Metric | Raw Science Input | Cleaned Output (Dark Net) | Control Output (Bias Net) |
-|---|---|---|---|
-| **Cosmic Ray Pixel Suppression** | Baseline ($>8\sigma$) | **98.8% median removal** | 89.5% median removal |
-| **Sky Background Level Drift** | $1283\text{ ADU}$ | **$\pm 1\text{ ADU}$ (Preserved)** | $-33\text{ ADU}$ |
-| **Bright Star Flux Recovery ($>10\sigma$)** | $1.00$ | $0.80 - 0.98$ | $0.80 - 0.96$ |
-| **Injected Noise Residual $\sigma$** | $57.5\text{ ADU}$ | $35.3\text{ ADU}$ | $22.3\text{ ADU}$ |
-
-### Analysis
-
-1. **Cosmic Ray Suppression:** Over 98% of identified cosmic ray artifacts are flattened to the local background noise floor.
-2. **Background Preservation:** Per-patch self-normalization guarantees that the sky background level is preserved within $\pm 1\text{ ADU}$.
-3. **Star Flux Attenuation:** Because the network is trained on zero-field darks, bright stars represent out-of-distribution inputs. Measured aperture flux recovery for bright stars ranges from $80\%$ to $98\%$, illustrating the trade-off of training without astronomical signal models.
-
----
-
-## Running the Case Study
-
-### Local Execution
-
-```bash
-# 1. Download sample data
-bash scripts/fetch_cfht_megacam_sample.sh
-bash scripts/fetch_cfht_calib_frames.sh
-
-# 2. Run training and evaluation pipeline
-python examples/example_megacam_cr_denoise.py --mode both
-```
-
-### Remote GPU Cluster Execution (CANFAR / Slurm)
-
-For running on remote HPC or cloud nodes equipped with NVIDIA GPUs:
-
-```bash
-TORCHFITS_DENOISE_MODE=full bash scripts/launch_canfar_denoise.sh
-```
-
----
-
-## Key Takeaways
-
-- **FITS-Native Deep Learning:** `torchfits` eliminates the complexity of converting astronomical data to intermediate formats, providing fast, direct tensor loading from multi-CCD files.
-- **Physics-Informed Architecture:** Leveraging calibration dark frames as natural Noise2Noise pairs provides a practical, simulation-free self-supervised learning paradigm.
-- **Modular Pipeline:** Demonstrates the clean interaction between `torchfits.data`, `torchfits.transforms`, and core I/O functions.
+The main lesson is the FITS-native composition: calibration frames can feed a
+PyTorch training loop directly, and the same `torchfits` reads can feed a
+careful, measurable inference product without an intermediate image export.

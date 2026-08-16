@@ -188,7 +188,7 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 | Script | Purpose & Key APIs |
 |---|---|
 | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | Galaxy Zoo 1 morphology classification on Legacy Survey cutouts |
-| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | Self-supervised Noise2Noise cosmic ray removal on CFHT darks |
+| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | FITS-native Noise2Noise calibration, held-out dark test, and conservative science CR repair |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | Gigapixel mosaic cutout extraction and Lupton RGB collage |
 | [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py) | Lupton asinh RGB synthesis from SDSS $g, r, i$ filter frames |
 | [`example_transforms.py`](published-examples/example_transforms.py) | Composite stretch and normalization pipelines (`Compose`) |

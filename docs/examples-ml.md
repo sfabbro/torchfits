@@ -118,30 +118,33 @@ Corresponding script: [`example_ml_galaxyzoo_legacy.py`](published-examples/exam
 
 ---
 
-## Case Study 2: Cosmic Ray & Detector Denoising (Noise2Noise on Real Darks) {#megacam-cosmic-ray-cleaning}
+## Case Study 2: Conservative MegaCam Denoising {#megacam-cosmic-ray-cleaning}
 
-Train a compact U-Net to remove cosmic rays and detector read noise from real CFHT MegaCam wide-field images without synthetic noise simulations.
+Train a compact U-Net on real CFHT MegaCam darks, test it on a separate dark exposure, and transfer it conservatively to science windows. The science path repairs only isolated sharp positive pixels, so it does not overwrite stars and galaxies with the blank-field prediction.
 
 ```bash
-# Fetch CFHT MegaCam calibration frames (12 darks + 8 biases from CADC)
 bash scripts/fetch_cfht_megacam_sample.sh
 bash scripts/fetch_cfht_calib_frames.sh
-python examples/example_megacam_cr_denoise.py --mode both
+python examples/example_megacam_cr_denoise.py \\
+  --mode dark \\
+  --compare-astroscrappy
 ```
 
-### Why Noise2Noise on Calibration Darks?
+The final dark exposure is reserved as a real test-set frame. The output reports
+held-out-dark RMS and CR-like suppression, science source/background
+preservation diagnostics, and—when Astro-SCRAPPY is installed—the same
+measurements for a classical baseline. Astro-SCRAPPY is optional and is not a
+`torchfits` dependency.
 
-Standard supervised denoising requires paired noisy and clean ground-truth images, which cannot be obtained for deep astronomical exposures.
+The generated gallery is an artifact-focused 512x512 crop selected for its
+CR-like pixel count, not a claim that the scene is a stellar cluster. Display
+panels use percentile stretches, while the Markdown and JSON reports contain
+the quantitative diagnostics. A “CR removed” percentage refers to pixels that
+were flagged by the before-image heuristic and are no longer flagged by that
+same heuristic after cleaning; it is not supervised detection accuracy.
 
-However, unilluminated calibration dark frames taken on the same detector during the same observing run share identical physical detector characteristics and cosmic ray event rates, while their read noise is statistically independent:
-
-$$\mathbb{E}[y_{\text{dark}, 2} \mid x_{\text{dark}, 1}] = \text{clean background}$$
-
-By training a neural network on paired raw calibration darks with self-normalization, the network learns the detector's noise-to-blank map and suppresses cosmic rays, hot pixels, and read noise when transferred to real science frames.
-
-![MegaCam Cosmic Ray Cleaning: Before vs After](assets/gallery/megacam_cr_denoise.png)
-
-For architectural details, mathematical proofs, and transfer metrics, see the [Denoise Pipeline Case Study](denoise-pipeline.md).
+For the implementation rationale, limitations, output files, and full
+end-to-end walkthrough, see the [Denoise Pipeline Case Study](denoise-pipeline.md).
 
 Corresponding script: [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py).
 
@@ -227,7 +230,7 @@ loader = make_loader(
 | Script | Topic |
 |---|---|
 | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | End-to-end Galaxy Zoo 1 CNN morphology classification |
-| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | Self-supervised Noise2Noise cosmic ray removal on real CFHT darks |
+| [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | FITS-native Noise2Noise calibration, held-out dark test, and conservative science CR repair |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | High-throughput survey mosaic cutouts and Lupton RGB collage |
 | [`example_image_dataset.py`](published-examples/example_image_dataset.py) | Minimal `FitsImageDataset` + `make_loader` pipeline |
 | [`example_data_catalogs.py`](published-examples/example_data_catalogs.py) | Tabular catalog and cutout dataset integration |
