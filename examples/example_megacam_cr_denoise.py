@@ -168,7 +168,7 @@ class SelfNorm(FITSTransform):
 
 
 def _box_bg(x: torch.Tensor, k: int = 7) -> torch.Tensor:
-    return F.avg_pool2d(x, k, stride=1, padding=k // 2)
+    return F.avg_pool2d(_as_batch(x), k, stride=1, padding=k // 2)
 
 
 def _robust_sigma(x: torch.Tensor) -> torch.Tensor:
@@ -578,7 +578,7 @@ def _astroscrappy_clean(ccd: torch.Tensor) -> tuple[torch.Tensor, int] | None:
         return None
     image = np.ascontiguousarray(ccd.float().cpu().numpy(), dtype=np.float32)
     readnoise = max(float(_robust_sigma(ccd - _box_bg(ccd)).item()), 0.5)
-    cleaned, mask = astroscrappy.detect_cosmics(
+    mask, cleaned = astroscrappy.detect_cosmics(
         image,
         sigclip=5.0,
         sigfrac=0.3,
