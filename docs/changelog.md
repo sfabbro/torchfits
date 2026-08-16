@@ -15,6 +15,11 @@ docs/usability soak before the tag.
 
 ### Added
 
+- `torchfits.to_astropy()`: Direct conversion of PyTorch tensor dictionary
+  structures to Astropy `Table` instances via zero-copy Arrow intermediate buffers.
+- Streaming ML Datasets: `FitsCubeIterableDataset`,
+  `FitsSpectrumIterableDataset`, and `FitsStagedCutoutIterableDataset`
+  with rank and world size sharding for distributed PyTorch training.
 - MegaCam cosmic-ray denoise example (`example_megacam_cr_denoise.py`):
   Noise2Noise on real dark/bias calibration twins (zero-field N2N), with
   self-normalizing pair transforms, held-out CCD evaluation, and honest
@@ -61,6 +66,8 @@ docs/usability soak before the tag.
 - Schema metadata with nanobind >= 2.14 (dropped str->int coercion):
   `tnull`/`bscale`/`bzero`/null values parsed from header strings instead of
   raising `std::bad_cast` on the write path.
+- Tile compression: reject unsupported floating-point payloads on PLIO_1 writes with a clean ValueError.
+- Table mutation & schema: strict validation for VLA and object dictionary-table columns.
 - Stats transforms accept integer dtypes (BZERO-scaled `read_subset` results
   come back as UInt16, which torch cannot reduce): helpers upcast to float32
   (int64 keeps precision as float64), masked fills use dtype-safe sentinels,

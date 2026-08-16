@@ -240,5 +240,6 @@ if TYPE_CHECKING:
     from .io import write_checksums as write_checksums
     from .io import write_tensor as write_tensor
     from .interop import to_arrow as to_arrow
+    from .interop import to_astropy as to_astropy
     from .interop import to_pandas as to_pandas
     from .interop import to_polars as to_polars
