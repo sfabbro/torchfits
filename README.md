@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/torchfits)](https://pypi.org/project/torchfits/)
 [![GitHub release](https://img.shields.io/github/v/release/astroai/torchfits?include_prereleases&label=latest%20release)](https://github.com/astroai/torchfits/releases)
+[![Documentation](https://img.shields.io/badge/docs-stable-brightgreen)](https://astroai.github.io/torchfits/)
 [![CI](https://github.com/astroai/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/astroai/torchfits/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
