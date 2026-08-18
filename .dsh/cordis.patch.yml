@@ -1,0 +1,21 @@
+# dsh overlay — apply with:
+#   npx @deepseek-ai/dsh --profile headless --patch .dsh/cordis.patch.yml "<task>"
+#
+# A patch row replaces the targeted entry's WHOLE config (no deep merge), so
+# restate every field you keep. Base rows come from @deepseek-ai/dsh-base
+# (packages/bundle/base/cordis.patch.yml upstream).
+
+# pixi solves, native rebuilds, and long science/bench runs routinely exceed
+# the 60 s bash default; 10 minutes leaves headroom for cold env installs.
+- id: bash-sandbox
+  disabled: !!js process.platform === 'win32'
+  config:
+    timeoutMs: 600000
+
+# Enable durable full-text session search so a research session can query past
+# runs (earlier experiments, decisions, trajectories) instead of scraping
+# JSONL logs by hand. SQLite lives in the harness home, not the workspace.
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('sessions.sqlite')
+    openAt: first-search
