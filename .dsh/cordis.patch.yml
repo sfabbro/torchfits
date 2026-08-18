@@ -1,5 +1,5 @@
 # dsh overlay — apply with:
-#   npx @deepseek-ai/dsh --profile headless --patch .dsh/cordis.patch.yml "<task>"
+#   npx -y @deepseek-ai/dsh -- --profile headless --patch .dsh/cordis.patch.yml "<task>"
 #
 # A patch row replaces the targeted entry's WHOLE config (no deep merge), so
 # restate every field you keep. Base rows come from @deepseek-ai/dsh-base
