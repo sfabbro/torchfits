@@ -276,7 +276,7 @@ scaled / nD).
 torchfits implements its own `where=` grammar and filtering so projection +
 gather land directly in tensors/Arrow buffers.
 
-Vendored CFITSIO is pinned in `extern/VERSIONS.txt` (currently **4.6.4**).
+Vendored CFITSIO is pinned in `extern/VERSIONS.txt` (currently **4.7.0**).
 
 ---
 

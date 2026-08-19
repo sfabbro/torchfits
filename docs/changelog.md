@@ -73,6 +73,10 @@ docs/usability soak before the tag.
   (int64 keeps precision as float64), masked fills use dtype-safe sentinels,
   and `SigmaClip` promotes integer inputs instead of raising.
 
+### Dependencies
+
+- Vendored CFITSIO updated to **4.7.0** (`extern/VERSIONS.txt` and `extern/patches/`).
+
 ### Packaging
 
 - Linux wheels now cover **x86_64 and aarch64** for CPython **3.10–3.14**

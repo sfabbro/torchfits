@@ -299,7 +299,7 @@ def _table_bytes(path: str) -> bytes:
 )
 def test_fpack_byte_identity(tmp_path, algo, flag):
     """torchfits output is byte-identical (table + heap) to fpack built from
-    the same vendored CFITSIO 4.6.4 source. The reference CLI at
+    the same vendored CFITSIO source. The reference CLI at
     _REFERENCE_FPACK takes precedence over any fpack found on PATH: the
     pixi/system fpack links an unpatched CFITSIO and aborts on PLIO_1.
     fpack must NOT be given -F: that clobber mode writes in place and
