@@ -20,7 +20,17 @@ class TableDataAccessor:
     def __getitem__(self, key: str) -> Any:
         if hasattr(self._table, "_raw_data") and key in self._table._raw_data:
             value = self._table._raw_data[key]
-            # Return tensors as stored; callers may .squeeze() if needed.
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() == 2
+                and value.shape[1] == 1
+            ):
+                return value.squeeze(1)
+            if hasattr(value, "ndim") and value.ndim == 2 and value.shape[1] == 1:
+                try:
+                    return value.squeeze(1)
+                except Exception:
+                    pass
             return value
         raise KeyError(f"Column '{key}' not found")
 

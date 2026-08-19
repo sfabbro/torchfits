@@ -177,7 +177,7 @@ def test_table_write_rich_types_roundtrip():
             table_hdu = hdul[1]
             assert table_hdu.header.get("EXTNAME") == "CATALOG"
             assert table_hdu.get_string_column("NAME") == ["alpha", "beta", "gamma"]
-            vals = table_hdu["Z"].squeeze(-1)
+            vals = table_hdu["Z"]
             assert np.allclose(
                 vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
             )
@@ -294,7 +294,7 @@ def test_table_write_complex_tensor_roundtrip():
     try:
         torchfits.write(filename, table, overwrite=True)
         with torchfits.open(filename) as hdul:
-            vals = hdul[1]["Z"].squeeze(-1)
+            vals = hdul[1]["Z"]
             assert np.allclose(
                 vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
             )
@@ -336,7 +336,7 @@ def test_write_compressed_hdulist_mixed():
             assert opened[2].header.get("EXTNAME") == "CAT"
         assert torch.equal(torchfits.read(filename, hdu=1), image)
         table_out = torchfits.read(filename, hdu=2)
-        assert table_out["ID"].squeeze(-1).tolist() == [1, 2, 3]
+        assert table_out["ID"].tolist() == [1, 2, 3]
     finally:
         if os.path.exists(filename):
             os.remove(filename)

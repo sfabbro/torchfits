@@ -360,8 +360,8 @@ def test_ascii_table_roundtrip_via_all_read_paths(tmp_path):
 
     for mmap in (True, False):
         out = torchfits.read(path, hdu=1, mmap=mmap)
-        assert torch.equal(out["ID"].squeeze(-1), torch.as_tensor(astro_id))
-        np.testing.assert_array_equal(out["VAL"].squeeze(-1).numpy(), table["VAL"])
+        assert torch.equal(out["ID"], torch.as_tensor(astro_id))
+        np.testing.assert_array_equal(out["VAL"].numpy(), table["VAL"])
 
     arrow = torchfits.table.read(path, hdu=1)
     assert list(arrow.column("ID").to_pylist()) == table["ID"].tolist()
@@ -401,8 +401,8 @@ def test_mutation_sequence_fidelity(tmp_path):
 
     for mmap in (True, False):
         out = torchfits.read(path, hdu=1, mmap=mmap)
-        assert torch.equal(out["ID"].squeeze(-1), torch.as_tensor(astro_id))
-        assert torch.equal(out["VAL"].squeeze(-1), torch.as_tensor(astro_val))
+        assert torch.equal(out["ID"], torch.as_tensor(astro_id))
+        assert torch.equal(out["VAL"], torch.as_tensor(astro_val))
 
 
 def test_ascii_string_width_handling_matches_astropy(tmp_path):
@@ -459,7 +459,7 @@ def test_append_rows_repeat_mismatch_is_rejected(tmp_path):
 
     # File untouched: still exactly the original rows.
     out = torchfits.read(path, hdu=1)
-    assert torch.equal(out["A"].squeeze(-1), torch.zeros(3, dtype=torch.int32))
+    assert torch.equal(out["A"], torch.zeros(3, dtype=torch.int32))
 
 
 # ---------------------------------------------------------------------------
@@ -625,8 +625,8 @@ def test_insert_rows_fidelity_mid_table(tmp_path):
 
     for mmap in (True, False):
         out = torchfits.read(path, hdu=1, mmap=mmap)
-        assert torch.equal(out["ID"].squeeze(-1), torch.as_tensor(astro_id))
-        assert torch.equal(out["VAL"].squeeze(-1), torch.as_tensor(astro_val))
+        assert torch.equal(out["ID"], torch.as_tensor(astro_id))
+        assert torch.equal(out["VAL"], torch.as_tensor(astro_val))
 
 
 def test_rename_and_drop_columns_fidelity(tmp_path):
@@ -652,8 +652,8 @@ def test_rename_and_drop_columns_fidelity(tmp_path):
 
     for mmap in (True, False):
         out = torchfits.read(path, hdu=1, mmap=mmap)
-        assert torch.equal(out["ALPHA"].squeeze(-1), torch.as_tensor(astro_a))
-        assert torch.equal(out["B"].squeeze(-1), torch.as_tensor(astro_b))
+        assert torch.equal(out["ALPHA"], torch.as_tensor(astro_a))
+        assert torch.equal(out["B"], torch.as_tensor(astro_b))
 
 
 def test_ascii_table_logical_column_is_rejected(tmp_path):
@@ -686,7 +686,7 @@ def test_table_tnull_values_roundtrip_raw(tmp_path):
     assert np.array_equal(astro, np.array([0, 5, 3, 0], dtype=np.int32))
     for mmap in (True, False):
         out = torchfits.read(path, hdu=1, mmap=mmap)
-        assert torch.equal(out["A"].squeeze(-1), torch.as_tensor(astro))
+        assert torch.equal(out["A"], torch.as_tensor(astro))
 
 
 # ---------------------------------------------------------------------------

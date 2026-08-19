@@ -112,9 +112,9 @@ def test_tablehduref_file_mutators_roundtrip(tmp_path):
 
     with torchfits.open(str(path)) as hdul:
         table = hdul[1]
-        assert table["ID"].squeeze(-1).tolist() == [1, 99, 2, 3, 4]
-        assert table["FLUX"].squeeze(-1).shape[0] == 5
-        assert abs(float(table["FLUX"].squeeze(-1)[0]) - 8.8) < 1e-6
+        assert table["ID"].tolist() == [1, 99, 2, 3, 4]
+        assert table["FLUX"].shape[0] == 5
+        assert abs(float(table["FLUX"][0]) - 8.8) < 1e-6
         assert "FLAG" not in table.columns
 
 
@@ -168,8 +168,8 @@ def test_tablehduref_column_mutators_roundtrip(tmp_path):
 
     with torchfits.open(str(path)) as hdul:
         table = hdul[1]
-        assert table["FLAGS"].squeeze(-1).tolist() == [7, 8]
-        assert table["QUAL"].squeeze(-1).tolist() == [101, 102]
+        assert table["FLAGS"].tolist() == [7, 8]
+        assert table["QUAL"].tolist() == [101, 102]
         assert table.header.get("TUNIT2") == "flag"
         assert int(table.header.get("TNULL2")) == -1
         assert table.header.get("TUNIT3") == "adu"
@@ -200,7 +200,7 @@ def test_hdulist_write_preserves_table_extension_metadata(tmp_path):
         assert len(hdul) == 2
         table = hdul[1]
         assert table.columns == ["ID", "QUAL"]
-        assert table["QUAL"].squeeze(-1).tolist() == [10, 20]
+        assert table["QUAL"].tolist() == [10, 20]
         assert str(table.header.get("TFORM2", "")).upper().startswith("I")
         assert table.header.get("TUNIT2") == "adu"
         assert int(table.header.get("TNULL2")) == -999
@@ -271,7 +271,7 @@ def test_insert_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
         assert hdul[2].header.get("EXTNAME") == "SCI_INSERT"
     assert torch.equal(torchfits.read(str(path), hdu=2), inserted)
     table_out = torchfits.read(str(path), hdu=3)
-    assert table_out["ID"].squeeze(-1).tolist() == [1, 2, 3]
+    assert table_out["ID"].tolist() == [1, 2, 3]
 
 
 def test_delete_hdu_compressed_image_only(tmp_path):
@@ -305,7 +305,7 @@ def test_delete_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
     with torchfits.open(str(path)) as hdul:
         assert len(hdul) == 2
     table_out = torchfits.read(str(path), hdu=1)
-    assert table_out["ID"].squeeze(-1).tolist() == [1, 2]
+    assert table_out["ID"].tolist() == [1, 2]
 
 
 def test_replace_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
@@ -331,7 +331,7 @@ def test_replace_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
         assert len(hdul) == 3
         assert hdul[2].header.get("EXTNAME") == "CAT_REPLACED"
     table_out = torchfits.read(str(path), hdu=2)
-    assert table_out["ID"].squeeze(-1).tolist() == [10, 20, 30]
+    assert table_out["ID"].tolist() == [10, 20, 30]
 
 
 def test_failed_hdu_mutation_preserves_original(monkeypatch, tmp_path):
