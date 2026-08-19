@@ -32,7 +32,9 @@ def test_tensor_hdu_concurrent_close_does_not_call_cpp_after_close():
         barrier.wait()
         try:
             import torchfits
-            if not hasattr(torchfits, "_C"): torchfits._C = mock.Mock()
+
+            if not hasattr(torchfits, "_C"):
+                torchfits._C = mock.Mock()
             with mock.patch("torchfits._C") as cpp:
                 cpp.read_full.side_effect = lambda *a, **k: torch.zeros(2, 2)
                 try:

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torchfits.hdu import Header, TableHDU, TableHDURef
 
+
 def test_table_data_accessor_auto_squeeze():
     header = Header()
     header["TFIELDS"] = 2
@@ -19,6 +20,7 @@ def test_table_data_accessor_auto_squeeze():
     # Verify auto-squeeze works for tensors and numpy arrays of shape (N, 1)
     assert data["x"].shape == (5,)
     assert data["y"].shape == (5,)
+
 
 def test_tablehduref_cache_invalidation():
     header = Header()

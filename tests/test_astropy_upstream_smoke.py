@@ -231,9 +231,7 @@ def test_astropy_complex_bit_string_mmap_updates_roundtrip_match_astropy(
     # Un-modified columns preserved accurately.
     with torchfits.open(path.as_posix()) as hdul:
         np.testing.assert_array_equal(hdul[1]["ID"].numpy(), new_ids)
-        np.testing.assert_array_equal(
-            hdul[1]["FLAGS"].numpy().astype(bool), new_flags
-        )
+        np.testing.assert_array_equal(hdul[1]["FLAGS"].numpy().astype(bool), new_flags)
 
 
 def test_astropy_string_mmap_update_pads_to_column_width(tmp_path) -> None:
