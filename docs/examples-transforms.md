@@ -26,7 +26,7 @@ image = torchfits.read_tensor("horsehead.fits", hdu=0).float()
 pipeline = Compose(
     [
         BackgroundSubtract(),
-        ArcsinhStretch(factor=0.1),
+        ArcsinhStretch(a=0.1),
         ZScaleNormalize(),
     ]
 )
@@ -62,7 +62,7 @@ rgb_tensor = lupton_rgb(
     r=i_band,
     g=r_band,
     b=g_band,
-    q=8.0,
+    Q=8.0,
     stretch=0.15,
 )
 print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [3, H, W]
@@ -83,13 +83,13 @@ import torch
 from torchfits.transforms import AsymmetricSigmaClip, SigmaClip
 
 # Sample photometric flux series
-flux = torch.tensor([...], dtype=torch.float32)
+flux = torch.randn(100, dtype=torch.float32)
 
-# Symmetric rejection (e.g. 3-sigma outlier mask)
-clipped_symmetric = SigmaClip(sigma=3.0)(flux)
+# Symmetric rejection for 1D series (dim=(-1,))
+clipped_symmetric = SigmaClip(n_sigma=3.0, dim=(-1,))(flux)
 
 # Asymmetric rejection (e.g. strict lower clipping for dips, relaxed upper clipping for flares)
-clipped_asymmetric = AsymmetricSigmaClip(low_sigma=2.5, high_sigma=5.0)(flux)
+clipped_asymmetric = AsymmetricSigmaClip(n_low=2.5, n_high=5.0, dim=(-1,))(flux)
 ```
 
 ### Symmetric Sigma Clipping
@@ -107,10 +107,12 @@ Corresponding script: [`example_time_series.py`](published-examples/example_time
 When FITS tables or arrays encode physical quantities using standard `BSCALE` and `BZERO` keywords ($y = \text{BZERO} + x \times \text{BSCALE}$):
 
 ```python
-from torchfits.transforms import LinearScale
+import torch
+from torchfits.transforms import FITSHeaderScale
 
-# Linear scaling transform
-scaler = LinearScale(scale=0.0036, zero=32768.0)
+# Linear scaling transform from BSCALE and BZERO
+scaler = FITSHeaderScale(bscale=0.0036, bzero=32768.0)
+raw_counts = torch.tensor([100.0, 200.0, 300.0], dtype=torch.float32)
 physical_flux = scaler(raw_counts)
 ```
 
@@ -124,7 +126,7 @@ You can create custom transforms by subclassing `FITSTransform`. This integrates
 
 ```python
 import torch
-from torchfits.transforms import FITSTransform
+from torchfits.transforms import Compose, FITSTransform, ZScaleNormalize
 
 
 class SkyNoiseInjector(FITSTransform):
@@ -134,7 +136,9 @@ class SkyNoiseInjector(FITSTransform):
         super().__init__()
         self.std = std
 
-    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, tensor: torch.Tensor, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         noise = torch.randn_like(tensor) * self.std
         return tensor + noise
 

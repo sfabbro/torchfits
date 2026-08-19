@@ -92,10 +92,10 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
     import torchfits
 
     # Single bounding box cutout [x1, y1, x2, y2)
-    stamp = torchfits.read_subset("mosaic.fits", x1=100, y1=100, x2=228, y2=228)
+    stamp = torchfits.read_subset("mosaic.fits", hdu=0, x1=100, y1=100, x2=228, y2=228)
 
     # High-throughput batch cutouts using reusable file handle
-    with torchfits.open_subset_reader("survey_mosaic.fits") as reader:
+    with torchfits.open_subset_reader("survey_mosaic.fits", hdu=0) as reader:
         stamp_a = reader.read_subset(100, 100, 228, 228)
         stamp_b = reader.read_subset(500, 500, 628, 628)
     ```

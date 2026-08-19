@@ -51,7 +51,7 @@ transform = Compose(
     [
         NanToZero(),  # Replace off-footprint survey boundary NaNs
         BackgroundSubtract(),  # Estimate and subtract local sky background
-        ArcsinhStretch(factor=0.1),  # Reveal faint spiral arm features
+        ArcsinhStretch(a=0.1),  # Reveal faint spiral arm features
         ZScaleNormalize(),  # Map pixel dynamic range to standard normal scale
     ]
 )

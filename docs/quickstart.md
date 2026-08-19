@@ -18,8 +18,6 @@ Prebuilt binary wheels include vendored CFITSIO (no C++ compiler or external dep
 
 ## 2. Reading Images to PyTorch Tensors
 
-Read an image HDU directly into a `torch.Tensor`:
-
 ```python
 import torchfits
 
@@ -29,11 +27,8 @@ print(f"Shape: {image.shape}, Dtype: {image.dtype}")
 
 # Direct decode to GPU (CUDA on Linux, MPS on Apple Silicon)
 gpu_image = torchfits.read_tensor("science.fits", hdu=0, device="cuda")
-```
 
-To read both pixel data and header metadata:
-
-```python
+# Read pixel data alongside header metadata
 data, header = torchfits.read("science.fits", hdu=0, return_header=True)
 print("Target Object:", header.get("OBJECT"))
 print("Exposure Time:", header.get("EXPTIME"))
@@ -120,7 +115,7 @@ with torchfits.open("observation.fits") as hdul:
 
     # Access extensions by name (EXTNAME)
     science_image = hdul["SCI"].to_tensor()
-    catalog_table = hdul["CATALOG"].to_tensor_dict()
+    catalog_table = hdul["CATALOG"].read()
 ```
 
 ---
@@ -166,7 +161,7 @@ from torchfits.transforms import ArcsinhStretch, Compose, ZScaleNormalize
 # Preprocessing transform
 transforms = Compose(
     [
-        ArcsinhStretch(factor=0.05),
+        ArcsinhStretch(a=0.05),
         ZScaleNormalize(),
     ]
 )
@@ -175,7 +170,7 @@ transforms = Compose(
 dataset = FitsImageDataset(
     "data/survey/*.fits",
     hdu=0,
-    label_key="CLASS",
+    label_key="CLASS_ID",
     transform=transforms,
 )
 
