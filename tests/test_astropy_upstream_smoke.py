@@ -86,10 +86,10 @@ def test_astropy_binary_table_vla_and_complex_workflows_match_torchfits(
 
     with torchfits.open(path.as_posix()) as hdul:
         table_hdu = hdul["CATALOG"]
-        assert table_hdu["ID"].squeeze(-1).tolist() == [1, 2, 3]
+        assert table_hdu["ID"].tolist() == [1, 2, 3]
         assert table_hdu.get_string_column("NAME") == ["a", "b", "c"]
         np.testing.assert_allclose(
-            table_hdu["Z"].squeeze(-1).numpy(),
+            table_hdu["Z"].numpy(),
             np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64),
         )
         assert [row.tolist() for row in table_hdu.get_vla_column("VLA")] == [
@@ -230,9 +230,9 @@ def test_astropy_complex_bit_string_mmap_updates_roundtrip_match_astropy(
 
     # Un-modified columns preserved accurately.
     with torchfits.open(path.as_posix()) as hdul:
-        np.testing.assert_array_equal(hdul[1]["ID"].squeeze(-1).numpy(), new_ids)
+        np.testing.assert_array_equal(hdul[1]["ID"].numpy(), new_ids)
         np.testing.assert_array_equal(
-            hdul[1]["FLAGS"].squeeze(-1).numpy().astype(bool), new_flags
+            hdul[1]["FLAGS"].numpy().astype(bool), new_flags
         )
 
 

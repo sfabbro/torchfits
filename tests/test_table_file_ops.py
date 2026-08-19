@@ -34,8 +34,8 @@ def test_table_write_negative_stride_column_roundtrip():
     try:
         torchfits.write(handle.name, {"ID": ids, "VAL": vals}, overwrite=True)
         with torchfits.open(handle.name) as hdul:
-            out_ids = hdul[1]["ID"].squeeze(-1).tolist()
-            out_vals = hdul[1]["VAL"].squeeze(-1).numpy()
+            out_ids = hdul[1]["ID"].tolist()
+            out_vals = hdul[1]["VAL"].numpy()
         assert out_ids == [5, 4, 3, 2, 1]
         assert np.allclose(out_vals, [5.0, 4.0, 3.0, 2.0, 1.0], atol=1e-6)
     finally:
@@ -73,7 +73,7 @@ def test_update_rows_mmap_forced_failure_not_swallowed(tmp_path):
 
         # Verify it actually updated by reading it
         table = torchfits.table.read_torch(path, columns=["A"])
-        assert table["A"].squeeze(-1).tolist() == [4, 5, 3]
+        assert table["A"].tolist() == [4, 5, 3]
 
     finally:
         cpp.update_fits_table_rows_mmap = original_mmap
@@ -99,11 +99,11 @@ def test_table_append_update_rename_drop():
             assert isinstance(ids, torch.Tensor)
             assert isinstance(vals, torch.Tensor)
             assert isinstance(flags, torch.Tensor)
-            assert ids.squeeze(-1).tolist() == [1, 2, 3, 4, 5]
+            assert ids.tolist() == [1, 2, 3, 4, 5]
             assert np.allclose(
-                vals.squeeze(-1).numpy(), [0.1, 0.2, 0.3, 0.4, 0.5], atol=1e-6
+                vals.numpy(), [0.1, 0.2, 0.3, 0.4, 0.5], atol=1e-6
             )
-            assert flags.squeeze(-1).tolist() == [True, False, True, False, True]
+            assert flags.tolist() == [True, False, True, False, True]
 
         with pytest.raises(ValueError):
             torchfits.table.append_rows(
@@ -125,7 +125,7 @@ def test_table_append_update_rename_drop():
         )
         with torchfits.open(path) as hdul:
             table_hdu = hdul[1]
-            vals = table_hdu["VAL"].squeeze(-1).numpy()
+            vals = table_hdu["VAL"].numpy()
             assert np.allclose(vals, [0.1, 9.9, 8.8, 0.4, 0.5], atol=1e-6)
 
         torchfits.table.rename_columns(path, {"VAL": "FLUX"}, hdu=1)
@@ -163,7 +163,7 @@ def test_tablehdu_to_fits_rich_types_roundtrip():
         with torchfits.open(dst.name) as hdul:
             table = hdul[1]
             assert table.get_string_column("NAME") == ["alpha", "beta", "gamma"]
-            vals = table["Z"].squeeze(-1)
+            vals = table["Z"]
             assert np.allclose(
                 vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
             )
@@ -229,7 +229,7 @@ def test_table_write_schema_roundtrip():
         )
         with torchfits.open(path.name) as hdul:
             table = hdul[1]
-            assert table["ID"].squeeze(-1).tolist() == [1, 2, 3]
+            assert table["ID"].tolist() == [1, 2, 3]
             assert str(table.header.get("TFORM1", "")).upper().startswith("J")
     finally:
         os.unlink(path.name)
@@ -247,7 +247,7 @@ def test_table_write_ascii_roundtrip():
         )
         with torchfits.open(path.name) as hdul:
             table = hdul[1]
-            assert table["A"].squeeze(-1).tolist() == [1, 2, 3]
+            assert table["A"].tolist() == [1, 2, 3]
             assert str(table.header.get("XTENSION", "")).upper() == "TABLE"
     finally:
         os.unlink(path.name)
@@ -293,13 +293,13 @@ def test_table_insert_rows_mid_table_preserves_order():
 
         with torchfits.open(path) as hdul:
             table_hdu = hdul[1]
-            assert table_hdu["ID"].squeeze(-1).tolist() == [1, 99, 100, 2, 3]
+            assert table_hdu["ID"].tolist() == [1, 99, 100, 2, 3]
             assert np.allclose(
-                table_hdu["VAL"].squeeze(-1).numpy(),
+                table_hdu["VAL"].numpy(),
                 [0.1, 9.9, 10.0, 0.2, 0.3],
                 atol=1e-6,
             )
-            assert table_hdu["FLAG"].squeeze(-1).tolist() == [
+            assert table_hdu["FLAG"].tolist() == [
                 True,
                 False,
                 True,
@@ -327,11 +327,11 @@ def test_table_delete_rows_slice_and_single():
 
         with torchfits.open(path) as hdul:
             table_hdu = hdul[1]
-            assert table_hdu["ID"].squeeze(-1).tolist() == [1, 3]
+            assert table_hdu["ID"].tolist() == [1, 3]
             assert np.allclose(
-                table_hdu["VAL"].squeeze(-1).numpy(), [0.1, 0.3], atol=1e-6
+                table_hdu["VAL"].numpy(), [0.1, 0.3], atol=1e-6
             )
-            assert table_hdu["FLAG"].squeeze(-1).tolist() == [True, True]
+            assert table_hdu["FLAG"].tolist() == [True, True]
     finally:
         os.unlink(path)
 
@@ -361,7 +361,7 @@ def test_append_rows_partial_payload_string_vla_defaults():
 
         with torchfits.open(path.name) as hdul:
             table_hdu = hdul[1]
-            assert table_hdu["ID"].squeeze(-1).tolist() == [1, 2, 3]
+            assert table_hdu["ID"].tolist() == [1, 2, 3]
             assert table_hdu.get_string_column("NAME") == ["alpha", "beta", ""]
             vla = table_hdu.get_vla_column("VLA")
             assert [v.tolist() for v in vla] == [[10, 11], [20], []]
@@ -394,8 +394,8 @@ def test_append_rows_partial_payload_respects_tnull():
 
         with torchfits.open(path.name) as hdul:
             table_hdu = hdul[1]
-            assert table_hdu["ID"].squeeze(-1).tolist() == [1, 2, 3]
-            assert table_hdu["QUAL"].squeeze(-1).tolist() == [7, 8, -999]
+            assert table_hdu["ID"].tolist() == [1, 2, 3]
+            assert table_hdu["QUAL"].tolist() == [7, 8, -999]
     finally:
         os.unlink(path.name)
 
@@ -428,7 +428,7 @@ def test_table_insert_delete_with_vla_and_string_columns():
 
         with torchfits.open(path.name) as hdul:
             table_hdu = hdul[1]
-            assert table_hdu["ID"].squeeze(-1).tolist() == [1, 99, 3]
+            assert table_hdu["ID"].tolist() == [1, 99, 3]
             assert table_hdu.get_string_column("NAME") == ["a", "", "c"]
             vla = table_hdu.get_vla_column("VLA")
             assert [v.tolist() for v in vla] == [[1], [], [4]]
@@ -467,7 +467,7 @@ def test_insert_column_with_explicit_format_metadata():
         with torchfits.open(path.name) as hdul:
             table = hdul[1]
             assert table.columns == ["ID", "FLAGS", "QUAL"]
-            assert table["FLAGS"].squeeze(-1).tolist() == [7, 8]
+            assert table["FLAGS"].tolist() == [7, 8]
             assert table.header.get("TTYPE2") == "FLAGS"
             assert str(table.header.get("TFORM2", "")).upper().startswith("I")
             assert table.header.get("TUNIT2") == "flag"
@@ -500,8 +500,8 @@ def test_insert_column_infers_format_from_numpy_and_list():
         with torchfits.open(path.name) as hdul:
             table = hdul[1]
             assert set(table.columns) == {"ID", "FA", "LB"}
-            assert table["FA"].squeeze(-1).tolist() == [1.5, 2.5]
-            assert table["LB"].squeeze(-1).tolist() == [7, 8]
+            assert table["FA"].tolist() == [1.5, 2.5]
+            assert table["LB"].tolist() == [7, 8]
     finally:
         os.unlink(path.name)
 
@@ -532,7 +532,7 @@ def test_replace_column_preserves_metadata_contract():
 
         with torchfits.open(path.name) as hdul:
             table = hdul[1]
-            assert table["QUAL"].squeeze(-1).tolist() == [101, 102, 103]
+            assert table["QUAL"].tolist() == [101, 102, 103]
             assert str(table.header.get("TFORM2", "")).upper().startswith("I")
             assert table.header.get("TUNIT2") == "adu"
             assert int(table.header.get("TNULL2")) == -999
@@ -585,7 +585,7 @@ def test_table_write_noncontiguous_numeric_roundtrip():
             overwrite=True,
         )
         with torchfits.open(path.name) as hdul:
-            got = hdul[1]["VAL"].squeeze(-1).detach().cpu().numpy()
+            got = hdul[1]["VAL"].detach().cpu().numpy()
         np.testing.assert_array_equal(got, col)
     finally:
         os.unlink(path.name)
