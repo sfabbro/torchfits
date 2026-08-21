@@ -198,3 +198,106 @@ def test_filter_short(fits_file):
     data = torchfits.cpp.read_fits_table_filtered(fits_file, 1, ["SHORT_VAL"], filters)
     assert len(data["SHORT_VAL"]) == 1
     assert data["SHORT_VAL"][0].item() == 10
+
+
+def _write_unsigned_fits(path, phys, code, tzero):
+    stored = (phys.astype(np.int64) - tzero).astype(
+        np.int16 if code == "I" else np.int32
+    )
+    c = fits.Column(name="U", format=code, array=stored)
+    hdu = fits.BinTableHDU.from_columns([c])
+    hdu.header["TZERO1"] = tzero
+    hdu.writeto(path)
+
+
+def test_filter_unsigned_int16_pushdown(tmp_path):
+    """WHERE on uint16 (TZERO=32768) columns must compare physical values.
+
+    Regression: the C++ mmap pushdown compared the raw signed storage bytes
+    and never applied the +32768 offset, so ``U > 40000`` returned wrong rows
+    while the Arrow/torch fallback returned the correct result.
+    """
+    import torchfits.table as table
+
+    path = str(tmp_path / "uint16.fits")
+    _write_unsigned_fits(
+        path, np.array([100, 200, 40000, 50000, 65535], dtype=np.uint16), "I", 32768
+    )
+
+    cases = {
+        "U > 40000": [50000, 65535],
+        "U >= 50000": [50000, 65535],
+        "U < 200": [100],
+        "U == 65535": [65535],
+        "U != 40000": [100, 200, 50000, 65535],
+    }
+    for pred, want in cases.items():
+        pushdown = sorted(
+            table.read(path, hdu=1, where=pred, mmap=True)["U"].to_pylist()
+        )
+        fallback = sorted(
+            table.read(path, hdu=1, where=pred, mmap=False)["U"].to_pylist()
+        )
+        assert pushdown == want, pred
+        assert fallback == want, pred
+
+
+def test_filter_unsigned_int32_pushdown(tmp_path):
+    """WHERE on uint32 (TZERO=2**31) columns must compare physical values."""
+    import torchfits.table as table
+
+    path = str(tmp_path / "uint32.fits")
+    _write_unsigned_fits(
+        path,
+        np.array([0, 1, 3000000000, 4000000000, 4294967295], dtype=np.uint32),
+        "J",
+        2147483648,
+    )
+
+    cases = {
+        "U > 3000000000": [4000000000, 4294967295],
+        "U == 4294967295": [4294967295],
+        "U < 2": [0, 1],
+        "U >= 4000000000": [4000000000, 4294967295],
+    }
+    for pred, want in cases.items():
+        pushdown = sorted(
+            table.read(path, hdu=1, where=pred, mmap=True)["U"].to_pylist()
+        )
+        fallback = sorted(
+            table.read(path, hdu=1, where=pred, mmap=False)["U"].to_pylist()
+        )
+        assert pushdown == want, pred
+        assert fallback == want, pred
+
+
+def test_filter_literal_out_of_range_int16(tmp_path):
+    """WHERE literals wider than the column storage must not be truncated.
+
+    Regression: the C++ pushdown cast the literal to the column's storage type
+    (``(int16_t)40000`` == ``-25536``), turning ``S > 40000`` into ``S > -25536``
+    and returning nearly every row. The literal must be compared at full width.
+    """
+    import torchfits.table as table
+
+    path = str(tmp_path / "int16.fits")
+    sv = np.array([-30000, -100, 0, 100, 30000], dtype=np.int16)
+    c = fits.Column(name="S", format="I", array=sv)
+    fits.BinTableHDU.from_columns([c]).writeto(path)
+
+    cases = {
+        "S > 40000": [],
+        "S < -40000": [],
+        "S > -40000": [-30000, -100, 0, 100, 30000],
+        "S == 40000": [],
+        "S != 40000": [-30000, -100, 0, 100, 30000],
+    }
+    for pred, want in cases.items():
+        pushdown = sorted(
+            table.read(path, hdu=1, where=pred, mmap=True)["S"].to_pylist()
+        )
+        fallback = sorted(
+            table.read(path, hdu=1, where=pred, mmap=False)["S"].to_pylist()
+        )
+        assert pushdown == want, pred
+        assert fallback == want, pred

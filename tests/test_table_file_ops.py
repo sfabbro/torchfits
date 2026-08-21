@@ -585,3 +585,94 @@ def test_table_write_noncontiguous_numeric_roundtrip():
         np.testing.assert_array_equal(got, col)
     finally:
         os.unlink(path.name)
+
+
+def _write_bit_table(path: str) -> None:
+    from astropy.io import fits
+
+    flags = np.array(
+        [
+            [1, 0, 1, 0, 1, 0, 1, 0],
+            [0, 1, 0, 1, 0, 1, 0, 1],
+            [1, 1, 0, 0, 1, 1, 0, 0],
+        ],
+        dtype=np.uint8,
+    )
+    ids = np.array([1, 2, 3], dtype=np.int32)
+    c1 = fits.Column(name="FLAGS", format="8X", array=flags)
+    c2 = fits.Column(name="ID", format="J", array=ids)
+    fits.BinTableHDU.from_columns([c1, c2]).writeto(path)
+
+
+def test_append_rows_bit_column_not_corrupted():
+    """Appending to a BIT (X) column must pack bits, not overflow rows.
+
+    Regression: ``append_rows`` had no TBIT branch, so an 8X column fell
+    through to the generic ndarray path and wrote ``num_rows * repeat`` bytes
+    as TBYTE — silently appending 8 rows (3 -> 11) and leaving the new ID
+    rows as zeros.
+    """
+    path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
+    path.close()
+    try:
+        _write_bit_table(path.name)
+
+        torchfits.table.append_rows(
+            path.name,
+            {
+                "FLAGS": np.array([[1, 0, 0, 0, 0, 0, 0, 1]], dtype=np.uint8),
+                "ID": np.array([4], dtype=np.int32),
+            },
+            hdu=1,
+        )
+
+        with torchfits.open(path.name) as hdul:
+            table_hdu = hdul[1]
+            assert table_hdu.num_rows == 4
+            assert table_hdu["ID"].tolist() == [1, 2, 3, 4]
+            got = table_hdu["FLAGS"].numpy()
+            assert got.shape == (4, 8)
+            assert got[-1].tolist() == [
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+            ]
+    finally:
+        os.unlink(path.name)
+
+
+@pytest.mark.parametrize("mmap", [False, True])
+def test_update_rows_bit_column_writes_bits(mmap):
+    """update_rows must write BIT (X) columns as per-bit logicals.
+
+    Regression: the non-mmap writer passed pre-packed bytes to CFITSIO's
+    ``fits_write_col(TBIT, ...)``, which expects one logical per bit, so the
+    payload bits were silently dropped.
+    """
+    path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
+    path.close()
+    try:
+        _write_bit_table(path.name)
+
+        torchfits.table.update_rows(
+            path.name,
+            {
+                "FLAGS": np.array([[1, 1, 1, 1, 1, 1, 1, 1]], dtype=np.uint8),
+                "ID": np.array([99], dtype=np.int32),
+            },
+            slice(0, 1),
+            hdu=1,
+            mmap=mmap,
+        )
+
+        with torchfits.open(path.name) as hdul:
+            table_hdu = hdul[1]
+            assert table_hdu["ID"].tolist() == [99, 2, 3]
+            assert table_hdu["FLAGS"].numpy()[0].tolist() == [True] * 8
+    finally:
+        os.unlink(path.name)

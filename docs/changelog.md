@@ -5,6 +5,36 @@ All notable changes to torchfits are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-08-21
+
+Patch release: correctness fixes for table row mutation and `where=` filtering.
+
+### Fixed
+
+- `table.append_rows` on BIT (`X`) columns: the missing `TBIT` branch let a bit
+  payload fall through to the generic ndarray path, which wrote
+  `num_rows * repeat` bytes as `TBYTE` — silently appending extra rows and
+  leaving the new rows' other columns zeroed. BIT payloads now pack per bit.
+- `table.update_rows` / `table.insert_rows` (buffered path) on BIT columns:
+  the writer passed pre-packed bytes to CFITSIO's `fits_write_col(TBIT, ...)`,
+  which expects one logical value per bit, so payload bits were silently
+  dropped. Now writes a per-bit logical buffer.
+- `where=` C++ pushdown on unsigned columns (`uint16` `TZERO=32768`, `uint32`
+  `TZERO=2**31`): the raw signed storage bytes were compared without applying
+  the `TZERO` offset, so predicates like `U > 40000` returned wrong rows. The
+  offset is now applied before comparison.
+- `where=` literals wider than the column storage type: the C++ pushdown cast
+  the literal to the storage type (e.g. `(int16_t)40000` == `-25536`), turning
+  `S > 40000` into `S > -25536`. Integer predicates now compare in `int64`, and
+  out-of-range `==` / `!=` are evaluated exactly.
+- Torch-fallback `where=` masks on out-of-range integer literals now promote
+  the column to `int64` instead of wrapping the literal to the tensor dtype,
+  matching the C++ pushdown.
+- Buffered table reads no longer double-close the cached pread file descriptor
+  on a failed read.
+- mmap table row updates now read non-contiguous / negative-stride source
+  arrays via DLPack strides instead of assuming C-contiguity.
+
 ## [1.0.0] — 2026-08-09
 
 Version cut on the 2.13 torch ABI lane: buffered table reads through a

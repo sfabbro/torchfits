@@ -83,6 +83,28 @@ def _compile_where_to_simple_predicates(
 
 
 def _torch_cmp_mask(tensor: torch.Tensor, op: str, literal: Any) -> torch.Tensor:
+    # PyTorch wraps an out-of-range Python int scalar to the tensor's dtype
+    # (e.g. comparing an int16 column against 40000 becomes `> -25536`), which
+    # silently flips the predicate. Promote the tensor to int64 so the literal
+    # is compared at full width instead (matching the C++ pushdown, which now
+    # also compares integers in int64).
+    if (
+        isinstance(literal, int)
+        and not isinstance(literal, bool)
+        and tensor.dtype
+        in (
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.uint8,
+            torch.uint16,
+            torch.uint32,
+        )
+    ):
+        info = torch.iinfo(tensor.dtype)
+        if not (info.min <= literal <= info.max):
+            tensor = tensor.to(torch.int64)
+
     if op == "==":
         return torch.eq(tensor, literal)
     if op == "!=":

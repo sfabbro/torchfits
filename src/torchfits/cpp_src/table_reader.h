@@ -1135,6 +1135,15 @@ public:
             bool is_long = false;
             bool is_short = false;
             bool is_byte = false;
+            // Effective integer comparison target: the raw literal, offset by
+            // TZERO for the uint16/uint32 FITS convention. Comparing against
+            // this (in int64) yields the same predicate as the decoded-physical
+            // value comparison without truncating the literal to the column's
+            // storage width.
+            int64_t target_i = 0;
+            // True when target_i is representable in the column's integer
+            // storage width; EQ/NE raw-byte compare is exact only then.
+            bool target_fits_storage = true;
         };
 
         std::vector<FilterContext> ctxs;
@@ -1171,6 +1180,25 @@ public:
                             "Filtering on column type is not supported: " + c.name);
                     }
 
+                    // Apply the uint16/uint32 FITS TZERO convention to the
+                    // literal so the raw signed storage bytes compare against
+                    // the physical value (see the scan below). EQ/NE raw-byte
+                    // compare is exact only when the effective target fits the
+                    // column's integer storage width; ordering comparisons are
+                    // promoted to int64 and never truncate.
+                    ctx.target_i = f.val_i;
+                    if (c.is_unsigned_int) {
+                        ctx.target_i -= c.unsigned_offset;
+                    }
+                    if (ctx.is_short) {
+                        ctx.target_fits_storage =
+                            ctx.target_i >= -32768 && ctx.target_i <= 32767;
+                    } else if (ctx.is_int) {
+                        ctx.target_fits_storage =
+                            ctx.target_i >= -2147483648LL &&
+                            ctx.target_i <= 2147483647LL;
+                    }
+
                     ctx.col_idx = ci;
                     ctxs.push_back(ctx);
                     found = true;
@@ -1197,9 +1225,12 @@ public:
             const FilterOp op = ctx.filter->op;
 
             // Pre-byte-swap the target so we can compare raw FITS bytes directly,
-            // eliminating per-row bswap instructions for EQ/NE/GE/LE on integers.
+            // eliminating per-row bswap instructions for EQ/NE on integers.
+            // Uses the offset-adjusted target (ctx.target_i), which for unsigned
+            // columns is the physical literal minus TZERO — the value the raw
+            // signed storage bytes actually encode.
             auto pre_swapped_target_int = [&ctx]() -> int64_t {
-                int64_t t = ctx.filter->val_i;
+                int64_t t = ctx.target_i;
                 // The raw FITS bytes are big-endian; pre-swap the target to match.
                 // For 2-byte values, we need the 16-bit-swapped value in the low 16 bits.
                 if (ctx.is_short) {
@@ -1221,25 +1252,39 @@ public:
             // Scan body shared between sequential and parallel dispatch.
             auto scan_chunk = [&](long start, long end, std::vector<long>& out) {
                 if (ctx.is_int) {
-                    const int32_t target = (int32_t)ctx.filter->val_i;
-                    const int32_t pre_swapped = (int32_t)pre_swapped_target_int;
-                    if (op == FilterOp::EQ) {
-                        for (long i = start; i < end; i++) {
-                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
-                            uint32_t raw; std::memcpy(&raw, val_ptr, 4);
-                            if (raw == (uint32_t)pre_swapped) out.push_back(i);
-                        }
-                    } else if (op == FilterOp::NE) {
-                        for (long i = start; i < end; i++) {
-                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
-                            uint32_t raw; std::memcpy(&raw, val_ptr, 4);
-                            if (raw != (uint32_t)pre_swapped) out.push_back(i);
+                    if (op == FilterOp::EQ || op == FilterOp::NE) {
+                        // Raw-byte EQ/NE is exact only when the literal fits
+                        // int32 storage; an out-of-range literal can never equal
+                        // (EQ) / always differs from (NE) any int32 cell.
+                        if (!ctx.target_fits_storage) {
+                            if (op == FilterOp::NE) {
+                                for (long i = start; i < end; i++) out.push_back(i);
+                            }
+                        } else {
+                            const int32_t pre_swapped = (int32_t)pre_swapped_target_int;
+                            if (op == FilterOp::EQ) {
+                                for (long i = start; i < end; i++) {
+                                    const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                                    uint32_t raw; std::memcpy(&raw, val_ptr, 4);
+                                    if (raw == (uint32_t)pre_swapped) out.push_back(i);
+                                }
+                            } else {
+                                for (long i = start; i < end; i++) {
+                                    const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                                    uint32_t raw; std::memcpy(&raw, val_ptr, 4);
+                                    if (raw != (uint32_t)pre_swapped) out.push_back(i);
+                                }
+                            }
                         }
                     } else {
+                        // Ordering: promote both sides to int64 so an out-of-range
+                        // literal and unsigned offsets compare exactly (no int32
+                        // truncation of the filter literal).
+                        const int64_t target = ctx.target_i;
                         for (long i = start; i < end; i++) {
-                            uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
                             uint32_t tmp; std::memcpy(&tmp, val_ptr, 4);
-                            int32_t val = (int32_t)bswap_32(tmp);
+                            const int64_t val = (int64_t)(int32_t)bswap_32(tmp);
                             bool match = false;
                             switch (op) {
                                 case FilterOp::GT: match = (val > target); break;
@@ -1252,25 +1297,35 @@ public:
                         }
                     }
                 } else if (ctx.is_short) {
-                    const int16_t target = (int16_t)ctx.filter->val_i;
-                    const int16_t pre_swapped = (int16_t)pre_swapped_target_int;
-                    if (op == FilterOp::EQ) {
-                        for (long i = start; i < end; i++) {
-                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
-                            uint16_t raw; std::memcpy(&raw, val_ptr, 2);
-                            if (raw == (uint16_t)pre_swapped) out.push_back(i);
-                        }
-                    } else if (op == FilterOp::NE) {
-                        for (long i = start; i < end; i++) {
-                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
-                            uint16_t raw; std::memcpy(&raw, val_ptr, 2);
-                            if (raw != (uint16_t)pre_swapped) out.push_back(i);
+                    if (op == FilterOp::EQ || op == FilterOp::NE) {
+                        // See the is_int branch: out-of-range literals make EQ
+                        // vacuously false and NE vacuously true.
+                        if (!ctx.target_fits_storage) {
+                            if (op == FilterOp::NE) {
+                                for (long i = start; i < end; i++) out.push_back(i);
+                            }
+                        } else {
+                            const int16_t pre_swapped = (int16_t)pre_swapped_target_int;
+                            if (op == FilterOp::EQ) {
+                                for (long i = start; i < end; i++) {
+                                    const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                                    uint16_t raw; std::memcpy(&raw, val_ptr, 2);
+                                    if (raw == (uint16_t)pre_swapped) out.push_back(i);
+                                }
+                            } else {
+                                for (long i = start; i < end; i++) {
+                                    const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                                    uint16_t raw; std::memcpy(&raw, val_ptr, 2);
+                                    if (raw != (uint16_t)pre_swapped) out.push_back(i);
+                                }
+                            }
                         }
                     } else {
+                        const int64_t target = ctx.target_i;
                         for (long i = start; i < end; i++) {
-                            uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
                             uint16_t tmp; std::memcpy(&tmp, val_ptr, 2);
-                            int16_t val = (int16_t)bswap_16(tmp);
+                            const int64_t val = (int64_t)(int16_t)bswap_16(tmp);
                             bool match = false;
                             switch (op) {
                                 case FilterOp::GT: match = (val > target); break;
@@ -1283,7 +1338,8 @@ public:
                         }
                     }
                 } else if (ctx.is_long) {
-                    const int64_t target = ctx.filter->val_i;
+                    // int64 storage always fits the literal (val_i is int64); the
+                    // uint16/uint32 TZERO convention never applies to LONG.
                     const int64_t pre_swapped = pre_swapped_target_int;
                     if (op == FilterOp::EQ) {
                         for (long i = start; i < end; i++) {
@@ -1298,10 +1354,11 @@ public:
                             if (raw != (uint64_t)pre_swapped) out.push_back(i);
                         }
                     } else {
+                        const int64_t target = ctx.target_i;
                         for (long i = start; i < end; i++) {
-                            uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
+                            const uint8_t* val_ptr = data_ptr + i * row_width_bytes_ + offset;
                             uint64_t tmp; std::memcpy(&tmp, val_ptr, 8);
-                            int64_t val = (int64_t)bswap_64(tmp);
+                            const int64_t val = (int64_t)bswap_64(tmp);
                             bool match = false;
                             switch (op) {
                                 case FilterOp::GT: match = (val > target); break;
@@ -1357,7 +1414,7 @@ public:
                         bool match = false;
                         if (ctx.is_byte) {
                             uint8_t val = *val_ptr;
-                            int64_t target = ctx.filter->val_i;
+                            int64_t target = ctx.target_i;
                             switch (op) {
                                 case FilterOp::EQ: match = (val == target); break;
                                 case FilterOp::NE: match = (val != target); break;
@@ -1412,7 +1469,7 @@ public:
                     } else if (ctx.is_long) {
                        uint64_t tmp; memcpy(&tmp, val_ptr, 8);
                        int64_t val = (int64_t)bswap_64(tmp);
-                       int64_t target = ctx.filter->val_i;
+                       int64_t target = ctx.target_i;
                        switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
                            case FilterOp::NE: match = (val != target); break;
@@ -1424,7 +1481,7 @@ public:
                     } else if (ctx.is_int) {
                        uint32_t tmp; memcpy(&tmp, val_ptr, 4);
                        int32_t val = (int32_t)bswap_32(tmp);
-                       int64_t target = ctx.filter->val_i;
+                       int64_t target = ctx.target_i;
                        switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
                            case FilterOp::NE: match = (val != target); break;
@@ -1436,7 +1493,7 @@ public:
                     } else if (ctx.is_short) {
                        uint16_t tmp; memcpy(&tmp, val_ptr, 2);
                        int16_t val = (int16_t)bswap_16(tmp);
-                       int64_t target = ctx.filter->val_i;
+                       int64_t target = ctx.target_i;
                        switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
                            case FilterOp::NE: match = (val != target); break;
@@ -1447,7 +1504,7 @@ public:
                        }
                     } else if (ctx.is_byte) {
                        uint8_t val = *val_ptr;
-                       int64_t target = ctx.filter->val_i;
+                       int64_t target = ctx.target_i;
                        switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
                            case FilterOp::NE: match = (val != target); break;
@@ -1785,7 +1842,13 @@ public:
                 uint8_t* dest_row = base_ptr + row_start_offset + i * row_width_bytes_ + col->byte_offset;
                 for (long j = 0; j < repeat; j++) {
                     uint8_t* dest = dest_row + j * col->width;
-                    long idx = i * repeat + j;
+                    // Element offset honoring DLPack strides (nanobind reports
+                    // strides in elements), so non-contiguous / negative-stride
+                    // views write the same values as the buffered
+                    // (fits_write_col) path instead of reading out of order.
+                    long idx = (ndim == 2)
+                        ? i * tensor.stride(0) + j * tensor.stride(1)
+                        : i * tensor.stride(0) + j;
 
                     switch (col->type) {
                         case FITSColumnType::BYTE: {
@@ -2306,7 +2369,12 @@ public:
                         file_off + static_cast<off_t>(got));
                     if (n <= 0) {
                         if (data_fd >= 0) {
+                            // data_fd aliases data_fd_cached_; close it once and
+                            // reset the member so the destructor does not
+                            // double-close the same descriptor.
                             ::close(data_fd);
+                            data_fd = -1;
+                            data_fd_cached_ = -1;
                         }
                         throw std::runtime_error("Failed to pread table bytes");
                     }
@@ -2320,8 +2388,11 @@ public:
 
             if (status != 0) {
                  if (data_fd >= 0) {
+                     // data_fd aliases data_fd_cached_; reset the member so the
+                     // destructor does not double-close the same descriptor.
                      ::close(data_fd);
                      data_fd = -1;
+                     data_fd_cached_ = -1;
                  }
                  char err_msg[81];
                  fits_get_errstatus(status, err_msg);

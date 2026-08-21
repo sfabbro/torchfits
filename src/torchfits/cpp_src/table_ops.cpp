@@ -324,6 +324,89 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
             continue;
         }
 
+        if (typecode == TBIT) {
+            // BIT columns: fits_write_col(TBIT, ...) routes to CFITSIO's
+            // ffpclx, which expects ONE logical (0/1) value PER BIT — not
+            // pre-packed bytes. Build a per-bit buffer of length
+            // num_rows * repeat and pass that many bits as nelem. Without this
+            // branch a BIT payload falls through to the generic ndarray path,
+            // maps uint8 -> TBYTE and writes num_rows * repeat bytes, overflowing
+            // into the following rows.
+            nb::ndarray<> t = nb::cast<nb::ndarray<>>(item.second);
+            int ndim_t = t.ndim();
+            long rows_t = 1;
+            long user_repeat = 1;
+            if (ndim_t == 0) {
+                rows_t = 1;
+                user_repeat = 1;
+            } else if (ndim_t == 1) {
+                rows_t = static_cast<long>(t.shape(0));
+                user_repeat = 1;
+            } else if (ndim_t == 2) {
+                rows_t = static_cast<long>(t.shape(0));
+                user_repeat = static_cast<long>(t.shape(1));
+            } else {
+                rollback_inserted_rows(fptr, start_row, num_rows);
+                throw std::runtime_error(
+                    "append_rows BIT only supports 1D/2D columns for " + col_name
+                );
+            }
+            if (rows_t != num_rows) {
+                rollback_inserted_rows(fptr, start_row, num_rows);
+                throw std::runtime_error(
+                    "append_rows column length mismatch for " + col_name
+                );
+            }
+            if (user_repeat <= 0 || user_repeat > repeat) {
+                rollback_inserted_rows(fptr, start_row, num_rows);
+                throw std::runtime_error(
+                    "append_rows BIT repeat must be 1.." + std::to_string(repeat) +
+                    " for " + col_name
+                );
+            }
+
+            std::vector<unsigned char> bits(
+                static_cast<size_t>(num_rows * repeat), 0
+            );
+
+            nb::dlpack::dtype dt_b = t.dtype();
+            const bool* src_bool_b = static_cast<const bool*>(t.data());
+            const uint8_t* src_u8_b = static_cast<const uint8_t*>(t.data());
+
+            for (long i = 0; i < num_rows; ++i) {
+                for (long j = 0; j < user_repeat; ++j) {
+                    bool val = false;
+                    long byte_off = (ndim_t == 2)
+                        ? i * t.stride(0) + j * t.stride(1)
+                        : i * t.stride(0) + j;
+                    if (
+                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::Bool &&
+                        dt_b.bits == 8
+                    ) {
+                        val = src_bool_b[byte_off];
+                    } else if (
+                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::UInt &&
+                        dt_b.bits == 8
+                    ) {
+                        val = src_u8_b[byte_off] != 0;
+                    } else {
+                        rollback_inserted_rows(fptr, start_row, num_rows);
+                        throw std::runtime_error(
+                            "append_rows BIT dtype must be bool or uint8 for " +
+                            col_name
+                        );
+                    }
+                    bits[static_cast<size_t>(i * repeat + j)] = val ? 1 : 0;
+                }
+            }
+
+            fits_write_col(
+                fptr, TBIT, colnum, start_row, 1,
+                num_rows * repeat, bits.data(), &status
+            );
+            continue;
+        }
+
         nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
         int ndim = tensor.ndim();
         long rows = 1;
@@ -710,11 +793,10 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
         }
 
         if (typecode == TBIT) {
-            // BIT columns: pack booleans MSB-first into (ceil(repeat/8))
-            // bytes per row and write via fits_write_col(FT, TBIT, ...).
-            // CFITSIO's TBIT descriptor expects bytes containing 8 packed
-            // bits each, mirroring the mmap-path's per-byte packing so the
-            // two writers stay byte-equivalent.
+            // BIT columns: fits_write_col(TBIT, ...) routes to CFITSIO's
+            // ffpclx, which expects ONE logical (0/1) value PER BIT — not
+            // pre-packed bytes. Build a per-bit buffer of length
+            // num_rows * repeat and pass that many bits as nelem.
             nb::ndarray<> t = nb::cast<nb::ndarray<>>(item.second);
             int ndim_t = t.ndim();
             long rows_t = 1;
@@ -745,9 +827,8 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                 );
             }
 
-            long packed_bytes_per_row = (repeat + 7) / 8;
-            std::vector<unsigned char> packed(
-                static_cast<size_t>(num_rows * packed_bytes_per_row), 0
+            std::vector<unsigned char> bits(
+                static_cast<size_t>(num_rows * repeat), 0
             );
 
             nb::dlpack::dtype dt_b = t.dtype();
@@ -776,17 +857,13 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                             col_name
                         );
                     }
-                    if (val) {
-                        packed[
-                            static_cast<size_t>(i * packed_bytes_per_row + j / 8)
-                        ] |= static_cast<unsigned char>(1U << (7 - (j % 8)));
-                    }
+                    bits[static_cast<size_t>(i * repeat + j)] = val ? 1 : 0;
                 }
             }
 
             fits_write_col(
                 fptr, TBIT, colnum, start_row, 1,
-                num_rows * packed_bytes_per_row, packed.data(), &status
+                num_rows * repeat, bits.data(), &status
             );
             continue;
         }
