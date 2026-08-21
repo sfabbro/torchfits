@@ -357,6 +357,36 @@ class TestTablePerformance:
         finally:
             os.unlink(filepath)
 
+    def test_tzero_floating_point_imprecision(self):
+        """Test that TZERO with floating point imprecision correctly maps to unsigned int."""
+        import tempfile
+        import numpy as np
+        import torch
+        import astropy.io.fits as fits
+
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as f:
+            col1 = fits.Column(
+                name="A", format="I", array=np.array([1, 2, 3], dtype=np.int16)
+            )
+            col2 = fits.Column(
+                name="B", format="J", array=np.array([1, 2, 3], dtype=np.int32)
+            )
+            hdu = fits.BinTableHDU.from_columns([col1, col2])
+
+            # Override the header directly to force imprecise TZERO
+            hdu.header["TZERO1"] = 32768.00000000001
+            hdu.header["TZERO2"] = 2147483648.0000001
+
+            hdu.writeto(f.name, overwrite=True)
+
+            data = torchfits.table.read_torch(f.name)
+            assert data["A"].dtype == torch.uint16, (
+                f"Expected uint16, got {data['A'].dtype}"
+            )
+            assert data["B"].dtype == torch.uint32, (
+                f"Expected uint32, got {data['B'].dtype}"
+            )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
