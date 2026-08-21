@@ -37,7 +37,7 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 
 - R7-HDU1 — ~~`TensorHDU.to_tensor()` closed-handle guard~~ — fixed
 - ~~R7-HDU2 — `TableDataAccessor` squeeze on `(N,1)` (intentional FITS scalar shape)~~ — fixed
-- R7-CPP1 — floating-point equality for unsigned TZERO (malformed files only)
+- ~~R7-CPP1 — floating-point equality for unsigned TZERO (malformed files only)~~ — #235
 - R7-CPP2 — thread-local HDU cache stale after shared-meta invalidation
 - R7-CPP3 — `cache.cpp:clear()` retain borrowed handles (ponytail)
 - R7-MUT4 — `_normalize_mutation_rows` preprocesses all columns

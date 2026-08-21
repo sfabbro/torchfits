@@ -36,11 +36,21 @@ def test_build_table_schema_dict():
 
 def test_unsigned_columns_from_header():
     header = {
-        "TFIELDS": 1,
+        "TFIELDS": 3,
         "TTYPE1": "PIX",
         "TFORM1": "1J",
         "TSCAL1": 1.0,
         "TZERO1": 2147483648.0,
+        "TTYPE2": "IMPRECISE_J",
+        "TFORM2": "1J",
+        "TSCAL2": 1.0000000001,
+        "TZERO2": 2147483648.0000001,
+        "TTYPE3": "IMPRECISE_I",
+        "TFORM3": "1I",
+        "TSCAL3": 1.0,
+        "TZERO3": 32768.0000000001,
     }
     dtypes = fits_schema.unsigned_column_dtypes_from_header(header)
     assert dtypes["PIX"] == torch.uint32
+    assert dtypes["IMPRECISE_J"] == torch.uint32
+    assert dtypes["IMPRECISE_I"] == torch.uint16

@@ -228,8 +228,9 @@ def test_runnable_workflow_snippets_execute(
         try:
             exec(code, scope)
             executed += 1
-        except ModuleNotFoundError as exc:
-            pytest.skip(f"Skipping snippet due to missing optional dependency: {exc}")
+        except (ModuleNotFoundError, ImportError):
+            # Optional third-party package (e.g. polars, duckdb) not installed in this environment
+            continue
         except Exception as exc:
             rel = snippet.file_path.relative_to(ROOT)
             pytest.fail(

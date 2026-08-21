@@ -14,5 +14,6 @@ Themes already covered by Jules (or integrated Jules PRs). Weekly Jules must
 | Lupton RGB Astropy-parity peak clip | main `91b30b0` | landed |
 | Deep review 1.0 triage (alias/spectral hard-remove, bench honesty) | main (pre-1.0 triage) | landed — do not reopen without new repro |
 | optimize Header.remove for huge HISTORY lists | #225 | landed |
+| fix floating-point equality for unsigned TZERO values | #235 | landed |
 
 When integrating a Jules PR, append a row here before closing the PR.

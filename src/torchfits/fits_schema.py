@@ -14,11 +14,6 @@ _TFORM_VLA_RE = re.compile(r"^\s*(\d+)?\s*([PQ])\s*([A-Za-z])")
 # ASCII-table string fields use the code-first "Aw" form (e.g. TFORM='A6').
 _TFORM_AW_RE = re.compile(r"^[A-Za-z]\s*(\d+)")
 
-_UNSIGNED_TZERO_TARGETS: dict[tuple[str, float], torch.dtype] = {
-    ("I", 32768.0): torch.uint16,
-    ("J", 2147483648.0): torch.uint32,
-}
-
 
 @dataclass(frozen=True)
 class TformInfo:
@@ -265,15 +260,15 @@ def unsigned_column_dtypes_from_header(
         code = col.tform_info.code
         if code is None:
             continue
-        if col.tscal != 1.0:
+        tscal = col.tscal if col.tscal is not None else 1.0
+        if abs(tscal - 1.0) > 1e-5:
             continue
-        target = (
-            _UNSIGNED_TZERO_TARGETS.get((code, col.tzero))
-            if col.tzero is not None
-            else None
-        )
-        if target is not None:
-            out[col.name] = target
+        if col.tzero is None:
+            continue
+        if code == "I" and abs(col.tzero - 32768.0) < 1e-5:
+            out[col.name] = torch.uint16
+        elif code == "J" and abs(col.tzero - 2147483648.0) < 1e-5:
+            out[col.name] = torch.uint32
     return out
 
 
