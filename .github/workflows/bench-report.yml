@@ -66,4 +66,4 @@ jobs:
           git commit -m "chore: benchmark report ${RUN_ID}"
           git push -u origin "$BRANCH"
           gh pr create --title "chore: benchmark report ${RUN_ID}" \
-            --body "Automated bench-all run. Artifacts: benchmarks_results/${RUN_ID}/"
+            --body "Automated bench-all run. Artifacts: benchmarks_results/${RUN_ID}/" || echo "PR creation skipped or not permitted by repository settings"
