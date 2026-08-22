@@ -2379,9 +2379,13 @@ public:
         // while chunk N de-interleaves/swaps, overlapping the buffered path's
         // two full-duplex passes. Skipped for tiny tables where thread
         // handoff costs more than the copy.
+        // Overlap only pays when a single chunk's pread is large enough that
+        // hiding it beats two thread handoffs (~0.1 ms): measured regression
+        // on 13 MB tables with warm page cache, gain on multi-hundred-MB
+        // payloads / cold storage.
         const bool prefetch =
             data_fd >= 0 && num_rows > 1 &&
-            static_cast<size_t>(num_rows) * row_width_bytes_ >= (4u << 20);
+            static_cast<size_t>(num_rows) * row_width_bytes_ >= (64u << 20);
         std::vector<uint8_t> second_buffer;
         if (prefetch) {
             second_buffer.resize(
