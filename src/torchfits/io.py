@@ -264,16 +264,20 @@ def write(
     overwrite: bool = False,
     compress: bool | str = False,
     quantize: Any = None,
+    checksum: bool = False,
 ) -> None:
     """Write a tensor or numpy array to a FITS file (primary or image extension).
 
-    ``quantize=\"robust\"`` (or a ``lo_q``/``hi_q`` dict) packs float images to
+    ``quantize="robust"`` (or a ``lo_q``/``hi_q`` dict) packs float images to
     ``BITPIX=16`` with robust ``BSCALE``/``BZERO``. Default keeps native float.
 
-    ``compress`` accepts an algorithm string (``\"RICE_1\"``, ``\"GZIP_1\"``,
-    ``\"HCOMPRESS_1\"``). GZIP_1 and integer RICE_1 writes are lossless; float
+    ``compress`` accepts an algorithm string (``"RICE_1"``, ``"GZIP_1"``,
+    ``"HCOMPRESS_1"``). GZIP_1 and integer RICE_1 writes are lossless; float
     RICE_1 and HCOMPRESS_1 use CFITSIO's default quantization (lossy, the same
     behavior as astropy and fitsio defaults).
+
+    ``checksum=True`` writes CFITSIO DATASUM/CHECKSUM keywords for every HDU
+    after the payload lands; verify later with :func:`verify_checksums`.
     """
     return _write_impl(
         path,
@@ -282,6 +286,7 @@ def write(
         overwrite=overwrite,
         compress=compress,
         quantize=quantize,
+        checksum=checksum,
     )
 
 

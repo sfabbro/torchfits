@@ -13,6 +13,7 @@ from torch import Tensor
 
 from ..hdu import HDUList, Header, TensorHDU
 from .paths import guard_fits_path
+from .checksum_api import write_checksums as _write_checksums_impl
 from ._hdu_rewrite import (
     _write_hdus_uncompressed,
     _write_hdus_with_optional_compression,
@@ -88,6 +89,15 @@ __all__ = [
 ]
 
 
+def _write_all_checksums(path: str) -> None:
+    """Write DATASUM/CHECKSUM for every HDU of a freshly written file."""
+    import torchfits._C as cpp
+
+    n_hdus = int(cpp.read_num_hdus(str(path)))
+    for hdu in range(n_hdus):
+        _write_checksums_impl(str(path), hdu=hdu)
+
+
 def write(
     path: str | os.PathLike[str],
     data: Any,
@@ -95,6 +105,7 @@ def write(
     overwrite: bool = False,
     compress: Union[bool, str] = False,
     quantize: Any = None,
+    checksum: bool = False,
 ) -> None:
     """Write data to FITS file.
 
@@ -106,9 +117,12 @@ def write(
         compress: Whether to use tile compression (Rice algorithm)
         quantize: Opt-in robust int16 packing for float images or table
             columns. ``None`` (default) keeps native float storage.
-            For images: ``\"robust\"`` or ``{\"lo_q\", \"hi_q\", \"keep_zero\"}``.
-            For dict tables: ``\"robust\"`` (all float columns) or
-            ``{\"col\": \"robust\" | opts}``.
+            For images: ``"robust"`` or ``{"lo_q", "hi_q", "keep_zero"}``.
+            For dict tables: ``"robust"`` (all float columns) or
+            ``{"col": "robust" | opts}``.
+        checksum: When True, compute and write CFITSIO DATASUM/CHECKSUM
+            keywords for every HDU after the payload lands (archive-ingest
+            friendly). Verify later with :func:`torchfits.verify_checksums`.
 
     Image tensors on non-CPU devices are detached and copied to CPU before
     the CFITSIO writer runs (in-memory input tensors are not modified).
@@ -141,6 +155,7 @@ def write(
                 overwrite=False,
                 compress=compress,
                 quantize=quantize,
+                checksum=checksum,
             )
             os.chmod(temp_path, original_mode)
             os.replace(temp_path, target)
@@ -218,11 +233,15 @@ def write(
                     invalidate=False,
                 )
                 out_hdu += 1
+            if checksum:
+                _write_all_checksums(path)
             _invalidate_path_caches(path)
             return
 
         if isinstance(data, HDUList):
             _write_hdus_uncompressed(path, list(getattr(data, "_hdus", [])), overwrite)
+            if checksum:
+                _write_all_checksums(path)
             return
 
         if isinstance(data, dict) and "data" not in data:
@@ -244,6 +263,8 @@ def write(
                     "binary",
                 )
                 _write_header_cards_if_supported(path, 1, header_obj)
+                if checksum:
+                    _write_all_checksums(path)
                 return
             raise ValueError(
                 "Dictionary table writes currently require CFITSIO-native column types "
@@ -311,6 +332,8 @@ def write(
         for idx, item in enumerate(hdus_to_write):
             item_header = item.get("header") if isinstance(item, dict) else None
             _write_header_cards_if_supported(path, idx, item_header, invalidate=False)
+        if checksum:
+            _write_all_checksums(path)
         _invalidate_path_caches(path)
 
     except ValueError as e:
