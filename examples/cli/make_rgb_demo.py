@@ -45,7 +45,7 @@ def main() -> int:
     print(
         "CLI equivalent:\n"
         f"  torchfits convert {r_path} {g_path} {b_path} {png} "
-        "--to png --q 6 --stretch 0.4"
+        "--to png --recipe lupton --q 6 --stretch 0.4"
     )
     return 0
 

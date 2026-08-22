@@ -42,11 +42,16 @@ Patch release: correctness fixes for table row mutation and `where=` filtering.
 Feature + correctness release on the same 2.13 torch ABI lane. New
 capabilities: checksum-stamped writes, GIL-free hot reads, clean
 truncated-file errors, high-fidelity Astropy interop, memory-bounded
-streaming filters, and multiprocess-safe remote downloads — plus a round
-of silent-corruption and security fixes.
+streaming filters, multiprocess-safe remote downloads, and auto-adaptive
+FITS RGB — plus a round of silent-corruption and security fixes.
 
 ### Features
 
+- **`transforms.rgb(*bands)`** auto-adaptive RGB from 1–7 aligned filters
+  (shortest wavelength first): scarlet-style mix, per-band sky-median
+  subtract + MAD equalize unless `calibrated=True` / `zeropoints=`,
+  fitspng-style MAD stretch, coupled asinh, saturation, and sRGB.
+  `lupton_rgb` stays the Astropy-parity 3-band mapping (reddest first).
 - **`write(..., checksum=True)`** stamps CFITSIO `DATASUM`/`CHECKSUM`
   keywords on every HDU at write time (all payload types, compressed
   included); verify later with `torchfits.verify_checksums`.
@@ -75,6 +80,10 @@ of silent-corruption and security fixes.
 
 ### Changed
 
+- **`torchfits convert` PNG default is auto RGB** (`--recipe auto`): 1–7
+  files, blue→red order, `--brightness` / `--saturation` /
+  `--calibrated` / `--zeropoints`. `--recipe lupton` keeps the previous
+  3-band reddest-first `--q` / `--stretch` mapping.
 - **Scalar-column shapes are now rank-1 everywhere**: FITS repeat==1
   columns read as ``(N,)`` through every path — `hdul[n].data[col]`,
   `hdul[n][col]`, `TableHDURef`, `read_torch`, `iter_rows`,

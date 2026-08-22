@@ -366,6 +366,71 @@ def test_convert_png(image_fits, tmp_path):
     assert out.read_bytes()[:4] == b"\x89PNG"
 
 
+def test_convert_png_auto_single_band(image_fits, tmp_path):
+    out = tmp_path / "grey.png"
+    result = _run_cli("convert", str(image_fits), str(out), "--to", "png")
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_convert_png_lupton_recipe(image_fits, tmp_path):
+    out = tmp_path / "lupton.png"
+    result = _run_cli(
+        "convert",
+        str(image_fits),
+        str(out),
+        "--recipe",
+        "lupton",
+        "--bands",
+        "0,0,0",
+        "--q",
+        "8",
+        "--stretch",
+        "0.5",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_convert_png_calibrated_needs_zeropoint(image_fits, tmp_path):
+    out = tmp_path / "rgb.png"
+    result = _run_cli(
+        "convert",
+        str(image_fits),
+        str(out),
+        "--to",
+        "png",
+        "--calibrated",
+    )
+    assert result.returncode == 2, result.stderr
+    assert "MAGZP" in result.stderr or "zeropoint" in result.stderr.lower()
+
+
+def test_convert_png_zeropoints(image_fits, tmp_path):
+    out = tmp_path / "rgb.png"
+    result = _run_cli(
+        "convert",
+        str(image_fits),
+        str(out),
+        "--to",
+        "png",
+        "--zeropoints",
+        "22.5",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_convert_png_header_magzp(tmp_path):
+    path = tmp_path / "z.fits"
+    data = torch.arange(16, dtype=torch.float32).reshape(4, 4)
+    torchfits.write(str(path), data, header={"MAGZP": 22.5}, overwrite=True)
+    out = tmp_path / "rgb.png"
+    result = _run_cli("convert", str(path), str(out), "--to", "png", "--calibrated")
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes()[:4] == b"\x89PNG"
+
+
 def test_lupton_rgb_zero_size_input():
     """lupton_rgb must not crash on a zero-size (e.g. degenerate cutout) band."""
     from torchfits.transforms.rgb import lupton_rgb
@@ -691,10 +756,32 @@ def test_vos_probe_bad_uri_is_io_error_when_vos_present():
 def test_convert_png_invalid_bands_count(image_fits, tmp_path):
     out = tmp_path / "rgb.png"
     result = _run_cli(
-        "convert", str(image_fits), str(out), "--to", "png", "--bands", "0,1"
+        "convert",
+        str(image_fits),
+        str(out),
+        "--to",
+        "png",
+        "--bands",
+        "0,1,2,3,4,5,6,7",
     )
     assert result.returncode == 2, result.stderr
     assert "bands" in result.stderr.lower()
+
+
+def test_convert_png_lupton_two_bands(image_fits, tmp_path):
+    out = tmp_path / "rgb.png"
+    result = _run_cli(
+        "convert",
+        str(image_fits),
+        str(out),
+        "--to",
+        "png",
+        "--recipe",
+        "lupton",
+        "--bands",
+        "0,1",
+    )
+    assert result.returncode == 2, result.stderr
 
 
 def test_convert_png_invalid_bands_non_integer(image_fits, tmp_path):

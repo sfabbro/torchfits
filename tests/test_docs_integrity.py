@@ -326,6 +326,8 @@ def test_docs_examples_reference_existing_scripts() -> None:
         return
     for name in (
         "lupton_rgb_sdss.png",
+        "rgb_sky_collage.png",
+        "rgb_vs_lupton_dwarf.png",
         "megapipe_cutout_collage.png",
         "ml_gz_class_grid.png",
     ):
@@ -548,6 +550,7 @@ def test_documented_api_members_exist() -> None:
             "AsModule",
             "as_module",
             "lupton_rgb",
+            "rgb",
             "safe_arcsinh",
             "safe_log",
             "estimate_background",

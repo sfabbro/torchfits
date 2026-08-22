@@ -1,9 +1,12 @@
-"""Lupton asinh RGB (1.0 surface); richer multi-band RGB → 1.1.
+"""Lupton asinh RGB plus auto-adaptive multi-band ``rgb()``.
 
-Matches Astropy's ``make_lupton_rgb`` / ``RGBImageMappingLupton`` path:
+``lupton_rgb`` matches Astropy's ``make_lupton_rgb`` / ``RGBImageMappingLupton``:
 stretch intensity with ``LuptonAsinhStretch``, colour = band * f(I)/I, then
 per-pixel peak clip when max(R,G,B) > 1. Never divide by the field-wide max
 (that crushed midtones to near-black whenever one star saturated).
+
+``rgb`` is the pretty default: fitspng-style MAD auto-scale, scarlet N-band
+mix, optional per-band MAD equalize, coupled asinh, saturation, sRGB.
 """
 
 from __future__ import annotations
@@ -12,9 +15,11 @@ import binascii
 import math
 import struct
 import zlib
-from typing import Any, Final
+from typing import Any, Final, Sequence
 
 import torch
+
+from .helpers import _quantile, estimate_background
 
 # Astropy softens near-zero Q to this floor so asinh(frac*Q) stays finite.
 # The threshold is float32 machine epsilon (2**-23): Q values below it are
@@ -73,6 +78,283 @@ def lupton_rgb(
         peak = channels.amax(dim=-1, keepdim=True)
         channels = torch.where(peak > 1.0, channels / peak, channels)
     return torch.clamp(channels, 0.0, 1.0)
+
+
+# Scarlet ``channels_to_rgb`` matrices, bands short → long; row 0 = R.
+# https://github.com/pmelchior/scarlet/blob/master/scarlet/display.py
+_SCARLET_MAPS: Final[dict[int, tuple[tuple[float, ...], ...]]] = {
+    1: ((1.0,), (1.0,), (1.0,)),
+    2: (
+        (0.0, 1.0),
+        (0.333 / 0.667, 0.333 / 0.667),
+        (1.0, 0.0),
+    ),
+    3: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+    4: (
+        (0.0, 0.0, 0.333 / 1.333, 1.0 / 1.333),
+        (0.0, 0.667 / 1.333, 0.667 / 1.333, 0.0),
+        (1.0 / 1.333, 0.333 / 1.333, 0.0, 0.0),
+    ),
+    5: (
+        (0.0, 0.0, 0.0, 0.667 / 1.667, 1.0 / 1.667),
+        (0.0, 0.333 / 1.667, 1.0 / 1.667, 0.333 / 1.667, 0.0),
+        (1.0 / 1.667, 0.667 / 1.667, 0.0, 0.0, 0.0),
+    ),
+    6: (
+        (0.0, 0.0, 0.0, 0.333 / 2.0, 0.667 / 2.0, 1.0 / 2.0),
+        (0.0, 0.333 / 2.0, 0.667 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0),
+        (1.0 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0, 0.0, 0.0),
+    ),
+    7: (
+        (0.0, 0.0, 0.0, 0.333 / 2.0, 0.667 / 2.0, 1.0 / 2.0, (2.0 / 3.0) / 2.0),
+        (
+            0.0,
+            0.333 / 2.0,
+            0.667 / 2.0,
+            0.667 / 2.0,
+            0.333 / 2.0,
+            0.0,
+            (2.0 / 3.0) / 2.0,
+        ),
+        (1.0 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0, 0.0, 0.0, (2.0 / 3.0) / 2.0),
+    ),
+}
+
+_RGB_Q: Final = 8.0
+_RGB_BLACK_MAD: Final = 3.0
+_RGB_FILLED_FRAC: Final = 0.22
+_RGB_NMGY_ZP: Final = 22.5
+_MAD_SCALE: Final = 1.4826  # estimate_background returns MAD × this
+
+
+def _work_dtype(device: torch.device) -> torch.dtype:
+    return torch.float32 if device.type == "mps" else torch.float64
+
+
+def _as_band_stack(*bands: Any) -> torch.Tensor:
+    """Return ``(C, H, W)`` float stack, C in 1..7. Shortest-λ first."""
+    if not bands:
+        raise ValueError("rgb() needs at least one band")
+    if len(bands) == 1:
+        tensor = torch.as_tensor(bands[0])
+        if tensor.ndim == 2:
+            stack = tensor.unsqueeze(0)
+        elif tensor.ndim == 3:
+            stack = tensor
+        else:
+            raise ValueError(
+                f"single-argument rgb() expects (H, W) or (C, H, W), got {tuple(tensor.shape)}"
+            )
+    else:
+        tensors = [torch.as_tensor(band) for band in bands]
+        if any(item.ndim != 2 for item in tensors):
+            raise ValueError("each rgb() band must be a 2-D image")
+        shape = tuple(tensors[0].shape)
+        if any(tuple(item.shape) != shape for item in tensors):
+            raise ValueError("rgb() bands must share the same spatial shape")
+        stack = torch.stack(tensors, dim=0)
+    channels = int(stack.shape[0])
+    if not 1 <= channels <= 7:
+        raise ValueError(f"rgb() supports 1–7 bands, got C={channels}")
+    if stack.ndim != 3:
+        raise ValueError(f"rgb() stack must be (C, H, W), got {tuple(stack.shape)}")
+    dtype = _work_dtype(stack.device)
+    return stack.to(dtype=dtype)
+
+
+def _subsample(image: torch.Tensor) -> torch.Tensor:
+    if image.numel() == 0:
+        return image
+    height, width = int(image.shape[-2]), int(image.shape[-1])
+    stride = 10 if min(height, width) >= 32 else 1
+    return image[..., ::stride, ::stride]
+
+
+def _scalar_stats(image: torch.Tensor) -> tuple[float, float, float, float]:
+    """Median, raw MAD, p0.5, p99.5 of a 2-D image (NaNs ignored)."""
+    sample = _subsample(image)
+    if sample.numel() == 0:
+        return 0.0, 0.0, 0.0, 1.0
+    med_t, std_t = estimate_background(sample, dim=(-2, -1))
+    lo_t = _quantile(sample, 0.005, dim=(-2, -1))
+    hi_t = _quantile(sample, 0.995, dim=(-2, -1))
+    med = float(med_t.reshape(()).item())
+    std = float(std_t.reshape(()).item())
+    mad = std / _MAD_SCALE if math.isfinite(std) else 0.0
+    lo = float(lo_t.reshape(()).item())
+    hi = float(hi_t.reshape(()).item())
+    if not math.isfinite(med):
+        med = 0.0
+    if not math.isfinite(mad) or mad < 0.0:
+        mad = 0.0
+    if not math.isfinite(lo):
+        lo = med
+    if not math.isfinite(hi) or hi <= lo:
+        hi = lo + 1.0
+    return med, mad, lo, hi
+
+
+def _equalize_bands(stack: torch.Tensor) -> torch.Tensor:
+    """Sky-subtract and divide by MAD so ADU scale / pedestal do not paint colour."""
+    out = stack.clone()
+    for index in range(int(stack.shape[0])):
+        med, mad, _lo, _hi = _scalar_stats(stack[index])
+        band = stack[index] - med
+        if mad > 0.0:
+            band = band / mad
+        out[index] = band
+    return out
+
+
+def _mix_to_rgb(stack: torch.Tensor, weights: Any | None) -> torch.Tensor:
+    channels, height, width = (int(n) for n in stack.shape)
+    if weights is None:
+        matrix = torch.tensor(
+            _SCARLET_MAPS[channels],
+            dtype=stack.dtype,
+            device=stack.device,
+        )
+    else:
+        matrix = torch.as_tensor(weights, dtype=stack.dtype, device=stack.device)
+        if tuple(matrix.shape) != (3, channels):
+            raise ValueError(
+                f"weights must have shape (3, {channels}), got {tuple(matrix.shape)}"
+            )
+    mixed = matrix @ stack.reshape(channels, -1)
+    return mixed.T.reshape(height, width, 3)
+
+
+def _stretch_for_target(i_ref: float, target: float, q: float) -> float:
+    """Lupton stretch so ``f(i_ref) ≈ target`` (``f`` = asinh mapping)."""
+    frac = 0.1
+    slope = frac / math.asinh(frac * q)
+    goal = min(max(target, 1e-4), 0.99)
+    denom = math.sinh(goal / slope)
+    if denom <= 0.0 or i_ref <= 0.0 or not math.isfinite(i_ref):
+        return 1.0
+    stretch = q * i_ref / denom
+    if not math.isfinite(stretch) or stretch <= 0.0:
+        return 1.0
+    return stretch
+
+
+def _srgb_oetf(linear: torch.Tensor) -> torch.Tensor:
+    linear = torch.clamp(linear, 0.0, 1.0)
+    low = linear * 12.92
+    high = 1.055 * torch.pow(linear.clamp(min=0.0), 1.0 / 2.4) - 0.055
+    return torch.where(linear <= 0.0031308, low, high)
+
+
+def _apply_saturation(rgb: torch.Tensor, saturation: float) -> torch.Tensor:
+    if saturation == 1.0:
+        return rgb
+    luma = (
+        0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+    ).unsqueeze(-1)
+    return luma + float(saturation) * (rgb - luma)
+
+
+def rgb(
+    *bands: Any,
+    brightness: float = 0.15,
+    saturation: float = 2.0,
+    scene: str = "auto",
+    weights: Any | None = None,
+    calibrated: bool = False,
+    zeropoints: Sequence[float] | None = None,
+) -> torch.Tensor:
+    """Auto RGB from 1–7 aligned bands (shortest wavelength first).
+
+    Parameters
+    ----------
+    bands :
+        One ``(H, W)`` image, one ``(C, H, W)`` cube with ``C`` in 1..7, or
+        1–7 separate ``(H, W)`` tensors. Order is **blue → red**
+        (``rgb(g, r, i)``), unlike :func:`lupton_rgb` which is reddest first.
+    brightness :
+        Display value of sky + 1σ on empty fields (default ``0.15``).
+    saturation :
+        STIFF-style chroma boost around luma. ``1`` is photometric.
+    scene :
+        ``"empty"``, ``"filled"``, or ``"auto"`` (median in the 0.5–99.5
+        percentile span; filled when that fraction exceeds 0.22).
+    weights :
+        Optional ``(3, C)`` mix (rows R, G, B). Default is scarlet's map.
+    calibrated :
+        If true, bands are already on one flux scale; skip per-band
+        sky-median subtract and MAD equalize. Implied when ``zeropoints``
+        is set.
+    zeropoints :
+        AB magnitude of 1 count per band. Converted to nanomaggies with
+        ``counts * 10**(-0.4*(zp - 22.5))``.
+
+    Returns
+    -------
+    Tensor
+        Display-referred ``(H, W, 3)`` in ``[0, 1]`` after sRGB OETF.
+    """
+    if brightness <= 0.0 or brightness >= 1.0:
+        raise ValueError(f"brightness must be in (0, 1), got {brightness}")
+    if saturation < 0.0:
+        raise ValueError(f"saturation must be >= 0, got {saturation}")
+    if scene not in ("auto", "empty", "filled"):
+        raise ValueError(f"scene must be 'auto', 'empty', or 'filled', got {scene!r}")
+
+    stack = _as_band_stack(*bands)
+    stack = torch.nan_to_num(stack, nan=0.0, posinf=0.0, neginf=0.0)
+    n_band = int(stack.shape[0])
+    use_calibrated = bool(calibrated) or zeropoints is not None
+    if zeropoints is not None:
+        zps = [float(z) for z in zeropoints]
+        if len(zps) != n_band:
+            raise ValueError(
+                f"zeropoints length must equal number of bands ({n_band}), got {len(zps)}"
+            )
+        scales = torch.tensor(
+            [10.0 ** (-0.4 * (zp - _RGB_NMGY_ZP)) for zp in zps],
+            dtype=stack.dtype,
+            device=stack.device,
+        )
+        stack = stack * scales.reshape(n_band, 1, 1)
+
+    if not use_calibrated:
+        stack = _equalize_bands(stack)
+
+    mixed = _mix_to_rgb(stack, weights)
+    if mixed.numel() == 0:
+        return mixed.clamp(0.0, 1.0)
+
+    luma = mixed.mean(dim=-1)
+    med, mad, p_lo, p_hi = _scalar_stats(luma)
+    span = p_hi - p_lo
+    frac = (med - p_lo) / span if span > 0.0 else 1.0
+    if scene == "filled":
+        filled = True
+    elif scene == "empty":
+        filled = False
+    else:
+        filled = frac > _RGB_FILLED_FRAC
+
+    if filled:
+        black = p_lo
+        stretch = _stretch_for_target(max(p_hi - p_lo, mad, 1e-12), 0.92, _RGB_Q)
+    else:
+        black = med - _RGB_BLACK_MAD * mad
+        i_ref = (_RGB_BLACK_MAD * mad) + (_MAD_SCALE * mad)
+        stretch = _stretch_for_target(max(i_ref, 1e-12), float(brightness), _RGB_Q)
+
+    shifted = torch.clamp(mixed - black, min=0.0)
+    mapped = lupton_rgb(
+        shifted[..., 0],
+        shifted[..., 1],
+        shifted[..., 2],
+        Q=_RGB_Q,
+        stretch=stretch,
+        minimum=0.0,
+    )
+    mapped = _apply_saturation(mapped, float(saturation))
+    mapped = torch.clamp(mapped, 0.0, 1.0)
+    return _srgb_oetf(mapped)
 
 
 def _png_chunk(tag: bytes, data: bytes) -> bytes:

@@ -241,6 +241,9 @@ def test_transforms_mps() -> None:
     rgb = T.lupton_rgb(r, g, b)
     assert rgb.device.type == "mps"
     assert rgb.shape == (4, 64, 64, 3)
+    auto = T.rgb(x[0])
+    assert auto.device.type == "mps"
+    assert auto.shape == (64, 64, 3)
 
     # Helpers
     s_arc = T.safe_arcsinh(x)

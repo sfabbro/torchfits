@@ -284,6 +284,7 @@ from torchfits.transforms import (
     SigmaClip,
     ZScaleNormalize,
     lupton_rgb,
+    rgb,
 )
 
 image = torchfits.read_tensor("science.fits", hdu=0)
@@ -301,11 +302,11 @@ transform_pipeline = Compose(
 )
 processed = transform_pipeline(image)
 
-# Combine 3 band images into a color Lupton RGB tensor
-r = image
-g = image * 0.8
-b = image * 0.5
-rgb = lupton_rgb(r, g, b, Q=8.0, stretch=0.5)
+# Combine filter images into color RGB (shortest wavelength first)
+g = r = i = image
+rgb_img = rgb(g, r, i)
+# Astropy-parity Lupton (reddest first)
+lupton = lupton_rgb(i, r, g, Q=8.0, stretch=0.5)
 ```
 
 ---
