@@ -28,19 +28,21 @@ def to_device(
     non_blocking: bool = False,
 ) -> Tensor:
     """Move a tensor to a device, adapting MPS-unsupported dtypes (float64/complex128)."""
-    dev_str = str(device)
+    # Fast path: the overwhelmingly common str-device cases without building
+    # torch.device objects or touching dtype tables.
+    dev_str = device if type(device) is str else str(device)
     if dev_str == "cpu":
         return (
             tensor
             if tensor.device.type == "cpu"
-            else tensor.to(device, non_blocking=non_blocking)
+            else tensor.to("cpu", non_blocking=non_blocking)
         )
     if dev_str == "mps" or dev_str.startswith("mps:"):
         if tensor.dtype == torch.float64:
             tensor = tensor.float()
         elif tensor.dtype == torch.complex128:
             tensor = tensor.to(torch.complex64)
-    return tensor.to(device, non_blocking=non_blocking)
+    return tensor.to(dev_str, non_blocking=non_blocking)
 
 
 def batch_to_device(tensors: list[Tensor], device: str | torch.device) -> list[Tensor]:

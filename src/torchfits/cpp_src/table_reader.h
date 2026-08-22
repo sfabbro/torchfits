@@ -19,6 +19,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <thread>
+#include <atomic>
 #include <fitsio.h>
 
 #include "torchfits_torch.h"
@@ -2373,69 +2375,121 @@ public:
             }
         }
 
-        long rows_read = 0;
-        while (rows_read < num_rows) {
-            long current_chunk_rows = std::min(rows_per_chunk, num_rows - rows_read);
+        // Double-buffered chunks: issue chunk N+1's pread on a helper thread
+        // while chunk N de-interleaves/swaps, overlapping the buffered path's
+        // two full-duplex passes. Skipped for tiny tables where thread
+        // handoff costs more than the copy.
+        const bool prefetch =
+            data_fd >= 0 && num_rows > 1 &&
+            static_cast<size_t>(num_rows) * row_width_bytes_ >= (4u << 20);
+        std::vector<uint8_t> second_buffer;
+        if (prefetch) {
+            second_buffer.resize(
+                static_cast<size_t>(rows_per_chunk) * row_width_bytes_);
+        }
 
-            int status = 0;
-            if (data_fd >= 0) {
-                const off_t file_off = static_cast<off_t>(
-                    data_offset_ +
-                    static_cast<LONGLONG>(start_row - 1 + rows_read) * row_width_bytes_);
-                const size_t nbytes =
-                    static_cast<size_t>(current_chunk_rows) * row_width_bytes_;
+        long rows_done = 0;
+        int cur = 0;                 // scratch holding the current chunk
+        bool cur_filled = false;     // ...already prefetched by the previous pass
+        while (rows_done < num_rows) {
+            const long rows = std::min(rows_per_chunk, num_rows - rows_done);
+            uint8_t* chunk_buf = cur == 0 ? buffer.data() : second_buffer.data();
+
+            // Join the prefetch (if any): this chunk's bytes are already in
+            // place, or the read failed and we surface it exactly like the
+            // serial path would.
+            std::atomic<bool> pf_ok{true};
+            auto pread_range = [&](uint8_t* dst, long row_index, long nrows) -> bool {
+                const off_t off = static_cast<off_t>(
+                    data_offset_ + static_cast<LONGLONG>(row_index) * row_width_bytes_);
+                const size_t nbytes = static_cast<size_t>(nrows) * row_width_bytes_;
                 size_t got = 0;
                 while (got < nbytes) {
-                    const ssize_t n = ::pread(
-                        data_fd, buffer.data() + got, nbytes - got,
-                        file_off + static_cast<off_t>(got));
+                    const ssize_t n = ::pread(data_fd, dst + got, nbytes - got,
+                                              off + static_cast<off_t>(got));
                     if (n <= 0) {
-                        if (data_fd >= 0) {
-                            // data_fd aliases data_fd_cached_; close it once
-                            // and reset the member so the destructor does not
-                            // double-close the same descriptor, and so the
-                            // recycled fd number is never pread again.
-                            ::close(data_fd);
-                            data_fd = -1;
-                            data_fd_cached_ = -1;
-                        }
-                        throw std::runtime_error("Failed to pread table bytes");
+                        return false;
                     }
                     got += static_cast<size_t>(n);
                 }
-            } else {
-                fits_read_tblbytes(
-                    fptr_, start_row + rows_read, 1,
-                    current_chunk_rows * row_width_bytes_, buffer.data(), &status);
+                return true;
+            };
+
+            if (!cur_filled) {
+                int status = 0;
+                if (data_fd >= 0) {
+                    if (!pread_range(chunk_buf, start_row - 1 + rows_done, rows)) {
+                        ::close(data_fd);
+                        data_fd = -1;
+                        data_fd_cached_ = -1;
+                        throw std::runtime_error("Failed to pread table bytes");
+                    }
+                } else {
+                    fits_read_tblbytes(
+                        fptr_, start_row + rows_done, 1,
+                        rows * row_width_bytes_, chunk_buf, &status);
+                }
+                if (status != 0) {
+                    if (data_fd >= 0) {
+                        ::close(data_fd);
+                        data_fd = -1;
+                        data_fd_cached_ = -1;
+                    }
+                    char err_msg[81];
+                    fits_get_errstatus(status, err_msg);
+                    throw std::runtime_error(
+                        "Failed to read table bytes: " + std::string(err_msg));
+                }
             }
 
-            if (status != 0) {
-                 if (data_fd >= 0) {
-                     // data_fd aliases data_fd_cached_; reset the member so the
-                     // destructor does not double-close the same descriptor.
-                     ::close(data_fd);
-                     data_fd = -1;
-                     data_fd_cached_ = -1;
-                 }
-                 char err_msg[81];
-                 fits_get_errstatus(status, err_msg);
-                 throw std::runtime_error("Failed to read table bytes: " + std::string(err_msg));
+            // Prefetch the next chunk into the other scratch while the
+            // current one de-interleaves below.
+            const long next_rows = std::min(rows_per_chunk, num_rows - rows_done - rows);
+            std::thread pf_thread;
+            if (prefetch && next_rows > 0 && data_fd >= 0) {
+                uint8_t* dst2 = cur == 0 ? second_buffer.data() : buffer.data();
+                const long next_first = start_row - 1 + rows_done + rows;
+                pf_thread = std::thread([&]() {
+                    if (!pread_range(dst2, next_first, next_rows)) {
+                        pf_ok.store(false);
+                    }
+                });
             }
 
-            // De-interleave data for each column
-            for (int col_idx : col_indices) {
-                const auto& col = columns_[col_idx];
-                // Get tensor from ColumnData
-                torch::Tensor tensor = result[col.name].fixed_data;
-
-                // Get pointer to tensor data at current offset
-                uint8_t* dest_ptr = (uint8_t*)get_tensor_data_ptr(tensor, rows_read * col.repeat);
-
-                // Extract and swap bytes
-                extract_column_data(buffer.data(), current_chunk_rows, col, dest_ptr);
+            try {
+                for (int col_idx : col_indices) {
+                    const auto& col = columns_[col_idx];
+                    torch::Tensor tensor = result[col.name].fixed_data;
+                    uint8_t* dest_ptr =
+                        (uint8_t*)get_tensor_data_ptr(tensor, rows_done * col.repeat);
+                    extract_column_data(chunk_buf, rows, col, dest_ptr);
+                }
+            } catch (...) {
+                // The prefetch thread reads `data_fd`; join before unwinding
+                // so nothing touches a closed descriptor.
+                if (pf_thread.joinable()) {
+                    pf_thread.join();
+                }
+                throw;
             }
 
-            rows_read += current_chunk_rows;
+            if (pf_thread.joinable()) {
+                pf_thread.join();
+                if (!pf_ok.load()) {
+                    ::close(data_fd);
+                    data_fd = -1;
+                    data_fd_cached_ = -1;
+                    throw std::runtime_error("Failed to pread table bytes");
+                }
+                rows_done += rows;
+                cur ^= 1;
+                cur_filled = true;
+                continue;
+            }
+
+            rows_done += rows;
+            cur ^= 1;
+            cur_filled = false;
         }
     }
 
