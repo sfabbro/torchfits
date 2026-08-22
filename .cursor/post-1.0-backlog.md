@@ -54,6 +54,29 @@ Ordered roughly by value; each names the site so a future fix can start fast.
 - `read_full_numpy` float-promotes scaled images (no unsigned convention)
   while tensor paths return uint16/uint32 — decide and document.
 
+### Performance: narrow-table buffered full-read (updated 2026-08-22, evening)
+
+Double-buffered prefetch landed (chunk N+1 pread overlaps chunk N
+extract): local single-thread 15.5 -> 10.4 ms on the bench schema; CANFAR
+CPU rerun pending. Deeper findings from today's fan-out experiment:
+
+- Per-column CFITSIO reads cost ~8.4 ms EACH locally (1M-row, 13 B rows)
+  regardless of threading — `fits_read_col`'s internal row buffering makes
+  column-at-a-time strictly worse than our whole-row pread. This is why
+  `fitsio`'s apparent win does NOT transfer via per-column strategies and
+  why read_column_by_column loses on wide tables.
+- A cross-thread fan-out of those same primitives was implemented and
+  measured 3-8x WORSE (CFITSIO serialization + per-call overheads);
+  reverted. Reader cache now proven warm across worker threads when keyed
+  with a slot tag — machinery kept in git history if ever needed.
+- Remaining structural lever for the last ~6-13%: single-pass decode into
+  caller-visible memory (arena + strided views) — an API-visible change
+  (non-contiguous column tensors), deferred to 1.2 design.
+- hcompress residual (~1.02-1.03x): three builds of the same CFITSIO
+  family span 85.2/89.0/91.9 ms on identical hardware (fitsio-bundled /
+  our vendored 4.7.0 / astropy-bundled). Build variance floor, not
+  algorithmic.
+
 ### Performance: narrow-table buffered projection (measured 2026-08-22)
 
 - `predicate_filter`/`_selective` (mmap=off) remain 26–32% behind

@@ -2605,6 +2605,62 @@ public:
 
     long get_num_rows() const { return nrows_; }
     int get_num_cols() const { return ncols_; }
+    bool is_ascii_table() const { return is_ascii_; }
+
+    // Total in-row bytes for the requested columns (fixed-width columns only;
+    // returns -1 when any requested column is variable-width, which makes the
+    // parallel fan-out gate reject).
+    long long projected_bytes(const std::vector<std::string>& names) const {
+        long long total = 0;
+        for (const auto& n : names) {
+            bool found = false;
+            for (const auto& c : columns_) {
+                if (c.name == n) {
+                    if (c.type == FITSColumnType::VARIABLE) {
+                        return -1;
+                    }
+                    total += static_cast<long long>(c.width) *
+                             static_cast<long long>(std::max(1, c.repeat));
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return -1;
+            }
+        }
+        return total;
+    }
+
+    // True when every requested column resolves to a fixed numeric type that
+    // fits_read_col can write directly into a tensor (no strings, logical
+    // conversion, BIT packing, complex pairing, or VLA heaps).
+    bool all_fixed_numeric(const std::vector<std::string>& names) const {
+        for (const auto& n : names) {
+            bool found = false;
+            for (const auto& c : columns_) {
+                if (c.name == n) {
+                    switch (c.type) {
+                        case FITSColumnType::BYTE:
+                        case FITSColumnType::SHORT:
+                        case FITSColumnType::INT:
+                        case FITSColumnType::LONG:
+                        case FITSColumnType::FLOAT:
+                        case FITSColumnType::DOUBLE:
+                            found = true;
+                            break;
+                        default:
+                            return false;
+                    }
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
+    }
 
 private:
     // Move to the target table HDU when the handle is shared via the cache.
