@@ -170,7 +170,9 @@ for batch in torchfits.table.scan("survey.fits", hdu=1, batch_size=50_000):
 
 !!! info "When to use"
     Use `scan()` when the table is too large to fit in memory, or when you
-    want to process rows in streaming fashion. For Polars-specific streaming,
+    want to process rows in streaming fashion. With `where=`, the predicate is
+    evaluated **per batch as rows stream past**, so peak memory stays bounded
+    by `batch_size`, not table size. For Polars-specific streaming,
     use `scan_polars()`.
 
 ---

@@ -460,7 +460,11 @@ torchfits.delete_hdu(path, hdu, compress=False)
 
 ## Checksums
 
+Stamp CFITSIO `DATASUM`/`CHECKSUM` while writing with `checksum=True`
+(applies to every HDU), or add them afterwards per HDU:
+
 ```python
+torchfits.write("img.fits", data, checksum=True)  # stamped at write time
 torchfits.write_checksums(path, hdu=0)
 result = torchfits.verify_checksums(path, hdu=0)
 # result: dict with "datastatus", "hdustatus", "ok", and "status" ("ok" / "no_checksums" / "fail")

@@ -39,10 +39,39 @@ Patch release: correctness fixes for table row mutation and `where=` filtering.
 
 ## [1.1.0] — Unreleased
 
-Audit-driven correctness, security, and consistency release on the same
-2.13 torch ABI lane. Highlights: silent-corruption fixes for BIT table
-columns and cached reads, SSRF/credential hardening, engine-independent
-WHERE semantics, and a completed scalar-column shape contract.
+Feature + correctness release on the same 2.13 torch ABI lane. New
+capabilities: checksum-stamped writes, GIL-free hot reads, clean
+truncated-file errors, high-fidelity Astropy interop, memory-bounded
+streaming filters, and multiprocess-safe remote downloads — plus a round
+of silent-corruption and security fixes.
+
+### Features
+
+- **`write(..., checksum=True)`** stamps CFITSIO `DATASUM`/`CHECKSUM`
+  keywords on every HDU at write time (all payload types, compressed
+  included); verify later with `torchfits.verify_checksums`.
+- **Multithreaded reads scale**: hot C++ paths (`read_full`,
+  `read_full_numpy`, header/shape/HDU-count probes) now release the GIL
+  for open + I/O, so DataLoader threads no longer serialize behind one
+  Python thread during disk or network access.
+- **Truncated files raise instead of crashing**: mmap table reads,
+  filtered scans, and row updates validate the header-claimed extent
+  against the real file size and raise a clear "truncated" error rather
+  than SIGBUS-killing the interpreter.
+- **High-fidelity `table.to_astropy()`**: TNULL-bearing columns become
+  real `MaskedColumn`s (no more object-dtype degradation), TUNIT maps to
+  `.unit`, and fixed-size vector columns keep their `(N, repeat)` shape.
+- **Memory-bounded streaming filters**: `scan(..., where=...)` now
+  evaluates predicates per batch as rows stream past — peak RAM tracks
+  `batch_size`, not table size. Hidden predicate columns are projected
+  out after filtering, and a fully filtered-out scan still yields one
+  typed empty batch.
+- **Multiprocess-safe remote downloads**: concurrent DataLoader workers
+  sharing a cache directory are serialized by an OS file lock (exactly
+  one fetch per URL), interrupted transfers resume via `If-Range`
+  validators (stale partials restart cleanly instead of producing hybrid
+  files), and servers without `Content-Length` trigger an explicit
+  completeness warning.
 
 ### Changed
 
