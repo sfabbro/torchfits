@@ -166,16 +166,17 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   sub-millisecond. If a cached-hot workload regresses measurably for you,
   `read(..., cache_capacity=0)` restores v1.0 semantics at the cost of
   re-reading.
-- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless
-  (`exhaustive_cpu_20260822_152204`: 3057 rows, 8 threads;
-  `exhaustive_cuda_20260822_152235`: 4315 rows incl. GPU transports;
-  lab profile, mmap on+off matrix): no new regressions versus the 1.0
-  scorecards, and the dense/selective `predicate_filter` cluster no
-  longer shows as significant on the 8-thread CANFAR host. Remaining
-  significant deficits are narrow-table / hcompress `read_full` lags of
-  1.02-1.13x vs fitsio (buffered-reader whole-row reads — backlog) and a
-  single 98.6%-win-rate fitstable cell; smart+specialized fits families
-  hold 100% win rates on both hosts.
+- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless (final
+  runs `exhaustive_cpu_20260822_213823` / `exhaustive_cuda_20260822_213846`;
+  lab profile, mmap on+off matrix, 3057 + 4315 rows): **100% of
+  significant image comparisons won on both hosts**; the dense/selective
+  `predicate_filter` cluster no longer registers. Exactly one case
+  family remains where a peer leads: narrow-table full reads with
+  `mmap=False` trail fitsio by 6-17% (buffered path stages whole rows;
+  single-pass decode lands in 1.2). Every other lag row is sub-1.13x
+  noise on shared-CFITSIO decompression or sub-0.15 ms GPU launch
+  overhead. A double-buffered chunk prefetch now overlaps the buffered
+  path's I/O with decode for payloads >= 64 MB.
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only

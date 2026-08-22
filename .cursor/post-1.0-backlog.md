@@ -54,6 +54,17 @@ Ordered roughly by value; each names the site so a future fix can start fast.
 - `read_full_numpy` float-promotes scaled images (no unsigned convention)
   while tensor paths return uint16/uint32 — decide and document.
 
+### Performance: narrow-table buffered full-read — RESIDUAL QUANTIFIED (2026-08-22 late)
+
+Final CANFAR state after prefetch + corruption fix + fan-out revert:
+exactly ONE significant deficit family remains (narrow-table
+`read_full`, `mmap=False`, 1.11-1.25x vs fitsio depending on host;
+node-normalized via scan_count index the CPU-host number is ~1.08-1.15).
+Everything else noise-level or won outright. Next lever unchanged
+(single-pass arena decode, 1.2, API-visible). Prefetch now gated to
+payloads >= 64 MB: overlap regressed 13 MB warm-cache tables (thread
+handoff > warm pread) but holds for large/cold payloads.
+
 ### Performance: narrow-table buffered full-read (updated 2026-08-22, evening)
 
 Double-buffered prefetch landed (chunk N+1 pread overlaps chunk N
