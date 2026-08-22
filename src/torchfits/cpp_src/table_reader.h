@@ -793,6 +793,24 @@ public:
     // Memory-mapped column reading
     // Returns a dict of column name to torch::Tensor (or numpy array for strings)
     // in file/request column order (see read_columns signature comment).
+    // A truncated file must raise a clean error instead of SIGBUS on first
+    // touch: header-derived extents are validated against the real size.
+    void ensure_extent_within_file(off_t file_size, LONGLONG data_offset,
+                                   long long rows_before, long long nrows) const {
+        const LONGLONG row_bytes = static_cast<LONGLONG>(row_width_bytes_);
+        const LONGLONG needed = data_offset
+            + static_cast<LONGLONG>(rows_before) * row_bytes
+            + static_cast<LONGLONG>(nrows) * row_bytes;
+        if (static_cast<LONGLONG>(file_size) < needed) {
+            throw std::runtime_error(
+                "FITS table is truncated: header claims table bytes through "
+                "offset " + std::to_string(static_cast<long long>(needed))
+                + " but the file holds only "
+                + std::to_string(static_cast<long long>(file_size))
+                + "; the copy is incomplete or corrupt");
+        }
+    }
+
     std::vector<std::pair<std::string, torch::Tensor>> read_columns_mmap(
         const std::vector<std::string>& column_names = {},
         long start_row = 1, long num_rows = -1) {
@@ -875,6 +893,7 @@ public:
             close(fd);
             throw std::runtime_error("Failed to stat file");
         }
+        ensure_extent_within_file(sb.st_size, data_offset, start_row - 1, num_rows);
 
         // Map the whole file
         void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
@@ -1122,6 +1141,7 @@ public:
         if (status) throw std::runtime_error("Failed to get HDU address");
 
         uint8_t* data_ptr = base_ptr + data_start;
+        ensure_extent_within_file(sb.st_size, data_start, 0, nrows_);
 
         // Resolve filter columns
         struct FilterContext {
@@ -1770,6 +1790,7 @@ public:
             close(fd);
             throw std::runtime_error("Failed to stat file for mmap update");
         }
+        ensure_extent_within_file(sb.st_size, data_offset, start_row - 1, num_rows);
 
         void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (map_ptr == MAP_FAILED) {

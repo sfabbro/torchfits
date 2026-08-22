@@ -195,7 +195,18 @@ def _try_torch_tensor_where_filter(
         else:
             reader = _acquire_cpp_reader(path, hdu, cpp)
             chunk = reader.read_rows(read_cols, 1, -1)
-    except (RuntimeError, OSError, MemoryError, ValueError, TypeError, AttributeError):
+    except (
+        RuntimeError,
+        OSError,
+        MemoryError,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        # A truncated file must surface as corruption, not as a silent
+        # fallback to a slower engine that fails again downstream.
+        if "truncat" in str(exc).lower():
+            raise
         return None
     if not isinstance(chunk, dict) or not chunk:
         return None

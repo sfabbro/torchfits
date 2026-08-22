@@ -290,7 +290,11 @@ def read_fallback_table(
                     )
             else:
                 table_result = cpp_module.read_fits_table(path, hdu_num, col_list, True)
-        except Exception:
+        except Exception as exc:
+            # Corruption must not fall through to a slower reader that will
+            # fail again with a more confusing error.
+            if "truncated" in str(exc).lower():
+                raise
             table_result = None
 
     if table_result is None:
@@ -304,7 +308,9 @@ def read_fallback_table(
                 table_result = cpp_module.read_fits_table_rows(
                     path, hdu_num, col_list, start_row, num_rows, False
                 )
-            except Exception:
+            except Exception as exc:
+                if "truncated" in str(exc).lower():
+                    raise
                 table_result = None
     if table_result is None:
         if columns is None and start_row == 1 and num_rows == -1:

@@ -538,8 +538,8 @@ def update_rows(
                 )
                 _mutation_cache_barrier(path)
                 return
-            except Exception:
-                if forced_mmap:
+            except Exception as exc:
+                if forced_mmap or "truncat" in str(exc).lower():
                     raise
 
     cpp.update_fits_table_rows(path, target_hdu, normalized, start_row, num_rows)
