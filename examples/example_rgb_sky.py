@@ -48,11 +48,16 @@ def _fast_mode() -> bool:
 
 
 def _resize(image: torch.Tensor, size: int) -> torch.Tensor:
-    """Nearest-neighbor resize of (H, W, 3) to size×size."""
+    """Resize (H, W, 3) to size×size; area-filter when shrinking."""
     if int(image.shape[0]) == size and int(image.shape[1]) == size:
         return image
     work = image.permute(2, 0, 1).unsqueeze(0).float()
-    out = F.interpolate(work, size=(size, size), mode="nearest")
+    shrinking = min(int(image.shape[0]), int(image.shape[1])) > size
+    out = F.interpolate(
+        work,
+        size=(size, size),
+        mode="area" if shrinking else "nearest",
+    )
     return out.squeeze(0).permute(1, 2, 0)
 
 
@@ -172,15 +177,30 @@ def _assert_visible(image: torch.Tensor, label: str) -> None:
         raise RuntimeError(f"{label} looks near-black — refuse to write gallery asset")
 
 
+_GUTTER = 12
+
+
+def _grid(tiles: list[torch.Tensor], columns: int) -> torch.Tensor:
+    """Assemble tiles on a near-black mount with an even outer frame."""
+    rows = (len(tiles) + columns - 1) // columns
+    height = rows * TILE + (rows + 1) * _GUTTER
+    width = columns * TILE + (columns + 1) * _GUTTER
+    canvas = torch.full((height, width, 3), 0.02)
+    for index, tile in enumerate(tiles):
+        row, col = divmod(index, columns)
+        y = _GUTTER + row * (TILE + _GUTTER)
+        x = _GUTTER + col * (TILE + _GUTTER)
+        canvas[y : y + TILE, x : x + TILE] = tile
+    return canvas
+
+
 def _collage(panels: list[torch.Tensor]) -> torch.Tensor:
     tiles = [_resize(p.float(), TILE) for p in panels]
-    top = torch.cat(tiles[0:2], dim=1)
-    bot = torch.cat(tiles[2:4], dim=1)
-    return torch.cat((top, bot), dim=0)
+    return _grid(tiles, columns=2)
 
 
 def _strip(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
-    return torch.cat((_resize(left.float(), TILE), _resize(right.float(), TILE)), dim=1)
+    return _grid([_resize(left.float(), TILE), _resize(right.float(), TILE)], columns=2)
 
 
 def main() -> int:

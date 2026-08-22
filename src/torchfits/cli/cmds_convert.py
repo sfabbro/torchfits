@@ -62,7 +62,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "--bands",
         help=(
             "comma-separated HDU indices for png "
-            "(auto: 1–7; lupton: three; default auto is HDU 0 per file)"
+            "(auto: 1–7 per input file; default: HDUs 0,1,2 of one file "
+            "when present, else HDU 0)"
         ),
     )
     parser.add_argument(
@@ -155,11 +156,21 @@ def _lupton_band_indices(raw: str | None, num_inputs: int) -> list[int]:
     return indices
 
 
-def _auto_band_indices(raw: str | None, num_inputs: int) -> list[int]:
+def _auto_band_indices(
+    raw: str | None, num_inputs: int, inputs: list[str] | None = None
+) -> list[int]:
     if not 1 <= num_inputs <= 7:
         raise UsageError(f"png convert accepts 1–7 FITS files, got {num_inputs}")
     if raw is None:
-        return [0] if num_inputs == 1 else [0] * num_inputs
+        if num_inputs == 1:
+            # Keep the historical convenience: a single multi-HDU file
+            # defaults to RGB from HDUs 0,1,2; grey otherwise.
+            try:
+                n_hdus = torchfits.read_num_hdus(inputs[0])
+            except Exception:
+                n_hdus = 1
+            return [0, 1, 2][: min(3, n_hdus)] or [0]
+        return [0] * num_inputs
     indices = _parse_hdu_list(raw, flag="--bands")
     if not 1 <= len(indices) <= 7:
         raise UsageError("--bands requires 1–7 HDU indices")
@@ -281,7 +292,7 @@ def _convert_png(args: argparse.Namespace) -> int:
         write_rgb_image(args.output, image)
         return EXIT_OK
 
-    hdus = _auto_band_indices(args.bands, len(args.inputs))
+    hdus = _auto_band_indices(args.bands, len(args.inputs), args.inputs)
     bands = _load_png_bands(args.inputs, hdus)
     rgb_args: tuple[Any, ...]
     if len(args.inputs) == 1 and len(bands) == 1:

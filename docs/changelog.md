@@ -52,6 +52,10 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   subtract + MAD equalize unless `calibrated=True` / `zeropoints=`,
   fitspng-style MAD stretch, coupled asinh, saturation, and sRGB.
   NaN mosaic holes stay black (they are not treated as sky).
+  Scene classification is blow-out-safe: a bright extended object (planet
+  disk, galaxy core) whose post-equalize p90 towers above the noise is
+  stretched against its own p90 instead of the faint-feature anchor, so
+  extended targets never clip while deep/star fields keep their stretch.
   `lupton_rgb` stays the Astropy-parity 3-band mapping (reddest first).
 - **`write(..., checksum=True)`** stamps CFITSIO `DATASUM`/`CHECKSUM`
   keywords on every HDU at write time (all payload types, compressed

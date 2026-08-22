@@ -155,3 +155,47 @@ def test_rgb_rejects_bad_knobs() -> None:
         rgb(g, r, i, zeropoints=(22.5, 22.5))
     with pytest.raises(ValueError, match="8"):
         rgb(torch.zeros(8, 4, 4))
+
+
+def test_rgb_channel_maps_normalized_and_neutral() -> None:
+    """Every mix row sums ~1 so band count never shifts brightness."""
+    from torchfits.transforms.rgb import _SCARLET_MAPS
+
+    for channels, rows in _SCARLET_MAPS.items():
+        tolerance = 1e-12 if channels == 7 else 2e-3
+        for row in rows:
+            # Upstream scarlet values are approximate (C=2 -> 0.9985,
+            # C=4 -> 1.00075); our 7-band extension is exact.
+            assert abs(sum(row) - 1.0) < tolerance
+        ones = torch.ones(1, channels)
+        mixed = torch.tensor(rows).matmul(ones.T)
+        assert torch.allclose(mixed, torch.ones(3, 1), atol=6e-3)
+
+
+def test_write_rgb_image_roundtrip(tmp_path) -> None:
+    """PNG writer emits spec-shaped scanlines decodable without Pillow."""
+    import struct as _struct
+    import zlib as _zlib
+
+    from torchfits.transforms.rgb import write_rgb_image
+
+    image = torch.rand(6, 9, 3)
+    path = tmp_path / "out.png"
+    write_rgb_image(str(path), image)
+    blob = path.read_bytes()
+    assert blob[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = _struct.unpack(">II", blob[16:24])
+    assert (width, height) == (9, 6)
+    idat = blob.find(b"IDAT")
+    size = _struct.unpack(">I", blob[idat - 4 : idat])[0]
+    raw = _zlib.decompress(blob[idat + 4 : idat + 4 + size])
+    assert len(raw) == height * (1 + width * 3)
+    assert all(raw[i * (1 + width * 3)] == 0 for i in range(height))
+    stride = 1 + width * 3
+    pixels = (
+        image.clamp(0, 1).mul(255).round().to(torch.uint8).reshape(-1).numpy().tobytes()
+    )
+    stripped = b"".join(
+        raw[i * stride + 1 : (i + 1) * stride] for i in range(height)
+    )
+    assert stripped == pixels

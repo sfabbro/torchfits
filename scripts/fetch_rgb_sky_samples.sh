@@ -65,8 +65,9 @@ if [[ "$need_jup" -eq 1 ]]; then
     fetch "$flt" \
       "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:HST/product/${root}_flt.fits"
   done
-  TORCHFITS_JUP_TMP="$tmp" TORCHFITS_JUP_CACHE="$CACHE_DIR" \
-    (cd "$ROOT" && pixi run python -c '
+  (
+    export TORCHFITS_JUP_TMP="$tmp" TORCHFITS_JUP_CACHE="$CACHE_DIR"
+    cd "$ROOT" && pixi run python -c '
 import os
 from pathlib import Path
 
@@ -105,8 +106,9 @@ for root, name in pairs:
   trap - EXIT
 fi
 
-TORCHFITS_RGB_CACHE="$CACHE_DIR" \
-  (cd "$ROOT" && pixi run python -c '
+(
+  export TORCHFITS_RGB_CACHE="$CACHE_DIR"
+  cd "$ROOT" && pixi run python -c '
 import os
 from pathlib import Path
 

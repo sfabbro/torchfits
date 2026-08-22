@@ -105,24 +105,25 @@ _SCARLET_MAPS: Final[dict[int, tuple[tuple[float, ...], ...]]] = {
         (0.0, 0.333 / 2.0, 0.667 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0),
         (1.0 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0, 0.0, 0.0),
     ),
+    # 7-band extension of scarlet's scheme, rows normalized to sum 1 like
+    # every other width (the reddest band contributes warm + a little grey).
     7: (
-        (0.0, 0.0, 0.0, 0.333 / 2.0, 0.667 / 2.0, 1.0 / 2.0, (2.0 / 3.0) / 2.0),
-        (
-            0.0,
-            0.333 / 2.0,
-            0.667 / 2.0,
-            0.667 / 2.0,
-            0.333 / 2.0,
-            0.0,
-            (2.0 / 3.0) / 2.0,
-        ),
-        (1.0 / 2.0, 0.667 / 2.0, 0.333 / 2.0, 0.0, 0.0, 0.0, (2.0 / 3.0) / 2.0),
+        (0.0, 0.0, 0.0, 1.0 / 8.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0),
+        (0.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 4.0, 1.0 / 8.0, 0.0, 1.0 / 4.0),
+        (3.0 / 8.0, 1.0 / 4.0, 1.0 / 8.0, 0.0, 0.0, 0.0, 1.0 / 4.0),
     ),
 }
 
 _RGB_Q: Final = 8.0
 _RGB_BLACK_MAD: Final = 3.0
 _RGB_FILLED_FRAC: Final = 0.22
+# A bright extended object (planet disk, nearby galaxy core) towers above
+# its noise: after MAD equalize its p90 sits orders of magnitude past a
+# few sigma, while star-rich/deep fields top out near single digits.
+# Classify those as filled so the faint-feature stretch cannot blow the
+# object out (measured: Jupiter disk p90 ~= 1200 sigma vs <= 6 elsewhere).
+_RGB_OBJECT_SPAN_SIGMAS: Final = 50.0
+_RGB_FILLED_TARGET: Final = 0.72
 _RGB_NMGY_ZP: Final = 22.5
 _MAD_SCALE: Final = 1.4826  # estimate_background returns MAD × this
 
@@ -332,16 +333,29 @@ def rgb(
     med, mad, p_lo, p_hi = _scalar_stats(luma)
     span = p_hi - p_lo
     frac = (med - p_lo) / span if span > 0.0 else 1.0
+
+    finite_luma = luma[torch.isfinite(luma)]
+    p90_sigma = (
+        float(_quantile(finite_luma, 0.90, dim=(-1,)).reshape(()))
+        if finite_luma.numel() > 0
+        else 0.0
+    )
+    object_span_sigmas = (p90_sigma - med) / mad if mad > 0.0 else 0.0
     if scene == "filled":
         filled = True
     elif scene == "empty":
         filled = False
     else:
-        filled = frac > _RGB_FILLED_FRAC
+        filled = frac > _RGB_FILLED_FRAC or object_span_sigmas > _RGB_OBJECT_SPAN_SIGMAS
 
     if filled:
+        # Anchor the stretch near the bright structure (p90), not the top
+        # quantile of the whole range: for extreme dynamic ranges (Jupiter
+        # disks, saturated cores) p99.5 sits deep in the asinh-saturated
+        # zone and every extended pixel clips.
         black = p_lo
-        stretch = _stretch_for_target(max(p_hi - p_lo, mad, 1e-12), 0.92, _RGB_Q)
+        anchor = max(p90_sigma - max(black, 0.0), mad, 1e-12)
+        stretch = _stretch_for_target(anchor, _RGB_FILLED_TARGET, _RGB_Q)
     else:
         black = med - _RGB_BLACK_MAD * mad
         i_ref = (_RGB_BLACK_MAD * mad) + (_MAD_SCALE * mad)
@@ -381,19 +395,16 @@ def write_rgb_image(path: str, rgb: torch.Tensor) -> None:
         .contiguous()
         .reshape(-1)
     )
-    raw = flat.numpy().tobytes()
     row_bytes = width * 3
-    scanlines = bytearray((row_bytes + 1) * height)
-    for row in range(height):
-        offset = row * (row_bytes + 1)
-        scanlines[offset] = 0
-        start = row * row_bytes
-        scanlines[offset + 1 : offset + 1 + row_bytes] = raw[start : start + row_bytes]
+    rows = flat.reshape(height, row_bytes)
+    scanlines = torch.cat(
+        (torch.zeros(height, 1, dtype=torch.uint8), rows), dim=1
+    ).contiguous()
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     png = (
         b"\x89PNG\r\n\x1a\n"
         + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", zlib.compress(bytes(scanlines), level=6))
+        + _png_chunk(b"IDAT", zlib.compress(scanlines.numpy().tobytes(), level=6))
         + _png_chunk(b"IEND", b"")
     )
     with open(path, "wb") as handle:
