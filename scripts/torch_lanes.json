@@ -1,7 +1,11 @@
 {
   "2.13": {
-    "torchfits_version": "1.0.0",
+    "torchfits_version": "1.1.0",
     "cu_default": "cu129",
-    "cu": ["cu126", "cu129", "cu130"]
+    "cu": [
+      "cu126",
+      "cu129",
+      "cu130"
+    ]
   }
 }

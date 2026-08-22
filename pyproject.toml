@@ -9,7 +9,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "torchfits"
-version = "1.0.0"
+version = "1.1.0"
 description = "FITS I/O for PyTorch with native tensor reads, datasets, and transforms"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"

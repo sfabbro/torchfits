@@ -54,6 +54,21 @@ Ordered roughly by value; each names the site so a future fix can start fast.
 - `read_full_numpy` float-promotes scaled images (no unsigned convention)
   while tensor paths return uint16/uint32 — decide and document.
 
+### Performance: narrow-table buffered projection (measured 2026-08-22)
+
+- `predicate_filter`/`_selective` (mmap=off) remain 26–32% behind
+  astropy-numpy on `narrow_1000000`. Profiled: ~10 ms is the C++
+  **buffered single-column read** itself — `read_columns_buffered`
+  preads whole rows (~20 MB for a 4-col table) then de-interleaves one
+  column, versus fitsio/astropy reading only the target column's bytes.
+  Python-side mask/gather is already sub-dominant (numpy-vs-torch mask
+  saves ~1 ms; verified not the bottleneck). Next lever: a selective-
+  projection fast path in the buffered reader (per-column CFITSIO reads
+  or strided preads) with explicit TSCAL/TZERO/TNULL semantics parity —
+  needs its own bench A/B before landing.
+- `narrow_1000000::read_full` mmap-off trails fitsio ~1.11x (5.6 vs
+  5.1 ms) — same reader, full-width rows, likely same lever.
+
 ### Table semantics polish
 
 - `schema()` reports complex columns (`C`/`M`) as float64 scalars;
