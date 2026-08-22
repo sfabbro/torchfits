@@ -117,13 +117,20 @@ WHERE semantics, and a completed scalar-column shape contract.
   after in-place rewrites. Measured cost of the validation: ~1.6 us per
   `os.stat` on this host.
 - Cached reads now hand out private copies, so callers can mutate results.
-  Measured on a 64 MiB float32 image (local NVMe, this host): uncached read
-  46.5 ms (~1.4 GB/s) vs warm cache hit 45.3 ms including the isolation
-  copy — a hit still beats the I/O it replaces, and repeated table hits
-  stay sub-millisecond (~0.3 ms for a 1.6 MB two-column table). The
-  exhaustive benchmark scorecards were not re-run for this release; if a
-  cached-hot workload regresses measurably for you, `read(...,
-  cache_capacity=0)` restores v1.0 semantics at the cost of re-reading.
+  Measured on a 64 MiB float32 image (local NVMe): uncached read 46.5 ms
+  (~1.4 GB/s) vs warm cache hit 45.3 ms including the isolation copy — a
+  hit still beats the I/O it replaces, and repeated table hits stay
+  sub-millisecond. If a cached-hot workload regresses measurably for you,
+  `read(..., cache_capacity=0)` restores v1.0 semantics at the cost of
+  re-reading.
+- Full CPU exhaustive re-soak on Linux
+  (`exhaustive_cpu_20260822_054439`, lab profile, mmap on+off matrix,
+  3057 rows): no new regressions versus the 1.0 scorecards — the only
+  significant deficits are the previously documented narrow-table
+  `read_full` (~1.11x vs fitsio) and dense/selective `predicate_filter`
+  (~26-32% vs astropy, mmap off) clusters; every smart/specialized family
+  keeps a 100% win rate. GPU/CANFAR scorecards are unchanged from their
+  previous runs.
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only
