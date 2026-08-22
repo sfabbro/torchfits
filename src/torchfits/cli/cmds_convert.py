@@ -166,7 +166,8 @@ def _auto_band_indices(
             # Keep the historical convenience: a single multi-HDU file
             # defaults to RGB from HDUs 0,1,2; grey otherwise.
             try:
-                n_hdus = torchfits.read_num_hdus(inputs[0])
+                first = (inputs or [""])[0]
+                n_hdus = torchfits.read_num_hdus(first) if first else 1
             except Exception:
                 n_hdus = 1
             return [0, 1, 2][: min(3, n_hdus)] or [0]

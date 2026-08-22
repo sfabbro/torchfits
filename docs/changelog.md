@@ -166,14 +166,16 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   sub-millisecond. If a cached-hot workload regresses measurably for you,
   `read(..., cache_capacity=0)` restores v1.0 semantics at the cost of
   re-reading.
-- Full CPU exhaustive re-soak on Linux
-  (`exhaustive_cpu_20260822_054439`, lab profile, mmap on+off matrix,
-  3057 rows): no new regressions versus the 1.0 scorecards — the only
-  significant deficits are the previously documented narrow-table
-  `read_full` (~1.11x vs fitsio) and dense/selective `predicate_filter`
-  (~26-32% vs astropy, mmap off) clusters; every smart/specialized family
-  keeps a 100% win rate. GPU/CANFAR scorecards are unchanged from their
-  previous runs.
+- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless
+  (`exhaustive_cpu_20260822_152204`: 3057 rows, 8 threads;
+  `exhaustive_cuda_20260822_152235`: 4315 rows incl. GPU transports;
+  lab profile, mmap on+off matrix): no new regressions versus the 1.0
+  scorecards, and the dense/selective `predicate_filter` cluster no
+  longer shows as significant on the 8-thread CANFAR host. Remaining
+  significant deficits are narrow-table / hcompress `read_full` lags of
+  1.02-1.13x vs fitsio (buffered-reader whole-row reads — backlog) and a
+  single 98.6%-win-rate fitstable cell; smart+specialized fits families
+  hold 100% win rates on both hosts.
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only

@@ -195,7 +195,5 @@ def test_write_rgb_image_roundtrip(tmp_path) -> None:
     pixels = (
         image.clamp(0, 1).mul(255).round().to(torch.uint8).reshape(-1).numpy().tobytes()
     )
-    stripped = b"".join(
-        raw[i * stride + 1 : (i + 1) * stride] for i in range(height)
-    )
+    stripped = b"".join(raw[i * stride + 1 : (i + 1) * stride] for i in range(height))
     assert stripped == pixels
