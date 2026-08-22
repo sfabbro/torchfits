@@ -132,6 +132,19 @@ def test_rgb_empty_nan_zero_size() -> None:
     assert z.shape == (8, 8, 3)
 
 
+def test_rgb_nan_mosaic_holes_stay_black() -> None:
+    """NaN mosaic holes must not zero-fill into a fake filled-scene stretch."""
+    g0, r0, i0 = _sky_scene()
+    g, r, i = g0.clone(), r0.clone(), i0.clone()
+    g[:6, :] = math.nan
+    r[:6, :] = math.nan
+    i[:6, :] = math.nan
+    out = rgb(g, r, i)
+    assert torch.isfinite(out).all()
+    assert float(out[:6].mean()) < 0.05
+    assert float(out[20:50, 20:50].max()) > 0.2
+
+
 def test_rgb_rejects_bad_knobs() -> None:
     g, r, i = _sky_scene(8, 8)
     with pytest.raises(ValueError, match="brightness"):

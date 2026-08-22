@@ -65,7 +65,7 @@ rgb_tensor = rgb(g, r, i)
 print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [H, W, 3]
 ```
 
-![Auto RGB on IC 3418, NGC 4438, JWST Stephan's Quintet, and HST OPAL Jupiter](assets/gallery/rgb_sky_collage.png)
+![Auto RGB on IC 3418, NGC 4438, JWST SMACS 0723, and HST OPAL Jupiter](assets/gallery/rgb_sky_collage.png)
 
 Same stretch, four skies: [`example_rgb_sky.py`](published-examples/example_rgb_sky.py).
 Why auto instead of library-default Lupton on a faint tail:

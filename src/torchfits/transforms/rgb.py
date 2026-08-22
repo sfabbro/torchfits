@@ -301,7 +301,11 @@ def rgb(
         raise ValueError(f"scene must be 'auto', 'empty', or 'filled', got {scene!r}")
 
     stack = _as_band_stack(*bands)
-    stack = torch.nan_to_num(stack, nan=0.0, posinf=0.0, neginf=0.0)
+    # Keep NaN through stats / equalize so mosaic holes are not a fake sky
+    # floor (zero-fill made HiPS footprints look filled and washed-out).
+    stack = torch.where(
+        torch.isfinite(stack), stack, torch.full_like(stack, float("nan"))
+    )
     n_band = int(stack.shape[0])
     use_calibrated = bool(calibrated) or zeropoints is not None
     if zeropoints is not None:
@@ -344,6 +348,7 @@ def rgb(
         stretch = _stretch_for_target(max(i_ref, 1e-12), float(brightness), _RGB_Q)
 
     shifted = torch.clamp(mixed - black, min=0.0)
+    shifted = torch.nan_to_num(shifted, nan=0.0, posinf=0.0, neginf=0.0)
     mapped = lupton_rgb(
         shifted[..., 0],
         shifted[..., 1],

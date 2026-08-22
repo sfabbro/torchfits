@@ -1,11 +1,11 @@
-"""Auto RGB collage: Virgo dwarf, merger, JWST Quintet, HST Jupiter.
+"""Auto RGB collage: Virgo dwarf, merger, JWST SMACS 0723, HST Jupiter.
 
 Same ``rgb()`` defaults on every panel. Prefers cached public FITS from
 ``scripts/fetch_rgb_sky_samples.sh``:
 
 - Legacy Survey ``grz`` (nanomaggies → ``calibrated=True``)
-- CDS JWST HiPS F150W/F200W/F444W at Stephan's Quintet
-- HST WFC3 UVIS OPAL F395N/F502N/F631N Jupiter (SCI centroid crop)
+- CDS JWST HiPS F115W/F150W/F200W at SMACS 0723
+- HST WFC3 UVIS OPAL F395N/F502N/F631N Jupiter (full-frame SCI downsample)
 
 Missing files fall back to synthetic stamps so the example still runs
 under ``TORCHFITS_EXAMPLE_FAST=1``. Gallery PNGs are written only from
@@ -187,9 +187,9 @@ def main() -> int:
     dwarf_path = SKY_DIR / "ic3418_grz.fits"
     merger_path = SKY_DIR / "ngc4438_grz.fits"
     jwst_paths = (
-        SKY_DIR / "jwst_quintet_F150W.fits",
-        SKY_DIR / "jwst_quintet_F200W.fits",
-        SKY_DIR / "jwst_quintet_F444W.fits",
+        SKY_DIR / "jwst_smacs_F115W.fits",
+        SKY_DIR / "jwst_smacs_F150W.fits",
+        SKY_DIR / "jwst_smacs_F200W.fits",
     )
     jup_paths = (
         SKY_DIR / "jupiter_f395n.fits",
@@ -227,17 +227,17 @@ def main() -> int:
         merger = rgb(mg, mr, mz, calibrated=True)
 
     if jwst_bands is None:
-        print("jwst: synthetic (no Quintet F150W/F200W/F444W)")
+        print("jwst: synthetic (no SMACS F115W/F150W/F200W)")
         jwst = rgb(*_synthetic_jwst())
     else:
-        print("jwst: CDS HiPS Stephan's Quintet F150W/F200W/F444W")
+        print("jwst: CDS HiPS SMACS 0723 F115W/F150W/F200W")
         jwst = rgb(*jwst_bands)
 
     if jup_bands is None:
         print("jupiter: synthetic (no OPAL F395N/F502N/F631N)")
         jupiter = rgb(*_synthetic_jupiter())
     else:
-        print("jupiter: HST OPAL WFC3 F395N/F502N/F631N")
+        print("jupiter: HST OPAL WFC3 F395N/F502N/F631N (full disk)")
         jupiter = rgb(*jup_bands)
 
     collage = _collage([dwarf, merger, jwst, jupiter])

@@ -31,17 +31,17 @@ fetch "$CACHE_DIR/ic3418_grz.fits" \
 fetch "$CACHE_DIR/ngc4438_grz.fits" \
   "https://www.legacysurvey.org/viewer/fits-cutout?ra=186.9417&dec=13.0086&layer=ls-dr10&pixscale=0.262&bands=grz&size=1200"
 
-# JWST NIRCam HiPS at Stephan's Quintet (F115W has no coverage here).
+# JWST NIRCam HiPS at SMACS 0723 (Webb's First Deep Field).
 HIPS="https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
-QRA="338.99754"
-QDEC="33.96049"
-for filt in F150W F200W F444W; do
-  fetch "$CACHE_DIR/jwst_quintet_${filt}.fits" \
-    "${HIPS}?hips=CDS/P/JWST/${filt}&width=800&height=800&fov=0.06&projection=TAN&coordsys=icrs&ra=${QRA}&dec=${QDEC}&format=fits"
+SRA="110.834"
+SDEC="-73.454"
+for filt in F115W F150W F200W; do
+  fetch "$CACHE_DIR/jwst_smacs_${filt}.fits" \
+    "${HIPS}?hips=CDS/P/JWST/${filt}&width=800&height=800&fov=0.04&projection=TAN&coordsys=icrs&ra=${SRA}&dec=${SDEC}&format=fits"
 done
 
 # HST WFC3 UVIS OPAL Jupiter (program 16266, visit 09). FLT is ~40 MB;
-# keep a 720px flux-centroid crop of SCI.
+# keep an 800px downsample of the full SCI so the disk and limb stay in frame.
 JUP_STAMPS=(
   "jupiter_f395n.fits:ieaq09b9q"
   "jupiter_f502n.fits:ieaq09b8q"
@@ -71,11 +71,12 @@ import os
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 import torchfits
 
 tmp = Path(os.environ["TORCHFITS_JUP_TMP"])
 cache = Path(os.environ["TORCHFITS_JUP_CACHE"])
-size = 720
+size = 800
 pairs = (
     ("ieaq09b9q", "jupiter_f395n.fits"),
     ("ieaq09b8q", "jupiter_f502n.fits"),
@@ -90,20 +91,15 @@ for root, name in pairs:
         print(f"warn: missing {src.name}", flush=True)
         continue
     tensor = torchfits.read_tensor(str(src), hdu=1).float()
-    weight = torch.clamp(torch.nan_to_num(tensor), min=0.0)
-    height, width = int(tensor.shape[0]), int(tensor.shape[1])
-    yy = torch.arange(height, dtype=torch.float32).unsqueeze(1)
-    xx = torch.arange(width, dtype=torch.float32).unsqueeze(0)
-    mass = float(weight.sum())
-    if mass <= 0.0:
-        print(f"warn: empty SCI in {src.name}", flush=True)
-        continue
-    cy = int(round(float((weight * yy).sum() / mass)))
-    cx = int(round(float((weight * xx).sum() / mass)))
-    y0 = max(0, min(height - size, cy - size // 2))
-    x0 = max(0, min(width - size, cx - size // 2))
-    torchfits.write(str(dest), tensor[y0 : y0 + size, x0 : x0 + size], overwrite=True)
-    print(f"crop {src.name} -> {name} {size}x{size} @ ({y0},{x0})", flush=True)
+    tensor = torch.nan_to_num(tensor, nan=0.0)
+    scaled = F.interpolate(
+        tensor.unsqueeze(0).unsqueeze(0),
+        size=(size, size),
+        mode="bilinear",
+        align_corners=False,
+    ).squeeze()
+    torchfits.write(str(dest), scaled, overwrite=True)
+    print(f"downsample {src.name} -> {name} {size}x{size}", flush=True)
 ')
   rm -rf "$tmp"
   trap - EXIT
@@ -118,7 +114,7 @@ import torch
 import torchfits
 
 cache = Path(os.environ["TORCHFITS_RGB_CACHE"])
-for name in ("jwst_quintet_F150W.fits", "jwst_quintet_F200W.fits", "jwst_quintet_F444W.fits"):
+for name in ("jwst_smacs_F115W.fits", "jwst_smacs_F150W.fits", "jwst_smacs_F200W.fits"):
     path = cache / name
     if not path.is_file() or path.stat().st_size <= 0:
         continue

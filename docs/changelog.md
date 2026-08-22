@@ -51,6 +51,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   (shortest wavelength first): scarlet-style mix, per-band sky-median
   subtract + MAD equalize unless `calibrated=True` / `zeropoints=`,
   fitspng-style MAD stretch, coupled asinh, saturation, and sRGB.
+  NaN mosaic holes stay black (they are not treated as sky).
   `lupton_rgb` stays the Astropy-parity 3-band mapping (reddest first).
 - **`write(..., checksum=True)`** stamps CFITSIO `DATASUM`/`CHECKSUM`
   keywords on every HDU at write time (all payload types, compressed
