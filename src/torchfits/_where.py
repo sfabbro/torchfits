@@ -110,12 +110,86 @@ def _tokenize_where_expression(where: str) -> List[Tuple[str, str]]:
 
 
 def _normalize_where_syntax(where: str) -> str:
-    """Translate C-style logical operators to SQL-style before parsing."""
-    result = where.replace("&&", " AND ").replace("||", " OR ")
-    result = re.sub(r"(?<!\w)~(?!\w)", " NOT ", result)
-    result = re.sub(r"(?<![!=<>])&(?!&)", " AND ", result)
-    result = re.sub(r"(?<!\|)\|(?!\|)", " OR ", result)
-    return result
+    """Translate C-style logical operators to SQL/Python style before parsing.
+
+    Rewrites apply only *outside* quoted literals, so values such as
+    ``'AT&T'`` or ``'x||y'`` survive verbatim instead of being silently
+    rewritten into ``AND``/``OR``. FITS-style doubled-quote escapes inside
+    single-quoted literals (``'O''NEIL'``) are converted to Python
+    backslash escapes so ``ast.parse`` yields the intended value.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(where)
+    while i < n:
+        ch = where[i]
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            buf: List[str] = []
+            closed = False
+            while i < n:
+                cur = where[i]
+                if quote == "'" and cur == "'" and i + 1 < n and where[i + 1] == "'":
+                    # FITS escaped quote -> Python escape sequence.
+                    buf.append("\\'")
+                    i += 2
+                    continue
+                if cur == "\\" and i + 1 < n:
+                    buf.append(cur)
+                    buf.append(where[i + 1])
+                    i += 2
+                    continue
+                if cur == quote:
+                    closed = True
+                    break
+                buf.append(cur)
+                i += 1
+            if not closed:
+                raise ValueError("Unterminated quoted literal in where expression")
+            i += 1  # consume closing quote
+            content = "".join(buf)
+            if quote == '"':
+                # Re-emit as a safe double-quoted literal for ast.parse.
+                out.append('"')
+                out.append(content.replace('"', '\\"'))
+                out.append('"')
+            else:
+                out.append("'")
+                out.append(content)
+                out.append("'")
+            continue
+        two = where[i : i + 2]
+        if two == "&&":
+            out.append(" AND ")
+            i += 2
+            continue
+        if two == "||":
+            out.append(" OR ")
+            i += 2
+            continue
+        if ch == "&":
+            out.append(" AND ")
+            i += 1
+            continue
+        if ch == "|":
+            out.append(" OR ")
+            i += 1
+            continue
+        if ch == "~":
+            prev = where[i - 1] if i > 0 else ""
+            nxt = where[i + 1] if i + 1 < n else ""
+
+            def _word(c: str) -> bool:
+                return c.isalnum() or c == "_"
+
+            if not _word(prev) and not _word(nxt):
+                out.append(" NOT ")
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _normalize_logical_operators(where: str) -> str:

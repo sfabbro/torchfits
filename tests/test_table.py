@@ -388,5 +388,61 @@ class TestTablePerformance:
             )
 
 
+def test_where_window_semantics_engine_independent(tmp_path):
+    """read(row_slice=, where=) and read_torch(start_row=, where=) must agree.
+
+    Regression: read_torch windowed the *filtered* result while the Arrow
+    route filtered *within* the window; and the C++ pushdown silently
+    ignored row_slice entirely.
+    """
+    from torchfits.table import read as arrow_read
+    from torchfits.table import read_torch
+
+    path = tmp_path / "window_where.fits"
+    vals = np.arange(1, 11, dtype=np.int32)
+    torchfits.write(path.as_posix(), {"V": torch.from_numpy(vals)}, overwrite=True)
+
+    a = arrow_read(path.as_posix(), hdu=1, row_slice=(3, None), where="V > 4")
+    b = read_torch(path.as_posix(), hdu=1, start_row=3, where="V > 4")
+    assert sorted(a.column("V").to_pylist()) == sorted(b["V"].tolist())
+    assert sorted(b["V"].tolist()) == [5, 6, 7, 8, 9, 10]
+
+    # Window fully inside the filtered-out region -> empty for both routes.
+    a2 = arrow_read(path.as_posix(), hdu=1, row_slice=(1, 2), where="V > 4")
+    b2 = read_torch(path.as_posix(), hdu=1, start_row=1, num_rows=2, where="V > 4")
+    assert len(a2.column("V")) == len(b2["V"]) == 0
+
+    # Windowless queries keep using the pushdown fast path.
+    c = arrow_read(path.as_posix(), hdu=1, where="V >= 9", backend="auto")
+    assert c.column("V").to_pylist() == [9, 10]
+
+
+def test_where_tnull_sentinel_excluded_on_all_engines(tmp_path):
+    """A TNULL sentinel value must never satisfy a numeric predicate.
+
+    Regression: cpp pushdown and the torch mask compared raw stored values,
+    so sentinel 25 matched ``M > 20`` on mmap/auto paths while the Arrow
+    engine (nulls applied during decode) excluded it.
+    """
+    from astropy.io import fits as afits
+
+    from torchfits.table import read as arrow_read
+
+    path = tmp_path / "tnull_where.fits"
+    m = np.array([5, 25, 30, 7], dtype=np.int32)
+    fits_hdu = afits.BinTableHDU.from_columns(
+        [afits.Column(name="M", format="J", array=m, null=25)]
+    )
+    fits_hdu.writeto(path.as_posix(), overwrite=True)
+
+    expected = [30]
+    auto = arrow_read(path.as_posix(), hdu=1, where="M > 20")  # pushdown/torch
+    forced_arrow = arrow_read(path.as_posix(), hdu=1, where="M > 20", mmap=False)
+    got_auto = [v for v in auto.column("M").to_pylist() if v is not None]
+    got_arrow = [v for v in forced_arrow.column("M").to_pylist() if v is not None]
+    assert got_auto == expected, got_auto
+    assert got_arrow == expected, got_arrow
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

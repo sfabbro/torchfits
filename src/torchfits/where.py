@@ -17,6 +17,15 @@ from ._where import (
 )
 
 
+def _not_null_like(values: "np.ndarray") -> "np.ndarray":
+    """Boolean mask of positions that are not null-like (NaN for floats)."""
+    import numpy as np
+
+    if np.issubdtype(values.dtype, np.floating):
+        return ~np.isnan(values)
+    return np.ones(values.shape, dtype=bool)
+
+
 def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
     """Evaluate a parsed predicate against mapping values as NumPy arrays.
 
@@ -40,7 +49,15 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
             np.ndarray, evaluate_where(ast[1], data) | evaluate_where(ast[2], data)
         )
     if kind == "not":
-        return ~evaluate_where(ast[1], data)
+        inverted = ~evaluate_where(ast[1], data)
+        # Exclude null-like positions from negated results so
+        # NOT (X == 5) stays equivalent to X != 5 (NaN rows excluded).
+        keep = None
+        for name in where_columns_from_ast(ast[1]):
+            if name in data:
+                finite = _not_null_like(np.asarray(data[name]))
+                keep = finite if keep is None else (keep & finite)
+        return cast(np.ndarray, inverted if keep is None else (inverted & keep))
 
     column = ast[1]
     if column not in data:
@@ -77,11 +94,15 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
     if kind == "in":
         _, _, literals, negate = ast
         mask = cast(np.ndarray, np.isin(values, literals))
-        return ~mask if negate else mask
+        if negate:
+            return cast(np.ndarray, ~mask & _not_null_like(values))
+        return mask
     if kind == "between":
         _, _, low, high, negate = ast
         mask = cast(np.ndarray, (values >= low) & (values <= high))
-        return ~mask if negate else mask
+        if negate:
+            return cast(np.ndarray, ~mask & _not_null_like(values))
+        return mask
     if kind == "isnull":
         _, _, negate = ast
         if np.issubdtype(values.dtype, np.floating):

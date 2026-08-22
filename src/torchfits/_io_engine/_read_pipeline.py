@@ -457,7 +457,10 @@ def _read_batch_paths(
         raise ValueError("Batch read requires a single integer HDU")
     hdu = hdu_batch
 
-    if mmap is not False:
+    # The batch C++ fast path has no fp16/bf16/raw_scale support; route
+    # around it so list inputs honor the same conversion contract as single
+    # reads instead of silently returning differently-scaled data.
+    if mmap is not False and not (fp16 or bf16 or raw_scale):
         for item_path in path:
             if item_path.lower().endswith(".bz2"):
                 raise ValueError(
@@ -543,7 +546,9 @@ def _read_batch_hdus(
     logger: Any,
 ) -> Any:
     """Dispatch multiple HDUs from one FITS path."""
-    if hasattr(cpp_module, "read_hdus_batch"):
+    # read_hdus_batch has no fp16/bf16/raw_scale support; keep list-of-HDU
+    # inputs consistent with the per-HDU conversion contract.
+    if not (fp16 or bf16 or raw_scale) and hasattr(cpp_module, "read_hdus_batch"):
         try:
             data = cpp_module.read_hdus_batch(path, list(hdu))
         except TypeError:

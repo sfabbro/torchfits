@@ -200,6 +200,15 @@ def _try_torch_tensor_where_filter(
     if not isinstance(chunk, dict) or not chunk:
         return None
 
+    # Sentinel→null exclusion must happen BEFORE predicate evaluation so the
+    # torch engine agrees with the Arrow engine (comparisons against NULL
+    # never match) regardless of which strategy runs.
+    tnull_map = (
+        fits_schema.column_tnull_map(header)
+        if apply_fits_nulls and header is not None
+        else {}
+    )
+
     mask: torch.Tensor | None = None
     try:
         for pred_col, op, literal in predicates:
@@ -207,18 +216,15 @@ def _try_torch_tensor_where_filter(
             if not isinstance(tensor, torch.Tensor):
                 return None
             part = _torch_cmp_mask(tensor, op, literal)
+            sentinel = tnull_map.get(pred_col)
+            if sentinel is not None:
+                part = part & torch.ne(tensor, sentinel)
             mask = part if mask is None else (mask & part)
     except (RuntimeError, TypeError, ValueError) as exc:
         logger.debug("torch WHERE mask build failed; falling back: %s", exc)
         return None
     if mask is None:
         return None
-
-    tnull_map = (
-        fits_schema.column_tnull_map(header)
-        if apply_fits_nulls and header is not None
-        else {}
-    )
 
     arrays = []
     names_out = []
@@ -327,11 +333,11 @@ def _where_mask_for_table(
 
         if has_null:
             mask = pc.or_(pc.fill_null(mask, False), pc.is_null(column))
-        mask = pc.fill_null(mask, False)
-
         if negate:
+            # Invert BEFORE null-fill so NULL rows stay excluded on negation
+            # (SQL three-valued logic): NOT IN must not resurrect NULLs.
             return pc.invert(mask)
-        return mask
+        return pc.fill_null(mask, False)
 
     def _between_mask(column_name: str, low: Any, high: Any, negate: bool) -> Any:
         column = _get_predicate_column(column_name)
@@ -341,11 +347,11 @@ def _where_mask_for_table(
         high_s = pa.scalar(high)
         ge = pc.greater_equal(column, low_s)
         le = pc.less_equal(column, high_s)
-        mask = pc.and_(pc.fill_null(ge, False), pc.fill_null(le, False))
-        mask = pc.fill_null(mask, False)
+        mask = pc.and_(ge, le)
         if negate:
+            # Null-propagating inversion: NOT BETWEEN excludes NULLs.
             return pc.invert(mask)
-        return mask
+        return pc.fill_null(mask, False)
 
     def _isnull_mask(column_name: str, negate: bool) -> Any:
         column = _get_predicate_column(column_name)
@@ -376,8 +382,10 @@ def _where_mask_for_table(
             right = pc.fill_null(_eval(node[2]), False)
             return pc.or_(left, right)
         if kind == "not":
-            child = pc.fill_null(_eval(node[1]), False)
-            return pc.invert(child)
+            child = _eval(node[1])
+            # Invert before the null-fill: NOT must keep NULL rows excluded
+            # (NOT (X == 5) ≡ X != 5 under SQL three-valued logic).
+            return pc.fill_null(pc.invert(child), False)
         raise ValueError("Invalid where AST")
 
     return pc.fill_null(_eval(ast), False)  # type: ignore[no-any-return]
@@ -422,6 +430,48 @@ def _try_cpp_where_pushdown(
         # filters is a tuple (immutable, cached) — C++ binding expects a list.
         data_dict = cpp.read_fits_table_filtered(path, hdu, target_cols, list(filters))
 
+        # The C++ pushdown compares raw stored values, so TNULL sentinels can
+        # satisfy numeric predicates (e.g. sentinel 25 matching "> 20") while
+        # the Arrow engine treats them as NULL and excludes them. Drop rows
+        # whose match came only from a sentinel so both engines agree.
+        full_tnull_map = (
+            fits_schema.column_tnull_map(header)
+            if apply_fits_nulls and header is not None
+            else {}
+        )
+        keep: Any = None
+        for pred_col, _op, _lit in filters:
+            sentinel = full_tnull_map.get(pred_col)
+            if sentinel is None:
+                continue
+            col_tensor = data_dict.get(pred_col)
+            if not isinstance(col_tensor, torch.Tensor):
+                # Predicate column not in the projection: cannot verify
+                # sentinel matches here — defer to the Arrow engine.
+                return None
+            valid = torch.ne(col_tensor, sentinel)
+            keep = valid if keep is None else (keep & valid)
+        if keep is not None:
+            if bool(keep.any()):
+                data_dict = {
+                    key: (
+                        value[keep]
+                        if isinstance(value, torch.Tensor)
+                        and value.shape[:1] == keep.shape[:1]
+                        else value
+                    )
+                    for key, value in data_dict.items()
+                }
+            else:
+                data_dict = {
+                    key: (
+                        value[:0]
+                        if isinstance(value, torch.Tensor)
+                        else ([] if isinstance(value, list) else value)
+                    )
+                    for key, value in data_dict.items()
+                }
+
         # Only look up tforms when string/bit columns are present
         # (numeric 1D columns don't need tform for Arrow conversion).
         pushdown_tforms = None
@@ -436,11 +486,7 @@ def _try_cpp_where_pushdown(
                         break
             if needs_tforms:
                 pushdown_tforms = _column_tforms_for_decode(path, hdu, set(target_cols))
-        tnull_map = (
-            fits_schema.column_tnull_map(header)
-            if apply_fits_nulls and header is not None
-            else {}
-        )
+        tnull_map = full_tnull_map
         arrays = []
         names_out = []
         for name in target_cols:
@@ -518,20 +564,25 @@ def _read_table_with_where(
     )
 
     if plan.strategy == WhereStrategy.CPP_PUSHDOWN:
-        pushed = _try_cpp_where_pushdown(
-            pa=pa,
-            path=path,
-            hdu=hdu,
-            columns=columns,
-            where=where,
-            decode_bytes=decode_bytes,
-            encoding=encoding,
-            strip=strip,
-            header=hdr if header_ok else None,
-            apply_fits_nulls=apply_fits_nulls,
-        )
-        if pushed is not None:
-            return pushed
+        # The C++ pushdown filters the whole HDU and cannot express a row
+        # window; using it here would silently ignore row_slice/rows. Only
+        # take this shortcut for full-table predicates so the fallback below
+        # can apply the window BEFORE filtering (filter-within-window).
+        if row_slice is None and rows is None:
+            pushed = _try_cpp_where_pushdown(
+                pa=pa,
+                path=path,
+                hdu=hdu,
+                columns=columns,
+                where=where,
+                decode_bytes=decode_bytes,
+                encoding=encoding,
+                strip=strip,
+                header=hdr if header_ok else None,
+                apply_fits_nulls=apply_fits_nulls,
+            )
+            if pushed is not None:
+                return pushed
 
     torch_filtered = _try_torch_tensor_where_filter(
         pa=pa,

@@ -6,6 +6,7 @@ from torchfits._where import (
     _tokenize_where_expression,
     _normalize_where_syntax,
     _parse_where_expression,
+    parse_where_expression,
     _where_columns_from_ast,
 )
 from torchfits._table.read import _where_mask_for_table
@@ -128,6 +129,35 @@ def test_normalize_where_syntax():
 
     # Don't touch == or != or >= or <=
     assert _normalize_where_syntax("A == B && C != D") == "A == B  AND  C != D"
+
+
+def test_normalize_where_syntax_quote_aware():
+    # Operators inside quoted literals must survive verbatim.
+    assert _normalize_where_syntax("NAME == 'AT&T'") == "NAME == 'AT&T'"
+    assert _normalize_where_syntax("NAME == 'x||y'") == "NAME == 'x||y'"
+    assert _normalize_where_syntax("A == 'A&&B' && B == 'C|D'") == (
+        "A == 'A&&B'  AND  B == 'C|D'"
+    )
+    # FITS doubled-quote escapes become Python escapes.
+    assert _normalize_where_syntax("NAME == 'O''NEIL'") == "NAME == 'O\\'NEIL'"
+    # Unterminated quotes raise instead of silently mangling.
+    with pytest.raises(ValueError, match="Unterminated"):
+        _normalize_where_syntax("NAME == 'unterminated")
+
+
+def test_parse_where_expression_quoted_literals():
+    ast = parse_where_expression("NAME != 'AT&T' OR NAME IN ('A&B', 'C')")
+    assert ast == (
+        "or",
+        ("cmp", "NAME", "!=", "AT&T"),
+        ("in", "NAME", ["A&B", "C"], False),
+    )
+    assert parse_where_expression("NAME == 'O''NEIL'") == (
+        "cmp",
+        "NAME",
+        "==",
+        "O'NEIL",
+    )
 
 
 def test_parse_where_expression():

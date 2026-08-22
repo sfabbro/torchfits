@@ -205,29 +205,88 @@ def read_table(
         if predicates is None:
             raise ValueError(f"Unsupported where expression for read_torch: {where!r}")
 
-        # Prefer project-all-needed-cols + torch mask over ``read_fits_table_filtered``.
-        # Filtered gather wins only when keep-rate is tiny *and* row assembly is
-        # heavy; for narrow/dense predicates (the Round-3 deficit cluster) mask
-        # is several× faster and also beats Astropy's numpy mask path.
         pred_cols = [col for col, _op, _lit in predicates]
         read_cols = list(columns) if columns is not None else []
         for name in pred_cols:
             if name not in read_cols:
                 read_cols.append(name)
-        try:
-            data = _thin_read_table_torch(
-                path,
-                hdu=hdu,
-                columns=read_cols or None,
-                start_row=1,
-                num_rows=-1,
-                device="cpu",
-                mmap=mmap,
-            )
-        except Exception:
-            data = None
+
+        # Filter-within-window contract (matches read(row_slice=..., where=...)
+        # and the Arrow engine): clamp the caller's row window FIRST, then
+        # evaluate predicates inside it. The old post-filter window returned
+        # a different population for the same query depending on API shape.
+        window_requested = start_row > 1 or num_rows != -1
+
+        data = None
+        if window_requested:
+            try:
+                data = _thin_read_table_torch(
+                    path,
+                    hdu=hdu,
+                    columns=read_cols or None,
+                    start_row=start_row,
+                    num_rows=num_rows,
+                    device="cpu",
+                    mmap=mmap,
+                )
+            except Exception:
+                data = None
+            if data is None:
+                try:
+                    data = _thin_read_table_torch(
+                        path,
+                        hdu=hdu,
+                        columns=read_cols or None,
+                        start_row=1,
+                        num_rows=-1,
+                        device="cpu",
+                        mmap=mmap,
+                    )
+                except Exception:
+                    data = None
+                if data is not None:
+                    data = _apply_row_window(data, start_row, num_rows)
+            if data is None and columns is not None and len(read_cols) > len(columns):
+                # Retry with the full projection: the failure may come from a
+                # predicate-only column rather than the requested window.
+                try:
+                    data = _thin_read_table_torch(
+                        path,
+                        hdu=hdu,
+                        columns=None,
+                        start_row=1,
+                        num_rows=-1,
+                        device="cpu",
+                        mmap=mmap,
+                    )
+                except Exception:
+                    data = None
+                if data is not None:
+                    data = _apply_row_window(data, start_row, num_rows)
+        else:
+            # Prefer project-all-needed-cols + torch mask over ``read_fits_table_filtered``.
+            # Filtered gather wins only when keep-rate is tiny *and* row assembly is
+            # heavy; for narrow/dense predicates (the Round-3 deficit cluster) mask
+            # is several× faster and also beats Astropy's numpy mask path.
+            try:
+                data = _thin_read_table_torch(
+                    path,
+                    hdu=hdu,
+                    columns=read_cols or None,
+                    start_row=1,
+                    num_rows=-1,
+                    device="cpu",
+                    mmap=mmap,
+                )
+            except Exception:
+                data = None
 
         if data is None:
+            if window_requested:
+                raise RuntimeError(
+                    f"Failed to read rows {start_row}..{start_row + max(num_rows, 0) - 1} "
+                    f"for where={where!r} on table HDU {hdu!r}"
+                )
             pushed = _thin_read_table_filtered(
                 path,
                 hdu=hdu,
@@ -240,12 +299,11 @@ def read_table(
                 raise RuntimeError(
                     f"Failed to apply where={where!r} on table HDU {hdu!r}"
                 )
-            data = _apply_row_window(pushed, start_row, num_rows)
             if return_header:
                 import torchfits
 
-                return data, torchfits.read_header(path, hdu=hdu)
-            return data
+                return pushed, torchfits.read_header(path, hdu=hdu)
+            return pushed
 
         import numpy as np
 
@@ -284,9 +342,7 @@ def read_table(
                 filtered[k] = torch.as_tensor(v)[mask]
             else:
                 filtered[k] = v
-        data = _apply_row_window(
-            _move_table_dict(filtered, device), start_row, num_rows
-        )
+        data = _move_table_dict(filtered, device)
         if return_header:
             import torchfits
 
