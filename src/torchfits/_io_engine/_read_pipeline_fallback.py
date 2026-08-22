@@ -340,6 +340,12 @@ def read_fallback_table(
         table_data = _coerce_bit_table_columns(table_data, header)
         table_data = _coerce_unsigned_table_columns(table_data, header)
 
+    # Reader-boundary normalization: FITS scalar columns surface as (N, 1);
+    # hand every consumer (and the cache) rank-1 columns instead.
+    from .table_api import _squeeze_scalar_columns
+
+    table_data = _squeeze_scalar_columns(table_data)
+
     if (start_row > 1 or num_rows != -1) and not hasattr(
         cpp_module, "read_fits_table_rows"
     ):

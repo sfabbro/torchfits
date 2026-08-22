@@ -24,6 +24,7 @@ class TableDataAccessor:
                 isinstance(value, torch.Tensor)
                 and value.dim() == 2
                 and value.shape[1] == 1
+                and value.dtype != torch.uint8
             ):
                 return value.squeeze(1)
             if hasattr(value, "ndim") and value.ndim == 2 and value.shape[1] == 1:
@@ -513,18 +514,31 @@ class TableHDU:
 
     def __getitem__(self, col_name: str) -> Any:
         if col_name in self._raw_data:
-            return self._raw_data[col_name]
+            value = self._raw_data[col_name]
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() == 2
+                and value.shape[1] == 1
+                and value.dtype != torch.uint8
+            ):
+                # Same scalar-column normalization as every reader boundary
+                # (see _io_engine.table_api._squeeze_scalar_columns).
+                return value.reshape(-1)
+            return value
         raise KeyError(f"Column '{col_name}' not found")
 
     def materialize(self) -> "TableHDU":
         return self
 
     def to_tensor_dict(self) -> Dict[str, Any]:
-        return {
-            str(k): v for k, v in self._raw_data.items() if isinstance(v, torch.Tensor)
-        }
+        from .._io_engine.table_api import _squeeze_scalar_columns
+
+        squeezed = _squeeze_scalar_columns(dict(self._raw_data))
+        return {str(k): v for k, v in squeezed.items() if isinstance(v, torch.Tensor)}
 
     def iter_rows(self, batch_size: int = 1000) -> Iterator[dict[str, Any]]:
+        from .._io_engine.table_api import _squeeze_scalar_columns
+
         if self._raw_data:
             total_rows = self.num_rows
             for start in range(0, total_rows, batch_size):
@@ -536,7 +550,7 @@ class TableHDU:
                         batch[str(k)] = v[start : start + batch_size]
                     else:
                         batch[str(k)] = v
-                yield batch
+                yield _squeeze_scalar_columns(batch)
 
     @classmethod
     def from_fits(cls, file_path: str, hdu_index: int = 1) -> "TableHDU":

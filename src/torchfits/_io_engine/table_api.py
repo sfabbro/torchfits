@@ -50,6 +50,39 @@ def _apply_row_window(
     return out
 
 
+def _squeeze_scalar_columns(data: Any) -> Any:
+    # Returns Any by design; callers re-narrow.
+    """Normalize FITS scalar columns to rank-1 ``(N,)`` tensors.
+
+    The C++ readers surface repeat==1 table columns as ``(N, 1)`` (FITS
+    stores the row-major width); every Python reader boundary normalizes
+    them to ``(N,)`` so column shapes never depend on which internal
+    binding served the read. Genuine vector columns keep their shape.
+    """
+    if isinstance(data, dict):
+        out: dict[str, Any] = {}
+        for key, value in data.items():
+            if (
+                isinstance(value, torch.Tensor)
+                and value.dim() == 2
+                and value.shape[1] == 1
+                and value.dtype != torch.uint8
+            ):
+                # uint8 2D columns are packed FITS strings — never squeezed.
+                out[key] = value.reshape(-1)
+            else:
+                out[key] = value
+        return out
+    if (
+        isinstance(data, torch.Tensor)
+        and data.dim() == 2
+        and data.shape[1] == 1
+        and data.dtype != torch.uint8
+    ):
+        return data.reshape(-1)
+    return data
+
+
 def _thin_read_table_torch(
     path: str,
     *,
@@ -87,7 +120,10 @@ def _thin_read_table_torch(
             k: torch.as_tensor(v) if isinstance(v, np.ndarray) else v
             for k, v in data.items()
         }
-    return _move_table_dict(dict(data), device)
+    result: dict[str, Any] = _squeeze_scalar_columns(
+        _move_table_dict(dict(data), device)
+    )
+    return result
 
 
 def _thin_read_table_filtered(
@@ -121,7 +157,10 @@ def _thin_read_table_filtered(
         data = cpp.read_fits_table_filtered(path, int(hdu), target_cols, list(filters))
     except Exception:
         return None
-    return _move_table_dict(dict(data), device)
+    result: dict[str, Any] = _squeeze_scalar_columns(
+        _move_table_dict(dict(data), device)
+    )
+    return result
 
 
 def read_table(

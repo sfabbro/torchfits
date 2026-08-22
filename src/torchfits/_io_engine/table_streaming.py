@@ -37,6 +37,7 @@ def stream_table(
     """
     import torchfits._C as cpp
     from .paths import cfitsio_base_path, guard_fits_path, is_cfitsio_network_url
+    from .table_api import _squeeze_scalar_columns
 
     if chunk_rows <= 0:
         raise ValueError("batch_size must be > 0")
@@ -51,7 +52,7 @@ def stream_table(
 
     if not hasattr(cpp, "read_fits_table_rows"):
         result = cpp.read_fits_table(file_path, hdu, col_list, mmap)
-        yield result
+        yield _squeeze_scalar_columns(result)
         return
 
     header = None
@@ -78,7 +79,9 @@ def stream_table(
             size = min(chunk_rows, remaining)
             yield cast(
                 Dict[str, Any],
-                cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, mmap),
+                _squeeze_scalar_columns(
+                    cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, mmap)
+                ),
             )
             row += size
             emitted += 1
@@ -94,12 +97,17 @@ def stream_table(
                 remaining = total_rows - row + 1
                 size = min(chunk_rows, remaining)
                 if reader is not None:
-                    yield cast(Dict[str, Any], reader.read_rows(col_list, row, size))
+                    yield cast(
+                        Dict[str, Any],
+                        _squeeze_scalar_columns(reader.read_rows(col_list, row, size)),
+                    )
                 else:
                     yield cast(
                         Dict[str, Any],
-                        cpp.read_fits_table_rows_from_handle(
-                            file_handle, hdu, col_list, row, size
+                        _squeeze_scalar_columns(
+                            cpp.read_fits_table_rows_from_handle(
+                                file_handle, hdu, col_list, row, size
+                            )
                         ),
                     )
                 row += size
@@ -115,7 +123,9 @@ def stream_table(
             size = min(chunk_rows, remaining)
             yield cast(
                 Dict[str, Any],
-                cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, mmap),
+                _squeeze_scalar_columns(
+                    cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, mmap)
+                ),
             )
             row += size
             emitted += 1
