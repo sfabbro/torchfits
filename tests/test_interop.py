@@ -174,3 +174,36 @@ def test_table_write_various_dataframe_types():
     finally:
         if os.path.exists(path):
             os.unlink(path)
+
+
+def test_table_to_astropy_fidelity(tmp_path):
+    """Path input preserves TUNIT, TNULL masking, and TDIM shapes."""
+    from astropy.io import fits as afits
+
+    from torchfits.table import to_astropy
+
+    path = tmp_path / "fidelity.fits"
+    mag = afits.Column(
+        name="MAG", format="E", array=np.array([1.0, 2.0], dtype="<f4"), unit="mag"
+    )
+    ident = afits.Column(
+        name="ID", format="J", array=np.array([7, 8], dtype="<i4"), null=8
+    )
+    vec = afits.Column(
+        name="VEC", format="3J", array=np.arange(6, dtype="<i4").reshape(2, 3)
+    )
+    afits.BinTableHDU.from_columns([mag, ident, vec]).writeto(str(path), overwrite=True)
+
+    tbl = to_astropy(str(path))
+    assert str(tbl["MAG"].unit) == "mag"
+    assert hasattr(tbl["ID"], "mask") and tbl["ID"].mask.tolist() == [False, True]
+    assert tbl["VEC"].shape == (2, 3)
+
+
+def test_arrow_nulls_become_masked_column():
+    import pyarrow as pa
+
+    from torchfits.table import to_astropy
+
+    tbl = to_astropy(pa.table({"a": pa.array([1, None, 3], type=pa.int32())}))
+    assert tbl["a"].mask.tolist() == [False, True, False]

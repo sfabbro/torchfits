@@ -304,6 +304,114 @@ def to_polars(
     return pl.from_arrow(data, rechunk=rechunk)
 
 
+def _astropy_fits_column_meta(
+    data: Any, kwargs: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Per-column ``unit`` / ``tdim`` from the source file's FITS header.
+
+    Only available when *data* is a path; pure Arrow input carries no FITS
+    metadata and gets an empty mapping.
+    """
+    import os
+
+    if not isinstance(data, (str, os.PathLike)):
+        return {}
+    try:
+        import torchfits
+        from .. import fits_schema
+
+        hdu = kwargs.get("hdu", 1)
+        header = torchfits.read_header(str(data), hdu)
+        meta: dict[str, dict[str, Any]] = {}
+        for col in fits_schema.iter_table_columns(header):
+            entry: dict[str, Any] = {}
+            tunit = header.get(f"TUNIT{col.index}")
+            if isinstance(tunit, str) and tunit.strip():
+                entry["unit"] = tunit.strip()
+            if col.tdim:
+                entry["tdim"] = col.tdim
+            if entry:
+                meta[col.name] = entry
+        return meta
+    except Exception:
+        return {}
+
+
+def _arrow_column_to_astropy(
+    pa: Any, chunked_arr: Any, name: str, meta: dict[str, Any]
+) -> Any:
+    """Convert one Arrow column to a numpy array or astropy MaskedColumn."""
+    import importlib
+
+    import numpy as np
+
+    astropy_table_mod = importlib.import_module("astropy.table")
+    Column = astropy_table_mod.Column
+    MaskedColumn = astropy_table_mod.MaskedColumn
+
+    unit = meta.get("unit")
+    arr_type = chunked_arr.type
+    is_fixed_list = pa.types.is_fixed_size_list(arr_type)
+
+    if chunked_arr.null_count == 0:
+        if is_fixed_list:
+            # TDIM-style vector column: flatten then reshape (N, list_size).
+            list_size = arr_type.list_size
+            arr = (
+                chunked_arr.combine_chunks()
+                if isinstance(chunked_arr, pa.ChunkedArray)
+                else chunked_arr
+            )
+            if isinstance(arr, pa.ChunkedArray):
+                arr = arr.chunk(0) if arr.num_chunks else None
+            if arr is None:
+                np_arr = np.empty((0, list_size), dtype=np.int64)
+            else:
+                flat = arr.flatten()
+                np_arr = np.asarray(flat.to_numpy(zero_copy_only=False))
+                try:
+                    np_arr = np_arr.reshape(-1, list_size)
+                except ValueError:
+                    pass
+            return Column(np_arr, name=name, unit=unit)
+        try:
+            return Column(
+                chunked_arr.to_numpy(zero_copy_only=False), name=name, unit=unit
+            )
+        except Exception:
+            values = np.asarray(chunked_arr.to_pylist(), dtype=object)
+            return Column(values, name=name, unit=unit)
+
+    # Null-bearing column: fill, mask, and hand astropy a MaskedColumn so
+    # TNULL sentinels survive as first-class missing values instead of
+    # degrading to object dtype.
+    if pa.types.is_floating(arr_type):
+        filled = chunked_arr.fill_null(float("nan"))
+    elif pa.types.is_integer(arr_type):
+        filled = chunked_arr.fill_null(0)
+    elif pa.types.is_boolean(arr_type):
+        filled = chunked_arr.fill_null(False)
+    elif pa.types.is_string(arr_type) or pa.types.is_large_string(arr_type):
+        filled = chunked_arr.fill_null("")
+    else:
+        filled = None
+
+    mask_np = np.asarray(chunked_arr.is_null())
+    if filled is not None:
+        try:
+            data_np = filled.to_numpy(zero_copy_only=False)
+        except Exception:
+            data_np = None
+    else:
+        data_np = None
+    if data_np is None:
+        pylist = chunked_arr.to_pylist()
+        data_np = np.array(
+            [None if m else v for v, m in zip(pylist, mask_np.tolist())], dtype=object
+        )
+    return MaskedColumn(data=data_np, mask=mask_np, name=name, unit=unit)
+
+
 def to_astropy(
     data: str | Any | Iterable[Any],
     **kwargs: Any,
@@ -316,9 +424,14 @@ def to_astropy(
             data is a file path.
 
     Returns:
-        astropy.table.Table: An Astropy Table containing the data.
+        astropy.table.Table: An Astropy Table containing the data. Columns
+        with Arrow nulls become :class:`astropy.table.MaskedColumn`; when the
+        input is a file path, TUNIT maps to ``.unit`` and fixed-size vector
+        columns keep their ``(N, repeat)`` shape (TDIM).
     """
     import importlib
+
+    import pyarrow as pa
 
     try:
         astropy_table_mod = importlib.import_module("astropy.table")
@@ -327,13 +440,17 @@ def to_astropy(
         raise ImportError("astropy is required for to_astropy conversion") from exc
 
     pa_table = _materialize_arrow_table(data, **kwargs)
+    field_meta = _astropy_fits_column_meta(data, kwargs)
     cols: dict[str, Any] = {}
-    for name in pa_table.column_names:
-        chunked_arr = pa_table[name]
-        try:
-            cols[name] = chunked_arr.to_numpy(zero_copy_only=False)
-        except Exception:
-            cols[name] = chunked_arr.to_pylist()
+    for schema_field in pa_table.schema:
+        name = schema_field.name
+        meta = field_meta.get(name, {})
+        field_metadata = getattr(schema_field, "metadata", None)
+        if "unit" not in meta and field_metadata:
+            raw_unit = field_metadata.get(b"fits_tunit")
+            if raw_unit:
+                meta.setdefault("unit", raw_unit.decode("utf-8").strip())
+        cols[name] = _arrow_column_to_astropy(pa, pa_table[name], name, meta)
     return Table(cols)
 
 
