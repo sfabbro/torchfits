@@ -12,13 +12,20 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import logging
 import threading
 import os
 import tempfile
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # e.g. Windows: isolation comes from unique temp names
+    _fcntl = None  # type: ignore[assignment]
 
 from torchfits.http_util import (
     HttpBlockedError,
@@ -85,13 +92,72 @@ def cache_path_for_url(url: str, *, cache_dir: Path | None = None) -> Path:
     return (cache_dir or remote_cache_dir()) / f"{digest}{suffix}"
 
 
+@contextmanager
+def _cross_process_download_lock(dest: Path) -> Iterator[None]:
+    """Serialize download-on-demand for *dest* across processes via ``flock``.
+
+    Only one writer at a time may touch a destination's ``.partial`` file;
+    every other process either finds the finished file after acquiring the
+    lock or joins the in-flight transfer. On platforms without ``fcntl``
+    (e.g. Windows) this is a no-op and writer isolation comes from unique
+    per-attempt temp names instead.
+    """
+    if _fcntl is None:
+        yield
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = dest.parent / f".{dest.name}.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+def _partial_path_for(dest: Path) -> Path:
+    """In-flight download file for *dest*.
+
+    Shared canonical name under the cross-process lock so later processes
+    can resume an interrupted transfer; unique per-attempt names where no
+    lock primitive exists.
+    """
+    if _fcntl is not None:
+        return dest.with_suffix(dest.suffix + ".partial")
+    token = f"{os.getpid()}.{threading.get_ident():x}"
+    return dest.with_suffix(dest.suffix + f".{token}.partial")
+
+
+def _read_resume_validators(meta_path: Path) -> dict[str, str]:
+    try:
+        data = json.loads(meta_path.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _download_http(url: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".partial")
+    tmp = _partial_path_for(dest)
+    meta_path = Path(str(tmp) + ".meta")
+    validators = _read_resume_validators(meta_path) if meta_path.is_file() else {}
+
     existing = tmp.stat().st_size if tmp.is_file() else 0
     headers: dict[str, str] = {}
     if existing > 0:
-        headers["Range"] = f"bytes={existing}-"
+        if not (validators.get("etag") or validators.get("last_modified")):
+            # A leftover partial without a validator cannot be checked
+            # against the current remote content: restart cleanly rather
+            # than risk gluing old bytes onto new ones.
+            tmp.unlink(missing_ok=True)
+            existing = 0
+        else:
+            headers["Range"] = f"bytes={existing}-"
+            headers["If-Range"] = validators.get("etag") or validators["last_modified"]
     try:
         with http_open(
             url, headers=headers or None, timeout=http_timeout()
@@ -121,6 +187,17 @@ def _download_http(url: str, dest: Path) -> Path:
             content_length = response.headers.get("Content-Length")
             expected = int(content_length) if content_length else None
             wrote = 0
+            if not append:
+                # Capture validators so a later interrupted attempt can resume
+                # safely (If-Range makes the server reject stale partials).
+                etag = response.headers.get("ETag")
+                last_modified = response.headers.get("Last-Modified")
+                if etag or last_modified:
+                    meta_path.write_text(
+                        json.dumps({"etag": etag, "last_modified": last_modified})
+                    )
+                else:
+                    meta_path.unlink(missing_ok=True)
             with open(tmp, mode) as handle:
                 while True:
                     chunk = response.read(1024 * 1024)
@@ -128,6 +205,20 @@ def _download_http(url: str, dest: Path) -> Path:
                         break
                     handle.write(chunk)
                     wrote += len(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            transfer_encoding = (
+                response.headers.get("Transfer-Encoding") or ""
+            ).lower()
+            if expected is None and "chunked" not in transfer_encoding and wrote > 0:
+                # Connection-close framing: clean EOF is indistinguishable
+                # from a dropped connection mid-body. Promote, but say so.
+                warnings.warn(
+                    f"{url}: server omitted Content-Length; the cached copy's "
+                    "completeness could not be verified",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             if expected is not None and wrote != expected:
                 try:
                     tmp.unlink(missing_ok=True)
@@ -153,6 +244,10 @@ def _download_http(url: str, dest: Path) -> Path:
     except HttpBlockedError:
         raise
     tmp.replace(dest)
+    try:
+        meta_path.unlink(missing_ok=True)
+    except OSError:
+        pass
     return dest
 
 
@@ -183,11 +278,11 @@ def _download(url: str, dest: Path) -> Path:
 
 
 def _download_once(cache_key: str, url: str, dest: Path) -> Path:
-    # NOTE: process-local locks cover Dataset/prefetch threads; use lock files
-    # if cross-process download-on-demand is added.
+    # Thread lock covers Dataset/prefetch threads; the flock serializes
+    # DataLoader worker *processes* sharing one cache directory.
     with _prefetch_lock:
         lock = _download_locks.setdefault(cache_key, threading.Lock())
-    with lock:
+    with lock, _cross_process_download_lock(dest):
         if dest.is_file():
             return dest
         return _download(url, dest)

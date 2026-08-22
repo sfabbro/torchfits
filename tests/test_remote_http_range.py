@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -296,6 +297,11 @@ def test_download_resume_appends_partial(tmp_path, allow_loopback, monkeypatch):
     dest = cache_path_for_url(url, cache_dir=cache)
     partial = dest.with_suffix(dest.suffix + ".partial")
     partial.write_bytes(body[:10])
+    # Resume requires a stored validator (If-Range) proving the partial
+    # matches the current remote content.
+    Path(str(partial) + ".meta").write_text(
+        json.dumps({"etag": '"v1"', "last_modified": None})
+    )
 
     class _Resp:
         status = 206
@@ -359,6 +365,9 @@ def test_download_resume_rejects_incomplete_206(tmp_path, monkeypatch):
     dest = cache_path_for_url(url, cache_dir=cache)
     partial = dest.with_suffix(dest.suffix + ".partial")
     partial.write_bytes(b"a" * 10)
+    Path(str(partial) + ".meta").write_text(
+        json.dumps({"etag": '"v1"', "last_modified": None})
+    )
 
     class _Resp:
         status = 206
@@ -389,3 +398,155 @@ def test_download_resume_rejects_incomplete_206(tmp_path, monkeypatch):
             resolve_local_path(url, cache_dir=cache)
     assert not dest.exists()
     assert partial.read_bytes() == b"a" * 10 + b"b" * 10
+
+
+def _race_worker(url: str, cache_dir: str, expected: bytes, flags, idx: int) -> None:
+    from pathlib import Path
+
+    from torchfits.data.remote import resolve_local_path
+
+    try:
+        local = resolve_local_path(url, cache_dir=Path(cache_dir))
+        flags[idx] = 1 if Path(local).read_bytes() == expected else 2
+    except Exception:
+        flags[idx] = 3
+
+
+def test_resolve_local_path_multiprocess_single_download(tmp_path, allow_loopback):
+    """Concurrent *processes* resolve one URL with exactly one HTTP fetch."""
+    import multiprocessing as mp
+
+    body = bytes(range(256)) * 32
+
+    class _RaceHandler(BaseHTTPRequestHandler):
+        requests = 0
+        lock = threading.Lock()
+
+        def log_message(self, format, *args):  # noqa: A002,A003
+            return
+
+        def do_GET(self):  # noqa: N802
+            with type(self).lock:
+                type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _RaceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    url = f"http://127.0.0.1:{port}/race.fits"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    ctx = mp.get_context("fork")
+    try:
+        flags = ctx.Array("b", [0] * 6)
+        workers = [
+            ctx.Process(
+                target=_race_worker,
+                args=(url, str(cache_dir), body, flags, i),
+                daemon=True,
+            )
+            for i in range(6)
+        ]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(timeout=60)
+        assert all(w.exitcode == 0 for w in workers), [w.exitcode for w in workers]
+        assert list(flags) == [1] * 6, list(flags)
+        # flock serializes download-on-demand: exactly one process fetched.
+        assert _RaceHandler.requests == 1, _RaceHandler.requests
+    finally:
+        server.shutdown()
+
+
+def test_download_http_stale_partial_with_validator_restarts_cleanly(
+    tmp_path, allow_loopback
+):
+    """If-Range mismatch (200 instead of 206) restarts from scratch."""
+    from torchfits.data.remote import cache_path_for_url
+    from torchfits.data.remote import resolve_local_path
+
+    body = b"REAL-FITS-PAYLOAD" * 64
+
+    class _AlwaysFull(BaseHTTPRequestHandler):
+        seen_range = []
+
+        def log_message(self, format, *args):  # noqa: A002,A003
+            return
+
+        def do_GET(self):  # noqa: N802
+            type(self).seen_range.append(self.headers.get("Range"))
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AlwaysFull)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    url = f"http://127.0.0.1:{port}/stale.fits"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    dest = cache_path_for_url(url, cache_dir=cache)
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    partial.write_bytes(b"STALE-STALE")  # 11 stale bytes
+    Path(str(partial) + ".meta").write_text(json.dumps({"etag": '"v1"'}))
+
+    try:
+        local = resolve_local_path(url, cache_dir=cache)
+        got = Path(local).read_bytes()
+        assert got == body  # restarted (not a hybrid append)
+        assert len(_AlwaysFull.seen_range) == 1
+        assert _AlwaysFull.seen_range[0] == "bytes=11-"
+        assert not partial.exists()
+        assert not Path(str(partial) + ".meta").exists()
+    finally:
+        server.shutdown()
+
+
+def test_download_http_partial_without_validator_is_discarded(tmp_path, allow_loopback):
+    """A leftover partial without resume metadata is never appended to."""
+    from torchfits.data.remote import cache_path_for_url
+    from torchfits.data.remote import resolve_local_path
+
+    body = b"FRESH-BODY" * 128
+
+    class _ProbeHandler(BaseHTTPRequestHandler):
+        seen_range = []
+
+        def log_message(self, format, *args):  # noqa: A002,A003
+            return
+
+        def do_GET(self):  # noqa: N802
+            type(self).seen_range.append(self.headers.get("Range"))
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    url = f"http://127.0.0.1:{port}/noval.fits"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    dest = cache_path_for_url(url, cache_dir=cache)
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    partial.write_bytes(b"ORPHANED")
+
+    try:
+        local = resolve_local_path(url, cache_dir=cache)
+        assert Path(local).read_bytes() == body
+        assert _ProbeHandler.seen_range == [None]  # no Range: clean restart
+        assert not partial.exists()
+    finally:
+        server.shutdown()
