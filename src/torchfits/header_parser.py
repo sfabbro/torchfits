@@ -206,11 +206,22 @@ class FastHeaderParser:
                     else:
                         segment = segment_raw.strip()
                     if segment:
+                        has_marker = segment.startswith("'") and segment.endswith("&'")
                         seg_value = (
                             _parse_string_value(segment)
                             if segment[0] == "'"
                             else segment
                         )
+                        if (
+                            has_marker
+                            and isinstance(seg_value, str)
+                            and seg_value.endswith("&")
+                        ):
+                            # The marker means "more coming": it is notation,
+                            # not content (a comment after the quote must not
+                            # hide it — detection above uses the stripped
+                            # value field).
+                            seg_value = seg_value[:-1]
                         prev = header.get(last_string_keyword)
                         if isinstance(prev, str):
                             header[last_string_keyword] = prev + seg_value
@@ -218,7 +229,7 @@ class FastHeaderParser:
                         # so the chain stays open only while that marker is
                         # present on the just-consumed card.
                         pending_ampersand_keyword = (
-                            last_string_keyword if segment.endswith("&'") else None
+                            last_string_keyword if has_marker else None
                         )
                 elif keyword:
                     header[keyword] = card[8:].strip()
@@ -227,7 +238,52 @@ class FastHeaderParser:
             else:
                 # No equals sign - might be a comment-only keyword
                 keyword = card[:8].rstrip()
-                if keyword:
+                if keyword == "HIERARCH" and "=" in card[8:]:
+                    # ESO convention: expose the full long keyword with a
+                    # typed value (matches _parse_hierarch_card).
+                    rest = card[8:]
+                    eq = rest.find("=")
+                    hier_key = rest[:eq].strip()
+                    value_comment = rest[eq + 1 :].strip()
+                    idx2 = value_comment.find("/")
+                    if idx2 == -1 or ("'" in value_comment[:idx2]):
+                        cstart = _find_comment_separator(value_comment)
+                        vstr = (
+                            value_comment[:cstart].strip()
+                            if cstart != -1
+                            else value_comment
+                        )
+                    else:
+                        # Dict parser stores values only; the comment text
+                        # after '/' is dropped here.
+                        vstr = value_comment[:idx2].strip()
+                    value2: Any = None
+                    if vstr:
+                        fc2 = vstr[0]
+                        if fc2 == "'":
+                            value2 = _parse_string_value(vstr)
+                        elif fc2 == '"':
+                            value2 = vstr.strip('"')
+                        elif fc2 in "+-0123456789.":
+                            try:
+                                if "." in vstr or "e" in vstr or "E" in vstr:
+                                    value2 = float(vstr)
+                                else:
+                                    value2 = int(vstr)
+                            except ValueError:
+                                pass
+                        if value2 is None:
+                            if vstr == "T":
+                                value2 = True
+                            elif vstr == "F":
+                                value2 = False
+                            else:
+                                value2 = vstr
+                    if hier_key:
+                        header[hier_key] = value2 if value2 is not None else vstr
+                        if isinstance(value2, str):
+                            last_string_keyword = hier_key
+                elif keyword:
                     header[keyword] = card[8:].strip()
 
         return header
@@ -319,10 +375,29 @@ class FastHeaderParser:
         else:
             # No equals sign - might be a comment-only keyword
             keyword = card[:8].strip()
+            if keyword == "HIERARCH":
+                # ESO convention: ``HIERARCH ESO TEL AMBI TEMP = 12.5 / c``
+                # exposes the full dotted name as the keyword with a typed
+                # value, instead of a raw "HIERARCH" -> text mapping.
+                return cls._parse_hierarch_card(card)
             if keyword:
                 return keyword, card[8:].strip(), None
 
         return None, None, None
+
+    @classmethod
+    def _parse_hierarch_card(cls, card: str) -> tuple[str, Any, Optional[str]]:
+        """Parse an ESO HIERARCH card into ``(full_keyword, value, comment)``."""
+        rest = card[8:]
+        eq = rest.find("=")
+        if eq <= 0:
+            return "HIERARCH", rest.strip(), None
+        long_key = rest[:eq].strip() or "HIERARCH"
+        value_comment = rest[eq + 1 :]
+        # Reuse the standard value parser through a synthetic normal card.
+        probe = (long_key[:8].ljust(8) + "=" + value_comment).ljust(80)
+        _kw, value, comment = cls._parse_card(probe)
+        return long_key, value, comment
 
     @classmethod
     def _find_comment_separator(cls, value_comment: str) -> int:
@@ -442,16 +517,20 @@ def fast_parse_header_cards(
         if kw == "CONTINUE":
             if last_value_index != -1 and isinstance(cards[last_value_index][1], str):
                 pk, pv, pc = cards[last_value_index]
-                segment_field = card[8:].strip()
-                segment_amp = (
-                    isinstance(val, str)
-                    and segment_field.startswith("'")
-                    and segment_field.endswith("&'")
-                )
-                if segment_amp and isinstance(val, str) and val.endswith("&"):
-                    val = val[:-1]
-                cards[last_value_index] = (pk, pv + val, pc)
-                pending_ampersand = last_value_index if segment_amp else -1
+                # Chain state must be decided on the VALUE field only: a
+                # trailing comment (``CONTINUE 'more &' / note``) must not
+                # hide the LONGSTRN ``&'`` marker.
+                raw_field = card[8:]
+                cpos = FastHeaderParser._find_comment_separator(raw_field)
+                seg_field = (raw_field[:cpos] if cpos != -1 else raw_field).strip()
+                has_marker = seg_field.startswith("'") and seg_field.endswith("&'")
+                seg_val = val if isinstance(val, str) else str(val)
+                if has_marker and seg_val.endswith("&"):
+                    # This segment continues the chain: its own marker is
+                    # notation, not content.
+                    seg_val = seg_val[:-1]
+                cards[last_value_index] = (pk, pv + seg_val, pc)
+                pending_ampersand = last_value_index if has_marker else -1
             else:
                 # Orphan CONTINUE card (malformed): keep it visible as-is.
                 cards.append((kw, val, "" if comment is None else str(comment)))
@@ -465,14 +544,15 @@ def fast_parse_header_cards(
         cards.append((kw, val, "" if comment is None else str(comment)))
         if isinstance(val, str):
             last_value_index = len(cards) - 1
-            value_field = card[9:].strip()
-            if (
-                card[8] == "="
-                and value_field.startswith("'")
-                and value_field.endswith("&'")
-            ):
-                # LONGSTRN marker: drop the '&' from the stored value; a
-                # CONTINUE card must follow (restored if it does not).
+        if isinstance(val, str) and len(card) > 8 and card[8] == "=":
+            # LONGSTRN marker detection on the VALUE field only: a comment
+            # after the closing quote must not hide the ``&'`` marker.
+            raw_field = card[9:]
+            cpos = FastHeaderParser._find_comment_separator(raw_field)
+            value_field = (raw_field[:cpos] if cpos != -1 else raw_field).strip()
+            if value_field.startswith("'") and value_field.endswith("&'"):
+                # Drop the '&' from the stored value; a CONTINUE card must
+                # follow (restored if it does not).
                 cards[last_value_index] = (
                     kw,
                     val[:-1],

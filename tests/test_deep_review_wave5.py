@@ -66,6 +66,46 @@ def test_plain_continue_card_appends_segment(tmp_path):
     assert hdr["S1"] == "abcdef"
 
 
+def test_longstrn_chain_with_comments_on_every_card(tmp_path):
+    """CONTINUE chains keep working when every card carries a comment.
+
+    Regression: the ``&'`` chain markers were detected on the raw card
+    text including the comment, so comment-bearing chains kept literal
+    '&' characters mid-value.
+    """
+    from torchfits.header_parser import fast_parse_header, fast_parse_header_cards
+
+    header = (
+        "LONGSTR = 'This is a long string that needs &' / first".ljust(80)
+        + "CONTINUE  'the continuation of the string.&' / second".ljust(80)
+        + "CONTINUE  'final part.' / third".ljust(80)
+        + "END".ljust(80)
+    )
+    want = "This is a long string that needs the continuation of the string.final part."
+    cards = {k: v for k, v, _c in fast_parse_header_cards(header)}
+    assert cards["LONGSTR"] == want
+    assert fast_parse_header(header)["LONGSTR"] == want
+
+    # A broken chain (no CONTINUE follows) restores the literal '&'.
+    broken = "K1      = 'abc&'                  / note".ljust(80) + "END".ljust(80)
+    cards_broken = {k: v for k, v, _c in fast_parse_header_cards(broken)}
+    assert cards_broken["K1"] == "abc&"
+
+
+def test_hierarch_cards_parse_to_typed_long_keys(tmp_path):
+    """ESO HIERARCH cards expose ``KEY WORD NAME`` -> typed value."""
+    from torchfits.header_parser import fast_parse_header
+
+    header = (
+        "HIERARCH ESO TEL AMBI TEMP = 12.5 / ambient temp".ljust(80)
+        + 'HIERARCH ESO DET CHIP1 ID = "RED"'.ljust(80)
+        + "END".ljust(80)
+    )
+    hdr = fast_parse_header(header)
+    assert hdr["ESO TEL AMBI TEMP"] == 12.5
+    assert hdr["ESO DET CHIP1 ID"] == "RED"
+
+
 # --- F2: uint64 writes are rejected with guidance --------------------------
 
 
