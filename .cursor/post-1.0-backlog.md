@@ -33,6 +33,76 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
   Astropy on narrow 1e6). Selective gather path kept as fallback only.
   Bench still has `predicate_filter` (dense) and `predicate_filter_selective`.
 
+## 1.1 audit deferrals (post-1.1 backlog)
+
+Findings from the pre-1.1 full audit that were triaged as non-blocking.
+Ordered roughly by value; each names the site so a future fix can start fast.
+
+### C++ robustness / perf
+
+- GIL held through long IO in `read_full_numpy` (incl. network opens),
+  `get_header`, `get_num_hdus` (`fits_bindings.cpp` ~1482–1491, 1556+).
+- mmap table paths skip the truncation bounds check the image layer has →
+  SIGBUS instead of exception on truncated files (`table_reader.h`
+  read_columns_mmap / _filtered / update_rows_mmap; contrast
+  `fits_detail.h:513`).
+- Strided DLPack numeric payloads silently miswritten in
+  `update_rows_mmap` (bool/uint8/string honor strides; numerics index flat).
+- Column repeat int32 truncation unguarded for non-string typecodes
+  (hostile headers; `table_reader.h:167ff`) + duplicate-TTYPE moved-from UB
+  (`:551/:599`).
+- `read_full_numpy` float-promotes scaled images (no unsigned convention)
+  while tensor paths return uint16/uint32 — decide and document.
+
+### Table semantics polish
+
+- `schema()` reports complex columns (`C`/`M`) as float64 scalars;
+  unnamed-column capability checks skip validation; empty-result reads
+  silently drop requested unknown columns (`_read_schema.py`).
+- `TableHDURef.head(n)` replaces the existing row window instead of
+  composing; in-memory `TableHDU.head(-n)` truncates tail rows instead of
+  raising; caches keyed on `id(self.header)` are GC-reusable.
+- Arrow width-1 chunk route can surface `FixedSizeList<T>[1]` where the
+  schema maps repeat==1 to scalar (main decode path verified scalar-only).
+- `to_astropy`: TNULL null columns become object dtype; TUNIT not mapped to
+  `.unit`. `TableHDURef.to_arrow(columns=...)` kwarg collision.
+- `table.write(quantize=)` silently no-ops when no column qualifies.
+- Error-type inconsistency across mutation API (KeyError vs ValueError for
+  unknown column); broad `except Exception` fallback swallows mask real IO
+  errors (`table_api.py`, `_read_scan.py`).
+
+### Remote / data pipeline
+
+- Multiprocess download races on shared `.partial`; resume lacks
+  If-Range/ETag; Content-Length-less truncation can be promoted to the
+  permanent cache (`data/remote.py`). Staged-cutout cleanup races +
+  make_loader double-download of staged remotes.
+
+### CLI / http
+
+- Unhandled non-CliError exceptions exit 1 (= documented diff-discrepancy
+  code) in `verify`/`stats`; `stats --json` emits bare NaN/Infinity;
+  copy/compress/convert accept OUTPUT == INPUT with lossy card round-trip;
+  KeyboardInterrupt returns usage-code 2; `-J` shares one stateful
+  transform instance across threads.
+- DNS-rebinding TOCTOU contradicts `http_util` docstring (guard resolves
+  once; CFITSIO/urllib re-resolve at connect).
+
+### Hygiene / tests
+
+- `[test]` extra cannot run the suite (astropy/fitsio/psutil undeclared);
+  declared `performance` marker unused so wall-clock/RSS tests always run;
+  GHA release gate omits 4 suites present in local release-gate;
+  security.h bracket test manual-only (wire into build); sleep-based race
+  in `test_data_datasets.py` prefetch dedupe test; several suites write
+  fixtures into process CWD.
+- Dead/duplicated code sweep: `read_scaled_cpu_fast`,
+  `clear_file_cache(handles=)` unread flag, `_normalize_cpp_chunk` no-op,
+  unused header_parser regexes, unreachable inf-guard in `clip.py`,
+  worker-split block duplicated ×3 in datasets.py, `_normalize_row_slice`
+  ×2, fallback-table double-open per call, negative meta lookups uncached,
+  HTTP cutout walks HDU headers twice.
+
 ## Round 7 deferrals (safe post-1.0)
 
 - R7-HDU1 — ~~`TensorHDU.to_tensor()` closed-handle guard~~ — fixed

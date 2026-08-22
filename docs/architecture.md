@@ -276,7 +276,9 @@ scaled / nD).
 torchfits implements its own `where=` grammar and filtering so projection +
 gather land directly in tensors/Arrow buffers.
 
-Vendored CFITSIO is pinned in `extern/VERSIONS.txt` (currently **4.7.0**).
+Vendored CFITSIO is pinned in `extern/VERSIONS.txt` (**4.7.0** for wheel
+and source builds; conda packages link the conda-forge 4.6.x lane, so
+behavior can differ slightly by install channel).
 
 ---
 

@@ -35,6 +35,117 @@ Patch release: correctness fixes for table row mutation and `where=` filtering.
 - mmap table row updates now read non-contiguous / negative-stride source
   arrays via DLPack strides instead of assuming C-contiguity.
 
+---
+
+## [1.1.0] — Unreleased
+
+Audit-driven correctness, security, and consistency release on the same
+2.13 torch ABI lane. Highlights: silent-corruption fixes for BIT table
+columns and cached reads, SSRF/credential hardening, engine-independent
+WHERE semantics, and a completed scalar-column shape contract.
+
+### Changed
+
+- **Scalar-column shapes are now rank-1 everywhere**: FITS repeat==1
+  columns read as ``(N,)`` through every path — `hdul[n].data[col]`,
+  `hdul[n][col]`, `TableHDURef`, `read_torch`, `iter_rows`,
+  `to_tensor_dict`, streaming chunks, and buffered/mmap reads alike.
+  Vector columns (repeat>1) keep their shapes; packed string columns are
+  never squeezed. Completes the accessor-only squeeze shipped in #234.
+- `read_torch(start_row=..., where=...)` now filters **within** the row
+  window, matching `table.read(row_slice=..., where=...)` and the Arrow
+  engine. Previously the two entry points returned different populations
+  for the same query.
+- WHERE negation follows SQL three-valued logic on every engine:
+  `NOT (X == 5)`, `X NOT IN (...)`, and `X NOT BETWEEN ...` exclude NULL
+  rows exactly like their unnegated counterparts.
+- TNULL sentinel values can no longer satisfy numeric predicates on the
+  C++ pushdown / torch-mask paths; sentinel-only matches are excluded so
+  all engines return identical rows for the same query.
+- Batch fast paths (`read(list_of_paths)`, list-of-HDUs) honor
+  `fp16` / `bf16` / `raw_scale` instead of silently returning raw data.
+
+### Fixed
+
+- **BIT (`'X'`) table columns wrote corrupted bits** when `repeat % 8 != 0`
+  (e.g. `'12X'`): both the initial writer and the buffered row-update
+  writer passed flat element runs to `fits_write_col(TBIT)`, which maps
+  them onto raw data-unit bits ignoring per-row padding. Every write call
+  is now confined to a single row; verified byte-exact against astropy for
+  8X/12X/16X/23X across all three write paths.
+- Buffered table reads no longer leak a closed fd after a transient pread
+  failure — a recycled descriptor could later serve an unrelated file's
+  bytes as table data.
+- Cached reads are isolated from caller mutation: in-place edits of a
+  returned tensor no longer poison subsequent identical reads (the default
+  read cache stores/hands out private copies).
+- `replace_hdu` header preservation drops stale `BSCALE` / `BZERO` /
+  `DATASUM` / `CHECKSUM`; grafting an unsigned-convention BZERO onto new
+  float data previously made every reader misinterpret the replacement.
+- `SigmaClip`: a single NaN no longer wipes the whole frame (valid mask is
+  seeded from finite values even without a user mask); median fill of
+  fully-masked groups yields 0 instead of NaN.
+- `GlobalScalarNorm`: negative statistics divide sign-preservingly instead
+  of exploding to ~1e30 scales; `inverse()` round-trips exactly; NaN no
+  longer poisons `mean` / `rms` statistics.
+- WHERE string literals survive parsing: `NAME == 'AT&T'` matches `AT&T`
+  (not `AT AND T`), FITS doubled-quote escapes work (`'O''NEIL'`), and
+  unterminated quotes raise instead of mangling.
+- Header parser: LONGSTRN chains keep assembling correctly when any card
+  carries a comment, and ESO `HIERARCH` cards parse to typed values under
+  their full keyword (`ESO TEL AMBI TEMP -> 12.5`).
+- Thread-local HDU metadata cache rotates its generation id when an
+  out-of-band file replacement is detected, so stale shape/dtype/scale
+  cannot be paired with new bytes on the mmap path.
+- Unsigned-convention detection tolerates floating-point imprecision in
+  stored `BZERO`/`TZERO` uniformly for images *and* tables (a file whose
+  offset was serialized as 32767.999… now reads as uint16/uint32 on every
+  path).
+
+### Security
+
+- `read_hdus` enforces the same SSRF/path guards as every other entry
+  point (loopback/link-local/private targets were reachable before).
+- HTTP credentials (`TORCHFITS_HTTP_TOKEN` / `TORCHFITS_HTTP_AUTHORIZATION`)
+  are stripped when a redirect crosses origins; kept only for same-origin
+  hops and plain http->https upgrades.
+
+### Performance
+
+- Policy/meta caches (`image_meta`, cold-nommap, auto-mmap, hdu-type) are
+  validated against the file's stat signature, eliminating stale dispatch
+  after in-place rewrites. Measured cost of the validation: ~1.6 us per
+  `os.stat` on this host.
+- Cached reads now hand out private copies, so callers can mutate results.
+  Measured on a 64 MiB float32 image (local NVMe, this host): uncached read
+  46.5 ms (~1.4 GB/s) vs warm cache hit 45.3 ms including the isolation
+  copy — a hit still beats the I/O it replaces, and repeated table hits
+  stay sub-millisecond (~0.3 ms for a 1.6 MB two-column table). The
+  exhaustive benchmark scorecards were not re-run for this release; if a
+  cached-hot workload regresses measurably for you, `read(...,
+  cache_capacity=0)` restores v1.0 semantics at the cost of re-reading.
+- Multi-HDU writes flush process-global caches once per operation instead
+  of twice per HDU.
+- BIT (`'X'`) writes now issue one `fits_write_col` call per row; only
+  tables containing bit columns pay for the extra calls.
+
+### Added
+
+- Table mutations warn on silent value loss: float payloads into integer
+  columns (truncation/non-finite counts), out-of-range integers, non-ASCII
+  characters dropped from string columns, and over-width string clipping.
+
+### Dependencies
+
+- Vendored CFITSIO updated to **4.7.0** for wheel and source builds
+  (`extern/VERSIONS.txt`); conda packages continue on the conda-forge
+  4.6.x lane (see [architecture](architecture.md)).
+
+### Docs
+
+- Scalar-column shape contract documented; architecture note reconciled
+  with the wheel-vs-conda CFITSIO split.
+
 ## [1.0.0] — 2026-08-09
 
 Version cut on the 2.13 torch ABI lane: buffered table reads through a
@@ -105,7 +216,9 @@ docs/usability soak before the tag.
 
 ### Dependencies
 
-- Vendored CFITSIO updated to **4.7.0** (`extern/VERSIONS.txt` and `extern/patches/`).
+- Vendored CFITSIO at the 1.0.0 tag: **4.6.4** (`extern/VERSIONS.txt`).
+  (An earlier revision of this entry claimed 4.7.0; that bump landed after
+  the tag and is recorded under [1.1.0] below.)
 
 ### Packaging
 

@@ -110,11 +110,21 @@ torchfits.table.read_torch(
 **Returns:** `dict[str, torch.Tensor]` (scalar columns; VLA columns use
 list/tuple values), or `(dict, Header)` when `return_header=True`.
 
+#### Scalar-column shapes
+
+FITS scalar columns (repeat == 1) are returned as rank-1 tensors of shape
+`(N,)` on every access path: `table.read_torch`, `torchfits.read`,
+`hdul[n].data[col]`, `hdul[n][col]`, `TableHDURef`, `iter_rows`, and
+streaming chunks. Vector columns (repeat > 1) keep `(N, repeat)`; packed
+string columns stay `(N, width)` uint8 matrices.
+
 `where=` on `read_torch` accepts only **simple** predicates: comparisons
 (`==`, `!=`, `<`, `<=`, `>`, `>=`), `BETWEEN`, and `AND` of those. Expressions
 with `OR`, `IN`, `IS NULL`, or `NOT` raise `ValueError` — use
 `table.read(..., where=...)` for the full dialect. Matching rows are kept by
-reading the needed columns and applying a torch mask.
+reading the needed columns and applying a torch mask. When combined with a
+row window (`start_row` / `num_rows`), the window selects file rows first and
+the predicate filters inside it — identical to `table.read(row_slice=..., where=...)`.
 
 ```python
 cols = torchfits.table.read_torch("catalog.fits", hdu=1, columns=["RA", "DEC"])
