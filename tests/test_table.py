@@ -446,3 +446,39 @@ def test_where_tnull_sentinel_excluded_on_all_engines(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_scan_where_streams_in_batches(tmp_path):
+    """scan(where=...) filters per batch instead of materializing everything."""
+    from astropy.io import fits as afits
+
+    from torchfits.table import read as arrow_read
+    from torchfits.table import scan
+
+    path = tmp_path / "scan_where.fits"
+    n = 20000
+    cols = [
+        afits.Column(name="V", format="J", array=np.arange(n, dtype="<i4")),
+        afits.Column(name="W", format="E", array=(np.arange(n) % 7).astype("<f4")),
+    ]
+    afits.BinTableHDU.from_columns(cols).writeto(str(path), overwrite=True)
+
+    batches = list(scan(str(path), hdu=1, where="W == 6.0", batch_size=2048))
+    got = [r["V"] for b in batches for r in b.to_pylist()]
+    assert got == [v for v in range(n) if v % 7 == 6]
+
+    # Same rows as the materializing route.
+    ref = arrow_read(str(path), hdu=1, where="W == 6.0")
+    assert sorted(ref.column("V").to_pylist()) == got
+
+    # Hidden predicate columns are projected out after filtering.
+    proj = list(
+        scan(str(path), hdu=1, columns=["W"], where="V >= 19998", batch_size=512)
+    )
+    rows = [r for b in proj for r in b.to_pylist()]
+    assert all(set(r.keys()) == {"W"} for r in rows)
+
+    # Fully filtered-out result still yields one typed empty batch.
+    empty = list(scan(str(path), hdu=1, where="V > 999999999", batch_size=512))
+    assert len(empty) == 1 and empty[0].num_rows == 0
+    assert empty[0].schema.names == ["V", "W"]

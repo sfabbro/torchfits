@@ -219,14 +219,39 @@ def _scan_iter(
     backend = validate_table_backend(backend)
 
     if where is not None:
-        from . import read as _read_mod
+        from ._read_where import _where_mask_for_table
 
-        table = _read_mod.read(
+        pa = _require_pyarrow()
+
+        try:
+            where_cols = where_columns_from_ast(parse_where_expression(where))
+        except ValueError:
+            where_cols = []
+
+        # Predicate columns outside the projection are read too, then dropped
+        # after filtering (mirrors read()'s column-union behavior).
+        read_columns: Optional[list[str]] = columns
+        drop_after: list[str] = []
+        if columns is not None:
+            seen = set(columns)
+            merged = list(columns)
+            for name in where_cols:
+                if name not in seen:
+                    merged.append(name)
+                    drop_after.append(name)
+                    seen.add(name)
+            read_columns = merged
+
+        # Stream unfiltered batches and evaluate the predicate per batch so
+        # peak memory stays bounded by batch_size rather than table size.
+        # (The old path materialized the entire filtered result via read()
+        # and then re-batched it — defeating the point of scan().)
+        source = _scan_iter(
             path,
             hdu=hdu,
-            columns=columns,
+            columns=read_columns,
             row_slice=row_slice,
-            where=where,
+            batch_size=batch_size,
             mmap=mmap,
             decode_bytes=decode_bytes,
             encoding=encoding,
@@ -235,8 +260,26 @@ def _scan_iter(
             apply_fits_nulls=apply_fits_nulls,
             backend=backend,
         )
-        for batch in table.to_batches(max_chunksize=batch_size):
-            yield batch
+
+        yielded = False
+        empty_batch = None
+        for batch in source:
+            tbl = pa.Table.from_batches([batch])
+            mask = _where_mask_for_table(tbl, where)
+            filtered = tbl.filter(mask)
+            if drop_after:
+                keep = [n for n in filtered.column_names if n not in set(drop_after)]
+                filtered = filtered.select(keep)
+            out_batches = filtered.to_batches(max_chunksize=batch_size)
+            if out_batches:
+                yielded = True
+                yield from out_batches
+            elif empty_batch is None and filtered.schema.names:
+                # Remember the projected schema so a fully-filtered-out scan
+                # still hands consumers a typed empty batch at the end.
+                empty_batch = pa.RecordBatch.from_pylist([], schema=filtered.schema)
+        if not yielded and empty_batch is not None:
+            yield empty_batch
         return
 
     import torchfits
