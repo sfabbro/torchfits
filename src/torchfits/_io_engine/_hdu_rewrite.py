@@ -342,13 +342,21 @@ def replace_hdu(
         raise TypeError("hdu must be an int index or EXTNAME string")
 
     if preserve_header:
-        # Keep the original header (e.g. EXTNAME/WCS) unless the caller overrides it.
+        # Keep the original header (e.g. EXTNAME/WCS) unless the caller
+        # overrides it. Scaling and checksum keys describe the REPLACED
+        # payload's storage: replaying e.g. an unsigned-convention BZERO=32768
+        # over different data makes every reader misinterpret the new bytes,
+        # so they are dropped and the writer emits canonical keywords.
         old_header = getattr(hdus[target], "header", None)
         if old_header is not None:
+            preserved = Header(old_header)
+            for stale_key in ("BSCALE", "BZERO", "DATASUM", "CHECKSUM"):
+                if stale_key in preserved:
+                    del preserved[stale_key]
             if isinstance(new_hdu, TensorHDU):
-                new_hdu._header = old_header
+                new_hdu._header = preserved
             else:
-                new_hdu.header = old_header
+                new_hdu.header = preserved
 
     hdus[target] = new_hdu
     _atomic_rewrite_hdus(path, hdus, compress=compress)
