@@ -234,6 +234,57 @@ def test_astropy_complex_bit_string_mmap_updates_roundtrip_match_astropy(
         np.testing.assert_array_equal(hdul[1]["FLAGS"].numpy().astype(bool), new_flags)
 
 
+def test_astropy_bit_column_unaligned_repeat_all_write_paths_match_astropy(
+    tmp_path,
+) -> None:
+    """BIT ('X') columns with repeat % 8 != 0 round-trip exactly through every
+    write path.
+
+    fits_write_col(TBIT) maps a flat element run onto raw data-unit bits and
+    ignores per-row byte padding when repeat % 8 != 0; both the initial table
+    writer and the buffered row-update writer must therefore keep each call
+    within a single row. Guards against silent bit drift on '12X'-style
+    columns (regression for the populate_rows/write_table_hdu convention fix).
+    """
+    repeat, nrows = 12, 5
+    # Non-periodic pattern so any bit-level shift is visible.
+    want = np.array(
+        [[(r * repeat + b) % 3 == 0 for b in range(repeat)] for r in range(nrows)],
+        dtype=np.bool_,
+    )
+
+    # Writer A: fresh table written by torchfits with an explicit X schema.
+    fresh = tmp_path / "bit_fresh_12x.fits"
+    torchfits.table.write(
+        fresh.as_posix(),
+        {"FLAGS": torch.from_numpy(want)},
+        schema={"FLAGS": {"format": f"{repeat}X"}},
+        overwrite=True,
+    )
+    with fits.open(fresh, mode="readonly") as hdul:
+        np.testing.assert_array_equal(
+            np.asarray(hdul[1].data["FLAGS"], dtype=bool), want
+        )
+
+    # Writer B: buffered (non-mmap) row update on an astropy-created file.
+    zeros = np.zeros_like(want)
+    buffered = tmp_path / "bit_buffered_12x.fits"
+    fits.BinTableHDU.from_columns(
+        [fits.Column(name="FLAGS", format=f"{repeat}X", array=zeros)]
+    ).writeto(buffered, overwrite=True)
+    torchfits.table.update_rows(
+        buffered.as_posix(),
+        {"FLAGS": torch.from_numpy(want)},
+        row_slice=(0, nrows),
+        hdu=1,
+        mmap=False,
+    )
+    with fits.open(buffered, mode="readonly") as hdul:
+        np.testing.assert_array_equal(
+            np.asarray(hdul[1].data["FLAGS"], dtype=bool), want
+        )
+
+
 def test_astropy_string_mmap_update_pads_to_column_width(tmp_path) -> None:
     """Updates with a narrower user-provided string are right-padded with
     ASCII spaces so the on-disk FITS CHAR width is preserved exactly."""

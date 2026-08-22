@@ -34,6 +34,17 @@
 namespace torchfits {
 namespace detail {
 
+// FITS stores BZERO/TZERO as ASCII decimals; writers may serialize the
+// canonical unsigned offsets with rounding error (e.g. 32767.99999 after a
+// float32 round-trip). Match them within the same tight tolerance the table
+// reader uses, so image and table paths agree on the unsigned conventions.
+inline bool is_unsigned_short_offset(double offset) {
+    return std::abs(offset - 32768.0) < 1e-5;
+}
+inline bool is_unsigned_long_offset(double offset) {
+    return std::abs(offset - 2147483648.0) < 1e-5;
+}
+
 inline void validate_image_naxis(int naxis) {
     if (naxis < 0 || naxis > 9) {
         throw std::runtime_error(
@@ -218,7 +229,11 @@ struct RawFdHolder {
 };
 
 struct SharedReadMeta {
-    uint64_t uid = 0;
+    // Rotated whenever out-of-band file changes are detected, so caches keyed
+    // by uid (e.g. the per-thread HDU metadata cache in read_full_cached)
+    // cannot serve entries from a previous file generation. Atomic because
+    // readers sample it without holding meta->mutex.
+    std::atomic<uint64_t> uid{0};
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache;
     std::unordered_map<int, bool> compressed_cache;
     std::unordered_map<int, bool> compressed_nulls_cache;
@@ -258,7 +273,8 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
         auto it = g_shared_meta.find(filename);
         if (it == g_shared_meta.end()) {
             meta = std::make_shared<SharedReadMeta>();
-            meta->uid = g_shared_meta_uid.fetch_add(1, std::memory_order_relaxed);
+            meta->uid.store(g_shared_meta_uid.fetch_add(1, std::memory_order_relaxed),
+                            std::memory_order_relaxed);
             g_shared_meta.emplace(filename, meta);
         } else {
             meta = it->second;
@@ -286,6 +302,12 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
             meta->compressed_nulls_cache.clear();
             meta->scale_cache.clear();
             meta->current_fits_hdu = -1;
+            // Rotate identity so per-thread caches keyed by {uid, hdu} cannot
+            // pair stale shape/dtype/scale metadata with the replaced file
+            // (R7-CPP2). In-flight readers keep their own shared_ptr and the
+            // data they already decoded from the previous generation.
+            meta->uid.store(g_shared_meta_uid.fetch_add(1, std::memory_order_relaxed),
+                            std::memory_order_relaxed);
             meta->has_stat = true;
             meta->size = st.st_size;
             meta->mtime_ns = cur_mtime_ns;
@@ -438,8 +460,8 @@ inline torch::Tensor read_tensor_canonical(
         torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]);
 
     // Unsigned conventions
-    const bool unsigned_short = scaled && bitpix == SHORT_IMG && bscale == 1.0 && bzero == 32768.0;
-    const bool unsigned_long  = scaled && bitpix == LONG_IMG  && bscale == 1.0 && bzero == 2147483648.0;
+    const bool unsigned_short = scaled && bitpix == SHORT_IMG && bscale == 1.0 && is_unsigned_short_offset(bzero);
+    const bool unsigned_long  = scaled && bitpix == LONG_IMG  && bscale == 1.0 && is_unsigned_long_offset(bzero);
 
     torch::ScalarType dtype;
     int datatype;

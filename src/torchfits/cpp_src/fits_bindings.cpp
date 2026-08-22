@@ -537,9 +537,9 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         compressed = (compressed_status == 0 && is_compressed);
 
         const bool unsigned_short = scale_info.scaled && bitpix == SHORT_IMG &&
-                                     scale_info.bscale == 1.0 && scale_info.bzero == 32768.0;
+                                     scale_info.bscale == 1.0 && d::is_unsigned_short_offset(scale_info.bzero);
         const bool unsigned_long  = scale_info.scaled && bitpix == LONG_IMG  &&
-                                     scale_info.bscale == 1.0 && scale_info.bzero == 2147483648.0;
+                                     scale_info.bscale == 1.0 && d::is_unsigned_long_offset(scale_info.bzero);
 
         torch::ScalarType dtype;
         int datatype;
@@ -1387,7 +1387,21 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                 } else {
                     throw std::runtime_error("Bit/logical table writes require bool or uint8 data");
                 }
-                fits_write_col(fptr, col.datatype, i + 1, 1, 1, nelements, logical.data(), &status);
+                if (col.datatype == TBIT) {
+                    // fits_write_col(TBIT) maps a flat element run onto raw
+                    // data-unit bits and ignores per-row byte padding when
+                    // repeat % 8 != 0 (empirically verified against astropy
+                    // ground truth for 8X/12X/16X), silently shifting every
+                    // row after the first. Write one row per call so the
+                    // element count stays within the row.
+                    for (long r = 0; r < num_rows; ++r) {
+                        fits_write_col(fptr, TBIT, i + 1, 1 + r, 1, col.repeat,
+                                       logical.data() + static_cast<size_t>(r * col.repeat),
+                                       &status);
+                    }
+                } else {
+                    fits_write_col(fptr, col.datatype, i + 1, 1, 1, nelements, logical.data(), &status);
+                }
             } else {
                 nb::ndarray<> tensor = col.fixed;
                 std::vector<uint8_t> contig_buf;

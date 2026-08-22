@@ -793,10 +793,16 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
         }
 
         if (typecode == TBIT) {
-            // BIT columns: fits_write_col(TBIT, ...) routes to CFITSIO's
-            // ffpclx, which expects ONE logical (0/1) value PER BIT — not
-            // pre-packed bytes. Build a per-bit buffer of length
-            // num_rows * repeat and pass that many bits as nelem.
+            // BIT ('X') columns: fits_write_col counts elements in *bits*,
+            // each input byte holding one bit value (0/1). This is the same
+            // convention proven by write_table_hdu (fits_bindings.cpp), whose
+            // round-trip is pinned against CFITSIO by
+            // test_fitsio_bit_column_read_write_workflows_match_torchfits,
+            // and by the mmap writer, which packs MSB-first into file bytes
+            // directly. Expand the boolean payload to one byte per bit. A
+            // partial-width payload cannot be expressed as one flat element
+            // run across rows, so reject it exactly like every other
+            // fixed-width column below.
             nb::ndarray<> t = nb::cast<nb::ndarray<>>(item.second);
             int ndim_t = t.ndim();
             long rows_t = 1;
@@ -820,6 +826,12 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                     "update_rows column length mismatch for " + col_name
                 );
             }
+            if (repeat > 0 && user_repeat != repeat) {
+                throw std::runtime_error(
+                    "update_rows repeat mismatch for " + col_name +
+                    ": column repeat=" + std::to_string(repeat) +
+                    " payload width=" + std::to_string(user_repeat));
+            }
             if (user_repeat <= 0 || user_repeat > repeat) {
                 throw std::runtime_error(
                     "update_rows BIT repeat must be 1.." + std::to_string(repeat) +
@@ -827,44 +839,51 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                 );
             }
 
-            std::vector<unsigned char> bits(
-                static_cast<size_t>(num_rows * repeat), 0
-            );
-
             nb::dlpack::dtype dt_b = t.dtype();
+            const bool is_bool =
+                dt_b.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt_b.bits == 8;
+            const bool is_u8 =
+                dt_b.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt_b.bits == 8;
+            if (!is_bool && !is_u8) {
+                throw std::runtime_error(
+                    "update_rows BIT dtype must be bool or uint8 for " + col_name
+                );
+            }
             const bool* src_bool_b = static_cast<const bool*>(t.data());
             const uint8_t* src_u8_b = static_cast<const uint8_t*>(t.data());
 
+            const long nelements_bits = num_rows * repeat;
+            std::vector<unsigned char> logical(
+                static_cast<size_t>(nelements_bits), 0
+            );
             for (long i = 0; i < num_rows; ++i) {
-                for (long j = 0; j < user_repeat; ++j) {
-                    bool val = false;
+                for (long j = 0; j < repeat; ++j) {
                     long byte_off = (ndim_t == 2)
                         ? i * t.stride(0) + j * t.stride(1)
                         : i * t.stride(0) + j;
-                    if (
-                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::Bool &&
-                        dt_b.bits == 8
-                    ) {
-                        val = src_bool_b[byte_off];
-                    } else if (
-                        dt_b.code == (uint8_t)nb::dlpack::dtype_code::UInt &&
-                        dt_b.bits == 8
-                    ) {
-                        val = src_u8_b[byte_off] != 0;
+                    unsigned char val;
+                    if (is_bool) {
+                        val = src_bool_b[byte_off] ? 1 : 0;
                     } else {
-                        throw std::runtime_error(
-                            "update_rows BIT dtype must be bool or uint8 for " +
-                            col_name
-                        );
+                        val = src_u8_b[byte_off] != 0 ? 1 : 0;
                     }
-                    bits[static_cast<size_t>(i * repeat + j)] = val ? 1 : 0;
+                    logical[static_cast<size_t>(i * repeat + j)] = val;
                 }
             }
 
-            fits_write_col(
-                fptr, TBIT, colnum, start_row, 1,
-                num_rows * repeat, bits.data(), &status
-            );
+            // fits_write_col(TBIT) maps a flat element run onto raw data-unit
+            // bits and ignores per-row byte padding when repeat % 8 != 0
+            // (verified against astropy ground truth), so keep every call
+            // within a single row.
+            for (long r = 0; r < num_rows; ++r) {
+                fits_write_col(
+                    fptr, TBIT, colnum, start_row + r, 1, repeat,
+                    logical.data() + static_cast<size_t>(r * repeat), &status
+                );
+                if (status != 0) {
+                    throw std::runtime_error("Failed to update BIT column rows");
+                }
+            }
             continue;
         }
 

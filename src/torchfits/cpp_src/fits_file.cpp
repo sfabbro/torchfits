@@ -542,9 +542,9 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
     const bool signed_byte_scaled =
         scaled && bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0;
     const bool unsigned_short =
-        scaled && bitpix == SHORT_IMG && scale_info.bscale == 1.0 && scale_info.bzero == 32768.0;
+        scaled && bitpix == SHORT_IMG && scale_info.bscale == 1.0 && detail::is_unsigned_short_offset(scale_info.bzero);
     const bool unsigned_long =
-        scaled && bitpix == LONG_IMG && scale_info.bscale == 1.0 && scale_info.bzero == 2147483648.0;
+        scaled && bitpix == LONG_IMG && scale_info.bscale == 1.0 && detail::is_unsigned_long_offset(scale_info.bzero);
     if (signed_byte_scaled) { dtype = torch::kInt8;  datatype = TSBYTE; }
     else if (unsigned_short) { dtype = torch::kUInt16; datatype = TUSHORT; }
     else if (unsigned_long) { dtype = torch::kUInt32; datatype = TUINT; }
@@ -921,11 +921,11 @@ void SubsetReader::init_from_hdu() {
         dtype_ = torch::kInt8; datatype_ = TSBYTE; elem_bytes_ = 1;
         mmap_conv_ = MmapConv::SignedByte;
     } else if (scale.scaled && bitpix == SHORT_IMG && scale.bscale == 1.0 &&
-               scale.bzero == 32768.0) {
+               detail::is_unsigned_short_offset(scale.bzero)) {
         dtype_ = torch::kUInt16; datatype_ = TUSHORT; elem_bytes_ = 2;
         mmap_conv_ = MmapConv::UInt16;
     } else if (scale.scaled && bitpix == LONG_IMG && scale.bscale == 1.0 &&
-               scale.bzero == 2147483648.0) {
+               detail::is_unsigned_long_offset(scale.bzero)) {
         dtype_ = torch::kUInt32; datatype_ = TUINT; elem_bytes_ = 4;
         mmap_conv_ = MmapConv::UInt32;
     } else if (scale.scaled) {
