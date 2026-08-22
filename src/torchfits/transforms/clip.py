@@ -73,11 +73,10 @@ class SigmaClip(FITSTransform):
             # UInt16/32/64 additionally lack reduction kernels in torch.
             if not x.dtype.is_floating_point:
                 x = x.float() if x.dtype != torch.int64 else x.double()
-            # Combine user mask with NaN mask if provided.
-            if mask is not None:
-                internal_mask = _get_valid_mask(x, mask)
-            else:
-                internal_mask = torch.ones_like(x, dtype=torch.bool)
+            # Seed with the valid-element mask: excludes user-masked
+            # positions AND non-finite values even without an explicit mask,
+            # so a single NaN cannot poison mean/std into wiping the frame.
+            internal_mask = _get_valid_mask(x, mask)
             # Pre-allocate working buffers for masked values and zeros
             # to avoid per-iteration torch.zeros_like allocations.
             masked_buf = x.clone()
@@ -148,9 +147,10 @@ class SigmaClip(FITSTransform):
                     dims if dims else (-1,),
                     mask=internal_mask,
                 )
-                # Replace inf (all-masked groups) with 0
+                # Replace non-finite fills (all-masked groups yield NaN from
+                # nanmedian, never inf) with 0
                 fill_val = torch.where(
-                    torch.isinf(fill_val), torch.zeros_like(fill_val), fill_val
+                    torch.isfinite(fill_val), fill_val, torch.zeros_like(fill_val)
                 )
 
             return torch.where(internal_mask, x, fill_val)

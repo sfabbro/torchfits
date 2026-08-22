@@ -6,7 +6,6 @@ import torch
 
 from .base import FITSTransform
 from .helpers import (
-    _get_valid_mask,
     _median,
     _amin,
     _amax,
@@ -239,39 +238,36 @@ class GlobalScalarNorm(FITSTransform):
                 scalar = _median(x, dim, mask=mask)
             elif self.stat == "max":
                 scalar = _amax(x, dim, mask=mask)
-            elif self.stat == "mean":
+            else:  # mean / rms
+                xf = x.float() if x.dtype != torch.int64 else x.double()
+                # Exclude user-masked AND non-finite values from the
+                # statistic: a single NaN must not poison the whole frame.
+                valid = torch.isfinite(xf)
                 if mask is not None:
-                    valid = _get_valid_mask(x, mask)
-                    x_clean = torch.where(
-                        valid,
-                        x.float(),
-                        torch.zeros_like(x.float()),
+                    valid = valid & mask.to(torch.bool)
+                if self.stat == "mean":
+                    total = torch.where(valid, xf, torch.zeros_like(xf)).sum(
+                        dim=dim, keepdim=True
                     )
-                    count = valid.float().sum(dim=dim, keepdim=True)
-                    scalar = x_clean.sum(dim=dim, keepdim=True) / torch.clamp_min(
-                        count, 1.0
-                    )
-                    scalar = scalar.to(x.dtype)
-                else:
-                    scalar = x.float().mean(dim=dim, keepdim=True).to(x.dtype)
-            else:  # rms
-                if mask is not None:
-                    valid = _get_valid_mask(x, mask)
-                    x_clean = torch.where(
-                        valid,
-                        x.float() ** 2,
-                        torch.zeros_like(x.float()),
-                    )
-                    count = valid.float().sum(dim=dim, keepdim=True)
+                    count = valid.to(xf.dtype).sum(dim=dim, keepdim=True)
+                    scalar = (total / torch.clamp_min(count, 1.0)).to(x.dtype)
+                else:  # rms
+                    sq = torch.where(valid, xf * xf, torch.zeros_like(xf))
+                    count = valid.to(xf.dtype).sum(dim=dim, keepdim=True)
                     scalar = torch.sqrt(
-                        x_clean.sum(dim=dim, keepdim=True) / torch.clamp_min(count, 1.0)
+                        sq.sum(dim=dim, keepdim=True) / torch.clamp_min(count, 1.0)
                     ).to(x.dtype)
-                else:
-                    scalar = torch.sqrt(
-                        (x.float() ** 2).mean(dim=dim, keepdim=True)
-                    ).to(x.dtype)
-        self._scalar = scalar
-        return x / torch.clamp_min(scalar, 1e-30)
+            # Sign-preserving floor: a negative statistic (e.g. max of a
+            # negative background) must divide by itself — clamping it up to
+            # +1e-30 produced ~1e30-scale garbage.
+            divisor = torch.where(
+                scalar < 0,
+                torch.clamp(scalar, max=-1e-30),
+                torch.clamp_min(scalar, 1e-30),
+            )
+        # Cache the divisor actually used so inverse() round-trips exactly.
+        self._scalar = divisor
+        return x / divisor
 
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
