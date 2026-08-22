@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional
 
 from .._table.utils import (
@@ -338,6 +339,58 @@ def delete_rows(
     _mutation_cache_barrier(path)
 
 
+def _warn_numeric_coercion(col_name: str, arr: Any, tform: Any) -> None:
+    """Warn when writing *arr* into an integer-TFORM column loses information.
+
+    CFITSIO truncates floats toward zero and wraps out-of-range integers;
+    surfacing this at the Python boundary keeps silent corruption out of
+    science pipelines.
+    """
+    if not tform:
+        return
+    try:
+        is_vla, code, _repeat = _parse_tform(str(tform))
+    except Exception:
+        return
+    if is_vla or code not in {"B", "I", "J", "K"}:
+        return
+    import numpy as _np
+
+    if arr.dtype.kind == "f":
+        finite = arr[_np.isfinite(arr)]
+        non_integral = (
+            int(_np.count_nonzero(finite != _np.floor(finite))) if finite.size else 0
+        )
+        n_nonfinite = int(arr.size - finite.size)
+        if not (non_integral or n_nonfinite):
+            return
+        message = (
+            f"Column '{col_name}' has integer FITS format '{tform}': "
+            f"{non_integral} non-integral value(s) will be truncated toward zero"
+        )
+        if n_nonfinite:
+            message += f" and {n_nonfinite} non-finite value(s) will become undefined"
+        warnings.warn(
+            message + ". Cast explicitly to silence this warning.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return
+    if arr.dtype.kind in {"i", "u"}:
+        bits = {"B": 8, "I": 16, "J": 32, "K": 64}[code]
+        high = (1 << (bits - 1)) - 1
+        low = 0 if code == "B" else -(1 << (bits - 1))
+        out_of_range = int(_np.count_nonzero((arr > high) | (arr < low)))
+        if out_of_range:
+            warnings.warn(
+                f"Column '{col_name}' has integer FITS format '{tform}': "
+                f"{out_of_range} value(s) fall outside [{low}, {high}] and "
+                "will wrap on disk. Cast explicitly to silence this warning.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+
 def update_rows(
     path: str,
     rows: dict[str, Any],
@@ -399,16 +452,41 @@ def update_rows(
 
             width = string_widths[col_name]
             arr = _np.full((expected_rows, width), 0x20, dtype=_np.uint8)
+            dropped_chars = 0
+            truncated_rows = 0
             for i, s in enumerate(values):
                 if isinstance(s, (bytes, bytearray)):
                     encoded = bytes(s)
                 elif isinstance(s, str):
                     encoded = s.encode("ascii", "ignore")
+                    if len(encoded) != len(s):
+                        dropped_chars += len(s) - len(encoded)
                 else:
-                    encoded = str(s).encode("ascii", "ignore")
+                    text = str(s)
+                    encoded = text.encode("ascii", "ignore")
+                    if len(encoded) != len(text):
+                        dropped_chars += len(text) - len(encoded)
                 length = min(len(encoded), width)
+                if len(encoded) > width:
+                    truncated_rows += 1
                 if length > 0:
                     arr[i, :length] = _np.frombuffer(encoded[:length], dtype=_np.uint8)
+            if dropped_chars:
+                warnings.warn(
+                    f"Column '{col_name}' is a FITS string column: "
+                    f"{dropped_chars} non-ASCII character(s) were removed. "
+                    "FITS string columns store bytes; encode explicitly to silence.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+            if truncated_rows:
+                warnings.warn(
+                    f"Column '{col_name}' has width {width}: "
+                    f"{truncated_rows} value(s) were silently clipped to fit. "
+                    "Shorten values or widen the column to silence.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
             normalized[col_name] = arr
         elif col_name in complex_codes:
             arr = _coerce_table_complex_values(
@@ -427,6 +505,7 @@ def update_rows(
             )
             if expected_rows is None:
                 expected_rows = int(arr.shape[0])
+            _warn_numeric_coercion(col_name, arr, tform_map.get(col_name))
             normalized[col_name] = arr
 
     if expected_rows is None:
