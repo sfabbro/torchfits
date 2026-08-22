@@ -726,5 +726,40 @@ class TestCacheManagerFunctions:
         assert stats_after["misses"] == 0
 
 
+def test_cached_reads_are_isolated_from_caller_mutation(tmp_path):
+    """In-place mutation of a returned result must not poison the cache.
+
+    Regression: cached read results were handed out (and stored) by
+    reference, so ``result['flux'].mul_(2)`` silently corrupted every later
+    read served from the default on-by-default cache.
+    """
+    import torch
+
+    import torchfits
+
+    table_path = tmp_path / "alias.fits"
+    torchfits.write(
+        table_path.as_posix(),
+        {"flux": torch.arange(10, dtype=torch.float32)},
+        overwrite=True,
+    )
+    image_path = tmp_path / "img.fits"
+    torchfits.write_tensor(image_path.as_posix(), torch.ones(4, 4), overwrite=True)
+
+    expected = torch.arange(10, dtype=torch.float32)
+
+    d1 = torchfits.read(table_path.as_posix(), hdu=1)
+    d1["flux"].mul_(100)
+    assert torch.equal(torchfits.read(table_path.as_posix(), hdu=1)["flux"], expected)
+
+    d3 = torchfits.read(table_path.as_posix(), hdu=1)
+    d3["flux"].mul_(-1)
+    assert torch.equal(torchfits.read(table_path.as_posix(), hdu=1)["flux"], expected)
+
+    i1 = torchfits.read(image_path.as_posix())
+    i1.add_(5)
+    assert torch.equal(torchfits.read(image_path.as_posix()), torch.ones(4, 4))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

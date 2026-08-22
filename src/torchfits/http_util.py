@@ -100,7 +100,42 @@ def is_internal_url(url: str) -> bool:
 
 
 class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Re-validate every redirect hop so redirects cannot reach internal hosts."""
+    """Re-validate every redirect hop so redirects cannot reach internal hosts.
+
+    Credential-bearing headers (``Authorization``, ``Cookie``) are stripped
+    whenever the redirect leaves the original origin, so an attacker-controlled
+    public target cannot collect tokens issued for the data provider.
+    """
+
+    _CREDENTIAL_HEADERS = ("Authorization", "Cookie")
+
+    @staticmethod
+    def _origin(url: str) -> tuple[str, int, str] | None:
+        parts = urllib.parse.urlsplit(url)
+        if not parts.hostname:
+            return None
+        try:
+            port = parts.port
+        except ValueError:
+            return None
+        if port is None:
+            port = 443 if parts.scheme == "https" else 80
+        return parts.hostname.lower(), port, parts.scheme
+
+    def _keep_credentials(self, original_url: str, newurl: str) -> bool:
+        old = self._origin(original_url)
+        new = self._origin(newurl)
+        if old is None or new is None:
+            return False
+        if old[0] != new[0]:
+            # Different host: never forward credentials.
+            return False
+        if old[2] == new[2]:
+            # Same scheme: keep credentials only on the same port.
+            return old[1] == new[1]
+        # Scheme change: only a plain default-port TLS upgrade keeps
+        # credentials; other ports can be bound by unrelated processes.
+        return old[2] == "http" and new[2] == "https" and old[1] == 80 and new[1] == 443
 
     def redirect_request(  # type: ignore[no-untyped-def]
         self, req, fp, code, msg, headers, newurl
@@ -110,7 +145,13 @@ class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
                 f"{newurl}: redirect to internal or private networks is blocked "
                 "for security reasons"
             )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is not None and not self._keep_credentials(req.full_url, newurl):
+            for header in self._CREDENTIAL_HEADERS:
+                if header in new_req.headers:
+                    del new_req.headers[header]
+                new_req.remove_header(header)
+        return new_req
 
 
 def build_http_opener() -> urllib.request.OpenerDirector:

@@ -212,9 +212,13 @@ def write(
                 if _is_skippable_empty_primary(idx, item_hdu):
                     continue
                 _write_header_cards_if_supported(
-                    path, out_hdu, getattr(item_hdu, "header", None)
+                    path,
+                    out_hdu,
+                    getattr(item_hdu, "header", None),
+                    invalidate=False,
                 )
                 out_hdu += 1
+            _invalidate_path_caches(path)
             return
 
         if isinstance(data, HDUList):
@@ -306,7 +310,8 @@ def write(
         cpp.write_fits_file(path, hdus_to_write, overwrite)
         for idx, item in enumerate(hdus_to_write):
             item_header = item.get("header") if isinstance(item, dict) else None
-            _write_header_cards_if_supported(path, idx, item_header)
+            _write_header_cards_if_supported(path, idx, item_header, invalidate=False)
+        _invalidate_path_caches(path)
 
     except ValueError as e:
         # uint64 rejections are documented as ValueError with guidance;

@@ -154,24 +154,51 @@ def get_cached_handle(path: str, handle_cache_capacity: int) -> tuple[Any, bool]
 
 def get_cached_hdu_type(path: str, hdu: int) -> str | None:
     """Return a cached HDU payload type for path/HDU dispatch, if known."""
-    sig = (path, hdu)
-    with cache_lock:
-        cached = hdu_type_cache.get(sig)
-        if cached is not None:
-            hdu_type_cache.move_to_end(sig)
-        return cached
+    value = signature_cached_get(hdu_type_cache, (path, hdu))
+    return None if value is None else str(value)
 
 
 def set_cached_hdu_type(path: str, hdu: int, hdu_type: str | None) -> None:
     """Record an HDU payload type for path/HDU dispatch."""
     if not hdu_type:
         return
-    sig = (path, hdu)
+    signature_cached_set(hdu_type_cache, (path, hdu), hdu_type, 512)
+
+
+def signature_cached_get(cache: Any, key: tuple[str, int]) -> Any:
+    """Get an entry validated against the file's current stat signature.
+
+    Policy/meta caches must not outlive the file state they describe: a
+    rewrite that swaps payloads in place would otherwise keep serving stale
+    dispatch decisions. Entries store ``(signature, value)``; a mismatch
+    drops the entry and reports a miss.
+    """
     with cache_lock:
-        hdu_type_cache[sig] = hdu_type
-        hdu_type_cache.move_to_end(sig)
-        while len(hdu_type_cache) > 512:
-            hdu_type_cache.popitem(last=False)
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        cache.move_to_end(key)
+        stored_sig, value = entry
+        current_sig = path_signature(key[0])
+        if (
+            stored_sig is not None
+            and current_sig is not None
+            and stored_sig != current_sig
+        ):
+            del cache[key]
+            return None
+        return value
+
+
+def signature_cached_set(
+    cache: Any, key: tuple[str, int], value: Any, max_size: int
+) -> None:
+    """Store ``(signature, value)`` for :func:`signature_cached_get`."""
+    with cache_lock:
+        cache[key] = (path_signature(key[0]), value)
+        cache.move_to_end(key)
+        while len(cache) > max_size:
+            cache.popitem(last=False)
 
 
 def check_read_cache(
@@ -283,6 +310,10 @@ def _check_read_cache_locked(
                                 else:
                                     new_data[key] = value
                             out_data = new_data
+                    else:
+                        # Hand out a private copy so callers mutating their
+                        # result cannot alias (and corrupt) the cached entry.
+                        out_data = _clone_read_value(cached_data)
                     return (
                         True,
                         ((out_data, cached_header) if return_header else out_data),
@@ -298,12 +329,47 @@ def _check_read_cache_locked(
     return False, None, cache_key
 
 
+def _clone_read_value(value: Any) -> Any:
+    """Deep-copy tensors inside a cached read result.
+
+    The cache must never hand out (or hold) caller-owned buffers: a user who
+    mutates ``result["flux"]`` in place would otherwise poison every later
+    read served from the cache.
+    """
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        return value.clone()
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, torch.Tensor):
+                out[key] = item.clone()
+            elif isinstance(item, list):
+                out[key] = [
+                    entry.clone() if isinstance(entry, torch.Tensor) else entry
+                    for entry in item
+                ]
+            else:
+                out[key] = item
+        return out
+    if isinstance(value, list):
+        return [_clone_read_value(entry) for entry in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_read_value(entry) for entry in value)
+    return value
+
+
 def store_cached_read(cache_key: Any, value: Any, capacity: int) -> None:
-    """Store one read result and evict the oldest entry under the cache lock."""
+    """Store one read result and evict the oldest entry under the cache lock.
+
+    The stored copy is detached from the caller's tensors so later in-place
+    mutation of the returned data cannot corrupt future cache hits.
+    """
     if capacity <= 0 or cache_key is None:
         return
     with cache_lock:
-        file_cache[cache_key] = value
+        file_cache[cache_key] = _clone_read_value(value)
         while len(file_cache) > capacity:
             file_cache.popitem(last=False)
         cache_stats["cache_size"] = len(file_cache)

@@ -229,7 +229,15 @@ def _write_header_cards_if_supported(
     path: str,
     hdu: int,
     header: Optional[Dict[str, Any]],
+    *,
+    invalidate: bool = True,
 ) -> None:
+    """Replay header cards for one HDU via CFITSIO.
+
+    ``invalidate=False`` defers cache invalidation to the caller — multi-HDU
+    writers batch the (process-global) flush once after their loop instead of
+    paying two full invalidations per HDU.
+    """
     if not header:
         return
     header_obj = header if isinstance(header, Header) else Header(header)
@@ -240,12 +248,15 @@ def _write_header_cards_if_supported(
     writer = getattr(cpp, "write_hdu_header_cards", None)
     if writer is None:
         return
-    _invalidate_path_caches(path)
-    # Invalidate both before and after the C++ header-card write:
-    #  - Before: ensure no stale handle/metadata races with writing new cards.
-    #  - After:  ensure the next reader picks up the freshly-written header.
+    if invalidate:
+        # Invalidate both before and after the C++ header-card write:
+        #  - Before: ensure no stale handle/metadata races with writing new cards.
+        #  - After:  ensure the next reader picks up the freshly-written header.
+        _invalidate_path_caches(path)
+        writer(path, int(hdu), list(header_obj.cards))
+        _invalidate_path_caches(path)
+        return
     writer(path, int(hdu), list(header_obj.cards))
-    _invalidate_path_caches(path)
 
 
 def _delete_header_key_if_supported(path: str, hdu: int, key: str) -> None:

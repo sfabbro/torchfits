@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -111,6 +112,49 @@ def test_normalize_vos_uri_placeholders() -> None:
     assert is_vos_path("vos:alice/a.fits")
     assert is_vos_path("vault:alice/a.fits")
     assert not is_vos_path("https://example.edu/a.fits")
+
+
+def test_redirect_handler_strips_credentials_cross_origin(allow_loopback) -> None:
+    """Tokens must not follow redirects to a different origin."""
+    handler = http_util.ValidatingRedirectHandler()
+
+    def request_with_token(url: str) -> urllib.request.Request:
+        return urllib.request.Request(
+            url, headers={"Authorization": "Bearer s3cret", "Cookie": "k=v"}
+        )
+
+    # Cross-host: stripped.
+    req = request_with_token("http://data.example.edu/x.fits")
+    new_req = handler.redirect_request(
+        req, None, 302, "x", {}, "https://attacker.example/y"
+    )
+    assert new_req is not None
+    assert "Authorization" not in new_req.headers
+    assert new_req.headers.get("Authorization") is None
+
+    # Scheme downgrade on same host: stripped.
+    req = request_with_token("https://data.example.edu/x.fits")
+    new_req = handler.redirect_request(
+        req, None, 302, "x", {}, "http://data.example.edu/y"
+    )
+    assert new_req is not None
+    assert new_req.headers.get("Authorization") is None
+
+    # Same origin: kept (standard http->https upgrade or plain same scheme).
+    req = request_with_token("http://data.example.edu/x.fits")
+    new_req = handler.redirect_request(
+        req, None, 302, "x", {}, "https://data.example.edu/y"
+    )
+    assert new_req is not None
+    assert new_req.headers.get("Authorization") == "Bearer s3cret"
+
+    # Different port: stripped.
+    req = request_with_token("http://data.example.edu:8443/x.fits")
+    new_req = handler.redirect_request(
+        req, None, 302, "x", {}, "https://data.example.edu:9443/y"
+    )
+    assert new_req is not None
+    assert new_req.headers.get("Authorization") is None
 
 
 def test_full_download_auth_and_redirect(tmp_path, allow_loopback, monkeypatch):

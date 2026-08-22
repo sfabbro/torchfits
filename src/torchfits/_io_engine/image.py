@@ -109,6 +109,11 @@ def read_hdus(
     """Read multiple image HDUs from one file using a direct one-handle path."""
     if not isinstance(path, str):
         raise ValueError("path must be a string")
+    if path.lower().endswith(".bz2"):
+        raise ValueError(
+            "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
+        )
+    guard_fits_path(path)
     if not isinstance(hdus, (list, tuple)) or len(hdus) == 0:
         raise ValueError("hdus must be a non-empty list/tuple of HDU indices or names")
     validate_device(device)

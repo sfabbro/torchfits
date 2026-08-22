@@ -11,6 +11,8 @@ from .caches import (
     cache_lock,
     cold_nommap_cache,
     image_meta_cache,
+    signature_cached_get,
+    signature_cached_set,
 )
 from ..hdu import Header
 
@@ -32,6 +34,15 @@ def _cache_set(cache: Any, key: Any, value: Any, max_size: int) -> None:
         cache.move_to_end(key)
         while len(cache) > max_size:
             cache.popitem(last=False)
+
+
+def _sig_get(cache: Any, key: tuple[str, int]) -> Any:
+    """Signature-validated read for policy caches (staleness-safe)."""
+    return signature_cached_get(cache, key)
+
+
+def _sig_set(cache: Any, key: tuple[str, int], value: Any, max_size: int) -> None:
+    signature_cached_set(cache, key, value, max_size)
 
 
 def _parse_image_meta(header_data: Mapping[str, Any]) -> ImageMeta:
@@ -113,7 +124,7 @@ def get_image_meta(
         cpp_module = _cpp
 
     sig = (path, hdu)
-    cached = _cache_get(image_meta_cache, sig)
+    cached = _sig_get(image_meta_cache, sig)
     if cached is not None:
         return cast(ImageMeta, cached)
 
@@ -124,7 +135,7 @@ def get_image_meta(
         except Exception:
             meta = None
 
-    _cache_set(image_meta_cache, sig, meta, 256)
+    _sig_set(image_meta_cache, sig, meta, 256)
     return meta
 
 
@@ -137,7 +148,7 @@ def get_image_meta_from_handle(
 ) -> ImageMeta | None:
     """Fetch image metadata using an already-open FITS handle."""
     sig = (path, hdu)
-    cached = _cache_get(image_meta_cache, sig)
+    cached = _sig_get(image_meta_cache, sig)
     if cached is not None:
         return cast(ImageMeta, cached)
 
@@ -146,7 +157,7 @@ def get_image_meta_from_handle(
     except Exception:
         meta = None
 
-    _cache_set(image_meta_cache, sig, meta, 256)
+    _sig_set(image_meta_cache, sig, meta, 256)
     return meta
 
 
@@ -166,30 +177,30 @@ def should_use_cold_nommap(
     if force_cold_nommap:
         return True
 
-    cached = _cache_get(cold_nommap_cache, (path, hdu))
+    cached = _sig_get(cold_nommap_cache, (path, hdu))
     if cached is not None:
         return bool(cached)
 
     try:
         file_size = os.path.getsize(path)
         if file_size < (1 << 20):
-            _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+            _sig_set(cold_nommap_cache, (path, hdu), False, 512)
             return False
     except Exception:
-        _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+        _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
-    meta = _cache_get(image_meta_cache, (path, hdu))
+    meta = _sig_get(image_meta_cache, (path, hdu))
     if meta is None:
         meta = get_image_meta_func(path, hdu)
     if not meta:
-        _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+        _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
     try:
         bitpix = int(meta[0])
     except Exception:
-        _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+        _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
     is_compressed = False
@@ -199,14 +210,14 @@ def should_use_cold_nommap(
         except Exception:
             is_compressed = False
     if is_compressed:
-        _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+        _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
     if bitpix in (16, 32, -32):
-        _cache_set(cold_nommap_cache, (path, hdu), True, 512)
+        _sig_set(cold_nommap_cache, (path, hdu), True, 512)
         return True
 
-    _cache_set(cold_nommap_cache, (path, hdu), False, 512)
+    _sig_set(cold_nommap_cache, (path, hdu), False, 512)
     return False
 
 
@@ -229,18 +240,18 @@ def resolve_image_mmap(
             raise ValueError("mmap must be bool or 'auto'")
 
         sig = (path, hdu)
-        cached = _cache_get(auto_mmap_cache, sig)
+        cached = _sig_get(auto_mmap_cache, sig)
         if cached is not None:
             return bool(cached)
 
-        meta = _cache_get(image_meta_cache, (path, hdu))
+        meta = _sig_get(image_meta_cache, (path, hdu))
         if meta is None:
             meta = get_image_meta_func(path, hdu)
 
         if meta is not None and len(meta) >= 6:
             try:
                 if bool(meta[5]):
-                    _cache_set(auto_mmap_cache, sig, False, 512)
+                    _sig_set(auto_mmap_cache, sig, False, 512)
                     return False
             except Exception:
                 pass
@@ -255,7 +266,7 @@ def resolve_image_mmap(
             )
         else:
             resolved = not should_use_cold_nommap_func(path, hdu, cache_capacity, True)
-        _cache_set(auto_mmap_cache, sig, bool(resolved), 512)
+        _sig_set(auto_mmap_cache, sig, bool(resolved), 512)
         return bool(resolved)
 
     raise ValueError("mmap must be bool or 'auto'")
