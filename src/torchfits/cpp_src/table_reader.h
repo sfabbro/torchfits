@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <thread>
 #include <atomic>
+#include <cassert>
 #include <fitsio.h>
 
 #include "torchfits_torch.h"
@@ -2395,9 +2396,15 @@ public:
         long rows_done = 0;
         int cur = 0;                 // scratch holding the current chunk
         bool cur_filled = false;     // ...already prefetched by the previous pass
+        // SAFETY: `cur` must only rotate while prefetch is live; otherwise
+        // chunk_buf alternates onto the unsized second buffer.
         while (rows_done < num_rows) {
             const long rows = std::min(rows_per_chunk, num_rows - rows_done);
-            uint8_t* chunk_buf = cur == 0 ? buffer.data() : second_buffer.data();
+            uint8_t* chunk_buf =
+                (prefetch && cur == 1) ? second_buffer.data() : buffer.data();
+            assert(!prefetch || cur == 0 ||
+                   second_buffer.size() >=
+                       static_cast<size_t>(rows) * row_width_bytes_);
 
             // Join the prefetch (if any): this chunk's bytes are already in
             // place, or the read failed and we surface it exactly like the
@@ -2492,7 +2499,6 @@ public:
             }
 
             rows_done += rows;
-            cur ^= 1;
             cur_filled = false;
         }
     }
