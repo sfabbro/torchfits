@@ -1493,16 +1493,51 @@ void bind_fits(nb::module_& m) {
             }
             return tensor_to_python(tensor);
         }, nb::arg("hdu_num"), nb::arg("use_mmap") = true)
-        .def("read_header", &FITSFile::get_header)
-        .def("get_num_hdus", &FITSFile::get_num_hdus)
-        .def("get_hdu_type", &FITSFile::get_hdu_type)
+        .def("read_header", [](FITSFile& self, int hdu_num) {
+            auto header = std::vector<std::tuple<std::string, std::string, std::string>>();
+            {
+                nb::gil_scoped_release release;
+                header = self.get_header(hdu_num);
+            }
+            return header;
+        })
+        .def("get_num_hdus", [](FITSFile& self) {
+            long long n = 0;
+            {
+                nb::gil_scoped_release release;
+                n = self.get_num_hdus();
+            }
+            return n;
+        })
+        .def("get_hdu_type", [](FITSFile& self, int hdu_num) {
+            std::string type;
+            {
+                nb::gil_scoped_release release;
+                type = self.get_hdu_type(hdu_num);
+            }
+            return type;
+        })
         .def("close", &FITSFile::close)
         .def("write_image", [](FITSFile& self, nb::ndarray<> tensor, int hdu_num, double bscale, double bzero) {
             return self.write_image(tensor, hdu_num, bscale, bzero);
         }, nb::arg("tensor"), nb::arg("hdu_num") = 0, nb::arg("bscale") = 1.0, nb::arg("bzero") = 0.0)
         .def("write_hdus", &FITSFile::write_hdus)
-        .def("get_shape", &FITSFile::get_shape)
-        .def("get_dtype", &FITSFile::get_dtype)
+        .def("get_shape", [](FITSFile& self, int hdu_num) {
+            std::vector<long> shape;
+            {
+                nb::gil_scoped_release release;
+                shape = self.get_shape(hdu_num);
+            }
+            return shape;
+        }, nb::arg("hdu_num"))
+        .def("get_dtype", [](FITSFile& self, int hdu_num) {
+            int bitpix = 0;
+            {
+                nb::gil_scoped_release release;
+                bitpix = self.get_dtype(hdu_num);
+            }
+            return bitpix;
+        }, nb::arg("hdu_num"))
         .def("read_subset", [](FITSFile& self, int hdu_num, long x1, long y1, long x2, long y2) {
             torch::Tensor tensor;
             {
@@ -1528,10 +1563,12 @@ void bind_fits(nb::module_& m) {
         .def_prop_ro("hdu", &SubsetReader::hdu);
 
     m.def("read_full", [](const std::string& filename, int hdu_num, bool use_mmap) {
-        FITSFile file(filename.c_str(), 0);
         torch::Tensor tensor;
         {
+            // Open + read without the GIL: network opens and disk IO must
+            // not stall other Python threads.
             nb::gil_scoped_release release;
+            FITSFile file(filename.c_str(), 0);
             tensor = file.read_tensor(hdu_num, use_mmap);
         }
         return tensor_to_python(tensor);
@@ -1568,32 +1605,40 @@ void bind_fits(nb::module_& m) {
     }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
 
     m.def("read_full_numpy", [](const std::string& filename, int hdu_num, bool use_mmap) -> nb::object {
-        FITSFile file(filename.c_str(), 0);
-        fitsfile* fptr = file.get_fptr();
-
-        int status = 0;
-        file.ensure_hdu(hdu_num, &status);
-        if (status != 0) {
-            throw std::runtime_error("Could not move to HDU");
-        }
-
-        const int bitpix = file.get_dtype(hdu_num);
-        const auto scale_info = file.get_scale_info_for_hdu(hdu_num);
-        const bool scaled = scale_info.scaled;
-
-        status = 0;
-        const int is_comp = fits_is_compressed_image(fptr, &status);
-        const bool compressed = (status == 0) && (is_comp != 0);
-        if (status != 0) {
-            status = 0;
-        }
-
-        std::vector<long> shape_long = file.get_shape(hdu_num);
+        // Phase 1 (no GIL): open — possibly a network extended filename —
+        // move to the HDU, and gather all header-derived metadata.
+        std::unique_ptr<FITSFile> file;
+        fitsfile* fptr = nullptr;
+        int bitpix = 0;
+        FITSFile::ScaleInfo scale_info;
+        bool compressed = false;
         std::vector<size_t> shape;
-        shape.reserve(shape_long.size());
-        for (long d : shape_long) {
-            shape.push_back((size_t) d);
+        {
+            nb::gil_scoped_release release;
+            file = std::make_unique<FITSFile>(filename.c_str(), 0);
+            fptr = file->get_fptr();
+
+            int status = 0;
+            file->ensure_hdu(hdu_num, &status);
+            if (status != 0) {
+                throw std::runtime_error("Could not move to HDU");
+            }
+
+            bitpix = file->get_dtype(hdu_num);
+            scale_info = file->get_scale_info_for_hdu(hdu_num);
+
+            status = 0;
+            const int is_comp = fits_is_compressed_image(fptr, &status);
+            compressed = (status == 0) && (is_comp != 0);
+
+            std::vector<long> shape_long = file->get_shape(hdu_num);
+            shape.reserve(shape_long.size());
+            for (long d : shape_long) {
+                shape.push_back((size_t) d);
+            }
         }
+
+        const bool scaled = scale_info.scaled;
 
         if (shape.empty()) {
             return alloc_numpy_array<uint8_t>({0}).cast();
@@ -1668,8 +1713,10 @@ void bind_fits(nb::module_& m) {
             scaled && bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0;
         if (use_mmap && !compressed && bitpix == BYTE_IMG && (!scaled || signed_byte_scaled)) {
             if (!has_cfitsio_extended_filename_syntax(filename)) {
+                // Phase 2 (no GIL): raw pread/mmap of the full data segment.
+                nb::gil_scoped_release release;
                 LONGLONG headstart = 0, data_offset = 0, dataend = 0;
-                status = 0;
+                int status = 0;
                 fits_get_hduaddrll(fptr, &headstart, &data_offset, &dataend, &status);
                 if (status == 0 && data_offset > 0) {
                     // Checked product: a NAXIS product overflow must not silently
@@ -1732,18 +1779,20 @@ void bind_fits(nb::module_& m) {
         }
 
         int anynul = 0;
+        int status = 0;
         float fnullval = NAN;
         double dnullval = NAN;
         void* nullval_ptr = nullptr;
 
-        if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-            if (d::has_compressed_nulls(fptr)) {
-                nullval_ptr = (datatype == TFLOAT) ? (void*) &fnullval : (void*) &dnullval;
-            }
-        }
-
         {
+            // Phase 3 (no GIL): compressed-null probe + CFITSIO read.
             nb::gil_scoped_release release;
+            if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
+                if (d::has_compressed_nulls(fptr)) {
+                    nullval_ptr = (datatype == TFLOAT) ? (void*) &fnullval : (void*) &dnullval;
+                }
+            }
+
             status = 0;
             std::vector<LONGLONG> dims;
             dims.reserve(shape.size());
@@ -1763,21 +1812,21 @@ void bind_fits(nb::module_& m) {
     }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
 
     m.def("read_full_raw", [](const std::string& filename, int hdu_num, bool use_mmap) {
-        FITSFile file(filename.c_str(), 0);
         torch::Tensor tensor;
         {
             nb::gil_scoped_release release;
+            FITSFile file(filename.c_str(), 0);
             tensor = file.read_image_raw(hdu_num, use_mmap);
         }
         return tensor_to_python(tensor);
     }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
 
     m.def("read_full_raw_with_scale", [](const std::string& filename, int hdu_num, bool use_mmap) {
-        FITSFile file(filename.c_str(), 0);
         torch::Tensor tensor;
         FITSFile::ScaleInfo scale_info;
         {
             nb::gil_scoped_release release;
+            FITSFile file(filename.c_str(), 0);
             tensor = file.read_image_raw(hdu_num, use_mmap);
             scale_info = file.get_scale_info_for_hdu(hdu_num);
         }
@@ -1790,11 +1839,11 @@ void bind_fits(nb::module_& m) {
     }, nb::arg("filename"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
 
     m.def("read_full_scaled_cpu", [](const std::string& filename, int hdu_num, bool use_mmap) {
-        FITSFile file(filename.c_str(), 0);
         torch::Tensor tensor;
         FITSFile::ScaleInfo scale_info;
         {
             nb::gil_scoped_release release;
+            FITSFile file(filename.c_str(), 0);
             tensor = file.read_image_raw(hdu_num, use_mmap);
             scale_info = file.get_scale_info_for_hdu(hdu_num);
         }
@@ -2110,18 +2159,38 @@ void bind_fits(nb::module_& m) {
     }, nb::rv_policy::take_ownership);
 
     m.def("read_header", [](FITSFile& file, int hdu_num) {
-        return file.get_header(hdu_num);
+        std::vector<std::tuple<std::string, std::string, std::string>> header;
+        {
+            nb::gil_scoped_release release;
+            header = file.get_header(hdu_num);
+        }
+        return header;
     });
     m.def("read_header_string", [](FITSFile& file, int hdu_num) {
-        return file.read_header_to_string(hdu_num);
+        std::string text;
+        {
+            nb::gil_scoped_release release;
+            text = file.read_header_to_string(hdu_num);
+        }
+        return text;
     });
 
     m.def("get_num_hdus", [](FITSFile& file) {
-        return file.get_num_hdus();
+        long long n = 0;
+        {
+            nb::gil_scoped_release release;
+            n = file.get_num_hdus();
+        }
+        return n;
     });
 
     m.def("get_hdu_type", [](FITSFile& file, int hdu_num) {
-        return file.get_hdu_type(hdu_num);
+        std::string type;
+        {
+            nb::gil_scoped_release release;
+            type = file.get_hdu_type(hdu_num);
+        }
+        return type;
     });
 
     m.def("read_tensor_from_handle", [](FITSFile& file, int hdu_num) {
