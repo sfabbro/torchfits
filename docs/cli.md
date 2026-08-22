@@ -31,7 +31,7 @@ torchfits transform science.fits --name ArcsinhStretch -o stretched.fits
 # Format conversions & previews
 torchfits convert catalog.fits catalog.parquet -e 1
 torchfits convert catalog.fits bright.parquet -e 1 -w "MAG_G < 18.0" -c RA,DEC,MAG_G
-torchfits convert r.fits g.fits b.fits -o rgb.png --to png
+torchfits convert g.fits r.fits i.fits -o rgb.png --to png
 
 # Compression
 torchfits compress science.fits science.fits.fz
@@ -97,7 +97,7 @@ Each command invocation starts the Python interpreter and loads the PyTorch runt
 | [`stats`](#stats) | Compute image statistics (min, max, mean, standard deviation, median) |
 | [`table`](#table) | Inspect binary/ASCII table schemas and preview rows |
 | [`cutout`](#cutout) | Extract sub-regions using pixel coordinates or CFITSIO sections |
-| [`convert`](#convert) | Export tables to Parquet, CSV, TSV, Arrow, or render 3-band RGB PNGs |
+| [`convert`](#convert) | Export tables to Parquet, CSV, TSV, Arrow, or render 1–7 band RGB PNGs |
 | [`copy`](#copy) | Lossless copy of single or multi-extension FITS files |
 | [`arith`](#arith) | Perform scalar or image-to-image arithmetic (+, -, *, /) |
 | [`compress`](#compress) | Tile-compress images using Rice, Gzip, or Hcompress algorithms |
@@ -237,7 +237,7 @@ torchfits cutout *.fits --box 100,100,256,256 --out-dir /tmp/cutouts -J 0
 
 ### `convert`
 
-Converts FITS binary/ASCII tables to modern data science formats (Parquet, CSV, TSV, Arrow IPC) with optional in-engine row filtering, or renders 3-band RGB PNG images.
+Converts FITS binary/ASCII tables to modern data science formats (Parquet, CSV, TSV, Arrow IPC) with optional in-engine row filtering, or renders 1–7 band RGB PNG images.
 
 #### Table Conversion & Filtering
 ```bash
@@ -251,12 +251,18 @@ torchfits convert catalog.fits -o catalog.csv -e 1 -c RA,DEC,MAG_G
 torchfits convert catalog.fits -o filtered.parquet -e 1 -w "MAG_G < 19.5 AND DEC > 0" -c RA,DEC,MAG_G
 ```
 
-#### 3-Band Color RGB PNG Rendering
+#### RGB PNG Rendering
 ```bash
-# Combine 3 separate band files into a Lupton RGB PNG
-torchfits convert r.fits g.fits b.fits -o preview.png --to png --q 8.0 --stretch 0.5
+# Auto RGB (default): files in blue → red order
+torchfits convert g.fits r.fits i.fits -o preview.png --to png
 
-# Render from a single MEF containing 3 image HDUs
+# Four filters, photometric zeropoints (AB mag of 1 count)
+torchfits convert u.fits g.fits i.fits z.fits -o preview.png --zeropoints 30,30,30,30
+
+# Astropy-parity Lupton (reddest file first; same as 1.0)
+torchfits convert r.fits g.fits b.fits -o preview.png --to png --recipe lupton --q 8.0 --stretch 0.5
+
+# Cube or MEF: HDU list is shortest → longest
 torchfits convert multi_band.fits -o preview.png --bands 0,1,2 --to png
 ```
 
@@ -412,7 +418,7 @@ torchfits probe vos:username/data/sample.fits
 | `stats` | [`imstat`](https://iraf.net/irafdocs/imstat.php) (IRAF), [`aststatistics`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-aststatistics.html) (Gnuastro) | Compute min, max, mean, standard deviation, and median pixel values |
 | `table` | [`asttable`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-asttable.html) (Gnuastro), `tablist` (NASA HEASARC FTOOLS) | Preview binary/ASCII table schema and row values |
 | `cutout` | [`astcrop`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astcrop.html) (Gnuastro), CFITSIO image sections | Extract sub-regions using pixel ranges (`[x1:x2, y1:y2]`) or bounding boxes |
-| `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html) (Gnuastro), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) (Starlink) | Export tables to Parquet/CSV/Arrow with SQL filters; render 3-band Lupton RGB PNGs |
+| `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html) (Gnuastro), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) (Starlink) | Export tables to Parquet/CSV/Arrow with SQL filters; render 1–7 band RGB PNGs |
 | `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (CFITSIO) | Lossless copy of single or multi-extension FITS files |
 | `arith` | [`imarith`](https://iraf.net/irafdocs/imarith.php) (IRAF) | Perform scalar or image-to-image addition, subtraction, multiplication, division |
 | `compress` / `decompress` | [`fpack` / `funpack`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (NASA HEASARC) | Lossless / lossy tile compression (Rice, Gzip, Hcompress) and expansion |

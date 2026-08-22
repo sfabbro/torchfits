@@ -44,9 +44,41 @@ Corresponding script: [`example_transforms.py`](published-examples/example_trans
 
 ---
 
-## 2. Multi-Band Color Synthesis (`lupton_rgb`)
+## 2. Multi-Band Color Synthesis
 
-Astronomical color images combine multiple narrowband or broadband filter exposures into an RGB representation. The Lupton (2004) algorithm preserves color ratios across faint and bright regions while preventing saturation burn-out in stellar cores:
+Astronomical color images combine filter exposures into RGB. Two mappings ship in
+`torchfits.transforms`:
+
+- **`rgb`** — auto stretch, 1–7 bands, shortest wavelength first (`rgb(g, r, i)`).
+- **`lupton_rgb`** — Astropy-parity Lupton asinh, reddest first (`lupton_rgb(r=i, g=r, b=g)`).
+
+```python
+import torchfits
+from torchfits.transforms import rgb
+
+g = torchfits.read_tensor("sdss_g.fits", hdu=0)
+r = torchfits.read_tensor("sdss_r.fits", hdu=0)
+i = torchfits.read_tensor("sdss_i.fits", hdu=0)
+
+# Pretty default: MAD auto-scale, coupled asinh, sRGB
+rgb_tensor = rgb(g, r, i)
+print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [H, W, 3]
+```
+
+![Auto RGB on IC 3418, NGC 4438, JWST SMACS 0723, and HST OPAL Jupiter](assets/gallery/rgb_sky_collage.png)
+
+Same stretch, four skies: [`example_rgb_sky.py`](published-examples/example_rgb_sky.py).
+Why auto instead of library-default Lupton on a faint tail:
+
+![Auto rgb versus lupton_rgb defaults on IC 3418](assets/gallery/rgb_vs_lupton_dwarf.png)
+
+HSC PDR3 files you already have use the same call: `rgb(g, r, i, z, y)`.
+Nanomaggy or MJy/sr cubes pass `calibrated=True` (or `zeropoints=` for AB of 1 count).
+
+### Lupton asinh (`lupton_rgb`)
+
+The Lupton (2004) algorithm preserves color ratios across faint and bright regions
+while preventing saturation burn-out in stellar cores. Argument order is reddest first:
 
 ```python
 import torchfits
@@ -65,7 +97,7 @@ rgb_tensor = lupton_rgb(
     Q=8.0,
     stretch=0.15,
 )
-print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [3, H, W]
+print(f"Generated RGB tensor with shape: {rgb_tensor.shape}")  # [H, W, 3]
 ```
 
 ![Lupton RGB synthesis from SDSS g/r/i filters](assets/gallery/lupton_rgb_sdss.png)

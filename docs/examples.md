@@ -191,6 +191,7 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 | [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | FITS-native Noise2Noise calibration, held-out dark test, and conservative science CR repair |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | Gigapixel mosaic cutout extraction and Lupton RGB collage |
 | [`example_lupton_rgb_sdss.py`](published-examples/example_lupton_rgb_sdss.py) | Lupton asinh RGB synthesis from SDSS $g, r, i$ filter frames |
+| [`example_rgb_sky.py`](published-examples/example_rgb_sky.py) | Auto RGB collage: Legacy Survey Virgo, JWST SMACS 0723, HST OPAL Jupiter |
 | [`example_transforms.py`](published-examples/example_transforms.py) | Composite stretch and normalization pipelines (`Compose`) |
 | [`example_time_series.py`](published-examples/example_time_series.py) | Light curve filtering with symmetric and asymmetric sigma clipping |
 | [`example_custom_transform.py`](published-examples/example_custom_transform.py) | Implementing custom `FITSTransform` subclasses |

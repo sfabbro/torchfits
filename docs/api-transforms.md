@@ -19,8 +19,9 @@ or call it on a tensor from `read_tensor`. See [Data module](api-data.md) for
 when to introduce a Dataset / `make_loader`.
 
 !!! note "RGB"
-    Lupton asinh RGB ships via `torchfits.transforms.lupton_rgb` (same as
-    `torchfits convert … --to png`).
+    Pretty auto RGB is `torchfits.transforms.rgb` (shortest wavelength first;
+    also `torchfits convert … --to png`). Astropy-parity Lupton remains
+    `lupton_rgb` (`--recipe lupton`).
 
 All transforms implement the `FITSTransform` callable protocol
 (`forward` / `inverse` / `__call__`). They are **not**
@@ -400,6 +401,20 @@ model = nn.Sequential(as_module(ArcsinhStretch(a=0.1)), nn.Linear(64, 10))
 Only the forward pass is exposed; call `transform.inverse` on the wrapped
 instance for undo.
 
+### `rgb(*bands, *, brightness=0.15, saturation=2.0, scene="auto", weights=None, calibrated=False, zeropoints=None)`
+
+Auto RGB from 1–7 aligned images (or one `(C, H, W)` cube). Band order is
+**shortest wavelength first**: `rgb(g, r, i)` or `rgb(u, g, r, i, z)`.
+Returns a `[H, W, 3]` float tensor in `[0, 1]` after sRGB encoding.
+
+Uncalibrated (default) subtracts each band's sky median and divides by MAD
+so ADU scale and sky pedestals do not paint the colour. `calibrated=True`
+skips that (bands already on one flux scale). `zeropoints=` is the AB
+magnitude of 1 count per band, converted to nanomaggies as
+`counts * 10**(-0.4*(zp - 22.5))`.
+
+See `examples/example_rgb_sky.py`.
+
 ### `lupton_rgb(r, g, b, *, Q=8.0, stretch=0.5)`
 
 Lupton asinh RGB from three single-band tensors (same shape). Returns a
@@ -513,7 +528,9 @@ from torchfits.transforms import (
     FITSHeaderNormalize,
     as_module,
     lupton_rgb,
+    rgb,
 )
 ```
-See `examples/example_transforms.py` (image pipeline) and
+See `examples/example_transforms.py` (image pipeline),
+`examples/example_rgb_sky.py` (auto RGB), and
 `examples/example_lupton_rgb_sdss.py` (Lupton RGB) for runnable demos.

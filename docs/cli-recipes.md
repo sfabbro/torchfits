@@ -165,13 +165,16 @@ torchfits convert catalog.fits -o /tmp/bright_stars.parquet -e 1 -w "MAG_G < 18.
 
 ---
 
-## 9. 3-Band Color RGB Rendering
+## 9. Color RGB Rendering
 
-Combine three single-band FITS images into a publication-quality Lupton RGB PNG:
+Combine 1–7 single-band FITS images into a PNG (files in blue → red order):
 
 ```bash
-# Combine red, green, and blue band images into an RGB PNG preview
-torchfits convert r.fits g.fits b.fits -o rgb_preview.png --to png --q 6 --stretch 0.4
+# Auto RGB (default)
+torchfits convert g.fits r.fits i.fits -o rgb_preview.png --to png
+
+# Astropy-parity Lupton (reddest file first)
+torchfits convert r.fits g.fits b.fits -o rgb_preview.png --to png --recipe lupton --q 6 --stretch 0.4
 ```
 
 ---

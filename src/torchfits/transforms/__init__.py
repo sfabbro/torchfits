@@ -32,7 +32,7 @@ from .normalize import (
     RobustNormalize,
     ZScaleNormalize,
 )
-from .rgb import lupton_rgb
+from .rgb import lupton_rgb, rgb
 from .stretch import ArcsinhStretch, LogStretch, SqrtStretch
 
 __all__ = [
@@ -44,6 +44,7 @@ __all__ = [
     "LogStretch",
     "SqrtStretch",
     "lupton_rgb",
+    "rgb",
     "ZScaleNormalize",
     "RobustNormalize",
     "BackgroundSubtract",

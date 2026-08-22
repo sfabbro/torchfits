@@ -1,16 +1,17 @@
-"""``torchfits convert`` — table export and Lupton RGB→PNG."""
+"""``torchfits convert`` — table export and RGB→PNG."""
 
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import Any
 
 import torchfits
 from torchfits import table as tf_table
+from torchfits.transforms.rgb import lupton_rgb, rgb as auto_rgb, write_rgb_image
 
 from .common import EXIT_OK, IoError, UsageError, add_hdu_arg
-from torchfits.transforms.rgb import lupton_rgb, write_rgb_image
 
 _TABLE_FORMATS = ("parquet", "csv", "tsv", "arrow", "fits")
 _ALL_FORMATS = (*_TABLE_FORMATS, "png")
@@ -59,10 +60,48 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     )
     parser.add_argument(
         "--bands",
-        help="comma-separated HDU indices for png (default: 0,1,2 on one file)",
+        help=(
+            "comma-separated HDU indices for png "
+            "(auto: 1–7; lupton: three; default auto is HDU 0 per file)"
+        ),
     )
-    parser.add_argument("--q", type=float, default=8.0, help="Lupton Q parameter")
-    parser.add_argument("--stretch", type=float, default=0.5, help="Lupton stretch")
+    parser.add_argument(
+        "--recipe",
+        choices=("auto", "lupton"),
+        default="auto",
+        help="png mapping: auto (default, blue→red) or lupton (reddest first)",
+    )
+    parser.add_argument(
+        "--brightness",
+        type=float,
+        default=0.15,
+        help="auto rgb sky+noise display value (default: 0.15)",
+    )
+    parser.add_argument(
+        "--saturation",
+        type=float,
+        default=2.0,
+        help="auto rgb chroma boost (default: 2; 1 = photometric)",
+    )
+    parser.add_argument(
+        "--calibrated",
+        action="store_true",
+        help="read AB zeropoints from MAGZP/PHOTZP/FLUXMAG0/ZP (or use --zeropoints)",
+    )
+    parser.add_argument(
+        "--zeropoints",
+        default=None,
+        help="comma-separated AB mag of 1 count per band (implies calibrated)",
+    )
+    parser.add_argument(
+        "--q",
+        type=float,
+        default=8.0,
+        help="Lupton Q (--recipe lupton)",
+    )
+    parser.add_argument(
+        "--stretch", type=float, default=0.5, help="Lupton stretch (--recipe lupton)"
+    )
     parser.set_defaults(func=run)
 
 
@@ -88,23 +127,86 @@ def _parse_columns(raw: str | None) -> list[str] | None:
     return cols
 
 
-def _band_indices(raw: str | None, num_inputs: int) -> list[int]:
+def _parse_hdu_list(raw: str, *, flag: str) -> list[int]:
+    try:
+        indices = [int(part.strip()) for part in raw.split(",") if part.strip()]
+    except ValueError as exc:
+        raise UsageError(f"{flag} must be comma-separated integers") from exc
+    if not indices:
+        raise UsageError(f"{flag} requires at least one integer")
+    return indices
+
+
+def _lupton_band_indices(raw: str | None, num_inputs: int) -> list[int]:
     if raw is None:
         if num_inputs == 1:
             return [0, 1, 2]
         if num_inputs == 3:
             return [0, 0, 0]
         raise UsageError(
-            f"png convert got {num_inputs} input path(s); need one FITS file "
+            f"--recipe lupton got {num_inputs} input path(s); need one FITS file "
             "(optionally with --bands 0,1,2) or exactly three band files"
         )
-    try:
-        indices = [int(part.strip()) for part in raw.split(",") if part.strip()]
-    except ValueError:
-        raise UsageError("--bands must be comma-separated integers, e.g. 0,1,2")
+    indices = _parse_hdu_list(raw, flag="--bands")
     if len(indices) != 3:
-        raise UsageError("--bands requires exactly three HDU indices")
+        raise UsageError("--recipe lupton: --bands requires exactly three HDU indices")
+    if num_inputs not in (1, 3):
+        raise UsageError("--recipe lupton accepts one FITS or three band FITS files")
     return indices
+
+
+def _auto_band_indices(raw: str | None, num_inputs: int) -> list[int]:
+    if not 1 <= num_inputs <= 7:
+        raise UsageError(f"png convert accepts 1–7 FITS files, got {num_inputs}")
+    if raw is None:
+        return [0] if num_inputs == 1 else [0] * num_inputs
+    indices = _parse_hdu_list(raw, flag="--bands")
+    if not 1 <= len(indices) <= 7:
+        raise UsageError("--bands requires 1–7 HDU indices")
+    if num_inputs == 1:
+        return indices
+    if len(indices) != num_inputs:
+        raise UsageError(
+            f"--bands length ({len(indices)}) must match input files ({num_inputs})"
+        )
+    return indices
+
+
+def _parse_zeropoints(raw: str | None) -> list[float] | None:
+    if raw is None:
+        return None
+    try:
+        values = [float(part.strip()) for part in raw.split(",") if part.strip()]
+    except ValueError as exc:
+        raise UsageError("--zeropoints must be comma-separated numbers") from exc
+    if not values:
+        raise UsageError("--zeropoints requires at least one value")
+    return values
+
+
+def _ab_zeropoint_from_header(path: str, hdu: int) -> float:
+    header = torchfits.read_header(path, hdu)
+    for key in ("MAGZP", "PHOTZP", "ZP"):
+        value = header[key] if key in header else None
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    fluxmag0 = header["FLUXMAG0"] if "FLUXMAG0" in header else None
+    if fluxmag0 is not None:
+        try:
+            flux = float(fluxmag0)
+        except (TypeError, ValueError) as exc:
+            raise UsageError(f"{path}: FLUXMAG0 is not a number") from exc
+        if flux <= 0.0:
+            raise UsageError(f"{path}: FLUXMAG0 must be positive")
+        return 2.5 * math.log10(flux)
+    raise UsageError(
+        f"{path} HDU {hdu}: --calibrated needs MAGZP, PHOTZP, FLUXMAG0, or ZP "
+        "(or pass --zeropoints)"
+    )
 
 
 def _arrow_to_column_dict(table: Any) -> dict[str, Any]:
@@ -162,21 +264,46 @@ def _read_band(path: str, hdu: int) -> object:
     return torchfits.read_tensor(path, hdu=hdu).detach().cpu()
 
 
+def _load_png_bands(inputs: list[str], hdus: list[int]) -> list[Any]:
+    if len(inputs) == 1:
+        path = inputs[0]
+        return [_read_band(path, index) for index in hdus]
+    return [_read_band(path, hdu) for path, hdu in zip(inputs, hdus, strict=True)]
+
+
 def _convert_png(args: argparse.Namespace) -> int:
     if args.where or args.columns:
         raise UsageError("--where / --columns apply only to table convert")
-    band_indices = _band_indices(args.bands, len(args.inputs))
-    if len(args.inputs) == 1:
-        path = args.inputs[0]
-        bands = [_read_band(path, index) for index in band_indices]
-    elif len(args.inputs) == 3:
-        bands = [
-            _read_band(path, band_indices[idx]) for idx, path in enumerate(args.inputs)
-        ]
+    if args.recipe == "lupton":
+        hdus = _lupton_band_indices(args.bands, len(args.inputs))
+        bands = _load_png_bands(args.inputs, hdus)
+        image = lupton_rgb(*bands, Q=args.q, stretch=args.stretch)
+        write_rgb_image(args.output, image)
+        return EXIT_OK
+
+    hdus = _auto_band_indices(args.bands, len(args.inputs))
+    bands = _load_png_bands(args.inputs, hdus)
+    rgb_args: tuple[Any, ...]
+    if len(args.inputs) == 1 and len(bands) == 1:
+        rgb_args = (bands[0],)
     else:
-        raise UsageError("png convert accepts one FITS or three band FITS files")
-    rgb = lupton_rgb(*bands, Q=args.q, stretch=args.stretch)
-    write_rgb_image(args.output, rgb)
+        rgb_args = tuple(bands)
+    zps = _parse_zeropoints(args.zeropoints)
+    if args.calibrated and zps is None:
+        if len(args.inputs) == 1:
+            zps = [_ab_zeropoint_from_header(args.inputs[0], hdu) for hdu in hdus]
+        else:
+            zps = [
+                _ab_zeropoint_from_header(path, hdu)
+                for path, hdu in zip(args.inputs, hdus, strict=True)
+            ]
+    image = auto_rgb(
+        *rgb_args,
+        brightness=args.brightness,
+        saturation=args.saturation,
+        zeropoints=zps,
+    )
+    write_rgb_image(args.output, image)
     return EXIT_OK
 
 
