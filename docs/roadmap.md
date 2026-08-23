@@ -4,26 +4,46 @@ The vision, planned milestones, and architectural evolution of `torchfits`.
 
 ---
 
-## 1.0.0 — Foundation (Current)
+## Released
 
-The 1.0.0 release establishes the high-performance core for FITS tensor and table I/O:
+### 1.0 — Foundation (2026-08-09)
+
+The 1.0 release established the high-performance core for FITS tensor and table I/O:
 
 - **Zero-Copy Tensor I/O:** Memory-mapped reads with SIMD-vectorized byte swapping for 1D–4D FITS image extensions.
-- **Apache Arrow Table Engine:** Columnar binary and ASCII table reads with SQL predicate pushdown (`where=`) and fast column projection.
+- **Columnar Table Engine:** Binary and ASCII table reads with SQL predicate pushdown (`where=`) and fast column projection.
 - **PyTorch ML Data Loaders:** Native `Dataset` classes (`FitsImageDataset`, `FitsCutoutDataset`, `FitsCubeDataset`, `FitsTableDataset`) and multi-worker `make_loader`.
 - **Command-Line Suite:** Unix-style CLI tools (`info`, `header`, `cutout`, `convert`, `checksum`).
 - **Feature Parity:** Comprehensive format support verified against standard FITS test suites.
 
+### 1.1 — Streaming, Correctness & Remote Hardening (beta soak)
+
+On the same PyTorch ABI lane; the [changelog](changelog.md) carries the full list:
+
+- **Checksum-stamped writes:** `write(..., checksum=True)` plus `verify_checksums`.
+- **GIL-free hot reads:** DataLoader workers no longer serialize behind one Python thread during disk or network access.
+- **Auto-adaptive RGB compositing:** `transforms.rgb(*bands)` and `convert --recipe auto`.
+- **Memory-bounded streaming filters:** `scan(..., where=...)` evaluates predicates per batch, so peak RAM tracks `batch_size`.
+- **Multiprocess-safe remote downloads:** OS-file-lock dedupe, resumable partials, explicit completeness warnings.
+- **Silent-corruption fixes:** BIT column writes, multi-chunk buffered reads, unsigned-column `where=` pushdown.
+
 ---
 
-## 1.1.0 — Streaming & Codec Enhancements (Planned)
+## Current focus
 
-The 1.1 minor release focuses on remote streaming efficiency and expanded compression features:
-
-- **Enhanced Remote HTTP/S3 Range Reads:** Improved row-band caching and range-fetching for remote mosaic cutouts and cloud object stores.
-- **Direct Write-Compression Tuning:** Optimized parallel tile compression for multi-CCD mosaic creation.
-- **Expanded Table Interoperability:** Zero-copy streaming bridges for DuckDB, Polars, and Pandas.
-- **Extended Instrument Profiles:** Pre-tuned cutout readers for large astronomical survey archives.
+- **Single-pass arena decode for buffered table reads.** Removes the one
+  remaining significant benchmark deficit vs `fitsio` (narrow-table full
+  reads with `mmap=False`, ~6–17%): decode straight into caller-visible,
+  strided tensors instead of staging whole rows in scratch chunks. An
+  API-visible change targeted at the next minor.
+- **Selective-projection fast path** in the same reader, so filtered scans
+  stop paying for whole-row pread when only a few columns are needed.
+- **Table semantics polish:** complex-column dtypes in `schema()`,
+  consistent error types across the mutation API.
+- **Object-store recipes:** row-band caching and range-fetch patterns for
+  S3-style archives on top of the hardened HTTP downloader.
+- **CLI wave 3:** thin `fitsverify` helper and fpack-style tile controls
+  (no CFITSIO HTTPS drivers — torchfits keeps its own HTTP stack).
 
 ---
 

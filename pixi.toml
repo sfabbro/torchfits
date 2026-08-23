@@ -91,6 +91,11 @@ check-lane = "python scripts/release_lane.py --check"
 # Resolve the [cpu] / [cuda] torch extra pins against download.pytorch.org
 # indexes (guards the published-wheel ABI lane). Requires network.
 check-torch-pins = "python scripts/check_torch_extra_pins.py"
+# Merge conventional commits into the changelog's Unreleased section
+# (scripts/update_changelog.py --release stamps it when cutting a release).
+changelog-update = "python scripts/update_changelog.py"
+changelog-check = "python scripts/update_changelog.py --check"
+changelog-release = "python scripts/update_changelog.py --release"
 ci-local = "bash scripts/ci_local.sh"
 ci-local-fast = "CI_LOCAL_FAST=1 bash scripts/ci_local.sh"
 setup-hooks = "pre-commit install"

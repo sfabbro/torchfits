@@ -49,7 +49,23 @@ Update the compatibility / install docs (README.md, `docs/install.md`,
 
 ## 2. Changelog
 
-Finalize the entry in `docs/changelog.md`. Follow [Keep a Changelog](https://keepachangelog.com/) format.
+`docs/changelog.md` follows [Keep a Changelog](https://keepachangelog.com/).
+Work in flight lives under a versionless `## Unreleased` heading on top —
+edge docs must never name an unreleased version.
+
+- While developing, fold conventional commits into `## Unreleased`:
+  ```bash
+  pixi run changelog-update          # merge commits since the newest tag (deduped)
+  pixi run changelog-check           # CI-style drift check
+  ```
+  Generated bullets are a starting point — curate the prose afterwards.
+- When cutting a release, stamp the real version and date (this also refreshes
+  the `[Unreleased]` / compare link refs at the bottom of the file and opens a
+  fresh empty `## Unreleased`):
+  ```bash
+  pixi run changelog-release -- 1.1.0
+  ```
+  Run it before `git tag`, so the tag points at the finalized changelog.
 
 ## 3. Tests and gates
 
