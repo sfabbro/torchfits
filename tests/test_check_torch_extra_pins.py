@@ -153,7 +153,8 @@ def test_lane_for_version_accepts_prerelease_suffix() -> None:
     current = max(lanes)
     base = lanes[current]["torchfits_version"]
     assert pins.lane_for_version(base) == current
-    assert pins.lane_for_version(f"{base}rc5") == current
+    for suffix in ("rc5", "b1", "a2", "beta1", "alpha3", "rc1.post1"):
+        assert pins.lane_for_version(f"{base}{suffix}") == current, suffix
 
 
 def test_main_fails_when_lane_map_consistency_fails(

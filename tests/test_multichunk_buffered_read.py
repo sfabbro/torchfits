@@ -5,6 +5,7 @@ prefetch was disabled, pointing chunk 2's pread at an unsized scratch
 vector (heap corruption -> slow + garbage reads on any table whose rows
 span more than one 16 MiB chunk with caching disabled).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -26,9 +27,9 @@ def big_mixed_table(tmp_path_factory):
         afits.Column(name="flux", format="E", array=rng.normal(size=n).astype("<f4")),
         afits.Column(name="flag", format="L", array=rng.integers(0, 2, n).astype(bool)),
     ]
-    afits.HDUList(
-        [afits.PrimaryHDU(), afits.BinTableHDU.from_columns(cols)]
-    ).writeto(str(path), overwrite=True)
+    afits.HDUList([afits.PrimaryHDU(), afits.BinTableHDU.from_columns(cols)]).writeto(
+        str(path), overwrite=True
+    )
     return str(path), n
 
 

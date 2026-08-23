@@ -70,14 +70,21 @@ def load_lane_map() -> dict[str, dict[str, object]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# PEP 440 prerelease suffixes mirroring release_lane.py's accepted set
+# (1.0.0rc5 / 1.0.0b1 / 1.0.0a2 / alpha/beta spellings, optional .postN).
+_PRERELEASE_SUFFIX_RE = re.compile(
+    r"(?:rc\d+|a\d+|b\d+|alpha\d+|beta\d+)(?:\.post\d+)?$"
+)
+
+
 def lane_for_version(version: str) -> str:
     lanes = load_lane_map()
     for lane, spec in lanes.items():
         if spec["torchfits_version"] == version:
             return lane
-        # Prerelease states (e.g. 1.0.0rc5) belong to the lane whose base
-        # version they carry, mirroring release_lane.py --prerelease.
-        base = re.sub(r"rc\d+$", "", version)
+        # Prerelease states (e.g. 1.0.0rc5, 1.1.0b1) belong to the lane whose
+        # base version they carry, mirroring release_lane.py --prerelease.
+        base = _PRERELEASE_SUFFIX_RE.sub("", version)
         if base != version and spec["torchfits_version"] == base:
             return lane
     raise SystemExit(
