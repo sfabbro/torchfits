@@ -68,6 +68,12 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   filtered scans, and row updates validate the header-claimed extent
   against the real file size and raise a clear "truncated" error rather
   than SIGBUS-killing the interpreter.
+- **Multi-chunk buffered reads are correct again**: tables whose rows
+  span more than one 16 MiB scratch chunk (payload > ~16 MB with caching
+  disabled) could read from an unsized staging buffer after a prefetch
+  rewrite — slow, garbage results on wide/mixed projections. Buffer
+  rotation now happens only while prefetching; regression tests pin
+  >16 MB reads against astropy.
 - **High-fidelity `table.to_astropy()`**: TNULL-bearing columns become
   real `MaskedColumn`s (no more object-dtype degradation), TUNIT maps to
   `.unit`, and fixed-size vector columns keep their `(N, repeat)` shape.
@@ -176,7 +182,9 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   single-pass decode lands in 1.2). Every other lag row is sub-1.13x
   noise on shared-CFITSIO decompression or sub-0.15 ms GPU launch
   overhead. A double-buffered chunk prefetch now overlaps the buffered
-  path's I/O with decode for payloads >= 64 MB.
+  path's I/O with decode for payloads >= 64 MB (gated from an earlier
+  4 MB threshold after CANFAR A/B showed thread handoff regressing
+  warm-cache 13 MB tables).
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only
