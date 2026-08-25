@@ -57,13 +57,29 @@ def test_root_functions_preserve_real_signatures():
 
 
 def test_cpp_public_surface_is_explicit_and_resolves():
-    import torchfits.cpp as cpp
+    """M2: the raw binding surface is private (_cpp) and the legacy
+    torchfits.cpp alias warns on use."""
+    import warnings
+
+    import torchfits._cpp as cpp
 
     assert len(cpp.__all__) == len(set(cpp.__all__))
     assert all(hasattr(cpp, name) for name in cpp.__all__)
     assert "read_header_dict" in cpp.__all__
     assert "resolve_hdu_name_cached" in cpp.__all__
     assert "compute_stats" not in cpp.__all__
+
+    # No-op native cache stubs left the exported surface entirely.
+    for gone in ("configure_cache", "get_cache_size", "clear_file_cache"):
+        assert gone not in cpp.__all__
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _ = torchfits.cpp.read_full  # noqa: B018
+    assert any(
+        issubclass(w.category, DeprecationWarning) and "torchfits.cpp" in str(w.message)
+        for w in caught
+    )
 
 
 def test_where_public_surface_matches_table_predicate_semantics():

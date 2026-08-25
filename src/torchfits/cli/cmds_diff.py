@@ -47,11 +47,11 @@ def _values_equal(a: Any, b: Any) -> bool:
     """NaN-aware equality: identical files containing NaN must not diff."""
     try:
         both_nan = isinstance(a, float) and isinstance(b, float) and a != a and b != b
+        if both_nan:
+            return True
+        return bool(a == b)
     except TypeError:
-        return a == b
-    if both_nan:
-        return True
-    return a == b
+        return bool(a == b)
 
 
 def _diff_pair(path_a: str, path_b: str) -> list[str]:

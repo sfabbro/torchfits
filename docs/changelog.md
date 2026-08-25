@@ -149,6 +149,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 - tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
 - cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
 - cpp: Decode CompImage null pixels as NaN (B1); define Random Groups rejection
+- quantize: Non-finite pixels encode as reserved BLANK/TNULL sentinel (B4)
 ### Fixed (major-release audit)
 
 - **Compressed-image null pixels decode as NaN** (was silent 0): the null
@@ -236,6 +237,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   with the wheel-vs-conda CFITSIO split.
 - Fix all audit falsehoods (M14/F1-F14); tone down unverifiable claims (F14)
 - changelog: Versionless Unreleased + generator tooling; refresh roadmap
+- changelog: Audit entries under Unreleased (W13); changelog-check green
 
 ## [1.0.0] — 2026-08-09
 

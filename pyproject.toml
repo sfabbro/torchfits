@@ -13,7 +13,7 @@ version = "1.1.0b1"
 description = "FITS I/O for PyTorch with native tensor reads, datasets, and transforms"
 authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 keywords = ["fits", "astronomy", "pytorch", "tensor", "cfitsio"]
 # Ship third-party license text (vendored CFITSIO) alongside the project
 # license in every wheel/sdist (M17).
@@ -21,7 +21,6 @@ license-files = ["LICENSE", "extern/licenses/CFITSIO-LICENSE.txt"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
