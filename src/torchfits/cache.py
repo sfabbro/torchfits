@@ -221,31 +221,23 @@ class CacheManager:
         }
 
     def configure_cpp_cache(self) -> None:
-        """Configure the C++ cache backend."""
-        try:
-            import torchfits._C as cpp
-        except ImportError:
-            return
-        try:
-            if hasattr(cpp, "configure_cache"):
-                cpp.configure_cache(self.config.max_files, self.config.max_memory_mb)
-        except Exception as exc:
-            warnings.warn(
-                f"configure_cpp_cache failed: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        """Deprecated no-op.
+
+        The C++ handle-pool cache was removed (private per-call handles);
+        ``max_files`` / ``max_memory_mb`` never configured live state and the
+        knobs are scheduled for removal (M1).
+        """
+        warnings.warn(
+            "CacheManager.configure_cpp_cache is a deprecated no-op: the "
+            "native handle pool was removed. Python-side caches size "
+            "themselves; CacheConfig.max_files/max_memory_mb do nothing.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get comprehensive cache statistics, including I/O engine stats."""
-        try:
-            import torchfits._C as cpp
-
-            cpp_size = cpp.get_cache_size() if hasattr(cpp, "get_cache_size") else 0
-        except (ImportError, AttributeError):
-            cpp_size = 0
-
-        # Merge I/O engine cache statistics when available
+        """Get comprehensive cache statistics (Python-side I/O engine)."""
+        # The native handle-pool is gone; there is no cpp cache size to merge.
         io_stats: Dict[str, Any] = {}
         try:
             from ._io_engine.caches import get_cache_performance
@@ -263,7 +255,7 @@ class CacheManager:
             "io_hits": io_stats.get("hits", 0),
             "io_misses": io_stats.get("misses", 0),
             "io_total_requests": io_stats.get("total_requests", 0),
-            "cpp_cache_size": cpp_size,
+            "cpp_cache_size": 0,  # native handle pool removed (Option A)
             "config": {
                 "max_files": self.config.max_files,
                 "max_memory_mb": self.config.max_memory_mb,
@@ -391,11 +383,19 @@ def stats() -> Dict[str, Any]:
 def configure_cache(
     max_files: int, max_memory_mb: int, disk_cache_gb: int = 10
 ) -> None:
-    """Manually configure cache settings."""
+    """Deprecated no-op (M1): retained for one release cycle.
+
+    The native cache these arguments targeted no longer exists.
+    """
+    warnings.warn(
+        "torchfits.cache.configure_cache is a deprecated no-op: there is no "
+        "native handle-pool cache to configure.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     global _cache_manager
     config = CacheConfig(max_files, max_memory_mb, disk_cache_gb)
     _cache_manager = CacheManager(config)
-    _cache_manager.configure_cpp_cache()
 
 
 def optimize_for_dataset(file_paths: list[str], avg_file_size_mb: float = 10.0) -> None:

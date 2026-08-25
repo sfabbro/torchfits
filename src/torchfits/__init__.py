@@ -10,7 +10,6 @@ Transforms live under :mod:`torchfits.transforms`. Arrow tables under
 
 from __future__ import annotations
 
-import os
 import threading
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
@@ -122,33 +121,11 @@ _ATTR_CACHE: dict[str, Any] = {}
 _ATTR_LOCK = threading.RLock()
 
 
-def _positive_env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from exc
-    if value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
-    return value
-
-
 def _ensure_runtime_init() -> None:
     """Initialize optional runtime caches when an I/O entry point is used."""
     global _RUNTIME_INITIALIZED
     if _RUNTIME_INITIALIZED:
         return
-
-    cache_mb = os.environ.get("TORCHFITS_CFITSIO_CACHE_MB")
-    cache_files = os.environ.get("TORCHFITS_CFITSIO_CACHE_FILES")
-    cache_limits = None
-    if cache_mb is not None or cache_files is not None:
-        cache_limits = (
-            _positive_env_int("TORCHFITS_CFITSIO_CACHE_FILES", 32),
-            _positive_env_int("TORCHFITS_CFITSIO_CACHE_MB", 256),
-        )
 
     cache = import_module("torchfits.cache")
     cache.configure_for_environment()
@@ -156,9 +133,7 @@ def _ensure_runtime_init() -> None:
     # libtorch_cuda.so, libtorch_python.so) are loaded before torchfits._C.
     import torch  # noqa: F401
 
-    cpp = import_module("torchfits._C")
-    if cache_limits is not None:
-        cpp.configure_cache(*cache_limits)
+    import_module("torchfits._C")
 
     _RUNTIME_INITIALIZED = True
 

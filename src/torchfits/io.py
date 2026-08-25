@@ -297,6 +297,7 @@ def write_tensor(
     overwrite: bool = False,
     compress: bool | str = False,
     quantize: Any = None,
+    checksum: bool = False,
 ) -> None:
     """Write a single PyTorch Tensor directly to a FITS image extension."""
     import torch
@@ -310,6 +311,7 @@ def write_tensor(
         overwrite=overwrite,
         compress=compress,
         quantize=quantize,
+        checksum=checksum,
     )
 
 

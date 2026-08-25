@@ -170,8 +170,13 @@ for name in ('torch', 'numpy', 'pyarrow', 'torchfits._C'):
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
-def test_invalid_native_cache_environment_fails_loudly() -> None:
-    env = {**os.environ, "TORCHFITS_CFITSIO_CACHE_MB": "0"}
+def test_removed_native_cache_environment_is_ignored() -> None:
+    """The removed TORCHFITS_CFITSIO_CACHE_* knobs must not break imports."""
+    env = {
+        **os.environ,
+        "TORCHFITS_CFITSIO_CACHE_MB": "256",
+        "TORCHFITS_CFITSIO_CACHE_FILES": "32",
+    }
     result = subprocess.run(
         [sys.executable, "-c", "import torchfits; torchfits.read"],
         env=env,
@@ -179,5 +184,4 @@ def test_invalid_native_cache_environment_fails_loudly() -> None:
         text=True,
         check=False,
     )
-    assert result.returncode != 0
-    assert "TORCHFITS_CFITSIO_CACHE_MB must be a positive integer" in result.stderr
+    assert result.returncode == 0, result.stderr
