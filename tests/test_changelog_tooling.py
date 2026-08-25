@@ -195,3 +195,35 @@ def test_merge_generated_suppresses_id_covered_subjects() -> None:
 
 def test_issue_id_regex_ignores_plain_words() -> None:
     assert changelog._issue_ids("M16 bench harness") == {"M16"}
+
+
+def test_release_notes_extracts_stamped_then_unreleased(tmp_path) -> None:
+    import release_notes as rn  # noqa: PLC0415  (sys.path set by conftest-ish header)
+
+    text = (
+        "# Changelog\n"
+        "\n"
+        "## Unreleased\n"
+        "\n"
+        "Fresh work.\n"
+        "\n"
+        "### Fixed\n"
+        "\n"
+        "- Something (B1).\n"
+        "\n"
+        "## [1.1.0] — 2026-08-25\n"
+        "\n"
+        "Stamped highlights.\n"
+        "\n"
+        "## [1.0.0] — 2026-08-09\n"
+    )
+    label, body = rn.extract(text, "1.1.0")
+    assert label == "[1.1.0]" and body == "Stamped highlights."
+
+    label, body = rn.extract(text, "1.2.0")  # unstamped -> prerelease fallback
+    assert label == "Unreleased" and body.startswith("Fresh work.")
+
+    import pytest  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        rn.extract("# Changelog\n", "9.9.9")

@@ -130,6 +130,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+      - name: Extract curated release notes from changelog
+        run: |
+          python scripts/release_notes.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --out "${RUNNER_TEMP}/release_notes.md"
       - uses: actions/download-artifact@v4
         with:
           pattern: cibw-*
@@ -138,5 +144,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: ${{ runner.temp }}/release_notes.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'b') || contains(github.ref_name, 'a') }}
