@@ -89,14 +89,34 @@ class _RssPeakSampler:
         return self._peak
 
 
+def _auto_sync_device(fn: Callable[[], Any]) -> str | None:
+    """Best-effort device detection so GPU work is never timed un-synced."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return None
+
+
 def time_median(
     fn: Callable[[], Any],
     *,
     runs: int,
     warmup: int,
-    sync_device: str | None = None,
+    sync_device: str | None = "auto",
 ) -> tuple[float | None, float | None, float | None, str | None]:
-    """Return (median_s, peak_rss_mb, peak_cuda_mb, error)."""
+    """Return (median_s, peak_rss_mb, peak_cuda_mb, error).
+
+    ``sync_device='auto'`` (default) detects CUDA/MPS and synchronizes after
+    every call; async GPU tails therefore cannot escape timing (M16).
+    """
+    if sync_device == "auto":
+        sync_device = _auto_sync_device(fn)
 
     def _sync() -> None:
         if not sync_device:
@@ -155,9 +175,16 @@ def time_medians_interleaved(
     *,
     runs: int,
     warmup: int,
-    sync_device: str | None = None,
+    sync_device: str | None = "auto",
 ) -> dict[str, tuple[float | None, float | None, float | None, str | None]]:
-    """Round-robin timing; returns name -> (median_s, peak_rss_mb, peak_cuda_mb, err)."""
+    """Round-robin timing; returns name -> (median_s, peak_rss_mb, peak_cuda_mb, err).
+
+    ``sync_device='auto'`` synchronizes CUDA/MPS after every call; the
+    interleaving shuffle uses a fixed seed so runs are reproducible (M16).
+    """
+    if sync_device == "auto":
+        sync_device = _auto_sync_device(lambda: None)
+    rng = np.random.default_rng(20260101)
 
     def _sync() -> None:
         if not sync_device:
@@ -190,7 +217,7 @@ def time_medians_interleaved(
     gc.collect()
     for _ in range(max(1, runs)):
         order = names[:]
-        np.random.default_rng().shuffle(order)
+        rng.shuffle(order)
         for name in order:
             if errors[name] is not None:
                 continue

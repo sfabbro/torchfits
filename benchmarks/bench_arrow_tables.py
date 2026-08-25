@@ -27,7 +27,7 @@ import csv  # noqa: E402
 import tempfile  # noqa: E402
 import time  # noqa: E402
 from pathlib import Path  # noqa: E402
-from statistics import mean, stdev  # noqa: E402
+from statistics import median, stdev  # noqa: E402
 
 import numpy as np  # noqa: E402
 from astropy.table import Table  # noqa: E402
@@ -52,6 +52,7 @@ def _build_table(path: Path, rows: int) -> None:
 
 
 def _time(fn, warmup: int, iterations: int) -> tuple[float, float]:
+    """Median-based timing: means let a single outlier flip rankings (M16)."""
     for _ in range(warmup):
         fn()
     times = []
@@ -59,7 +60,7 @@ def _time(fn, warmup: int, iterations: int) -> tuple[float, float]:
         t0 = time.perf_counter()
         fn()
         times.append(time.perf_counter() - t0)
-    return mean(times), (stdev(times) if len(times) > 1 else 0.0)
+    return median(times), (stdev(times) if len(times) > 1 else 0.0)
 
 
 def _to_native_endian(arr: np.ndarray) -> np.ndarray:
@@ -144,6 +145,7 @@ def main() -> None:
                 apply_fits_nulls=False,
                 batch_size=args.batch_size,
                 backend="cpp",
+                use_cache=False,
             ),
         )
     )

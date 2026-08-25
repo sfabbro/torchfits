@@ -100,8 +100,11 @@ class GPUMemoryBenchmark:
                 try:
                     import time
 
+                    torch.cuda.synchronize()
                     start_time = time.perf_counter()
                     gpu_tensor = torchfits.read(filepath, device="cuda")
+                    # Async H2D must land before the clock stops (M16).
+                    torch.cuda.synchronize()
                     direct_time = time.perf_counter() - start_time
 
                     mem_after_direct, _ = self.get_gpu_memory_usage()

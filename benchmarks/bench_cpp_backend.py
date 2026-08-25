@@ -178,8 +178,11 @@ class CPPBackendBenchmark:
                 tf_last = {"tensor_shape": None, "tensor_dtype": None}
 
                 def read_torchfits() -> torch.Tensor:
-                    # High-level comparison path.
-                    out = torchfits.read(filepath, hdu=hdu)
+                    # High-level comparison path. Caches are DISABLED to match
+                    # the cold-open cost astropy/fitsio pay per call; timing a
+                    # cached torchfits read against uncached peers inflated
+                    # rankings (M16).
+                    out = torchfits.read(filepath, hdu=hdu, use_cache=False)
                     tensor = out[0] if isinstance(out, tuple) else out
                     tf_last["tensor_shape"] = list(tensor.shape)
                     tf_last["tensor_dtype"] = str(tensor.dtype)
@@ -210,7 +213,12 @@ class CPPBackendBenchmark:
                         array = hdul[hdu].data
                         if array is None:
                             raise RuntimeError("astropy returned no data")
-                        return torch.from_numpy(_to_native_endian(array))
+                        # Materialize: an uncompressed memmap *view* would let
+                        # astropy skip the pixel-touch cost every other peer
+                        # pays (fitsio/torchfits return real arrays).
+                        return torch.from_numpy(
+                            np.ascontiguousarray(_to_native_endian(array))
+                        )
 
                 ast_stats = self._time_callable(read_astropy)
                 result.update({f"astropy_{k}": v for k, v in ast_stats.items()})

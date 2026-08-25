@@ -150,6 +150,8 @@ def bench_loader(
     for _ in loader:
         break
 
+    import torch as _torch
+
     start_time = time.time()
     total_pixels = 0
     for _ in range(n_epochs):
@@ -157,6 +159,9 @@ def bench_loader(
             if device != "cpu":
                 batch = batch.to(device, non_blocking=True)
             total_pixels += batch.numel()
+    # Async H2D copies must land before the clock stops (M16).
+    if device != "cpu" and device.startswith("cuda") and _torch.cuda.is_available():
+        _torch.cuda.synchronize()
 
     total_time = time.time() - start_time
     pixels_sec = total_pixels / total_time
