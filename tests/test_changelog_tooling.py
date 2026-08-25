@@ -179,7 +179,10 @@ def test_merge_generated_suppresses_id_covered_subjects() -> None:
         "## [1.0.0] — 2026-08-09\n"
     )
     bullets = [
-        ("Fixed", "- cpp: Decode CompImage null pixels as NaN (B1); Random Groups rejection"),
+        (
+            "Fixed",
+            "- cpp: Decode CompImage null pixels as NaN (B1); Random Groups rejection",
+        ),
         ("Fixed", "- cli: Integer-safe arith (B2)"),
         ("Fixed", "- tables: brand new fix with no cited ID yet"),
     ]
