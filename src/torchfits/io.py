@@ -272,9 +272,11 @@ def write(
     ``BITPIX=16`` with robust ``BSCALE``/``BZERO``. Default keeps native float.
 
     ``compress`` accepts an algorithm string (``"RICE_1"``, ``"GZIP_1"``,
-    ``"HCOMPRESS_1"``). GZIP_1 and integer RICE_1 writes are lossless; float
-    RICE_1 and HCOMPRESS_1 use CFITSIO's default quantization (lossy, the same
-    behavior as astropy and fitsio defaults).
+    ``"HCOMPRESS_1"``, ``"PLIO_1"``, ``"BZIP2_1"`` when the build links
+    libbz2). GZIP_1 and integer RICE_1 writes are lossless; float RICE_1,
+    HCOMPRESS_1, PLIO_1 and BZIP2_1 use CFITSIO's default quantization
+    (lossy, matching astropy/fitsio defaults). Note BZIP2_1 files are only
+    readable by CFITSIO builds compiled with bzip2.
 
     ``checksum=True`` writes CFITSIO DATASUM/CHECKSUM keywords for every HDU
     after the payload lands; verify later with :func:`verify_checksums`.
