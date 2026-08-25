@@ -82,6 +82,30 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 - Batch fast paths (`read(list_of_paths)`, list-of-HDUs) honor
   `fp16` / `bf16` / `raw_scale` instead of silently returning raw data.
 
+- `torchfits.cpp` is deprecated in favor of private `torchfits._cpp`;
+  every attribute access warns. No-op native cache stubs (`configure_cache`,
+  `get_cache_size`, `clear_file_cache`) left the public surface (M2).
+- `TORCHFITS_CFITSIO_CACHE_MB/_FILES` env vars removed; they configured a
+  native cache that no longer exists. `cache.configure_cache()` /
+  `CacheManager.configure_cpp_cache()` remain as documented no-ops emitting
+  DeprecationWarning for one cycle (M1).
+- `write_tensor()` accepts `checksum=` for parity with `write()` (L3).
+- `torchfits.open()` accepts only `mode="r"`; in-place update modes are
+  rejected with an actionable error (L5).
+- `TensorHDU.chunks()` is implemented: lazy row-band slabs equal to slices
+  of `to_tensor()`. It previously called a binding that never existed and
+  always raised AttributeError (B5).
+- `DataView.dtype` reports convention dtypes (uint16/uint32/int8) matching
+  reader output rather than raw storage BITPIX (L1).
+- TableHDU schema caches hold strong header refs so GC id-reuse cannot
+  serve stale schemas (L4); `select()` rejects unknown columns and
+  `head()` validates its argument (L2).
+- Vendored CFITSIO fetches are sha256-pinned and verified; unpinned tags
+  fail closed unless `TORCHFITS_VENDOR_ALLOW_UNPINNED=1`; "latest"
+  resolution removed. Conda/pixi builds compile the same pinned+patched
+  CFITSIO as the wheels — PLIO buffer fix + BZIP2_1 on every channel
+  (H4, H5).
+
 ### Fixed
 
 - **BIT (`'X'`) table columns wrote corrupted bits** when `repeat % 8 != 0`
@@ -118,6 +142,41 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   stored `BZERO`/`TZERO` uniformly for images *and* tables (a file whose
   offset was serialized as 32767.999… now reads as uint16/uint32 on every
   path).
+
+- bench: Synchronized GPU timing, seeded interleaving, medians, cache fairness (M16)
+- build: Sha256-pinned vendored CFITSIO everywhere (H4); conda ships patched CFITSIO (H5)
+- transforms: Interpolated median (M7), functional transforms (M6), visible sigma-clip rejection (M5)
+- tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
+- cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
+- cpp: Decode CompImage null pixels as NaN (B1); define Random Groups rejection
+### Fixed (major-release audit)
+
+- **Compressed-image null pixels decode as NaN** (was silent 0): the null
+  probe targeted a CFITSIO symbol that exists in no upstream release.
+  ZBLANK is probed directly and float CompImage reads always pass NaN
+  nulval (B1). Regression suite vs astropy: tests/test_compressed_nulls.py.
+- **`torchfits arith` no longer wraps/truncates integer images**: ops run
+  in int64/float64 with saturating cast-back plus warning; `--dtype`
+  overrides; div produces floats under `auto` (B2).
+- **`torchfits stats` works on unsigned-convention images**: min/max run
+  after upcast instead of raising on missing uint reduction kernels (B3).
+- **`quantize="robust"` maps NaN/Inf to BLANK sentinel codes** with the
+  keyword written, instead of packing non-finite values into valid codes
+  that dequantize as real data (B4).
+- **WHERE float equality is engine-independent** (H2); **schema() stops
+  lying about complex columns** (H3); **row windows keep VLA/string
+  columns aligned** (H7); **scan(mmap=True) handles scaled tables and
+  ASCII HDUs** (H8); chunk buffers zero-initialized (M8); read_batch
+  warnings document skip semantics (M9); interop kwargs no longer leak to
+  pandas (M12); FITS numeric parsing accepts D-exponents / rejects `1_0`.
+- **Transforms are functional** (no caller-tensor mutation via `.to()`
+  aliasing, M6); medians interpolate like numpy/astropy (M7);
+  SigmaClip/AsymmetricSigmaClip gain `fill="nan"` (M5).
+- **Random Groups images fail loudly** instead of decoding garbage (M13).
+- **Thread-safety**: TensorHDU reads use private per-call handles; shared
+  TableReader instances serialize I/O (H1). Stale-cache windows after
+  header mutations closed by invalidating SharedReadMeta/readers in the
+  header-card/key/checksum writers (M3).
 
 ### Security
 
@@ -164,6 +223,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   columns (truncation/non-finite counts), out-of-range integers, non-ASCII
   characters dropped from string columns, and over-width string clipping.
 
+- hdu: Implement TensorHDU.chunks (B5); per-call handles + reader locks (H1); HDU metadata honesty
 ### Dependencies
 
 - Vendored CFITSIO updated to **4.7.0** for wheel and source builds
@@ -174,6 +234,8 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 
 - Scalar-column shape contract documented; architecture note reconciled
   with the wheel-vs-conda CFITSIO split.
+- Fix all audit falsehoods (M14/F1-F14); tone down unverifiable claims (F14)
+- changelog: Versionless Unreleased + generator tooling; refresh roadmap
 
 ## [1.0.0] — 2026-08-09
 
