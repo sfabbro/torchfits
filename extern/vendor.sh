@@ -6,17 +6,24 @@ EXTERN_DIR="${ROOT_DIR}/extern"
 TMP_DIR="${ROOT_DIR}/.tmp-vendor"
 
 CFITSIO_REPO="HEASARC/cfitsio"
-CFITSIO_VERSION="latest"
+CFITSIO_VERSION=""
+CFITSIO_SPEC_FILE=""
+CFITSIO_SHA256=""
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") [--cfitsio-version <tag-or-versions-file>]
+Usage: $(basename "$0") --cfitsio-version <tag-or-versions-file>
 
-Defaults to latest published release for each dependency.
+Vendored dependencies are pinned: pass an exact tag or a versions file
+(extern/VERSIONS.txt). A sha256 recorded in the versions file is enforced
+against the downloaded tarball; fetching a tag with no recorded hash
+requires TORCHFITS_VENDOR_ALLOW_UNPINNED=1 (the hash is then computed and
+recorded for the next run). "latest" resolution was removed so builds can
+never silently pick up different upstream code (H4).
+
 Examples:
-  $(basename "$0")
-  $(basename "$0") --cfitsio-version cfitsio-4.6.2
   $(basename "$0") --cfitsio-version extern/VERSIONS.txt
+  $(basename "$0") --cfitsio-version cfitsio-4.6.2   # requires ALLOW_UNPINNED
 USAGE
 }
 
@@ -24,6 +31,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --cfitsio-version)
       CFITSIO_VERSION="$2"
+      CFITSIO_SPEC_FILE="$2"
       shift 2
       ;;
     -h|--help)
@@ -72,31 +80,9 @@ resolve_cfitsio_version() {
 
 require_cmd curl
 require_cmd tar
+require_cmd sha256sum
 
 CFITSIO_VERSION="$(resolve_cfitsio_version "${CFITSIO_VERSION}")"
-
-latest_tag() {
-  local repo="$1"
-  local tag
-
-  tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -n1)"
-
-  if [[ -z "${tag}" ]]; then
-    tag="$(curl -fsSL "https://api.github.com/repos/${repo}/tags" \
-      | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      | head -n1)"
-  fi
-
-  if [[ -z "${tag}" ]]; then
-    echo "Failed to resolve latest tag for ${repo}" >&2
-    exit 1
-  fi
-
-  echo "${tag}"
-}
-
 
 fetch_and_extract() {
   local repo="$1"
@@ -108,7 +94,19 @@ fetch_and_extract() {
   mkdir -p "${TMP_DIR}"
 
   echo "Downloading ${repo}@${tag}"
-  curl -fL "https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz" -o "${archive}"
+  curl -fL --retry 3 --retry-delay 2 \
+    "https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz" -o "${archive}"
+
+  if [[ -n "${CFITSIO_SHA256}" ]]; then
+    echo "Verifying sha256 (${CFITSIO_SHA256})"
+    echo "${CFITSIO_SHA256}  ${archive}" | sha256sum --check --status ||
+      { echo "sha256 MISMATCH for ${repo}@${tag}: refusing to vendor" >&2; exit 1; }
+  elif [[ "${TORCHFITS_VENDOR_ALLOW_UNPINNED:-0}" != "1" ]]; then
+    echo "No cfitsio_sha256 recorded for ${tag}." >&2
+    echo "Re-run with TORCHFITS_VENDOR_ALLOW_UNPINNED=1 to accept and record it," >&2
+    echo "or pin a hash in extern/VERSIONS.txt (cfitsio_sha256=...)." >&2
+    exit 1
+  fi
 
   local extract_dir="${TMP_DIR}/extract-$(basename "${dest}")-${tag}"
   rm -rf "${extract_dir}"
@@ -127,9 +125,14 @@ fetch_and_extract() {
 }
 
 
-if [[ "${CFITSIO_VERSION}" == "latest" ]]; then
-  CFITSIO_VERSION="$(latest_tag "${CFITSIO_REPO}")"
+# Resolve the pinned hash from the versions file (if the user passed one).
+if [[ -n "${CFITSIO_SPEC_FILE}" && -f "${CFITSIO_SPEC_FILE}" ]]; then
+  CFITSIO_SHA256="$(grep -E '^cfitsio_sha256=' "${CFITSIO_SPEC_FILE}" | head -n1 | cut -d= -f2- || true)"
 fi
+
+compute_archive_hash() {
+  sha256sum "${TMP_DIR}/cfitsio-${CFITSIO_VERSION}.tar.gz" | cut -d' ' -f1
+}
 
 mkdir -p "${EXTERN_DIR}"
 fetch_and_extract "${CFITSIO_REPO}" "${CFITSIO_VERSION}" "${EXTERN_DIR}/cfitsio"
@@ -147,9 +150,11 @@ if [[ -d "${PATCH_DIR}" ]]; then
   done
 fi
 
+RECORDED_HASH="$(compute_archive_hash)"
 cat > "${EXTERN_DIR}/VERSIONS.txt" <<VERSIONS
 cfitsio_repo=${CFITSIO_REPO}
 cfitsio_tag=${CFITSIO_VERSION}
+cfitsio_sha256=${RECORDED_HASH}
 VERSIONS
 
 echo "Vendored deps prepared in ${EXTERN_DIR}"

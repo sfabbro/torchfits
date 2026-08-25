@@ -4,10 +4,12 @@
 # scripts/torch_lanes.json by scripts/release_lane.py --apply, so the recipe
 # always tracks the same torch ABI lane as the wheels.
 #
-# The build links the conda-forge CFITSIO and the lane-pinned conda-forge
-# PyTorch via bare CMake (pixi-build-cmake backend on pixi.toml); the CMake
-# install rules mirror the scikit-build-core wheel layout (site-packages +
-# console script).
+# The build compiles the SAME sha256-pinned, patched vendored CFITSIO as the
+# wheels (extern/vendor.sh + extern/VERSIONS.txt) so every distribution
+# channel carries the PLIO buffer fix and BZIP2_1 support. The lane-pinned
+# conda-forge PyTorch is linked via bare CMake (pixi-build-cmake backend on
+# pixi.toml); the CMake install rules mirror the scikit-build-core wheel
+# layout (site-packages + console script).
 #
 # Not yet upstreamed. Local verification:
 #   pixi run build   (or: rattler-build build -r packaging/conda)
@@ -30,7 +32,7 @@ build:
   number: 0
   script:
     - cmake -G Ninja ${CMAKE_ARGS} -DCMAKE_BUILD_TYPE=Release \
-        -DTORCHFITS_USE_VENDORED_CFITSIO=OFF \
+        -DTORCHFITS_USE_VENDORED_CFITSIO=ON \
         -DTORCHFITS_NIOBUF=80 \
         -DTORCHFITS_MINDIRECT=8640 \
         -B $SRC_DIR/../build \
@@ -45,16 +47,19 @@ requirements:
     - python >=3.10
     - pytorch ${{ torch_pin }}
     - nanobind >=2.13.0
+    # Vendored-CFITSIO build needs the download at configure time; the
+    # tarball is sha256-verified against extern/VERSIONS.txt (H4).
+    - curl
+    - git
   host:
     - python >=3.10
     - pytorch ${{ torch_pin }}
     - nanobind >=2.13.0
-    - cfitsio >=4.6.3,<4.6.5
     - zlib >=1.2.13
+    - bzip2  # enables BZIP2_1 in the vendored CFITSIO (parity with wheels)
   run:
     - python >=3.10
     - pytorch ${{ torch_pin }}
-    - cfitsio >=4.6.3,<4.6.5
     - zlib >=1.2.13
     - numpy >=1.20
     - pyarrow >=5.0

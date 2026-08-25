@@ -1,2 +1,3 @@
 cfitsio_repo=HEASARC/cfitsio
 cfitsio_tag=cfitsio-4.7.0
+cfitsio_sha256=f281ca292407d8682e83a37ea68fce6e1383d2449d923647ea62fa0570c59aee

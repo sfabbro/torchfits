@@ -326,9 +326,10 @@ set(TORCHFITS_VENDOR_RAN FALSE)
 macro(torchfits_run_vendor_once)
     if(TORCHFITS_AUTO_VENDOR_DEPS AND NOT TORCHFITS_VENDOR_RAN)
         if(EXISTS "${TORCHFITS_VENDOR_SCRIPT}")
-            message(STATUS "Vendored deps missing; running ${TORCHFITS_VENDOR_SCRIPT}")
+            message(STATUS "Vendored deps missing; running ${TORCHFITS_VENDOR_SCRIPT} (pinned via extern/VERSIONS.txt)")
             execute_process(
                 COMMAND bash "${TORCHFITS_VENDOR_SCRIPT}"
+                        --cfitsio-version "${TORCHFITS_REPO_ROOT}/extern/VERSIONS.txt"
                 WORKING_DIRECTORY "${TORCHFITS_REPO_ROOT}"
                 RESULT_VARIABLE TORCHFITS_VENDOR_RESULT
             )

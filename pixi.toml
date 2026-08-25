@@ -15,12 +15,13 @@ authors = ["Seb Fabbro <sebfabbro@gmail.com>"]
 [package.build]
 backend = { name = "pixi-build-cmake", version = "*"}
 
-# Keep the conda package byte-identical in behavior to the wheels: link the
-# conda-forge CFITSIO (no network during forge builds; pyproject.toml forces
-# the vendored build) and apply the same tuned I/O constants.
+# Keep the conda package byte-identical in behavior to the wheels: compile
+# the SAME sha256-pinned, patched vendored CFITSIO (extern/VERSIONS.txt) so
+# every channel carries the PLIO buffer fix + BZIP2_1 support, plus the same
+# tuned I/O constants.
 [package.build.config]
 extra-args = [
-    "-DTORCHFITS_USE_VENDORED_CFITSIO=OFF",
+    "-DTORCHFITS_USE_VENDORED_CFITSIO=ON",
     "-DTORCHFITS_NIOBUF=80",
     "-DTORCHFITS_MINDIRECT=8640",
 ]
@@ -232,12 +233,6 @@ bench-gpu-py311 = { features = ["bench", "gpu", "py311"] }
 bench-gpu-py312 = { features = ["bench", "gpu", "py312"] }
 bench-gpu-py313 = { features = ["bench", "gpu", "py313"] }
 bench-gpu-py314 = { features = ["bench", "gpu", "py314"] }
-
-[target.osx-arm64.dependencies]
-cfitsio = ">=4.6.4,<4.6.5"
-
-[target.linux-64.dependencies]
-cfitsio = ">=4.6.3,<4.6.4"
 
 [pypi-dependencies]
 zensical = ">=0.0.52, <0.0.53"
