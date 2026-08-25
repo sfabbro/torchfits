@@ -43,6 +43,17 @@ def _image_record(path: str, index: int) -> dict[str, Any]:
     }
 
 
+def _values_equal(a: Any, b: Any) -> bool:
+    """NaN-aware equality: identical files containing NaN must not diff."""
+    try:
+        both_nan = isinstance(a, float) and isinstance(b, float) and a != a and b != b
+    except TypeError:
+        return a == b
+    if both_nan:
+        return True
+    return a == b
+
+
 def _diff_pair(path_a: str, path_b: str) -> list[str]:
     diffs: list[str] = []
     try:
@@ -62,13 +73,13 @@ def _diff_pair(path_a: str, path_b: str) -> list[str]:
                 for key in keys:
                     val_a = map_a.get(key)
                     val_b = map_b.get(key)
-                    if val_a != val_b:
+                    if not _values_equal(val_a, val_b):
                         diffs.append(f"HDU {index} {key}: {val_a!r} vs {val_b!r}")
                 if type_a == "IMAGE":
                     stats_a = _image_record(path_a, index)
                     stats_b = _image_record(path_b, index)
                     for field in ("shape", "min", "max", "mean"):
-                        if stats_a[field] != stats_b[field]:
+                        if not _values_equal(stats_a[field], stats_b[field]):
                             diffs.append(
                                 f"HDU {index} image {field}: "
                                 f"{stats_a[field]!r} vs {stats_b[field]!r}"

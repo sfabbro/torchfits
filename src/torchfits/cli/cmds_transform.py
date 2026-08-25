@@ -147,10 +147,19 @@ def run(args: argparse.Namespace) -> int:
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
     if file_jobs == 1:
         configure_torch_jobs(int(args.jobs))
+
+    # Transforms may carry per-call state (_last_state/_last_mask). With
+    # multi-file fan-out, give every worker its own instance so concurrent
+    # invocations never share mutable state.
+    if file_jobs > 1:
+        transform = None
     run_file_jobs(
         pairs,
         lambda pair: _transform_one(
-            pair, name=name, transform=transform, hdu=int(args.hdu)
+            pair,
+            name=name,
+            transform=transform if transform is not None else _build_transform(args.name)[1],
+            hdu=int(args.hdu),
         ),
         file_jobs,
     )

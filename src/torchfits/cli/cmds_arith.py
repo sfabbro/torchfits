@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,6 +36,72 @@ _OPS: dict[str, Callable[[torch.Tensor, torch.Tensor | float], torch.Tensor]] = 
     "div": lambda t, v: t / v,
 }
 
+_DTYPE_CHOICES = ("auto", "float32", "float64")
+
+
+def _promote_scalar(value: float) -> float | int:
+    """Keep integer scalars exact so integer adds stay in integer arithmetic."""
+    try:
+        as_int = int(value)
+    except (ValueError, OverflowError):
+        return value
+    return as_int if float(as_int) == value else value
+
+
+def _saturate_to(t: torch.Tensor, dtype: torch.dtype) -> tuple[torch.Tensor, int]:
+    """Cast *t* to *dtype* clamping to the representable range.
+
+    Returns the cast tensor and the number of elements that required clamping
+    (i.e. wrapped values a naive cast would have corrupted).
+    """
+    if not t.dtype.is_floating_point and dtype.is_floating_point:
+        return t.to(dtype), 0
+    info = torch.iinfo(dtype)
+    clipped = torch.clamp(t, info.min, info.max)
+    n_clipped = int((clipped != t).sum())
+    return clipped.to(dtype), n_clipped
+
+
+def _compute(
+    op_fn: Callable[[torch.Tensor, torch.Tensor | float], torch.Tensor],
+    left: torch.Tensor,
+    right: torch.Tensor | float,
+    out_dtype: torch.dtype,
+) -> torch.Tensor:
+    """Run one arithmetic op without silent integer wraparound/truncation.
+
+    Integer inputs are accumulated in int64 (or float64 when the operand is a
+    float scalar) and saturating-cast back to ``out_dtype``; out-of-range
+    pixels raise a RuntimeWarning instead of wrapping silently.
+    """
+    if out_dtype.is_floating_point:
+        return op_fn(left.to(out_dtype), right)
+
+    if left.dtype.is_floating_point:
+        # Already float: native semantics are exact enough for preview math.
+        return op_fn(left, right)
+
+    # Integer input: accumulate wide so 65535 + 1 cannot wrap uint16.
+    if isinstance(right, float):
+        result = op_fn(left.to(torch.float64), float(right))
+    else:
+        right_t = right if isinstance(right, torch.Tensor) else None
+        if right_t is not None and right_t.dtype.is_floating_point:
+            result = op_fn(left.to(torch.float64), right_t.to(torch.float64))
+        else:
+            acc = left.to(torch.int64)
+            acc_r = right_t.to(torch.int64) if right_t is not None else right
+            result = op_fn(acc, acc_r)
+    out, n_clipped = _saturate_to(result, out_dtype)
+    if n_clipped:
+        warnings.warn(
+            f"arith: {n_clipped} pixel value(s) outside {out_dtype} range were "
+            "saturated (use --dtype float32/float64 to keep full precision)",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return out
+
 
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser(
@@ -62,6 +129,16 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         type=float,
         default=None,
         help="scalar operand B (mutually exclusive with image B)",
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=_DTYPE_CHOICES,
+        default="auto",
+        help=(
+            "output/compute dtype: 'auto' keeps the input dtype with "
+            "saturation warnings on overflow; float32/float64 compute and "
+            "store in that dtype"
+        ),
     )
     parser.add_argument(
         "--operand2",
@@ -175,22 +252,39 @@ def _hdu_width(indices: list[int]) -> int:
     return max(2, len(str(max(indices))))
 
 
+def _resolve_out_dtype(spec: str, left: torch.Tensor) -> torch.dtype:
+    if spec == "float32":
+        return torch.float32
+    if spec == "float64":
+        return torch.float64
+    return left.dtype
+
+
 def _apply_op(
     op: str,
     left: torch.Tensor,
     right: torch.Tensor | float,
+    dtype_spec: str = "auto",
 ) -> torch.Tensor:
-    if op == "div" and isinstance(right, float) and right == 0.0:
+    if op == "div" and not isinstance(right, torch.Tensor) and right == 0:
         raise UsageError("division by zero")
     if op == "div" and isinstance(right, torch.Tensor) and bool((right == 0).any()):
         raise UsageError("division by zero")
-    return _OPS[op](left, right)
+    out_dtype = _resolve_out_dtype(dtype_spec, left)
+    if op == "div" and dtype_spec == "auto":
+        # Fractional quotients must survive: integral inputs compute in
+        # float64 rather than truncating through an integer output dtype.
+        out_dtype = (
+            left.dtype if left.dtype.is_floating_point else torch.float64
+        )
+    return _compute(_OPS[op], left, right, out_dtype)
 
 
 def _arith_one_file(
     path_a: str,
     *,
     op: str,
+    dtype_spec: str = "auto",
     value: float | None,
     operand2: str | None,
     hdu: str | None,
@@ -212,7 +306,8 @@ def _arith_one_file(
 
     rights: list[torch.Tensor | float]
     if value is not None:
-        rights = [value] * len(tensors)
+        scalar_b: torch.Tensor | float = _promote_scalar(value)
+        rights = [scalar_b] * len(tensors)
     else:
         assert operand2 is not None
         rights = [_b_tensor(operand2, index, hdu2) for index in indices]
@@ -228,7 +323,7 @@ def _arith_one_file(
     shapes = {tuple(t.shape) for t in tensors}
     can_stack = len(shapes) == 1 and len(tensors) > 1
     if can_stack and value is not None:
-        results = list(_apply_op(op, torch.stack(tensors), value).unbind(0))
+        results = list(_apply_op(op, torch.stack(tensors), scalar_b, dtype_spec).unbind(0))
     elif (
         can_stack
         and value is None
@@ -237,16 +332,16 @@ def _arith_one_file(
         b_tensors = [right for right in rights if isinstance(right, torch.Tensor)]
         if len({tuple(right.shape) for right in b_tensors}) == 1:
             results = list(
-                _apply_op(op, torch.stack(tensors), torch.stack(b_tensors)).unbind(0)
+                _apply_op(op, torch.stack(tensors), torch.stack(b_tensors), dtype_spec).unbind(0)
             )
         else:
             results = [
-                _apply_op(op, left, right)
+                _apply_op(op, left, right, dtype_spec)
                 for left, right in zip(tensors, rights, strict=True)
             ]
     else:
         results = [
-            _apply_op(op, left, right)
+            _apply_op(op, left, right, dtype_spec)
             for left, right in zip(tensors, rights, strict=True)
         ]
 
@@ -307,6 +402,7 @@ def run(args: argparse.Namespace) -> int:
         _arith_one_file(
             path_a,
             op=args.op,
+            dtype_spec=args.dtype,
             value=value,
             operand2=operand2,
             hdu=args.hdu,
