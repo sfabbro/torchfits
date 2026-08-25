@@ -70,6 +70,49 @@ def test_windowed_read_keeps_vla_columns_aligned(tmp_path):
     assert [len(v) for v in result["V"]] == [(i % 4 + 1) for i in (3, 4, 5)]
 
 
+def test_transforms_never_mutate_input(tmp_path):
+    """M6: forward/inverse of scaling transforms must be functional."""
+    from torchfits.transforms import FITSHeaderScale, ZScaleNormalize
+
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x0 = x.clone()
+    t = FITSHeaderScale(bscale=2.0, bzero=10.0)
+    y = t(x)
+    assert torch.equal(x, x0), "FITSHeaderScale.forward mutated its input"
+    _ = t.inverse(y)
+    assert torch.equal(x, x0), "FITSHeaderScale.inverse mutated its input"
+
+    z = ZScaleNormalize()
+    img = torch.rand(8, 8)
+    img0 = img.clone()
+    _ = z(img)
+    _ = z.inverse(z(img))
+    assert torch.equal(img, img0), "ZScaleNormalize mutated its input"
+
+
+def test_sigma_clip_fill_nan_keeps_rejection_visible():
+    from torchfits.transforms import AsymmetricSigmaClip, SigmaClip
+
+    x = torch.full((1, 16, 16), 5.0)
+    x[0, 0, 0] = 1000.0  # outlier
+    out = SigmaClip(fill="nan")(x)
+    assert bool(torch.isnan(out[0, 0, 0]))
+    assert not bool(torch.isnan(out[0, 8, 8]))  # background pixels untouched
+
+    out2 = AsymmetricSigmaClip(fill="nan")(x)
+    assert bool(torch.isnan(out2[0, 0, 0]))
+    with pytest.raises(ValueError, match="fill"):
+        SigmaClip(fill="bogus")
+
+
+def test_median_matches_numpy_for_even_counts():
+    from torchfits.transforms.helpers import _median
+
+    x = torch.arange(16, dtype=torch.float32)
+    got = _median(x.reshape(1, -1), (-1,))
+    np.testing.assert_allclose(got.item(), float(np.median(np.arange(16))))
+
+
 def test_stream_scaled_table_with_mmap_succeeds(tmp_path):
     path = tmp_path / "scaled.fits"
     rng = np.random.default_rng(42)

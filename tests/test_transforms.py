@@ -160,12 +160,13 @@ class TestMedianAminAmaxQuantile:
         m = _median(x, (-2, -1))
         assert m.shape == (4, 1, 1)
 
-    def test_median_vs_torch(self) -> None:
+    def test_median_is_interpolated(self) -> None:
         x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
         m = _median(x, (-2, -1))
-        # torch.median returns the lower median for even element counts
-        assert m[0, 0, 0].item() == 2.0  # lower median of [1,2,3,4]
-        assert m[1, 0, 0].item() == 6.0  # lower median of [5,6,7,8]
+        # M7: interpolated median matches numpy.median for even counts,
+        # unlike torch.median's lower-middle element.
+        assert m[0, 0, 0].item() == pytest.approx(2.5)  # median of [1,2,3,4]
+        assert m[1, 0, 0].item() == pytest.approx(6.5)  # median of [5,6,7,8]
 
     def test_amin_multi_dim(self) -> None:
         x = torch.randn(4, 64, 64)
@@ -261,9 +262,9 @@ class TestEstimateBackground:
         # col4 from rows1-3 (10,15,20). Sorted: 1,2,3,4,5,6,10,11,15,16,20,21,22,23,24,25,26?
         # Wait, with 5x5 = 25 values, masking 3x3=9 leaves 16. Values 1-25.
         # Border: [1,2,3,4,5, 6,10, 11,15, 16,20, 21,22,23,24,25]
-        # PyTorch's nanmedian returns the lower median for even counts
-        # (8th of 16 sorted values = 11).
-        assert abs(med.item() - 11.0) < 0.5
+        # Interpolated median (M7) of these 16 values = (11+15)/2 = 13,
+        # matching numpy.median instead of torch.median's lower-middle 11.
+        assert abs(med.item() - 13.0) < 1e-6
 
 
 class TestZScaleLimits:

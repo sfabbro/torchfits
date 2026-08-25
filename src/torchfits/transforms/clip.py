@@ -35,7 +35,9 @@ class SigmaClip(FITSTransform):
     dim :
         Dimensions along which stats are computed independently.
     fill : str
-        Replacement strategy: ``"mean"`` (default) or ``"median"``.
+        Replacement strategy for clipped/masked pixels: ``"mean"``,
+        ``"median"``, or ``"nan"`` (keep the rejection visible as NaN
+        instead of silently filling with a plausible background value).
     """
 
     def __init__(
@@ -48,8 +50,8 @@ class SigmaClip(FITSTransform):
         self.n_sigma = float(n_sigma)
         self.max_iter = int(max_iter)
         self.dim = tuple(dim)
-        if fill not in ("mean", "median"):
-            raise ValueError("fill must be 'mean' or 'median'")
+        if fill not in ("mean", "median", "nan"):
+            raise ValueError("fill must be 'mean', 'median', or 'nan'")
         self.fill = fill
         self._last_mask: torch.Tensor | None = None
 
@@ -123,6 +125,12 @@ class SigmaClip(FITSTransform):
 
             self._last_mask = internal_mask
 
+            # Keep the rejection visible: clipped/masked positions become NaN
+            # instead of a plausible background value (fill="nan").
+            if self.fill == "nan":
+                nan = x.new_full((), float("nan"))
+                return torch.where(internal_mask, x, nan)
+
             # Fill clipped values with per-group mean or median
             if self.fill == "mean":
                 torch.where(internal_mask, x, zero, out=masked_buf)
@@ -191,6 +199,9 @@ class AsymmetricSigmaClip(FITSTransform):
     dim :
         Dimensions along which stats are computed independently.
         Default ``(-2, -1)`` for per-image clipping.
+    fill : str
+        Replacement for clipped pixels: ``"median"`` (default) or ``"nan"``
+        to keep the rejection visible instead of filling with background.
 
     Examples
     --------
@@ -206,12 +217,17 @@ class AsymmetricSigmaClip(FITSTransform):
         n_low: float = 3.0,
         n_high: float = 3.0,
         dim: Tuple[int, ...] = (-2, -1),
+        fill: str = "median",
     ) -> None:
         if n_low <= 0 or n_high <= 0:
             raise ValueError("n_low and n_high must be > 0")
+        if fill not in ("median", "nan"):
+            raise ValueError("fill must be 'median' or 'nan'")
         self.n_low = float(n_low)
         self.n_high = float(n_high)
         self.dim = tuple(dim)
+        self.fill = fill
+        self._last_mask: torch.Tensor | None = None
 
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
@@ -221,6 +237,9 @@ class AsymmetricSigmaClip(FITSTransform):
             lower = med - self.n_low * std
             upper = med + self.n_high * std
             clip_mask = (x >= lower) & (x <= upper)
+            if self.fill == "nan":
+                nan = x.new_full((), float("nan"))
+                return torch.where(clip_mask, x, nan)
             return torch.where(clip_mask, x, med)
 
     def inverse(

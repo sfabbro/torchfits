@@ -43,7 +43,8 @@ class ZScaleNormalize(FITSTransform):
                 "to capture the per-image limits."
             )
         z1, z2 = self._last_state
-        return x.mul_(z2 - z1).add_(z1)
+        # Functional: inverses never mutate their input (M6).
+        return x * (z2 - z1) + z1
 
     def __repr__(self) -> str:
         return f"ZScaleNormalize(contrast={self.contrast}, dim={self.dim})"
@@ -76,7 +77,7 @@ class RobustNormalize(FITSTransform):
             raise RuntimeError(
                 "RobustNormalize.inverse() requires a prior forward() pass."
             )
-        return x.mul_(self._last_std).add_(self._last_med)
+        return x * self._last_std + self._last_med
 
     def __repr__(self) -> str:
         return f"RobustNormalize(dim={self.dim})"
@@ -153,7 +154,7 @@ class PercentileClipNormalize(FITSTransform):
                 "PercentileClipNormalize.inverse() requires a prior forward() pass."
             )
         lower, upper = self._last_state
-        return x.mul_(upper - lower).add_(lower)
+        return x * (upper - lower) + lower
 
     def __repr__(self) -> str:
         return (
@@ -194,7 +195,7 @@ class MinMaxNormalize(FITSTransform):
                 "MinMaxNormalize.inverse() requires a prior forward() pass."
             )
         vmin, vmax = self._last_state
-        return x.mul_(vmax - vmin).add_(vmin)
+        return x * (vmax - vmin) + vmin
 
     def __repr__(self) -> str:
         return f"MinMaxNormalize(dim={self.dim})"

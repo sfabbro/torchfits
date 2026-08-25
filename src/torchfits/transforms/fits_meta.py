@@ -60,11 +60,9 @@ class FITSHeaderScale(FITSTransform):
     ) -> torch.Tensor:
         if self.bscale == 1.0 and self.bzero == 0.0:
             return x
-        result = x.to(torch.float32)
-        if self.bscale != 1.0:
-            result = result.mul_(self.bscale)
-        if self.bzero != 0.0:
-            result = result.add_(self.bzero)
+        # Functional ops: `.to(float32)` aliases float32 inputs, so in-place
+        # mul_/add_ here used to mutate the caller's tensor (M6).
+        result = x.to(torch.float32) * self.bscale + self.bzero
         return result.to(x.dtype) if x.dtype != torch.float32 else result
 
     def inverse(
@@ -72,11 +70,7 @@ class FITSHeaderScale(FITSTransform):
     ) -> torch.Tensor:
         if self.bscale == 1.0 and self.bzero == 0.0:
             return x
-        result = x.to(torch.float32)
-        if self.bzero != 0.0:
-            result = result.sub_(self.bzero)
-        if self.bscale != 1.0:
-            result = result.div_(self.bscale)
+        result = (x.to(torch.float32) - self.bzero) / self.bscale
         return result.to(x.dtype) if x.dtype != torch.float32 else result
 
     def __repr__(self) -> str:
@@ -146,11 +140,8 @@ class FITSScaleColumns(FITSTransform):
             val = out[name]
             if tscal == 1.0 and tzero == 0.0:
                 continue
-            result = val.to(torch.float32)
-            if tscal != 1.0:
-                result = result.mul_(tscal)
-            if tzero != 0.0:
-                result = result.add_(tzero)
+            # Functional ops: never mutate the caller's tensor (M6).
+            result = val.to(torch.float32) * tscal + tzero
             out[name] = result.to(val.dtype) if val.dtype != torch.float32 else result
         return out
 
@@ -166,11 +157,7 @@ class FITSScaleColumns(FITSTransform):
             val = out[name]
             if tscal == 1.0 and tzero == 0.0:
                 continue
-            result = val.to(torch.float32)
-            if tzero != 0.0:
-                result = result.sub_(tzero)
-            if tscal != 1.0:
-                result = result.div_(tscal)
+            result = (val.to(torch.float32) - tzero) / tscal
             out[name] = result.to(val.dtype) if val.dtype != torch.float32 else result
         return out
 

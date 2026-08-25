@@ -92,23 +92,25 @@ def _median(
     dim: Tuple[int, ...],
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Mask-aware torch.median over tuple dim."""
+    """Mask-aware *interpolated* median over tuple dim.
+
+    Uses ``torch.nanquantile(0.5)`` so even-sized groups interpolate between
+    the two central samples (matching numpy/astropy) instead of
+    ``torch.median``'s lower-middle element. Masked-out pixels and NaNs are
+    excluded; an all-masked group yields NaN.
+    """
     x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
-    if valid.all():
-        if x.dtype.is_floating_point:
-            med = lambda t, d, k: torch.nanmedian(t, dim=d, keepdim=k).values  # noqa: E731
-        else:
-            med = lambda t, d, k: torch.median(t, dim=d, keepdim=k).values  # noqa: E731
-        return _reduce_keepdim(x, dim, med)
     if not x.dtype.is_floating_point:
         # NaN sentinel needs a float dtype; masked integer medians upcast.
         x = x.float() if x.dtype != torch.int64 else x.double()
         valid = _get_valid_mask(x, mask)
     x_clean = torch.where(valid, x, _mask_fill(x, "nan"))
-    return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.nanmedian(t, dim=d, keepdim=k).values
-    )
+
+    def nan_median(t: torch.Tensor, d: int, keepdim: bool) -> torch.Tensor:
+        return torch.nanquantile(t, 0.5, dim=d, keepdim=keepdim)
+
+    return _reduce_keepdim(x_clean, dim, nan_median)
 
 
 def _amin(
