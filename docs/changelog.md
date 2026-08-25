@@ -185,9 +185,13 @@ thread-safety, and supply-chain fixes.
   header mutations closed by invalidating SharedReadMeta/readers in the
   header-card/key/checksum writers (M3).
 
+<!-- Per-commit one-liners below are maintained by
+     scripts/update_changelog.py; do not delete without checking
+     `pixi run changelog-check`. -->
 - packaging: SPDX license expression for license-files; boundary test tracks _cpp move (W14 gate)
 - tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
 - cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
+
 ### Security
 
 - `read_hdus` enforces the same SSRF/path guards as every other entry
@@ -236,7 +240,9 @@ thread-safety, and supply-chain fixes.
   columns (truncation/non-finite counts), out-of-range integers, non-ASCII
   characters dropped from string columns, and over-width string clipping.
 
+<!-- Auto-maintained one-liners (scripts/update_changelog.py). -->
 - io: Native whole-file .bz2 FITS reads on bzip2-capable builds
+
 ### Dependencies
 
 - Vendored CFITSIO updated to **4.7.0** for wheel, source, conda and pixi
