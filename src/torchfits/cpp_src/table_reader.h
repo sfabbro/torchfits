@@ -2617,6 +2617,12 @@ public:
     int get_num_cols() const { return ncols_; }
     bool is_ascii_table() const { return is_ascii_; }
 
+    // Serializes read/update calls when one reader instance is shared across
+    // Python threads (persistent open_fits_mmap_reader capsule, exposed
+    // TableReader objects). CFITSIO cursor state and the scratch buffer are
+    // not safe for unsynchronized concurrent use.
+    mutable std::mutex io_mutex_;
+
     // Total in-row bytes for the requested columns (fixed-width columns only;
     // returns -1 when any requested column is variable-width, which makes the
     // parallel fan-out gate reject).

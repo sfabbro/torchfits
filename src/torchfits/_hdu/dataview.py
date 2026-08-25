@@ -19,9 +19,15 @@ _BITPIX_TO_DTYPE: dict[int, torch.dtype] = {
 
 
 class DataView:
-    def __init__(self, file_handle: Any, hdu_index: int):
+    def __init__(
+        self,
+        file_handle: Any,
+        hdu_index: int,
+        header: Any = None,
+    ):
         self._handle = file_handle
         self._index = hdu_index
+        self._header = header
 
     @property
     def shape(self) -> Tuple[int, ...]:
@@ -30,10 +36,38 @@ class DataView:
     @property
     def dtype(self) -> torch.dtype:
         bitpix = self._handle.get_dtype(self._index)
-        dtype = _BITPIX_TO_DTYPE.get(bitpix)
-        if dtype is not None:
-            return dtype
-        return torch.float32
+        base = _BITPIX_TO_DTYPE.get(bitpix)
+        if base is None:
+            return torch.float32
+        # Respect the FITS integer conventions so metadata matches the
+        # tensors the readers actually produce (uint16/uint32/int8), not the
+        # raw storage BITPIX (L1).
+        if self._header is not None and bitpix in (8, 16, 32):
+            try:
+                bscale = float(self._header.get("BSCALE", 1.0))
+                bzero = float(self._header.get("BZERO", 0.0))
+            except (TypeError, ValueError):
+                return base
+            tol = 1e-5
+            if (
+                bitpix == 8
+                and abs(bscale - 1.0) < tol
+                and abs(bzero + 128.0) < tol
+            ):
+                return torch.int8
+            if (
+                bitpix == 16
+                and abs(bscale - 1.0) < tol
+                and abs(bzero - 32768.0) < tol
+            ):
+                return torch.uint16
+            if (
+                bitpix == 32
+                and abs(bscale - 1.0) < tol
+                and abs(bzero - 2147483648.0) < tol
+            ):
+                return torch.uint32
+        return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:
         shape = self.shape

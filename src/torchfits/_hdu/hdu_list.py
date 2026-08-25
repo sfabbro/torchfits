@@ -39,8 +39,13 @@ class HDUList:
         if not path or not isinstance(path, str):
             raise ValueError("Path must be a non-empty string")
 
-        if mode not in ["r", "w", "rw"]:
-            raise ValueError("Mode must be 'r', 'w', or 'rw'")
+        if mode != "r":
+            raise ValueError(
+                f"HDUList supports mode='r' only; got {mode!r}. In-place "
+                "update is not supported — write modified HDUs to a new "
+                "path with hdul.write(path, overwrite=True) or use the "
+                "torchfits.insert_hdu / replace_hdu / delete_hdu APIs."
+            )
 
         guard_fits_path(path)
         # Network URLs are opened by CFITSIO; only local paths need exists().

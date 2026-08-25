@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import html
+import warnings
 from typing import Any, Callable, Dict, Iterator, List, Optional, cast
 
 import torch
@@ -60,6 +61,13 @@ class TableHDU:
     ):
         import numpy as np
 
+        if col_stats:
+            warnings.warn(
+                "TableHDU(col_stats=...) is ignored and deprecated; the "
+                "parameter will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if not isinstance(tensor_dict, dict):
             raise TypeError("tensor_dict must be a dictionary of table columns")
         row_counts: dict[str, int] = {}
@@ -92,12 +100,17 @@ class TableHDU:
     # Cache string column derivation and schema builds, invalidated when the
     # header is mutated (Header._version bumps on every change) or replaced.
     def _cached(self, name: str, compute: Callable[[], Any]) -> Any:
-        key = (id(self.header), self.header._version)
+        header = self.header
+        key = (id(header), header._version)
         cached = getattr(self, name, None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
+        # Hold a strong ref to the header used for the key: id() alone can be
+        # reused after the old header is GC'd and would alias stale caches.
+        if cached is not None and getattr(self, "_cache_header_ref", None) is header:
+            if cached[0] == key:
+                return cached[1]
         value = compute()
         setattr(self, name, (key, value))
+        self._cache_header_ref = header
         return value
 
     @property
@@ -211,7 +224,11 @@ class TableHDU:
         return types
 
     def select(self, cols: List[str]) -> "TableHDU":
-        selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in cols}
+        wanted = {str(c) for c in cols}
+        missing = sorted(name for name in wanted if name not in self._raw_data)
+        if missing:
+            raise KeyError(f"Columns not found: {missing}")
+        selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in wanted}
         return TableHDU(selected_dict, {}, self.header)
 
     def filter(self, condition: str) -> "TableHDU":
@@ -312,6 +329,8 @@ class TableHDU:
         )
 
     def head(self, n: int) -> "TableHDU":
+        if n < 0:
+            raise ValueError("n must be non-negative")
         if self._raw_data:
             new_dict: Dict[str, Any] = {}
             for k, v in self._raw_data.items():

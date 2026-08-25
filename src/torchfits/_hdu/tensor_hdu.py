@@ -26,7 +26,11 @@ class TensorHDU:
         self._file_handle = file_handle
         self._hdu_index = hdu_index
         self._source_path = source_path
-        self._data_view = DataView(file_handle, hdu_index) if file_handle else None
+        self._data_view = (
+            DataView(file_handle, hdu_index, header=self._header)
+            if file_handle
+            else None
+        )
         self._closed = False
         self._io_lock = threading.RLock()
 
@@ -58,11 +62,39 @@ class TensorHDU:
                 )
             import torchfits._C as cpp
 
+            # Prefer a private per-call handle: the HDUList's shared FITSFile
+            # keeps CFITSIO cursor state that is not safe under concurrent
+            # access (H1). Fall back to the shared handle only when the HDU
+            # was constructed without a source path.
+            source = self._source_path
+            if isinstance(source, str) and source:
+                handle = cpp.open_fits_file(source, "r")
+                try:
+                    return to_device(cpp.read_full(handle, self._hdu_index), device)
+                finally:
+                    handle.close()
+
             handle = self._file_handle
             hdu_index = self._hdu_index
             return to_device(cast(Tensor, cpp.read_full(handle, hdu_index)), device)
 
-    def chunks(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
+    def chunks(
+        self, chunk_size: Tuple[int, ...]
+    ) -> Iterator[Tensor]:
+        """Yield row-band slabs of the image lazily (bounded memory).
+
+        ``chunk_size`` follows numpy/torch convention: element 0 is the slab
+        height along the first (outermost) axis; remaining elements are
+        accepted but always read in full. Each yielded tensor equals the
+        corresponding slice of :meth:`to_tensor`.
+        """
+        if self._data is not None:
+            step = max(1, int(chunk_size[0])) if chunk_size else 64
+            data = self._data
+            for start in range(0, data.shape[0], step):
+                yield data[start : start + step]
+            return
+
         with self._io_lock:
             if self._closed or self._file_handle is None:
                 raise RuntimeError(
@@ -70,12 +102,28 @@ class TensorHDU:
                 )
             import torchfits._C as cpp
 
-            handle = self._file_handle
-            hdu_index = self._hdu_index
-            return cast(
-                Iterator[Tensor],
-                cpp.iter_chunks(handle, hdu_index, chunk_size),
-            )
+            source = self._source_path
+            if not isinstance(source, str) or not source:
+                raise RuntimeError(
+                    "TensorHDU.chunks() requires a file-backed HDU opened by "
+                    "path (torchfits.open); in-memory handles are unsupported"
+                )
+            # Private reader per iteration protocol: never shares the
+            # HDUList's underlying fitsfile* across threads (H1).
+            reader = cpp.SubsetReader(source, int(self._hdu_index))
+        try:
+            height = int(reader.height)
+            step = max(1, int(chunk_size[0])) if chunk_size else 64
+            for y0 in range(0, height, step):
+                with self._io_lock:
+                    closed = self._closed
+                if closed:
+                    raise RuntimeError(
+                        "TensorHDU was closed during chunk iteration"
+                    )
+                yield cast(Tensor, reader.read(0, y0, int(reader.width), min(y0 + step, height)))
+        finally:
+            reader.close()
 
     def _get_shape_str(self) -> str:
         if self._data is not None:

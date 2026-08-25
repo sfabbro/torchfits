@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 astropy = pytest.importorskip("astropy")
+afits = pytest.importorskip("astropy.io.fits")
 torch = pytest.importorskip("torch")
 pa = pytest.importorskip("pyarrow")
 
@@ -111,6 +112,78 @@ def test_median_matches_numpy_for_even_counts():
     x = torch.arange(16, dtype=torch.float32)
     got = _median(x.reshape(1, -1), (-1,))
     np.testing.assert_allclose(got.item(), float(np.median(np.arange(16))))
+
+
+def test_tensorhdu_chunks_match_full_read(tmp_path):
+    """B5: chunks() must work and equal the full read, band by band."""
+    data = torch.arange(64, dtype=torch.float32).reshape(8, 8)
+    path = tmp_path / "cube.fits"
+    torchfits.write(str(path), data, overwrite=True)
+    with torchfits.open(str(path)) as hdul:
+        hdu = hdul[0]
+        bands = list(hdu.chunks((3,)))
+        assert len(bands) == 3
+        assert [b.shape[0] for b in bands] == [3, 3, 2]
+    torch.testing.assert_close(torch.cat(bands, dim=0), data)
+
+
+def test_tensorhdu_chunks_in_memory(tmp_path):
+    data = torch.randn(6, 4)
+    from torchfits.hdu import Header, TensorHDU
+
+    hdu = TensorHDU(data=data, header=Header())
+    bands = list(hdu.chunks((4,)))
+    torch.testing.assert_close(torch.cat(bands, dim=0), data)
+
+
+def test_dataview_dtype_respects_unsigned_convention(tmp_path):
+    import numpy as np
+
+    raw = np.arange(6, dtype=np.int16).reshape(2, 3)
+    path = tmp_path / "u16v.fits"
+    hdul = afits.HDUList([afits.PrimaryHDU(data=raw)])
+    hdul[0].header["BZERO"] = 32768
+    hdul.writeto(str(path), overwrite=True)
+    with torchfits.open(str(path)) as hdul:
+        assert hdul[0].data.dtype == torch.uint16
+
+
+def test_hdulist_rejects_write_modes(tmp_path):
+    path = tmp_path / "m.fits"
+    torchfits.write(str(path), torch.zeros(2, 2), overwrite=True)
+    # open_hdulist wraps the ValueError in RuntimeError with the reason.
+    with pytest.raises(RuntimeError, match="mode='r' only"):
+        torchfits.open(str(path), mode="w")
+
+
+def test_shared_hdulist_reads_across_threads(tmp_path):
+    """H1: concurrent to_tensor() on one HDUList must be safe (private handles)."""
+    import threading
+
+    data = torch.randn(16, 16)
+    path = tmp_path / "mt.fits"
+    torchfits.write(str(path), data, overwrite=True)
+
+    results: list[torch.Tensor] = []
+    errors: list[BaseException] = []
+
+    def worker():
+        try:
+            with torchfits.open(str(path)) as hdul:
+                for _ in range(8):
+                    results.append(hdul[0].to_tensor())
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    assert len(results) == 32
+    for r in results:
+        torch.testing.assert_close(r, data)
 
 
 def test_stream_scaled_table_with_mmap_succeeds(tmp_path):

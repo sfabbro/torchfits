@@ -228,6 +228,7 @@ void bind_table(nb::module_& m) {
                              const std::vector<std::string>& column_names,
                              long start_row, long num_rows) -> nb::object {
             nb::gil_scoped_release release;
+            std::lock_guard<std::mutex> io_lock(self.io_mutex_);
             auto result_map = self.read_columns(column_names, start_row, num_rows, true);
             nb::gil_scoped_acquire acquire;
             return table_result_to_python(result_map, false);
@@ -237,6 +238,7 @@ void bind_table(nb::module_& m) {
                                    const std::vector<std::string>& column_names,
                                    long start_row, long num_rows) -> nb::object {
             nb::gil_scoped_release release;
+            std::lock_guard<std::mutex> io_lock(self.io_mutex_);
             auto result_map = self.read_columns(column_names, start_row, num_rows, true);
             nb::gil_scoped_acquire acquire;
             return table_result_to_python(result_map, true);
@@ -466,6 +468,9 @@ void bind_table(nb::module_& m) {
             throw std::runtime_error("Invalid mmap reader capsule");
         }
         nb::gil_scoped_release release;
+        // A persistent capsule reader can be shared across threads (e.g.
+        // DataLoader workers); serialize access to its CFITSIO cursor.
+        std::lock_guard<std::mutex> io_lock(reader->io_mutex_);
         auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
         nb::gil_scoped_acquire acquire;
         return tensor_map_to_python(result);
