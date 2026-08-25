@@ -402,24 +402,6 @@ inline void clear_shared_meta_cache() {
     g_shared_meta.clear();
 }
 
-// CFITSIO has no public symbol for this: an earlier implementation dlsym'd
-// `fits_is_compressed_with_nulls`, which exists in no upstream release, so
-// CompImage HDUs containing undefined pixels silently decoded them as 0
-// instead of NaN. CFITSIO's own convention (imcompress.c) is that a ZBLANK
-// keyword — or a ZBLANK column when the null value varies per tile — signals
-// possible nulls. Probe that directly.
-inline bool has_compressed_nulls(fitsfile* fptr) {
-    if (!fptr) return false;
-    int status = 0;
-    LONGLONG zblank = 0;
-    fits_read_key(fptr, TLONGLONG, "ZBLANK", &zblank, nullptr, &status);
-    if (status == 0) return true;
-    status = 0;
-    int colnum = 0;
-    fits_get_colnum(fptr, CASEINSEN, const_cast<char*>("ZBLANK"), &colnum, &status);
-    return status == 0 && colnum > 0;
-}
-
 inline size_t datatype_elem_size(int datatype) {
     switch (datatype) {
         case TBYTE:

@@ -129,6 +129,12 @@ def write(
     """
     path = os.fspath(path)
     guard_fits_path(path)
+    if str(path).lower().endswith(".bz2"):
+        # CFITSIO would create a plain, uncompressed FITS under this name.
+        raise ValueError(
+            "Writing bzip2-wrapped FITS files ('.bz2') is not supported; "
+            "use compress='BZIP2_1' for tile compression inside the file."
+        )
     path_exists = os.path.exists(path)
     if not overwrite and path_exists:
         raise FileExistsError(

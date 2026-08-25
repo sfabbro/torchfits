@@ -15,6 +15,14 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 
 ### Features
 
+- **Native whole-file `.bz2` FITS reads** on builds with bzip2 support
+  (capability flag `torchfits._C.HAS_BZIP2`; vendored CFITSIO links
+  libbz2 from the conda prefix *or* the system): every reader entry point
+  decompresses transparently, while direct-I/O fast paths automatically
+  route through CFITSIO. Writing a `.bz2`-named output is rejected —
+  CFITSIO would silently create an uncompressed file; use
+  `compress="BZIP2_1"` for tile compression instead.
+
 - **`transforms.rgb(*bands)`** auto-adaptive RGB from 1–7 aligned filters
   (shortest wavelength first): scarlet-style mix, per-band sky-median
   subtract + MAD equalize unless `calibrated=True` / `zeropoints=`,
@@ -150,6 +158,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 - cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
 - cpp: Decode CompImage null pixels as NaN (B1); define Random Groups rejection
 - quantize: Non-finite pixels encode as reserved BLANK/TNULL sentinel (B4)
+- packaging: SPDX license expression for license-files; boundary test tracks _cpp move (W14 gate)
 ### Fixed (major-release audit)
 
 - **Compressed-image null pixels decode as NaN** (was silent 0): the null
@@ -238,6 +247,7 @@ FITS RGB — plus a round of silent-corruption and security fixes.
 - Fix all audit falsehoods (M14/F1-F14); tone down unverifiable claims (F14)
 - changelog: Versionless Unreleased + generator tooling; refresh roadmap
 - changelog: Audit entries under Unreleased (W13); changelog-check green
+- io: Document BZIP2_1 availability, lossiness and interop caveat in write()
 
 ## [1.0.0] — 2026-08-09
 

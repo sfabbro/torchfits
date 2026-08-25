@@ -421,19 +421,27 @@ else()
         set(UTILS OFF CACHE BOOL "Disable utils" FORCE)
         set(USE_PTHREADS ON CACHE BOOL "Enable thread-safe build" FORCE)
 
-        # Enable BZIP2_1 image compression.  Upstream CFITSIO ships it
-        # disabled; the compressed image codec lives in imcompress.c and is
-        # re-enabled by the vendored patch.  Requires libbz2: use the pixi /
-        # conda environment when present, otherwise fall back to the system.
-        option(TORCHFITS_USE_BZIP2 "Build vendored CFITSIO with BZIP2_1 support" ON)
+        # Enable BZIP2 support.  Upstream CFITSIO ships it disabled; the
+        # vendored patch re-enables the BZIP2_1 tile codec in imcompress.c,
+        # and HAVE_BZIP2 additionally turns on transparent whole-file `.bz2`
+        # reading in drvrmem.c (CFITSIO decompresses on open).  libbz2 is
+        # taken from the pixi/conda prefix when present, else from the
+        # system via FIND_PACKAGE(BZip2) so wheel builds get it too.
+        option(TORCHFITS_USE_BZIP2 "Build vendored CFITSIO with bzip2 support" ON)
         if(TORCHFITS_USE_BZIP2)
             if(DEFINED ENV{CONDA_PREFIX} AND EXISTS "$ENV{CONDA_PREFIX}/include/bzlib.h")
                 set(USE_BZIP2 ON CACHE BOOL "Enable bzip2 support" FORCE)
                 set(BZIP2_INCLUDE_DIR "$ENV{CONDA_PREFIX}/include" CACHE FILEPATH "bzip2 include dir" FORCE)
                 set(BZIP2_LIBRARY "$ENV{CONDA_PREFIX}/lib/libbz2.a" CACHE FILEPATH "bzip2 library" FORCE)
             else()
-                message(STATUS "TORCHFITS_USE_BZIP2 is ON but bzlib.h was not found in the conda environment; leaving CFITSIO bzip2 support disabled")
-                set(USE_BZIP2 OFF CACHE BOOL "Enable bzip2 support" FORCE)
+                find_package(BZip2 QUIET)
+                if(BZIP2_FOUND)
+                    message(STATUS "Using system BZip2 for CFITSIO: ${BZIP2_LIBRARIES}")
+                    set(USE_BZIP2 ON CACHE BOOL "Enable bzip2 support" FORCE)
+                else()
+                    message(STATUS "TORCHFITS_USE_BZIP2 is ON but no bzlib.h/libbz2 was found; leaving CFITSIO bzip2 support disabled")
+                    set(USE_BZIP2 OFF CACHE BOOL "Enable bzip2 support" FORCE)
+                endif()
             endif()
         endif()
 
@@ -548,6 +556,11 @@ if(DLPACK_INCLUDE_DIR)
 endif()
 target_compile_definitions(_C PRIVATE HAS_CFITSIO)
 target_compile_definitions(_C PRIVATE TORCHFITS_TORCH_ABI="${TORCHFITS_TORCH_ABI}")
+# Feature flag surfaced to Python as _C.HAS_BZIP2 so guards can be
+# capability-aware instead of blanket-rejecting .bz2 inputs.
+if(USE_BZIP2)
+    target_compile_definitions(_C PRIVATE TORCHFITS_HAVE_BZIP2=1)
+endif()
 
 
 # Compiler flags

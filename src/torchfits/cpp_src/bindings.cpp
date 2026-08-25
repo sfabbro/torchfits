@@ -26,6 +26,11 @@ NB_MODULE(_C, m) {
         );
         throw nb::python_error();
     }
+#ifdef TORCHFITS_HAVE_BZIP2
+    m.attr("HAS_BZIP2") = true;
+#else
+    m.attr("HAS_BZIP2") = false;
+#endif
     bind_fits(m);
     bind_table(m);
 }

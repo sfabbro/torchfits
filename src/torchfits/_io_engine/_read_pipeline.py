@@ -14,6 +14,7 @@ from torch import Tensor
 from ..fits_schema import bit_column_names, unsigned_column_dtypes_from_header
 from ..hdu import Header
 from .device import to_device, validate_device
+from .paths import require_bz2_support
 from .options import ReadOptions
 from .caches import (
     cache_stats,
@@ -153,10 +154,7 @@ def _validate_single_path_params(
     """Validate path/hdu/device/mmap/mode; return (force_image, force_table)."""
     if not isinstance(path, str):
         raise ValueError("Path must be a string or list of strings")
-    if path.lower().endswith(".bz2"):
-        raise ValueError(
-            "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
-        )
+    require_bz2_support(path)
     if isinstance(hdu, int) and hdu < 0:
         raise ValueError("HDU index must be a non-negative integer")
     validate_device(device)
@@ -462,10 +460,7 @@ def _read_batch_paths(
     # reads instead of silently returning differently-scaled data.
     if mmap is not False and not (fp16 or bf16 or raw_scale):
         for item_path in path:
-            if item_path.lower().endswith(".bz2"):
-                raise ValueError(
-                    "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
-                )
+            require_bz2_support(item_path)
         try:
             data_list = cpp_module.read_images_batch(list(path), hdu)
             if device != "cpu":

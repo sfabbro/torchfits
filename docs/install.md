@@ -72,6 +72,8 @@ torchfits info --help
 
 ## Building from source
 
+Builds link libbz2 when available (conda prefix or system via CMake), which enables `BZIP2_1` tile compression and transparent reading of whole-file `.bz2` FITS (`torchfits._C.HAS_BZIP2` reports the capability). Without it, `.bz2` inputs raise an actionable error.
+
 Building from source is only needed if you are developing torchfits or targeting a custom PyTorch build (≥ 2.10).
 
 ### Prerequisites

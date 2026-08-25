@@ -8,6 +8,7 @@ from torch import Tensor
 
 from .device import to_device, validate_device
 from .http_subset import HttpRangeUnsupported, read_subset_http
+from .paths import require_bz2_support
 from torchfits.http_util import HttpRangeNotSatisfied
 
 
@@ -74,10 +75,7 @@ class SubsetReader:
         if not isinstance(path, str):
             raise ValueError("path must be a string")
         guard_fits_path(path)
-        if path.lower().endswith(".bz2"):
-            raise ValueError(
-                "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
-            )
+        require_bz2_support(path)
         if not isinstance(hdu, (int, str)):
             raise ValueError("hdu must be an integer or string")
         if isinstance(hdu, int) and hdu < 0:

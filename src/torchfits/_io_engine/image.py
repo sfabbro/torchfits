@@ -15,7 +15,7 @@ from .device import (
     to_device as to_device,
     validate_device as validate_device,
 )
-from .paths import guard_fits_path
+from .paths import guard_fits_path, require_bz2_support
 
 
 def validate_read_image_args(
@@ -24,10 +24,7 @@ def validate_read_image_args(
     """Validate arguments for low-level read_image."""
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
-    if path.lower().endswith(".bz2"):
-        raise ValueError(
-            "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
-        )
+    require_bz2_support(path)
     if not isinstance(hdu, (int, str)):
         raise ValueError("hdu must be an integer or string")
     if isinstance(hdu, int) and hdu < 0:
@@ -109,10 +106,7 @@ def read_hdus(
     """Read multiple image HDUs from one file using a direct one-handle path."""
     if not isinstance(path, str):
         raise ValueError("path must be a string")
-    if path.lower().endswith(".bz2"):
-        raise ValueError(
-            "CFITSIO does not support .bz2 compression natively. Please decompress the file first."
-        )
+    require_bz2_support(path)
     guard_fits_path(path)
     if not isinstance(hdus, (list, tuple)) or len(hdus) == 0:
         raise ValueError("hdus must be a non-empty list/tuple of HDU indices or names")

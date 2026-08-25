@@ -884,6 +884,19 @@ public:
              throw std::runtime_error("Failed to get HDU data offset: " + std::string(err_msg));
         }
 
+        // Whole-file compressed inputs (.bz2): no direct byte layout on
+        // disk matches the header extents, so decode through CFITSIO and
+        // return the same fixed-column tensor map the mmap path produces.
+        if (!direct_io_ok()) {
+            auto rows = read_columns(column_names, start_row, num_rows, false);
+            std::vector<std::pair<std::string, torch::Tensor>> out;
+            out.reserve(rows.size());
+            for (auto& kv : rows) {
+                out.emplace_back(kv.first, std::move(kv.second.fixed_data));
+            }
+            return out;
+        }
+
         // Open file with mmap
         int fd = open(filename_.c_str(), O_RDONLY);
         if (fd == -1) {
@@ -1123,6 +1136,11 @@ public:
             throw std::runtime_error("ASCII tables are not supported for mmap filtered reads");
         }
 
+        if (!direct_io_ok()) {
+            throw std::runtime_error(
+                "filtered mmap scans require an uncompressed local file; "
+                "the caller falls back to the Arrow predicate engine");
+        }
         // Map file
         int fd = open(filename_.c_str(), O_RDONLY);
         if (fd == -1) throw std::runtime_error("Failed to open file");
@@ -1783,6 +1801,11 @@ public:
             throw std::runtime_error("Failed to get HDU data offset: " + std::string(err_msg));
         }
 
+        if (!direct_io_ok()) {
+            throw std::runtime_error(
+                "in-place mmap updates require an uncompressed local file "
+                "(whole-file compressed inputs like .bz2 are read-only)");
+        }
         int fd = open(filename_.c_str(), O_RDWR);
         if (fd == -1) {
             throw std::runtime_error("Failed to open file for mmap update");
@@ -2186,7 +2209,8 @@ public:
             return (env[0] == '1' || env[0] == 'y' || env[0] == 'Y' || env[0] == 't' || env[0] == 'T');
         }();
         bool heap_contiguous =
-            heap_pread_enabled && (elem_bytes > 0 && total > 0 && !filename_.empty());
+            heap_pread_enabled && direct_io_ok() &&
+            (elem_bytes > 0 && total > 0);
         long expect_off = -1;
         long first_heap = -1;
         for (long i = 0; i < num_rows && heap_contiguous; i++) {
@@ -2359,7 +2383,7 @@ public:
         // anonymous memory on every call (kernel rusage shows ~2930 minor
         // faults per read), which dominates the pread cost on a busy host.
         int data_fd = -1;
-        if (!filename_.empty() && !has_cfitsio_extended_filename_syntax(filename_)) {
+        if (direct_io_ok()) {
             if (data_offset_ < 0) {
                 LONGLONG headstart = 0, dataend = 0;
                 int addr_status = 0;
@@ -2616,6 +2640,21 @@ public:
     long get_num_rows() const { return nrows_; }
     int get_num_cols() const { return ncols_; }
     bool is_ascii_table() const { return is_ascii_; }
+
+    // True when raw fd/pread/mmap access to filename_ is byte-compatible
+    // with the FITS layout: plain local, uncompressed files only. Whole-file
+    // compressed inputs (.bz2) decompress inside CFITSIO, so their on-disk
+    // size/layout do NOT match header-derived offsets — direct-I/O paths
+    // must route through CFITSIO instead (native .bz2 support).
+    bool direct_io_ok() const {
+        if (filename_.empty()) return false;
+        if (filename_.size() >= 4 &&
+            filename_.compare(filename_.size() - 4, 4, ".bz2") == 0) {
+            return false;
+        }
+        if (filename_.find("://") != std::string::npos) return false;
+        return !has_cfitsio_extended_filename_syntax(filename_);
+    }
 
     // Serializes read/update calls when one reader instance is shared across
     // Python threads (persistent open_fits_mmap_reader capsule, exposed
