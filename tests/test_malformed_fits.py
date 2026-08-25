@@ -100,10 +100,10 @@ def test_vla_descriptor_out_of_heap_detected(tmp_path):
     afits.HDUList([afits.PrimaryHDU(), afits.BinTableHDU.from_columns(cols)]).writeto(
         path
     )
-    # Corrupt one heap descriptor (row 3 offset) to point far past the heap.
+    # Corrupt bytes in the tail of the file (heap region): descriptors or
+    # payload bytes flip, and the reader must either decode consistently or
+    # raise — never crash.
     raw = bytearray(open(path, "rb").read())
-    idx = raw.find(b"\x00\x00\x00")  # locate table area heuristically is unsafe;
-    # instead flip bytes in the last 512 bytes of the heap region.
     for off in range(len(raw) - 512, len(raw) - 256):
         raw[off] ^= 0xA5
     open(path, "wb").write(bytes(raw))
@@ -135,7 +135,6 @@ def test_random_groups_explicitly_unsupported(tmp_path):
     path.write_bytes(blob)
     with pytest.raises(RuntimeError, match="[Rr]andom [Gg]roups"):
         torchfits.read_tensor(str(path))
-
 
 
 def test_checksum_detects_corrupted_data(tmp_path):

@@ -47,12 +47,16 @@ def test_compressed_float_null_pixels_decode_as_nan(tmp_path, mmap):
 
 def test_compressed_null_parity_with_astropy(tmp_path):
     path = str(tmp_path / "parity.fits.fz")
-    original = _write_comp_image_with_null(path)
+    _write_comp_image_with_null(path)
 
     got = torchfits.read_tensor(path, hdu=1).numpy()
 
     ref = afits.getdata(path)
-    ref_mask = ~np.ma.getmaskarray(ref) if np.ma.isMaskedArray(ref) else np.ones_like(ref, bool)
+    ref_mask = (
+        ~np.ma.getmaskarray(ref)
+        if np.ma.isMaskedArray(ref)
+        else np.ones_like(ref, bool)
+    )
     ref_data = np.ma.getdata(ref) if np.ma.isMaskedArray(ref) else ref
     assert np.isnan(got).sum() >= 2
     np.testing.assert_allclose(

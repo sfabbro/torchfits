@@ -45,7 +45,7 @@ if [[ ! -f "$CSV" ]]; then
   exit "${BENCH_RC:-1}"
 fi
 
-python scripts/patch_bench_docs.py \
+"${PYTHON_BINARY:-python3}" scripts/patch_bench_docs.py \
   --csv "$CSV" \
   --deficits "$DEFICITS" \
   --run-id "$RUN_ID" >>"$LOG_FILE" 2>&1

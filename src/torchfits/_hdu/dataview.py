@@ -49,17 +49,9 @@ class DataView:
             except (TypeError, ValueError):
                 return base
             tol = 1e-5
-            if (
-                bitpix == 8
-                and abs(bscale - 1.0) < tol
-                and abs(bzero + 128.0) < tol
-            ):
+            if bitpix == 8 and abs(bscale - 1.0) < tol and abs(bzero + 128.0) < tol:
                 return torch.int8
-            if (
-                bitpix == 16
-                and abs(bscale - 1.0) < tol
-                and abs(bzero - 32768.0) < tol
-            ):
+            if bitpix == 16 and abs(bscale - 1.0) < tol and abs(bzero - 32768.0) < tol:
                 return torch.uint16
             if (
                 bitpix == 32

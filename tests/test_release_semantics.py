@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 astropy = pytest.importorskip("astropy")
-afits = pytest.importorskip("astropy.io.fits")
 torch = pytest.importorskip("torch")
 pa = pytest.importorskip("pyarrow")
 
@@ -22,7 +21,9 @@ from astropy.io import fits as afits  # noqa: E402
 
 
 def _write_float32_table(path, values):
-    cols = [afits.Column(name="X", format="E", array=np.array(values, dtype=np.float32))]
+    cols = [
+        afits.Column(name="X", format="E", array=np.array(values, dtype=np.float32))
+    ]
     afits.BinTableHDU.from_columns(cols).writeto(str(path), overwrite=True)
 
 
@@ -62,9 +63,7 @@ def test_windowed_read_keeps_vla_columns_aligned(tmp_path):
         {"N": torch.arange(10, dtype=torch.int32), "V": vla},
         overwrite=True,
     )
-    result = torchfits.read(
-        str(path), hdu=1, start_row=4, num_rows=3, mode="table"
-    )
+    result = torchfits.read(str(path), hdu=1, start_row=4, num_rows=3, mode="table")
     assert len(result["N"]) == len(result["V"]) == 3
     # Row 4 is 1-based => N value 3 (0-based storage).
     assert result["N"].tolist() == [3, 4, 5]
@@ -191,9 +190,7 @@ def test_stream_scaled_table_with_mmap_succeeds(tmp_path):
     rng = np.random.default_rng(42)
     raw = (rng.integers(-1000, 1000, size=64)).astype(np.int16)
     cols = [afits.Column(name="RAW", format="I", array=raw)]
-    hdul = afits.HDUList(
-        [afits.PrimaryHDU(), afits.BinTableHDU.from_columns(cols)]
-    )
+    hdul = afits.HDUList([afits.PrimaryHDU(), afits.BinTableHDU.from_columns(cols)])
     hdul.writeto(str(path), overwrite=True)
     # Attach TSCAL/TZERO to column 1 post-write (astropy's Column bscale
     # pre-scales the in-memory array, which is not what we want here).

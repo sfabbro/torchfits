@@ -479,7 +479,6 @@ def _parse_fits_number(text: str) -> "float | int | None":
             return None
 
 
-
 def fast_parse_header(header_string: str) -> Dict[str, Any]:
     """
     Convenience function for fast header parsing.

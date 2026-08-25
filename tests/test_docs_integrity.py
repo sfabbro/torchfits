@@ -64,7 +64,6 @@ def test_docs_reference_existing_local_files() -> None:
         "benchmarks/bench_contract.py",
         "scripts/launch_canfar_gpu_bench.sh",
         "scripts/canfar_gpu_bench_incontainer.sh",
-        "scripts/canfar_gpu_bench_remote.sh",
         "scripts/selfcheck_canfar_launcher.sh",
         "scripts/gpu-bootstrap.sh",
         "scripts/ci_local.sh",

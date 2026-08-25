@@ -78,9 +78,7 @@ class TensorHDU:
             hdu_index = self._hdu_index
             return to_device(cast(Tensor, cpp.read_full(handle, hdu_index)), device)
 
-    def chunks(
-        self, chunk_size: Tuple[int, ...]
-    ) -> Iterator[Tensor]:
+    def chunks(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
         """Yield row-band slabs of the image lazily (bounded memory).
 
         ``chunk_size`` follows numpy/torch convention: element 0 is the slab
@@ -118,10 +116,11 @@ class TensorHDU:
                 with self._io_lock:
                     closed = self._closed
                 if closed:
-                    raise RuntimeError(
-                        "TensorHDU was closed during chunk iteration"
-                    )
-                yield cast(Tensor, reader.read(0, y0, int(reader.width), min(y0 + step, height)))
+                    raise RuntimeError("TensorHDU was closed during chunk iteration")
+                yield cast(
+                    Tensor,
+                    reader.read(0, y0, int(reader.width), min(y0 + step, height)),
+                )
         finally:
             reader.close()
 

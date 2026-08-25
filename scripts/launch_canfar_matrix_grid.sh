@@ -9,7 +9,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PYTHONS=(3.10 3.11 3.12 3.13 3.14)
-TORCHES=("${TORCHES[@]:-2.11 2.12 2.13}")
+TORCHES=${TORCHES:-"2.13"}
+read -r -a TORCHES <<< "$TORCHES"
 
 launch_leg() {
   local py="$1" torch="$2" cuda="$3" cu="$4" tag="$5"

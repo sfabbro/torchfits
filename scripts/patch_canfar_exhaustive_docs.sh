@@ -19,7 +19,7 @@ Fetch from VOSpace (after a CANFAR session completes):
   bash scripts/fetch_canfar_bench_vos.sh ${RUN_ID}
 
 Or if vcp is unavailable, fall back to log import:
-  pixi run python scripts/import_canfar_bench_artifacts.py \\
+  pixi run "${PYTHON_BINARY:-python3}" scripts/import_canfar_bench_artifacts.py \\
     benchmarks_results/canfar_${RUN_ID}/canfar_logs.txt ${RUN_ID}
 
 Expected layout:
@@ -29,7 +29,7 @@ EOF
   exit 1
 fi
 
-python scripts/patch_bench_docs.py \
+"${PYTHON_BINARY:-python3}" scripts/patch_bench_docs.py \
   --csv "${CSV}" \
   --deficits "${DEFICITS}" \
   --run-id "${RUN_ID}"

@@ -78,9 +78,7 @@ def stream_table(
         except Exception:
             ascii_table = False
     else:
-        ascii_table = (
-            str(header.get("XTENSION", "")).strip().upper() == "TABLE"
-        )
+        ascii_table = str(header.get("XTENSION", "")).strip().upper() == "TABLE"
 
     # Scaled columns (TSCALn/TZEROn beyond the unsigned conventions) cannot be
     # decoded from raw mmap bytes; route to the buffered CFITSIO reader, which
@@ -112,7 +110,12 @@ def stream_table(
 
     row = start_row
     emitted = 0
-    if mmap and not ascii_table and not scaled_columns and hasattr(cpp, "read_fits_table_rows"):
+    if (
+        mmap
+        and not ascii_table
+        and not scaled_columns
+        and hasattr(cpp, "read_fits_table_rows")
+    ):
         while row <= total_rows:
             remaining = total_rows - row + 1
             size = min(chunk_rows, remaining)

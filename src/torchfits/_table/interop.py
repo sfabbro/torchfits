@@ -264,8 +264,7 @@ def to_pandas(
 
     if stream:
         return (
-            pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs)
-            for batch in data
+            pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs) for batch in data
         )
 
     frames = [

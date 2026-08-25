@@ -158,7 +158,9 @@ def run(args: argparse.Namespace) -> int:
         lambda pair: _transform_one(
             pair,
             name=name,
-            transform=transform if transform is not None else _build_transform(args.name)[1],
+            transform=transform
+            if transform is not None
+            else _build_transform(args.name)[1],
             hdu=int(args.hdu),
         ),
         file_jobs,

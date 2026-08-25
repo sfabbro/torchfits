@@ -8,6 +8,10 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_COLOR: 1
   TORCHFITS_EXAMPLE_FAST: "1"
@@ -16,6 +20,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -31,10 +36,15 @@ jobs:
         run: ruff check .
       - name: Ruff format
         run: ruff format --check .
+      - name: Mypy (strict)
+        run: |
+          python -m pip install "mypy>=2.3"
+          mypy src/torchfits
 
   test:
     name: Test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:

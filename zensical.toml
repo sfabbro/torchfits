@@ -9,13 +9,13 @@ copyright = "Copyright &copy; 2026 torchfits contributors"
 
 extra_css = [
   "stylesheets/extra.css",
-  "https://unpkg.com/katex@0/dist/katex.min.css",
+  "assets/katex/katex.min.css",
 ]
 
 extra_javascript = [
   "javascripts/katex.js",
-  "https://unpkg.com/katex@0/dist/katex.min.js",
-  "https://unpkg.com/katex@0/dist/contrib/auto-render.min.js",
+  "assets/katex/katex.min.js",
+  "assets/katex/contrib/auto-render.min.js",
 ]
 
 nav = [

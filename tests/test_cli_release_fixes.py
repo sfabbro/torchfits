@@ -47,9 +47,7 @@ def test_arith_add_does_not_wrap_uint16(tmp_path):
     src = tmp_path / "u16.fits"
     out = tmp_path / "out.fits"
     _write_uint16(src)
-    result = _run_cli(
-        "arith", str(src), "--op", "add", "--value", "5", "-o", str(out)
-    )
+    result = _run_cli("arith", str(src), "--op", "add", "--value", "5", "-o", str(out))
     assert result.returncode == 0, result.stderr
     got = _read_u16(out)
     expect = np.clip(_read_u16(src).astype(np.int64) + 5, 0, 65535).astype(np.uint16)

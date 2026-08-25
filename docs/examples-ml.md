@@ -53,6 +53,7 @@ class NanToZero:
 
         return torch.nan_to_num(x, nan=0.0)
 
+
 # 1. Define astronomical preprocessing pipeline
 transform = Compose(
     [

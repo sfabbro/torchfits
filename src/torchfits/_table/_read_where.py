@@ -353,9 +353,7 @@ def _where_mask_for_table(
 
         if non_null:
             if pa.types.is_float32(column.type):
-                value_set = pa.array(
-                    [float(v) for v in non_null], type=column.type
-                )
+                value_set = pa.array([float(v) for v in non_null], type=column.type)
             else:
                 value_set = _pa_array(pa, non_null)
             mask = pc.is_in(column, value_set=value_set)

@@ -274,9 +274,7 @@ def _apply_op(
     if op == "div" and dtype_spec == "auto":
         # Fractional quotients must survive: integral inputs compute in
         # float64 rather than truncating through an integer output dtype.
-        out_dtype = (
-            left.dtype if left.dtype.is_floating_point else torch.float64
-        )
+        out_dtype = left.dtype if left.dtype.is_floating_point else torch.float64
     return _compute(_OPS[op], left, right, out_dtype)
 
 
@@ -323,7 +321,9 @@ def _arith_one_file(
     shapes = {tuple(t.shape) for t in tensors}
     can_stack = len(shapes) == 1 and len(tensors) > 1
     if can_stack and value is not None:
-        results = list(_apply_op(op, torch.stack(tensors), scalar_b, dtype_spec).unbind(0))
+        results = list(
+            _apply_op(op, torch.stack(tensors), scalar_b, dtype_spec).unbind(0)
+        )
     elif (
         can_stack
         and value is None
@@ -332,7 +332,9 @@ def _arith_one_file(
         b_tensors = [right for right in rights if isinstance(right, torch.Tensor)]
         if len({tuple(right.shape) for right in b_tensors}) == 1:
             results = list(
-                _apply_op(op, torch.stack(tensors), torch.stack(b_tensors), dtype_spec).unbind(0)
+                _apply_op(
+                    op, torch.stack(tensors), torch.stack(b_tensors), dtype_spec
+                ).unbind(0)
             )
         else:
             results = [

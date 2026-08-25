@@ -86,7 +86,7 @@ build = "pixi build"
 test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
 release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py -q && pixi run docs-contract && pixi run docs-links"
 lint = "ruff check . && ruff format ."
-preflight-push = "ruff check . && ruff format --check . && mypy src/torchfits && python -m compileall -q src/torchfits tests && pixi run check-lane"
+preflight-push = "ruff check . && ruff format --check . && mypy src/torchfits && python -m compileall -q src/torchfits tests && pixi run check-lane && pixi run changelog-check"
 # Verify the committed release-lane pins match scripts/torch_lanes.json.
 check-lane = "python scripts/release_lane.py --check"
 # Resolve the [cpu] / [cuda] torch extra pins against download.pytorch.org
@@ -136,7 +136,7 @@ bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
 bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
 bench-megacam = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_megacam_cutouts.py"
 bench-denoise = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_denoise.py"
-bench-ml = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_ml_loader.py --output benchmarks_results/ml_$(date -u +%Y%m%d_%H%M%S)/ml_results.csv --run-id ml_$(date -u +%Y%m%d_%H%M%S)"
+bench-ml = 'bash -c "TS=$(date -u +%Y%m%d_%H%M%S); pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_ml_loader.py --output benchmarks_results/ml_${TS}/ml_results.csv --run-id ml_${TS}"'
 
 # Render the bench-all CSV into the I/O Transport x Backend markdown section
 # of docs/benchmarks.md. Pass --csv after --, e.g.:

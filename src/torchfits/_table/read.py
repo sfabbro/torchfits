@@ -114,7 +114,6 @@ def scan(
 def read(
     path: str,
     hdu: int | str = 1,
-
     columns: Optional[list[str]] = None,
     row_slice: Optional[slice | tuple[int, int]] = None,
     rows: Optional[list[int]] = None,

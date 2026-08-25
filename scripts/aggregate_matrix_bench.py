@@ -132,7 +132,7 @@ def main() -> None:
         nargs="+",
         default=[
             os.path.expanduser("~/torchfits-gpu-bench"),
-            os.path.expanduser("/arc/home/sfabbro/torchfits-gpu-bench"),
+            os.environ.get("TORCHFITS_BENCH_ROOT", ""),
             str(ROOT / "benchmarks_results"),
         ],
         help="Directories to search for benchmark runs",

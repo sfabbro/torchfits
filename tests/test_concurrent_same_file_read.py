@@ -5,9 +5,6 @@ path now opens a private per-call handle, so many threads hitting the same file
 and alternating HDUs must return byte-identical data with no crash / corruption.
 """
 
-import tempfile
-import threading
-
 import os
 import tempfile
 import threading
@@ -35,10 +32,11 @@ def teardown_module() -> None:
         except OSError:
             pass
 
-import numpy as np
-import torch
 
-import torchfits
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+
+import torchfits  # noqa: E402
 
 
 def _write_mef():

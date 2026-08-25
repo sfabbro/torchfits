@@ -15,6 +15,9 @@ authors = [{ name = "Seb Fabbro", email = "sebfabbro@gmail.com" }]
 readme = "README.md"
 license = { text = "MIT" }
 keywords = ["fits", "astronomy", "pytorch", "tensor", "cfitsio"]
+# Ship third-party license text (vendored CFITSIO) alongside the project
+# license in every wheel/sdist (M17).
+license-files = ["LICENSE", "extern/licenses/CFITSIO-LICENSE.txt"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",

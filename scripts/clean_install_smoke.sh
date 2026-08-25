@@ -32,9 +32,11 @@ smoke() {
   # shellcheck disable=SC1091
   source "$venv/bin/activate"
   python -m pip install -q --upgrade pip
-   # Documented CPU-only one-liner (docs/install.md): local wheel + current
-   # 2.13 ABI-lane torch pin, pulled from the PyTorch CPU index.
-   python -m pip install -q "$WHEEL" "torch>=2.13,<2.14" --extra-index-url https://download.pytorch.org/whl/cpu
+   # Documented CPU-only one-liner (docs/install.md): local wheel + the
+   # torch ABI lane pin rendered from scripts/torch_lanes.json, so this
+   # smoke cannot rot when the lane moves.
+   TORCH_PIN="$(python "$ROOT_DIR/scripts/release_lane.py" --print-pins | sed 's/.*torch=//')"
+   python -m pip install -q "$WHEEL" "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
   python - <<'PY'
 import tempfile
 from pathlib import Path
