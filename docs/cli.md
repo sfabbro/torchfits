@@ -49,7 +49,7 @@ torchfits probe https://example.edu/survey/image.fits --header-bytes 5760
 
 ## Global Options & Flags
 
-Common flags shared across subcommands:
+Flags available on the emit-style subcommands (`info`, `header`, `verify`, `stats`, `table`, `probe`):
 
 | Flag | Name | Purpose | Default |
 |---|---|---|---|

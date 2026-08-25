@@ -164,6 +164,10 @@ Below is the measured performance variance across the full matrix grid (**Python
 | 2.13 | 3.14 | CUDA | 0.211 | +12.6% slower | 1.13× |
 | 2.13 | 3.10 | CUDA | 0.215 | +15.1% slower | 1.15× |
 
+<!-- PROVENANCE: headline scorecards cite exhaustive_cpu_20260822_213823 /
+     exhaustive_cuda_20260822_213846. Those per-run CSVs are archived on the
+     bench host / CANFAR VOSpace and are pending mirroring into docs/assets/bench/.
+     -->
 ## Published Benchmark Data {#published-csvs}
 
 Exhaustive benchmark datasets and analysis CSVs (`results.csv`, `torchfits_deficits.csv`) are published with each release and mirrored under `docs/assets/bench/<run-id>/`:

@@ -22,7 +22,7 @@ Status values:
 |---|:---:|---|---|
 | **2D Image Reading & Writing** | **Supported** | `astropy.io.fits`, `fitsio` | Direct C++ decoding to PyTorch tensors (`float32`, `float64`, `int16`, `int32`, `int64`, `uint8`). |
 | **3D/4D Datacubes** | **Supported** | `astropy.io.fits`, `fitsio` | Reads multi-dimensional cubes (e.g. IFU datacubes, radio velocity channels) into $[D, H, W]$ tensors. |
-| **Multi-Extension (MEF)** | **Supported** | `astropy.io.fits.HDUList` | HDU iteration by integer index or extension name (`hdul["SCI", 1]`), lazy metadata scanning. |
+| **Multi-Extension (MEF)** | **Supported** | `astropy.io.fits.HDUList` | HDU iteration by integer index or extension name (`hdul["SCI"]`), lazy metadata scanning. |
 | **Windowed Cutout Reads** | **Supported** | `astropy.io.fits`, `fitsio` | Fast pixel sub-region extraction via `read_subset` and zero-overhead `open_subset_reader`. |
 | **Unsigned Integers (`uint16`/`uint32`)** | **Supported** | `BZERO` convention | Vectorized SIMD decoding of unsigned integers into native PyTorch integer tensors. |
 | **Physical Scaling (`BSCALE`/`BZERO`)** | **Supported** | FITS Standard | Automatically scales raw detector counts to physical float32/float64 values. |
@@ -44,12 +44,12 @@ Status values:
 
 | Table Feature | Status | Comparator | Implementation Details & Behavior |
 |---|:---:|---|---|
-| **Binary Tables (`BINTABLE`)** | **Supported** | `astropy.io.fits`, `fitsio` | High-throughput zero-copy Arrow decoding into tables and PyTorch tensors. |
+| **Binary Tables (`BINTABLE`)** | **Supported** | `astropy.io.fits`, `fitsio` | High-throughput Arrow decoding into tables and PyTorch tensors. |
 | **ASCII Tables (`TABLE`)** | **Supported** | `astropy.io.fits.TableHDU` | Full column parsing and type inference for fixed-width ASCII tables. |
 | **Column Projection** | **Supported** | `columns=["ra", "dec"]` | Reads only requested columns from disk, skipping unneeded byte offsets. |
 | **Row Slicing (`start_row`, `num_rows`)** | **Supported** | `fitsio` row limits | Reads contiguous row ranges without scanning earlier or later records. |
 | **Predicate Filtering (`where=`)** | **Supported** | `fitsio` WHERE clauses | SQL expression pushdown (`"mag < 21.0 AND flag == 0"`) executed during scanning. |
-| **In-Place Table Mutation** | **Supported** | `table.update(...)` | Fast in-place column and cell updating on disk via memory-mapping. |
+| **In-Place Table Mutation** | **Supported** | `table.update_rows(...)` | Fast in-place column and cell updating on disk via memory-mapping. |
 
 ---
 

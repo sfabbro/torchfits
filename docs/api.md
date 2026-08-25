@@ -69,10 +69,10 @@ Destination-qualified spelling of `table.read` (same object): `table.read_arrow`
 
 | Goal | Entry point | Reference |
 |---|---|---|
-| Interop: Astropy | `to_astropy(table_dict, decode_bytes=True)` | [Tables](api-tables.md#astropy) |
-| Interop: Polars | `to_polars(table_dict, decode_bytes=True)` | [Tables](api-tables.md#polars) |
-| Interop: Arrow | `to_arrow(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
-| Interop: pandas | `to_pandas(table_dict, decode_bytes=True)` | [Tables](api-tables.md#arrow-and-pandas) |
+| Interop: Astropy | `to_astropy(table_dict, decode_bytes=False)` | [Tables](api-tables.md#astropy) |
+| Interop: Polars | `to_polars(table_dict, decode_bytes=False)` | [Tables](api-tables.md#polars) |
+| Interop: Arrow | `to_arrow(table_dict, decode_bytes=False)` | [Tables](api-tables.md#arrow-and-pandas) |
+| Interop: pandas | `to_pandas(table_dict, decode_bytes=False)` | [Tables](api-tables.md#arrow-and-pandas) |
 
 ### Cache
 
@@ -145,7 +145,7 @@ private until promoted there.
 
 ## Public API Index
 
-The root `torchfits.__all__` (frozen surface for 1.0.0):
+The root `torchfits.__all__` (public surface; see `__all__`):
 
 - **Image / table I/O:** `read`, `write`, `open`, `read_tensor`, `read_subset`,
   `read_hdus`, `read_batch`, `read_batch_info`, `open_subset_reader`,
@@ -159,7 +159,7 @@ The root `torchfits.__all__` (frozen surface for 1.0.0):
 - **Interop:** `to_astropy`, `to_pandas`, `to_arrow`, `to_polars`
 - **HDU types:** `Header`, `Card`, `HDUList`, `TensorHDU`, `TableHDU`,
   `TableHDURef`
-- **Namespaces:** `table`, `cache`, `cpp`
+- **Namespaces:** `table`, `cache`, `transforms`, `data`, `where`, `hdu`
 
 Each entry has a quick-path row and a reference page above.
 

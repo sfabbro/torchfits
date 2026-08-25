@@ -42,9 +42,16 @@ from torchfits.transforms import (
     ArcsinhStretch,
     BackgroundSubtract,
     Compose,
-    NanToZero,
     ZScaleNormalize,
 )
+
+
+# NanToZero is example-local: torchfits ships no such transform.
+class NanToZero:
+    def __call__(self, x):
+        import torch
+
+        return torch.nan_to_num(x, nan=0.0)
 
 # 1. Define astronomical preprocessing pipeline
 transform = Compose(

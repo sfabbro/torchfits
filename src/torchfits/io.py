@@ -233,7 +233,7 @@ def read_subset(
     x2: int,
     y2: int,
 ) -> Any:
-    """Read a rectangular pixel subset (x1:y1, x2:y2) from an image HDU."""
+    """Read a rectangular subset from an image HDU: box corners (x1, y1)-(x2, y2), half-open."""
     with open_subset_reader(path, hdu=hdu) as reader:
         return reader.read_subset(x1, y1, x2, y2)
 

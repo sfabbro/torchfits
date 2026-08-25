@@ -5,7 +5,7 @@ title: FITS I/O for PyTorch Tensors and Tables
 
 <div class="tf-below" markdown>
 
-**`torchfits`** delivers high-performance FITS I/O for the modern Python data science and machine learning ecosystem. Powered by a native C++ engine with vendored CFITSIO, it decodes astronomical images directly to PyTorch GPU/CPU tensors, queries binary catalogs as zero-copy PyArrow tables, extracts survey cutouts in sub-milliseconds, and provides a full shell CLI.
+**`torchfits`** delivers high-performance FITS I/O for the modern Python data science and machine learning ecosystem. Powered by a native C++ engine with vendored CFITSIO, it decodes astronomical images directly to PyTorch GPU/CPU tensors, queries binary catalogs as Arrow tables with C++ predicate pushdown, reads survey cutouts without materializing full frames, and provides a full shell CLI.
 
 Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS (Apple Silicon arm64)** supporting **Python 3.10–3.14** (no C++ compiler or system libraries needed).
 
@@ -35,7 +35,7 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
 
     ---
 
-    Filter multi-million row catalogs with C++ pushdown predicates (`where="MAG < 20"`). Zero-copy integration with Polars, Pandas, and DuckDB.
+    Filter multi-million row catalogs with C++ pushdown predicates (`where="MAG < 20"`). Zero-copy where dtypes allow; integration with Polars, Pandas, and DuckDB.
 
     [:octicons-arrow-right-24: Table Workflows](python-workflows.md#tables-as-dataframes)
 

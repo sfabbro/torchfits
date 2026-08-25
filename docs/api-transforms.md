@@ -415,7 +415,7 @@ magnitude of 1 count per band, converted to nanomaggies as
 
 See `examples/example_rgb_sky.py`.
 
-### `lupton_rgb(r, g, b, *, Q=8.0, stretch=0.5)`
+### `lupton_rgb(r, g, b, *, Q=8.0, stretch=0.5, minimum=0.0)`
 
 Lupton asinh RGB from three single-band tensors (same shape). Returns a
 `[H, W, 3]` **float64** tensor in `[0, 1]` (channel last; accepts any

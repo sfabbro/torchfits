@@ -44,7 +44,7 @@ The default PyPI release matches **PyTorch 2.13.x** (`torch>=2.13,<2.14`). If yo
 
 ```bash
 # For PyTorch 2.12 (e.g. Python 3.11 on Linux x86_64):
-pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch212-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch212-cp311-cp311-manylinux_2_28_x86_64.whl
 
 # For PyTorch 2.11 (e.g. Python 3.11 on Linux x86_64):
 pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch211-cp311-cp311-linux_x86_64.whl

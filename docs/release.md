@@ -10,9 +10,11 @@ because PyTorch has no stable C++ ABI across minors. Lanes live in
 
 | PyTorch lane | torchfits release |
 |---|---|
-| **2.13.x** | **1.0.0** (primary PyPI release lane) |
-| **2.12.x** | **1.0.0+torch212** (auxiliary prebuilt release wheel) |
-| **2.11.x** | **1.0.0+torch211** (auxiliary prebuilt release wheel) |
+| **2.13.x** | **1.1.0** (primary PyPI release lane; CUDA flavors cu126/cu129/cu130) |
+
+`scripts/torch_lanes.json` currently defines a single lane; auxiliary
+`+torchNNN` local-version wheels are created by adding lanes to that file and
+re-running `scripts/release_lane.py --apply`.
 
 ## 1. Version sync
 

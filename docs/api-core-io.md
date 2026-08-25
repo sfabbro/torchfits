@@ -403,7 +403,8 @@ with torchfits.open_table_reader("catalog.fits", hdu=1) as reader:
 Write a tensor, numpy array, dict table, or HDUList to FITS.
 
 ```python
-torchfits.write(path, data, header=None, overwrite=False, compress=False, quantize=None)
+torchfits.write(path, data, header=None, overwrite=False, compress=False, quantize=None,
+      checksum=False)
 ```
 
 | Parameter | Type | Default | Description |

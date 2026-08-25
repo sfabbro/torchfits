@@ -13,7 +13,7 @@ If you are migrating from existing libraries, see also the [Astropy migration gu
 | **Read image to Tensor** | `read_tensor(path, device="cuda")` | Direct decode to target device (CPU/CUDA/MPS) | [Images & HDUs](#images-and-hdus) |
 | **Read image + Header** | `read(path, return_header=True)` | Unified access to pixel tensor and card dictionary | [Headers](#headers) |
 | **Write Tensor to FITS** | `write(path, tensor, compress="RICE_1")` | Lossless / lossy tile compression & header preservation | [Writing Images](#writing-images) |
-| **Filter & load catalogs** | `table.read(path, where="MAG < 20")` | Zero-copy PyArrow table with SQL pushdown filtering | [Tables & Catalogs](#tables-as-dataframes) |
+| **Filter & load catalogs** | `table.read(path, where="MAG < 20")` | PyArrow table with C++ pushdown filtering | [Tables & Catalogs](#tables-as-dataframes) |
 | **Catalog columns as Tensors** | `table.read_torch(path, columns=[...])` | Dictionary of PyTorch tensors ready for model inputs | [Tables as Tensors](#tables-as-tensors) |
 | **Stream huge catalogs** | `table.scan(path, batch_size=50_000)` | Out-of-core chunked reader for datasets larger than RAM | [Streaming Large Catalogs](#streaming-large-catalogs) |
 | **Extract image cutouts** | `read_subset(path, x1, y1, x2, y2)` | Fast bounding box extraction without loading full frame | [Cutouts](#cutouts-and-mefs) |
@@ -106,7 +106,7 @@ torchfits.write("calibrated.fits", image_data, header=header, overwrite=True)
 
 ### Tables as DataFrames & Astropy Tables
 
-`torchfits.table.read` decodes binary and ASCII tables into a zero-copy `pyarrow.Table`. You can apply column projections and SQL-like predicate filters directly at the C++ reader level:
+`torchfits.table.read` decodes binary and ASCII tables into a `pyarrow.Table`. You can apply column projections and SQL-like predicate filters directly at the C++ reader level:
 
 ```python
 import polars as pl
@@ -121,7 +121,7 @@ table = torchfits.table.read(
 )
 print(f"Loaded {table.num_rows} rows.")
 
-# Zero-copy export to Pandas or Polars
+# Export to Pandas or Polars
 df_pandas = table.to_pandas()
 df_polars = pl.from_arrow(table)
 

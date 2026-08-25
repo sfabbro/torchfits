@@ -72,7 +72,7 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 
 ### 2. Tabular Data Representation
 - **Astropy:** Returns custom `astropy.table.Table` or NumPy record arrays (`numpy.recarray`).
-- **torchfits:** Returns zero-copy Apache Arrow tables (`pyarrow.Table`), PyTorch tensor dictionaries (`dict[str, torch.Tensor]`), or Polars DataFrames (`FITSPolarsFrame`), providing immediate compatibility with modern data science ecosystems.
+- **torchfits:** Returns Apache Arrow tables (`pyarrow.Table`), PyTorch tensor dictionaries (`dict[str, torch.Tensor]`), or Polars DataFrames (`FITSPolarsFrame`), providing immediate compatibility with modern data science ecosystems.
 
 ### 3. Thread Safety & Multi-Worker Loaders
 - **Astropy:** `HDUList` instances are not thread-safe and can cause file descriptor corruption when shared across threads or PyTorch `DataLoader` worker processes.

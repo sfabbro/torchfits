@@ -185,10 +185,11 @@ def _upcast_for_precision(x: torch.Tensor, *, precision: str = "auto") -> torch.
 
 
 def safe_arcsinh(x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
-    """Compute ``arcsinh(scale * x)`` using float64 internally.
+    """Compute ``arcsinh(scale * x)`` with precision-aware upcasting.
 
-    This preserves precision across the large dynamic range typical of
-    astronomical images (LSST / SDSS convention).
+    float16/bfloat16 inputs are computed in float32; float32 stays float32
+    (``precision="float64"`` forces float64). Matches the LSST/SDSS asinh
+    convention across large dynamic ranges without hidden dtype changes.
     """
     orig_dtype = x.dtype
     out = torch.arcsinh(_upcast_for_precision(x) * scale)
@@ -198,7 +199,7 @@ def safe_arcsinh(x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
 def safe_log(x: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
     """Compute ``log(x)`` with a floor at *eps* to avoid -inf.
 
-    Uses float64 internally for precision.
+    Upcasts per :func:`_upcast_for_precision` (see ``precision=`` there).
     """
     orig_dtype = x.dtype
     out = torch.log(torch.clamp_min(_upcast_for_precision(x), eps))

@@ -402,7 +402,7 @@ for batch in torchfits.table.scan_polars("catalog.fits", hdu=1):
 lazy = torchfits.table.to_polars("catalog.fits", hdu=1).lazy()
 
 # From table dict
-polars_df = torchfits.to_polars(table_dict, decode_bytes=True)
+polars_df = torchfits.to_polars(table_dict, decode_bytes=False)
 ```
 
 !!! tip "True streaming"
@@ -432,8 +432,8 @@ result = torchfits.table.duckdb_query(
 ### Arrow and Pandas
 
 ```python
-arrow_table = torchfits.to_arrow(table_dict, decode_bytes=True)
-pandas_df = torchfits.to_pandas(table_dict, decode_bytes=True)
+arrow_table = torchfits.to_arrow(table_dict, decode_bytes=False)
+pandas_df = torchfits.to_pandas(table_dict, decode_bytes=False)
 ```
 
 ---

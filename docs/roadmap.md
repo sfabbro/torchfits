@@ -13,7 +13,7 @@ The 1.0 release established the high-performance core for FITS tensor and table 
 - **Zero-Copy Tensor I/O:** Memory-mapped reads with SIMD-vectorized byte swapping for 1D–4D FITS image extensions.
 - **Columnar Table Engine:** Binary and ASCII table reads with SQL predicate pushdown (`where=`) and fast column projection.
 - **PyTorch ML Data Loaders:** Native `Dataset` classes (`FitsImageDataset`, `FitsCutoutDataset`, `FitsCubeDataset`, `FitsTableDataset`) and multi-worker `make_loader`.
-- **Command-Line Suite:** Unix-style CLI tools (`info`, `header`, `cutout`, `convert`, `checksum`).
+- **Command-Line Suite:** Unix-style CLI tools (`info`, `header`, `cutout`, `convert`, `verify`).
 - **Feature Parity:** Comprehensive format support verified against standard FITS test suites.
 
 ### 1.1 — Streaming, Correctness & Remote Hardening (beta soak)
