@@ -204,3 +204,35 @@ def test_stream_scaled_table_with_mmap_succeeds(tmp_path):
     table = pa.Table.from_batches(batches)
     expected = raw.astype(np.float64) * 0.5 + 10.0
     np.testing.assert_allclose(table["RAW"].to_numpy(), expected, rtol=1e-6)
+
+
+def test_quantize_nan_becomes_blank_not_lo(tmp_path):
+    """B4: non-finite pixels encode as the reserved BLANK sentinel."""
+    x = torch.randn(16, 16) * 10 + 100
+    x[0, 0] = float("nan")
+    path = tmp_path / "nanq.fits"
+    torchfits.write(str(path), x, quantize="robust", overwrite=True)
+    header = torchfits.read_header(str(path))
+    assert int(header["BLANK"]) == -32767
+
+    with afits.open(str(path)) as hdul:
+        data = hdul[0].data
+        arr = (
+            np.ma.filled(np.ma.masked_invalid(data), np.nan)
+            if np.ma.isMaskedArray(data)
+            else data
+        )
+        arr = np.asarray(arr, dtype=float)
+    assert np.isnan(arr[0, 0])
+    finite = ~np.isnan(arr)
+    np.testing.assert_allclose(
+        torch.from_numpy(arr[finite]), x.numpy()[finite], rtol=2e-2, atol=2e-1
+    )
+
+
+def test_quantize_table_nan_writes_tnull(tmp_path):
+    v = {"V": torch.cat([torch.randn(32) * 5 + 50, torch.tensor([float("nan")])])}
+    path = tmp_path / "tblq.fits"
+    torchfits.write(str(path), v, quantize="robust", overwrite=True)
+    th = torchfits.read_header(str(path), 1)
+    assert int(th["TNULL1"]) == -32767

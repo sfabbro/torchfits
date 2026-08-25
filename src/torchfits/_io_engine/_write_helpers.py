@@ -132,6 +132,9 @@ def _apply_image_quantize(
         tensor, lo_q=opts.lo_q, hi_q=opts.hi_q, keep_zero=opts.keep_zero
     )
     extra = {"BSCALE": packed.scale, "BZERO": packed.zero}
+    if packed.blank_code is not None:
+        # Reserved sentinel code for the non-finite pixels (B4).
+        extra["BLANK"] = int(packed.blank_code)
     return packed.codes, _merge_fits_write_header(header, extra)
 
 
@@ -194,6 +197,9 @@ def _prepare_quantized_table_data_for_write(
         meta["format"] = _unsigned_table_tform(packed.codes, "I")
         meta["bscale"] = float(packed.scale)
         meta["bzero"] = float(packed.zero)
+        if packed.blank_code is not None:
+            # C++ writer emits TNULLn from this key (B4).
+            meta["null"] = int(packed.blank_code)
         changed = True
 
     if not changed:
@@ -619,6 +625,8 @@ def _table_schema_scale_header_cards(
         if "bzero" in meta:
             bzero = meta["bzero"]
             out[f"TZERO{idx}"] = int(bzero) if float(bzero).is_integer() else bzero
+        if "null" in meta:
+            out[f"TNULL{idx}"] = int(meta["null"])
     return out
 
 

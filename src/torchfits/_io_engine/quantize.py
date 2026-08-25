@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Final, Mapping
 
 import torch
 from torch import Tensor
@@ -23,10 +23,19 @@ _SHRT_MIN_EFF = -32766
 _SHRT_MAX_EFF = 32765
 _SPAN = _SHRT_MAX_EFF - _SHRT_MIN_EFF  # 65531
 
+# Reserved sentinel code for non-finite samples (outside the used range):
+# written as FITS BLANK/TNULL so NaN can never masquerade as real data (B4).
+BLANK_CODE: Final = -32767
+
 
 @dataclass(frozen=True)
 class QuantizeInt16Result:
-    """Packed int16 codes plus FITS linear scale keywords."""
+    """Packed int16 codes plus FITS linear scale keywords.
+
+    ``blank_code`` is ``BLANK_CODE`` when any non-finite sample was encoded
+    as the reserved sentinel (writers must emit BLANK/TNULL accordingly);
+    ``None`` when every sample was finite.
+    """
 
     codes: Tensor
     scale: float
@@ -34,6 +43,7 @@ class QuantizeInt16Result:
     lo: float
     hi: float
     n_clipped: int
+    blank_code: int | None = None
 
 
 @dataclass(frozen=True)
@@ -264,6 +274,12 @@ def quantize_int16_robust(
             zero = lo
             codes = torch.zeros(flat.shape, dtype=torch.int16).reshape(shape)
             n_clipped = int((~finite_mask).sum().item())
+            blank_code = None
+            if n_clipped:
+                codes = codes.reshape(-1)
+                codes[~finite_mask] = BLANK_CODE
+                codes = codes.reshape(shape)
+                blank_code = BLANK_CODE
             if device.type != "cpu":
                 codes = codes.to(device)
             return QuantizeInt16Result(
@@ -273,6 +289,7 @@ def quantize_int16_robust(
                 lo=lo,
                 hi=hi,
                 n_clipped=n_clipped,
+                blank_code=blank_code,
             )
         scale = (hi - lo) / float(_SPAN)
         if not math.isfinite(scale) or scale <= 0.0:
@@ -281,9 +298,16 @@ def quantize_int16_robust(
         clipped = flat.to(dtype=torch.float64).clamp(lo, hi)
         if not bool(finite_mask.all()):
             clipped = clipped.clone()
+            # Non-finite positions get placeholder values for packing; they
+            # are overwritten with the BLANK sentinel below (B4).
             clipped[~finite_mask] = lo
 
-    codes = _pack_codes(clipped, scale, zero).reshape(shape)
+    codes_flat = _pack_codes(clipped, scale, zero).reshape(-1)
+    blank_code = None
+    if not keep_zero and not bool(finite_mask.all()):
+        codes_flat[~finite_mask] = BLANK_CODE
+        blank_code = BLANK_CODE
+    codes = codes_flat.reshape(shape)
     in_range = finite_mask & (flat >= lo) & (flat <= hi)
     n_clipped = int((~in_range).sum().item())
 
@@ -296,6 +320,7 @@ def quantize_int16_robust(
         lo=float(lo),
         hi=float(hi),
         n_clipped=n_clipped,
+        blank_code=blank_code,
     )
 
 
@@ -334,7 +359,15 @@ def quantize_int16_minmax(values: Tensor | Any) -> QuantizeInt16Result:
 
 
 def dequantize_int16(
-    codes: Tensor, scale: float, zero: float, *, dtype: torch.dtype = torch.float32
+    codes: Tensor,
+    scale: float,
+    zero: float,
+    *,
+    dtype: torch.dtype = torch.float32,
+    blank: int | None = None,
 ) -> Tensor:
-    """Apply physical = scale * code + zero."""
-    return codes.to(dtype=dtype) * float(scale) + float(zero)
+    """Apply physical = scale * code + zero; ``blank`` codes decode to NaN."""
+    out = codes.to(dtype=dtype) * float(scale) + float(zero)
+    if blank is not None:
+        out = torch.where(codes == blank, torch.nan, out)
+    return out
