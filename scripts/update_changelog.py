@@ -93,6 +93,18 @@ def _normalize(bullet: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", bullet.lower()).strip()
 
 
+# Audit-style tracking IDs embedded in commit subjects / curated bullets
+# (e.g. "(B1)", "(H4, H5)", "M16"). A generated bullet whose IDs are all
+# already cited somewhere in Unreleased is considered merged even when its
+# wording differs from the curated prose — otherwise every curation pass
+# re-imports a terse duplicate.
+_ISSUE_ID_RE = re.compile(r"(?<![A-Za-z])(?:B|H|M)\d{1,2}(?!\d)")
+
+
+def _issue_ids(text: str) -> set[str]:
+    return set(_ISSUE_ID_RE.findall(text))
+
+
 def _unreleased_span(lines: list[str]) -> tuple[int, int]:
     """Return [start, end) line indexes of the Unreleased section."""
     start = None
@@ -119,6 +131,11 @@ def merge_generated(text: str, bullets: list[tuple[str, str]]) -> str:
     start, end = _unreleased_span(lines)
     block = lines[start:end]
 
+    covered_ids: set[str] = set()
+    for line in block:
+        if line.startswith("- ") or line.startswith("  "):
+            covered_ids |= _issue_ids(line)
+
     pending: dict[str, list[str]] = {}
     for section, bullet in bullets:
         pending.setdefault(section, []).append(bullet)
@@ -136,7 +153,14 @@ def merge_generated(text: str, bullets: list[tuple[str, str]]) -> str:
 
     for section in pending:
         seen = _seen(section)
-        pending[section] = [b for b in pending[section] if _normalize(b) not in seen]
+
+        def _merged(bullet: str) -> bool:
+            if _normalize(bullet) in seen:
+                return True
+            ids = _issue_ids(bullet)
+            return bool(ids) and ids <= covered_ids
+
+        pending[section] = [b for b in pending[section] if not _merged(b)]
 
     # Work on content without trailing blank lines so appends land tight.
     trail = len(block)

@@ -152,3 +152,43 @@ def test_repo_changelog_tracks_unreleased_without_version() -> None:
     assert not re.search(r"^## \[[^\]]+\][^\n]*Unreleased", text, flags=re.M), (
         "no heading may pair a version number with 'Unreleased'"
     )
+
+
+def test_issue_ids_extraction() -> None:
+    assert changelog._issue_ids(
+        "fix(cli): Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6)"
+    ) == {"B2", "B3", "H6"}
+    assert changelog._issue_ids("docs: rewrite install page") == set()
+    # FITS/HCOMPRESS-style words must not match.
+    assert changelog._issue_ids("HCOMPRESS tiles for FITS files") == set()
+
+
+def test_merge_generated_suppresses_id_covered_subjects() -> None:
+    """A generated bullet whose tracking IDs are already cited anywhere in
+    Unreleased counts as merged, even when the curated wording differs."""
+    text = (
+        "# Changelog\n"
+        "\n"
+        "## Unreleased\n"
+        "\n"
+        "### Fixed\n"
+        "\n"
+        "- **CompImage null pixels decode as NaN (B1)** with astropy parity.\n"
+        "- **arith no longer wraps integer images**; saturating cast (B2).\n"
+        "\n"
+        "## [1.0.0] — 2026-08-09\n"
+    )
+    bullets = [
+        ("Fixed", "- cpp: Decode CompImage null pixels as NaN (B1); Random Groups rejection"),
+        ("Fixed", "- cli: Integer-safe arith (B2)"),
+        ("Fixed", "- tables: brand new fix with no cited ID yet"),
+    ]
+    merged = changelog.merge_generated(text, [list(b) for b in bullets])
+    unreleased = merged.split("## Unreleased\n", 1)[1].split("\n## [1.0.0]", 1)[0]
+    assert "cpp: Decode CompImage" not in unreleased  # B1 covered
+    assert "cli: Integer-safe arith" not in unreleased  # B2 covered
+    assert "- tables: brand new fix with no cited ID yet" in unreleased
+
+
+def test_issue_id_regex_ignores_plain_words() -> None:
+    assert changelog._issue_ids("M16 bench harness") == {"M16"}

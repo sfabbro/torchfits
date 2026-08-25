@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Feature + correctness release on the same 2.13 torch ABI lane. New
 capabilities: checksum-stamped writes, GIL-free hot reads, clean
 truncated-file errors, high-fidelity Astropy interop, memory-bounded
-streaming filters, multiprocess-safe remote downloads, and auto-adaptive
-FITS RGB — plus a round of silent-corruption and security fixes.
+streaming filters, multiprocess-safe remote downloads, auto-adaptive
+FITS RGB, and native whole-file `.bz2` FITS reads — plus a
+major-release-readiness audit that cleared a round of silent-corruption,
+thread-safety, and supply-chain fixes.
 
 ### Features
 
@@ -151,16 +153,6 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   offset was serialized as 32767.999… now reads as uint16/uint32 on every
   path).
 
-- bench: Synchronized GPU timing, seeded interleaving, medians, cache fairness (M16)
-- build: Sha256-pinned vendored CFITSIO everywhere (H4); conda ships patched CFITSIO (H5)
-- transforms: Interpolated median (M7), functional transforms (M6), visible sigma-clip rejection (M5)
-- tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
-- cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
-- cpp: Decode CompImage null pixels as NaN (B1); define Random Groups rejection
-- quantize: Non-finite pixels encode as reserved BLANK/TNULL sentinel (B4)
-- packaging: SPDX license expression for license-files; boundary test tracks _cpp move (W14 gate)
-### Fixed (major-release audit)
-
 - **Compressed-image null pixels decode as NaN** (was silent 0): the null
   probe targeted a CFITSIO symbol that exists in no upstream release.
   ZBLANK is probed directly and float CompImage reads always pass NaN
@@ -183,11 +175,19 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   aliasing, M6); medians interpolate like numpy/astropy (M7);
   SigmaClip/AsymmetricSigmaClip gain `fill="nan"` (M5).
 - **Random Groups images fail loudly** instead of decoding garbage (M13).
+- **`torchfits diff` treats NaN == NaN**: byte-identical files containing
+  NaN pixels compare clean instead of reporting spurious differences (H6).
+- `torchfits --transform -J` fan-out builds one transform instance per
+  worker file, so stateful transforms never share `_last_state` across
+  threads (M10).
 - **Thread-safety**: TensorHDU reads use private per-call handles; shared
   TableReader instances serialize I/O (H1). Stale-cache windows after
   header mutations closed by invalidating SharedReadMeta/readers in the
   header-card/key/checksum writers (M3).
 
+- packaging: SPDX license expression for license-files; boundary test tracks _cpp move (W14 gate)
+- tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
+- cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
 ### Security
 
 - `read_hdus` enforces the same SSRF/path guards as every other entry
@@ -221,7 +221,10 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   overhead. A double-buffered chunk prefetch now overlaps the buffered
   path's I/O with decode for payloads >= 64 MB (gated from an earlier
   4 MB threshold after CANFAR A/B showed thread handoff regressing
-  warm-cache 13 MB tables).
+  warm-cache 13 MB tables). Benchmark
+   harness fairness fixes: device synchronization on GPU timings, seeded
+   interleaving order, medians over means, and cache-symmetric peer
+   comparisons (M16).
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only
@@ -233,12 +236,12 @@ FITS RGB — plus a round of silent-corruption and security fixes.
   columns (truncation/non-finite counts), out-of-range integers, non-ASCII
   characters dropped from string columns, and over-width string clipping.
 
-- hdu: Implement TensorHDU.chunks (B5); per-call handles + reader locks (H1); HDU metadata honesty
+- io: Native whole-file .bz2 FITS reads on bzip2-capable builds
 ### Dependencies
 
-- Vendored CFITSIO updated to **4.7.0** for wheel and source builds
-  (`extern/VERSIONS.txt`); conda packages continue on the conda-forge
-  4.6.x lane (see [architecture](architecture.md)).
+- Vendored CFITSIO updated to **4.7.0** for wheel, source, conda and pixi
+  builds alike (`extern/VERSIONS.txt`, sha256-pinned): every channel ships
+  the PLIO buffer fix and BZIP2_1 support (see [architecture](architecture.md)).
 
 ### Docs
 
