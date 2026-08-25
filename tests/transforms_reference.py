@@ -14,12 +14,60 @@ import math
 
 import torch
 
-from torchfits.transforms.helpers import (
-    _flatten_dims,
-    _median,
-    _normalize_dims,
-    _unflatten_result,
-)
+# Deliberately self-contained: a parity reference that imports production
+# helpers cannot detect bugs in those helpers, so everything it needs is
+# reimplemented below with straightforward torch/numpy primitives.
+import numpy as np
+
+
+def _normalize_dims(ndim: int, dim: tuple[int, ...]) -> tuple[int, ...]:
+    return tuple(sorted({d if d >= 0 else ndim + d for d in dim}))
+
+
+def _flatten_dims(x, dims):
+    keep = [d for d in range(x.ndim) if d not in dims]
+    moved = x.permute(*keep, *dims)
+    return moved.reshape(*moved.shape[: len(keep)], -1)
+
+
+def _unflatten_result(reduced, shape, dims):
+    shape_out = list(shape)
+    for d in dims:
+        shape_out[d] = 1
+    return reduced.reshape(shape_out)
+
+
+def _naive_median_lastdim(values: np.ndarray) -> np.ndarray:
+    """Interpolated median along the last axis, NaN-excluding."""
+    return np.nanmedian(values, axis=-1, keepdims=True)
+
+
+def _median(x, dim, mask=None):
+    """Independent median: upcast, mask, then numpy nanmedian per group."""
+    arr = x.double().numpy()
+    m = ~np.isnan(arr)
+    if mask is not None:
+        m &= mask.numpy()
+    arr = np.where(m, arr, np.nan)
+
+    def np_med(t, d, keepdim):
+        moved = np.moveaxis(t, d, -1)
+        med = _naive_median_lastdim(moved)
+        back = np.moveaxis(med, -1, d)
+        shape = list(t.shape)
+        shape[d] = 1
+        return torch.from_numpy(back.reshape(shape))
+
+    if len(dim) == 1:
+        out_t = np_med(arr, dim[0], True)
+    else:
+        flat = arr.reshape(*[arr.shape[d] for d in range(arr.ndim) if d not in dim], -1)
+        med = _naive_median_lastdim(flat)
+        shape_out = list(x.shape)
+        for d in dim:
+            shape_out[d] = 1
+        out_t = torch.from_numpy(np.ascontiguousarray(med.reshape(shape_out)))
+    return out_t.to(x.dtype)
 
 
 def sigma_clip_naive(

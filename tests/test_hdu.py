@@ -26,10 +26,9 @@ def create_test_file(filename):
 
 
 @pytest.fixture(scope="module")
-def fits_file():
-    # Get the absolute path to the example file
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(current_dir, "table_example.fits")
+def fits_file(tmp_path_factory):
+    # Write into a session tmp dir: never into the repo tree.
+    file_path = str(tmp_path_factory.mktemp("hdu") / "table_example.fits")
     create_test_file(file_path)
     return file_path
 

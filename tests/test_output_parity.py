@@ -245,7 +245,8 @@ _WRITE_IMAGE_DTYPES = [
 
 @pytest.mark.parametrize("dtype_name,np_dtype", _WRITE_IMAGE_DTYPES)
 def test_write_image_roundtrip_fitsio(parity_dir, dtype_name: str, np_dtype) -> None:
-    rng = np.random.default_rng(hash(dtype_name) % 2**32)
+    import zlib as _zlib
+    rng = np.random.default_rng(_zlib.crc32(dtype_name.encode()))
     if np.issubdtype(np_dtype, np.floating):
         arr = rng.normal(size=(32, 40)).astype(np_dtype)
     else:
@@ -277,7 +278,8 @@ def test_write_quantize_robust_roundtrip_fitsio(parity_dir) -> None:
 
 @pytest.mark.parametrize("compression", ["RICE_1", "GZIP_1", "HCOMPRESS_1"])
 def test_write_compressed_roundtrip_fitsio(parity_dir, compression: str) -> None:
-    rng = np.random.default_rng(hash(compression) % 2**32)
+    import zlib as _zlib
+    rng = np.random.default_rng(_zlib.crc32(compression.encode()))
     arr = rng.normal(size=(64, 64)).astype(np.float32)
     path = parity_dir / f"tw_compressed_{compression.lower()}.fits"
     torchfits.write(str(path), arr, overwrite=True, compress=compression)

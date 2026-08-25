@@ -8,6 +8,33 @@ and alternating HDUs must return byte-identical data with no crash / corruption.
 import tempfile
 import threading
 
+import os
+import tempfile
+import threading
+
+_LEAKED: list[str] = []
+
+
+def _tracked_tmpfile() -> "object":
+    fd, name = tempfile.mkstemp(suffix=".fits")
+    os.close(fd)
+    _LEAKED.append(name)
+
+    class _F:
+        pass
+
+    f = _F()
+    f.name = name
+    return f
+
+
+def teardown_module() -> None:
+    for _name in _LEAKED:
+        try:
+            os.unlink(_name)
+        except OSError:
+            pass
+
 import numpy as np
 import torch
 
@@ -21,8 +48,7 @@ def _write_mef():
     rng = np.random.default_rng(1234)
     d0 = rng.normal(0, 1, (48, 64)).astype(np.float32)
     d1 = rng.normal(0, 1, (32, 96)).astype(np.float32)
-    f = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
-    f.close()
+    f = _tracked_tmpfile()
     hdus = [fits.PrimaryHDU(d0), fits.ImageHDU(d1, name="SCI")]
     fits.HDUList(hdus).writeto(f.name, overwrite=True)
     return f.name, d0, d1
@@ -72,8 +98,7 @@ def test_concurrent_same_file_read():
 def test_concurrent_same_file_table_read():
     """Concurrent table reads of one file across threads must not crash/corrupt."""
     n = 500
-    f = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
-    f.close()
+    f = _tracked_tmpfile()
     torchfits.write(
         f.name,
         {
@@ -117,8 +142,7 @@ def test_concurrent_read_then_mutate_fresh_data():
     (CFITSIO status 104 otherwise), and acquire re-verifies the file identity
     so a replace racing a release is caught as well.
     """
-    f = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
-    f.close()
+    f = _tracked_tmpfile()
     torchfits.table.write(
         f.name,
         data={"A": np.array([1, 2], dtype=np.int32)},
