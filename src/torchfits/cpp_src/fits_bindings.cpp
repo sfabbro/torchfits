@@ -109,8 +109,6 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         std::array<LONGLONG, 9> naxes_ll{};
         bool has_compressed = false;
         bool compressed = false;
-        bool has_nulls = false;
-        bool compressed_nulls = false;
         bool has_scale = false;
         bool scaled = false;
         bool trusted = true;
@@ -190,26 +188,6 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
         return local->compressed;
     };
 
-    auto get_compressed_nulls = [&]() -> bool {
-        if (local->has_nulls) return local->compressed_nulls;
-        {
-            std::shared_lock<std::shared_mutex> lock(meta->mutex);
-            auto it = meta->compressed_nulls_cache.find(hdu_num);
-            if (it != meta->compressed_nulls_cache.end()) {
-                local->compressed_nulls = it->second;
-                local->has_nulls = true;
-                return local->compressed_nulls;
-            }
-        }
-        local->compressed_nulls = d::has_compressed_nulls(fptr);
-        {
-            std::unique_lock<std::shared_mutex> lock(meta->mutex);
-            meta->compressed_nulls_cache[hdu_num] = local->compressed_nulls;
-        }
-        local->has_nulls = true;
-        return local->compressed_nulls;
-    };
-
     auto get_scale = [&]() -> void {
         if (local->has_scale) return;
         get_image_info();
@@ -282,7 +260,6 @@ torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mm
     resolved.bscale = bscale;
     resolved.bzero = bzero;
     resolved.compressed = compressed;
-    resolved.compressed_nulls = get_compressed_nulls();
 
     // Hold the refcounted fd for the duration of the canonical read so an
     // invalidation cannot close it underneath pread/mmap.
@@ -580,14 +557,10 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         float fnullval = NAN;
         double dnullval = NAN;
         void* nullval_ptr = nullptr;
+        // Compressed images may hold undefined pixels; always substitute NaN
+        // for float reads so nulls never decode as 0.
         if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-            if (d::has_compressed_nulls(fptr)) {
-                if (datatype == TFLOAT) {
-                    nullval_ptr = &fnullval;
-                } else {
-                    nullval_ptr = &dnullval;
-                }
-            }
+            nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
         }
 
         static LONGLONG firstpixels[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
@@ -787,25 +760,6 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
         resolved.bscale = bscale;
         resolved.bzero = bzero;
         resolved.compressed = compressed;
-        resolved.compressed_nulls = false;
-        if (resolved.compressed) {
-            bool nulls_cached = false;
-            if (shared_meta) {
-                std::shared_lock<std::shared_mutex> lock(shared_meta->mutex);
-                auto it = shared_meta->compressed_nulls_cache.find(hdu_num);
-                if (it != shared_meta->compressed_nulls_cache.end()) {
-                    resolved.compressed_nulls = it->second;
-                    nulls_cached = true;
-                }
-            }
-            if (!nulls_cached) {
-                resolved.compressed_nulls = d::has_compressed_nulls(fptr);
-                if (shared_meta) {
-                    std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
-                    shared_meta->compressed_nulls_cache[hdu_num] = resolved.compressed_nulls;
-                }
-            }
-        }
 
         // Hold the refcounted fd for the duration of the canonical read so an
         // invalidation cannot close it underneath pread/mmap.
@@ -831,66 +785,10 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
 
 namespace {
 
-bool ndarray_is_c_contiguous(const nb::ndarray<>& t) {
-    // Signed math: a negative stride must compare unequal to a positive
-    // expected stride, never wrap to a huge size_t that looks contiguous.
-    std::ptrdiff_t expect = 1;
-    for (size_t d = t.ndim(); d-- > 0;) {
-        const std::ptrdiff_t n = static_cast<std::ptrdiff_t>(t.shape(d));
-        if (n <= 1) {
-            continue;
-        }
-        if (static_cast<std::ptrdiff_t>(t.stride(d)) != expect) {
-            return false;
-        }
-        expect *= n;
-    }
-    return true;
-}
-
-void* ensure_c_contiguous_ndarray(
-    nb::ndarray<>& t, long nelements, std::vector<uint8_t>& buf
-) {
-    const size_t item = (static_cast<size_t>(t.dtype().bits) + 7) / 8;
-    if (ndarray_is_c_contiguous(t)) {
-        return t.data();
-    }
-    buf.resize(static_cast<size_t>(nelements) * item);
-    auto* dst = buf.data();
-    const auto* base = static_cast<const uint8_t*>(t.data());
-    // Strides are signed byte offsets: negative strides address earlier bytes,
-    // so use ptrdiff_t (never size_t) to avoid reading out of bounds.
-    if (t.ndim() == 1) {
-        const std::ptrdiff_t s0 =
-            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
-        for (long i = 0; i < nelements; ++i) {
-            std::memcpy(dst + static_cast<size_t>(i) * item,
-                        base + static_cast<std::ptrdiff_t>(i) * s0, item);
-        }
-        return dst;
-    }
-    if (t.ndim() == 2) {
-        const size_t n0 = static_cast<size_t>(t.shape(0));
-        const size_t n1 = static_cast<size_t>(t.shape(1));
-        const std::ptrdiff_t s0 =
-            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
-        const std::ptrdiff_t s1 =
-            static_cast<std::ptrdiff_t>(t.stride(1)) * static_cast<std::ptrdiff_t>(item);
-        size_t out = 0;
-        for (size_t i0 = 0; i0 < n0; ++i0) {
-            for (size_t i1 = 0; i1 < n1; ++i1) {
-                std::memcpy(dst + out * item,
-                            base + static_cast<std::ptrdiff_t>(i0) * s0
-                                 + static_cast<std::ptrdiff_t>(i1) * s1, item);
-                ++out;
-            }
-        }
-        return dst;
-    }
-    throw std::runtime_error(
-        "non-contiguous table column with ndim>2; call contiguous() before write"
-    );
-}
+// Shared ndarray helpers live in internal_utils.h (single definition for the
+// image and table write paths).
+using torchfits::internal::ndarray_is_c_contiguous;
+using torchfits::internal::ensure_c_contiguous_ndarray;
 
 }  // namespace
 
@@ -1350,17 +1248,8 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             }
         } else if (col.is_string) {
             long width_chars = col.width > 0 ? col.width : 1;
-            std::vector<std::string> padded;
-            padded.reserve(col.string_values.size());
-            for (const auto& v : col.string_values) {
-                std::string s = v;
-                if (static_cast<long>(s.size()) > width_chars) {
-                    s = s.substr(0, static_cast<size_t>(width_chars));
-                } else if (static_cast<long>(s.size()) < width_chars) {
-                    s.append(static_cast<size_t>(width_chars - s.size()), ' ');
-                }
-                padded.push_back(std::move(s));
-            }
+            std::vector<std::string> padded =
+                torchfits::internal::pad_fits_strings(col.string_values, width_chars);
             std::vector<const char*> ptrs;
             ptrs.reserve(padded.size());
             for (const auto& s : padded) {
@@ -1785,12 +1674,11 @@ void bind_fits(nb::module_& m) {
         void* nullval_ptr = nullptr;
 
         {
-            // Phase 3 (no GIL): compressed-null probe + CFITSIO read.
+            // Phase 3 (no GIL): CFITSIO read. Compressed images may hold
+            // undefined pixels; always substitute NaN for float reads.
             nb::gil_scoped_release release;
             if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-                if (d::has_compressed_nulls(fptr)) {
-                    nullval_ptr = (datatype == TFLOAT) ? (void*) &fnullval : (void*) &dnullval;
-                }
+                nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
             }
 
             status = 0;
@@ -1949,6 +1837,10 @@ void bind_fits(nb::module_& m) {
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);
+        // Header mutations must not leave stale SharedReadMeta / cached
+        // readers behind (same contract as the table-mutation wrappers).
+        invalidate_shared_meta(path);
+        evict_cached_reader(path);
         status = open_fits_for_write(&fptr, path);
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for checksum writing");
@@ -2000,6 +1892,11 @@ void bind_fits(nb::module_& m) {
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);
+        // Header mutations must not leave stale SharedReadMeta / cached
+        // readers behind (e.g. an EXTNAME rename must invalidate the
+        // hdu_name_cache immediately).
+        invalidate_shared_meta(path);
+        evict_cached_reader(path);
         status = open_fits_for_write(&fptr, path);
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for header-card writing");
@@ -2115,6 +2012,8 @@ void bind_fits(nb::module_& m) {
         fitsfile* fptr = nullptr;
         int status = 0;
         check_fits_filename_security(path);
+        invalidate_shared_meta(path);
+        evict_cached_reader(path);
         status = open_fits_for_write(&fptr, path);
         if (status != 0 || !fptr) {
             throw std::runtime_error("Could not open FITS file for header-key deletion");
@@ -2359,14 +2258,30 @@ void bind_fits(nb::module_& m) {
                     continue;
                 }
                 try {
+                    // Full-consumption check: a partially numeric string
+                    // ("1999-01-01") must stay a string, not truncate to its
+                    // leading number.
+                    size_t pos = 0;
                     if (val.find_first_of(".eE") != std::string::npos) {
-                        out[item.key.c_str()] = std::stod(val);
+                        const double dv = std::stod(val, &pos);
+                        while (pos < val.size() &&
+                               std::isspace(static_cast<unsigned char>(val[pos]))) ++pos;
+                        if (pos == val.size()) {
+                            out[item.key.c_str()] = dv;
+                            continue;
+                        }
                     } else {
-                        out[item.key.c_str()] = std::stoll(val);
+                        const long long iv = std::stoll(val, &pos);
+                        while (pos < val.size() &&
+                               std::isspace(static_cast<unsigned char>(val[pos]))) ++pos;
+                        if (pos == val.size()) {
+                            out[item.key.c_str()] = iv;
+                            continue;
+                        }
                     }
                 } catch (const std::exception&) {
-                    out[item.key.c_str()] = val;
                 }
+                out[item.key.c_str()] = val;
             }
             return out;
         },

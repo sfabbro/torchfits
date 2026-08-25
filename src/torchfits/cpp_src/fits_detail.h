@@ -103,6 +103,20 @@ inline void read_image_params_9d(
     std::array<LONGLONG, 9>& naxes,
     int* status
 ) {
+    // Random Groups data (GROUPS=T with PCOUNT/GCOUNT) is not supported:
+    // decoding it as an ordinary image would silently return wrong-shaped
+    // values. Fail loudly instead of guessing. Compressed-image HDUs are
+    // unaffected — cfitsio virtualizes them as plain images and they never
+    // carry a GROUPS keyword.
+    {
+        int groups_status = 0;
+        int groups_val = 0;
+        fits_read_key(fptr, TLOGICAL, "GROUPS", &groups_val, nullptr, &groups_status);
+        if (groups_status == 0 && groups_val != 0) {
+            throw std::runtime_error(
+                "Random Groups FITS images (GROUPS=T) are not supported");
+        }
+    }
     int declared_naxis = 0;
     fits_read_key(fptr, TINT, "NAXIS", &declared_naxis, nullptr, status);
     if (*status != 0) return;
@@ -208,7 +222,6 @@ struct ResolvedFITSMeta {
     double bscale = 1.0;
     double bzero = 0.0;
     bool compressed = false;
-    bool compressed_nulls = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -236,7 +249,6 @@ struct SharedReadMeta {
     std::atomic<uint64_t> uid{0};
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache;
     std::unordered_map<int, bool> compressed_cache;
-    std::unordered_map<int, bool> compressed_nulls_cache;
     std::unordered_map<int, std::tuple<bool, bool, double, double>> scale_cache;
     std::unordered_map<std::string, int> hdu_name_cache;
     bool has_stat = false;
@@ -299,7 +311,6 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
             meta->raw_fd.reset();
             meta->image_info_cache.clear();
             meta->compressed_cache.clear();
-            meta->compressed_nulls_cache.clear();
             meta->scale_cache.clear();
             meta->current_fits_hdu = -1;
             // Rotate identity so per-thread caches keyed by {uid, hdu} cannot
@@ -391,17 +402,22 @@ inline void clear_shared_meta_cache() {
     g_shared_meta.clear();
 }
 
-using fits_is_compressed_with_nulls_fn = int (*)(fitsfile*);
-
+// CFITSIO has no public symbol for this: an earlier implementation dlsym'd
+// `fits_is_compressed_with_nulls`, which exists in no upstream release, so
+// CompImage HDUs containing undefined pixels silently decoded them as 0
+// instead of NaN. CFITSIO's own convention (imcompress.c) is that a ZBLANK
+// keyword — or a ZBLANK column when the null value varies per tile — signals
+// possible nulls. Probe that directly.
 inline bool has_compressed_nulls(fitsfile* fptr) {
-#if defined(__APPLE__) || defined(__linux__)
-    static fits_is_compressed_with_nulls_fn fn = []() -> fits_is_compressed_with_nulls_fn {
-        void* sym = dlsym(RTLD_DEFAULT, "fits_is_compressed_with_nulls");
-        return sym ? reinterpret_cast<fits_is_compressed_with_nulls_fn>(sym) : nullptr;
-    }();
-    if (fn) return fn(fptr) != 0;
-#endif
-    return false;
+    if (!fptr) return false;
+    int status = 0;
+    LONGLONG zblank = 0;
+    fits_read_key(fptr, TLONGLONG, "ZBLANK", &zblank, nullptr, &status);
+    if (status == 0) return true;
+    status = 0;
+    int colnum = 0;
+    fits_get_colnum(fptr, CASEINSEN, const_cast<char*>("ZBLANK"), &colnum, &status);
+    return status == 0 && colnum > 0;
 }
 
 inline size_t datatype_elem_size(int datatype) {
@@ -588,13 +604,14 @@ inline torch::Tensor read_tensor_canonical(
         }
     }
 
-    // CFITSIO fallback
+    // CFITSIO fallback. Compressed images may hold undefined pixels; always
+    // substitute NaN so nulls can never masquerade as 0 (CFITSIO only applies
+    // nulval where a pixel is actually undefined, so this is free otherwise).
     float fnullval = NAN;
     double dnullval = NAN;
     void* nullval_ptr = nullptr;
     if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-        if (meta.compressed_nulls)
-            nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
+        nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
     }
 
     int status = 0;

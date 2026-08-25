@@ -169,26 +169,6 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
     return result;
 }
 
-bool FITSFile::has_compressed_nulls_cached(int hdu_num) {
-    auto it = compressed_nulls_cache_.find(hdu_num);
-    if (it != compressed_nulls_cache_.end()) return it->second;
-    if (shared_meta_) {
-        std::shared_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        auto sit = shared_meta_->compressed_nulls_cache.find(hdu_num);
-        if (sit != shared_meta_->compressed_nulls_cache.end()) {
-            compressed_nulls_cache_[hdu_num] = sit->second;
-            return sit->second;
-        }
-    }
-    bool result = detail::has_compressed_nulls(fptr_);
-    compressed_nulls_cache_[hdu_num] = result;
-    if (shared_meta_) {
-        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        shared_meta_->compressed_nulls_cache[hdu_num] = result;
-    }
-    return result;
-}
-
 const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(int hdu_num) {
     auto it = image_info_cache_.find(hdu_num);
     if (it != image_info_cache_.end()) return it->second;
@@ -252,7 +232,6 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
         meta.bscale = 1.0;
         meta.bzero = 0.0;
         meta.compressed = false;
-        meta.compressed_nulls = false;
         return detail::read_tensor_canonical(
             fptr_, filename_, meta, /*use_mmap=*/false, /*raw_fd=*/-1, /*use_chunking=*/false);
     }
@@ -268,7 +247,6 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
     meta.bscale = scale_info.bscale;
     meta.bzero = scale_info.bzero;
     meta.compressed = is_compressed_image_cached(hdu_num);
-    meta.compressed_nulls = meta.compressed ? has_compressed_nulls_cached(hdu_num) : false;
 
     // Hold the refcounted fd for the duration of the canonical read so an
     // invalidation cannot close it underneath pread/mmap.
@@ -398,8 +376,9 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
     float fnullval = NAN;
     double dnullval = NAN;
     void* nullval_ptr = nullptr;
-    if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed &&
-        has_compressed_nulls_cached(hdu_num))
+    // Compressed images may hold undefined pixels; always substitute NaN for
+    // float reads so nulls never decode as 0 (see read_tensor_canonical).
+    if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed)
         nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
     fits_read_img(fptr_, datatype, 1, nelements, nullval_ptr, tensor.data_ptr(), &anynul, &status);
     if (status != 0) {

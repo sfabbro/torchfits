@@ -21,72 +21,11 @@ namespace nb = nanobind;
 
 namespace {
 
-bool ndarray_is_c_contiguous(const nb::ndarray<>& t) {
-    // Signed math: a negative stride must compare unequal to a positive
-    // expected stride, never wrap to a huge size_t that looks contiguous.
-    std::ptrdiff_t expect = 1;
-    for (size_t d = t.ndim(); d-- > 0;) {
-        const std::ptrdiff_t n = static_cast<std::ptrdiff_t>(t.shape(d));
-        if (n <= 1) {
-            continue;
-        }
-        if (static_cast<std::ptrdiff_t>(t.stride(d)) != expect) {
-            return false;
-        }
-        expect *= n;
-    }
-    return true;
-}
-
-void* ensure_c_contiguous_ndarray(
-    nb::ndarray<>& t, long nelements, std::vector<uint8_t>& buf
-) {
-    const size_t item = (static_cast<size_t>(t.dtype().bits) + 7) / 8;
-    if (ndarray_is_c_contiguous(t)) {
-        return t.data();
-    }
-    buf.resize(static_cast<size_t>(nelements) * item);
-    auto* dst = buf.data();
-    const auto* base = static_cast<const uint8_t*>(t.data());
-    // Strides are signed byte offsets: negative strides address earlier bytes,
-    // so use ptrdiff_t (never size_t) to avoid reading out of bounds.
-    if (t.ndim() == 1) {
-        const std::ptrdiff_t s0 =
-            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
-        for (long i = 0; i < nelements; ++i) {
-            std::memcpy(
-                dst + static_cast<size_t>(i) * item,
-                base + static_cast<std::ptrdiff_t>(i) * s0,
-                item
-            );
-        }
-        return dst;
-    }
-    if (t.ndim() == 2) {
-        const size_t n0 = static_cast<size_t>(t.shape(0));
-        const size_t n1 = static_cast<size_t>(t.shape(1));
-        const std::ptrdiff_t s0 =
-            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
-        const std::ptrdiff_t s1 =
-            static_cast<std::ptrdiff_t>(t.stride(1)) * static_cast<std::ptrdiff_t>(item);
-        size_t out = 0;
-        for (size_t i0 = 0; i0 < n0; ++i0) {
-            for (size_t i1 = 0; i1 < n1; ++i1) {
-                std::memcpy(
-                    dst + out * item,
-                    base + static_cast<std::ptrdiff_t>(i0) * s0
-                         + static_cast<std::ptrdiff_t>(i1) * s1,
-                    item
-                );
-                ++out;
-            }
-        }
-        return dst;
-    }
-    throw std::runtime_error(
-        "non-contiguous table column with ndim>2; call contiguous() before write"
-    );
-}
+// Shared ndarray/string helpers live in internal_utils.h (single definition
+// for the image and table write paths).
+using torchfits::internal::ndarray_is_c_contiguous;
+using torchfits::internal::ensure_c_contiguous_ndarray;
+using torchfits::internal::pad_fits_strings;
 
 void rollback_inserted_rows(fitsfile* fptr, long start_row, long num_rows) {
     int st = 0;
@@ -302,17 +241,7 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
             // `repeat > 0 ? repeat : 1` fallback truncates ASCII strings to
             // a single character.
             long width_chars = repeat > 1 ? repeat : width;
-            std::vector<std::string> padded;
-            padded.reserve(values.size());
-            for (const auto& v : values) {
-                std::string s = v;
-                if (static_cast<long>(s.size()) > width_chars) {
-                    s = s.substr(0, static_cast<size_t>(width_chars));
-                } else if (static_cast<long>(s.size()) < width_chars) {
-                    s.append(static_cast<size_t>(width_chars - s.size()), ' ');
-                }
-                padded.push_back(std::move(s));
-            }
+            std::vector<std::string> padded = pad_fits_strings(values, width_chars);
             std::vector<const char*> ptrs;
             ptrs.reserve(padded.size());
             for (const auto& s : padded) {
@@ -770,17 +699,7 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
             // `repeat > 0 ? repeat : 1` fallback truncates ASCII strings to
             // a single character.
             long width_chars = repeat > 1 ? repeat : width;
-            std::vector<std::string> padded;
-            padded.reserve(values.size());
-            for (const auto& v : values) {
-                std::string s = v;
-                if (static_cast<long>(s.size()) > width_chars) {
-                    s = s.substr(0, static_cast<size_t>(width_chars));
-                } else if (static_cast<long>(s.size()) < width_chars) {
-                    s.append(static_cast<size_t>(width_chars - s.size()), ' ');
-                }
-                padded.push_back(std::move(s));
-            }
+            std::vector<std::string> padded = pad_fits_strings(values, width_chars);
             std::vector<const char*> ptrs;
             ptrs.reserve(padded.size());
             for (const auto& s : padded) {

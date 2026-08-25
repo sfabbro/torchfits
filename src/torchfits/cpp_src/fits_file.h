@@ -41,7 +41,6 @@ public:
     const ScaleInfo& get_scale_info(int hdu_num, int bitpix);
     ScaleInfo get_scale_info_for_hdu(int hdu_num);
     bool is_compressed_image_cached(int hdu_num);
-    bool has_compressed_nulls_cached(int hdu_num);
     const std::tuple<int, int, std::array<LONGLONG, 9>>& get_image_info(int hdu_num);
 
     torch::Tensor read_tensor(int hdu_num, bool use_mmap = true);
@@ -70,7 +69,6 @@ private:
     bool raw_fd_ready_ = false;
     std::unordered_map<int, ScaleInfo> scale_cache_;
     std::unordered_map<int, bool> compressed_cache_;
-    std::unordered_map<int, bool> compressed_nulls_cache_;
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache_;
     std::shared_ptr<detail::SharedReadMeta> shared_meta_;
 };

@@ -1,12 +1,18 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <chrono>
 #include <sys/stat.h>
+
+#include <nanobind/ndarray.h>
+
+namespace nb = nanobind;
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
@@ -203,6 +209,93 @@ inline void bswap64_copy(const uint64_t* src, uint64_t* dst, size_t n) {
     }
 #endif
     for (; i < n; ++i) dst[i] = bswap_64(src[i]);
+}
+
+// ---------------------------------------------------------------------------
+// nanobind ndarray helpers shared by the image and table write paths
+// ---------------------------------------------------------------------------
+
+/// True when a nanobind ndarray view is C-contiguous. Signed math: a negative
+/// stride must compare unequal to a positive expected stride, never wrap to a
+/// huge size_t that looks contiguous.
+inline bool ndarray_is_c_contiguous(const nb::ndarray<>& t) {
+    std::ptrdiff_t expect = 1;
+    for (size_t d = t.ndim(); d-- > 0;) {
+        const std::ptrdiff_t n = static_cast<std::ptrdiff_t>(t.shape(d));
+        if (n <= 1) {
+            continue;
+        }
+        if (static_cast<std::ptrdiff_t>(t.stride(d)) != expect) {
+            return false;
+        }
+        expect *= n;
+    }
+    return true;
+}
+
+/// Copy a possibly non-contiguous 1D/2D ndarray view into `buf` (grown as
+/// needed) and return a pointer to contiguous data; returns the source
+/// pointer unchanged when already contiguous. Strides are signed byte
+/// offsets: negative strides address earlier bytes, so use ptrdiff_t.
+inline void* ensure_c_contiguous_ndarray(
+    nb::ndarray<>& t, long nelements, std::vector<uint8_t>& buf
+) {
+    const size_t item = (static_cast<size_t>(t.dtype().bits) + 7) / 8;
+    if (ndarray_is_c_contiguous(t)) {
+        return t.data();
+    }
+    buf.resize(static_cast<size_t>(nelements) * item);
+    auto* dst = buf.data();
+    const auto* base = static_cast<const uint8_t*>(t.data());
+    if (t.ndim() == 1) {
+        const std::ptrdiff_t s0 =
+            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
+        for (long i = 0; i < nelements; ++i) {
+            std::memcpy(dst + static_cast<size_t>(i) * item,
+                        base + static_cast<std::ptrdiff_t>(i) * s0, item);
+        }
+        return dst;
+    }
+    if (t.ndim() == 2) {
+        const size_t n0 = static_cast<size_t>(t.shape(0));
+        const size_t n1 = static_cast<size_t>(t.shape(1));
+        const std::ptrdiff_t s0 =
+            static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
+        const std::ptrdiff_t s1 =
+            static_cast<std::ptrdiff_t>(t.stride(1)) * static_cast<std::ptrdiff_t>(item);
+        size_t out = 0;
+        for (size_t i0 = 0; i0 < n0; ++i0) {
+            for (size_t i1 = 0; i1 < n1; ++i1) {
+                std::memcpy(dst + out * item,
+                            base + static_cast<std::ptrdiff_t>(i0) * s0
+                                 + static_cast<std::ptrdiff_t>(i1) * s1, item);
+                ++out;
+            }
+        }
+        return dst;
+    }
+    throw std::runtime_error(
+        "non-contiguous table column with ndim>2; call contiguous() before write"
+    );
+}
+
+/// Pad/truncate string values to a FITS character-column width: longer values
+/// are clipped, shorter values right-padded with ASCII spaces.
+inline std::vector<std::string> pad_fits_strings(
+    const std::vector<std::string>& values, long width_chars
+) {
+    std::vector<std::string> padded;
+    padded.reserve(values.size());
+    for (const auto& v : values) {
+        std::string s = v;
+        if (static_cast<long>(s.size()) > width_chars) {
+            s = s.substr(0, static_cast<size_t>(width_chars));
+        } else if (static_cast<long>(s.size()) < width_chars) {
+            s.append(static_cast<size_t>(width_chars - s.size()), ' ');
+        }
+        padded.push_back(std::move(s));
+    }
+    return padded;
 }
 
 }  // namespace internal
