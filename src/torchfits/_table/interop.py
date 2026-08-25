@@ -255,13 +255,22 @@ def to_pandas(
             )
         return read(data, **io_kwargs).to_pandas(**pandas_kwargs)
 
+    # Batch/table inputs must not receive I/O kwargs (hdu, columns, ...);
+    # forward only the pandas-valid remainder (M12).
+    _, pandas_kwargs = _split_io_kwargs(kwargs)
+
     if hasattr(data, "to_pandas"):
-        return data.to_pandas(**kwargs)
+        return data.to_pandas(**pandas_kwargs)
 
     if stream:
-        return (pa.Table.from_batches([batch]).to_pandas(**kwargs) for batch in data)
+        return (
+            pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs)
+            for batch in data
+        )
 
-    frames = [pa.Table.from_batches([batch]).to_pandas(**kwargs) for batch in data]
+    frames = [
+        pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs) for batch in data
+    ]
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)

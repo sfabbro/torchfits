@@ -56,7 +56,9 @@ def read_batch(
             if strict:
                 raise
             warnings.warn(
-                f"read_batch: skipped {path!r}: {exc}",
+                f"read_batch: skipped {path!r}: {exc} "
+                f"({len(results)} of {len(file_paths)} files read so far; the "
+                "returned list holds only successful reads)",
                 RuntimeWarning,
                 stacklevel=2,
             )

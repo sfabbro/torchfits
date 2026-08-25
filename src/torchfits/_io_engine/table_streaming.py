@@ -67,13 +67,52 @@ def stream_table(
 
     # ASCII tables (XTENSION=TABLE) have no binary row layout and cannot be
     # read through the mmap row path; route them through the CFITSIO reader.
-    ascii_table = header is not None and (
-        str(header.get("XTENSION", "")).strip().upper() == "TABLE"
-    )
+    # The XTENSION probe must run even when the caller supplied total_rows —
+    # otherwise ASCII tables would be routed into the binary mmap path.
+    ascii_table = False
+    if header is None:
+        try:
+            import torchfits as _tf
+
+            ascii_table = _tf.read_hdu_type(file_path, hdu) == "ASCII_TABLE"
+        except Exception:
+            ascii_table = False
+    else:
+        ascii_table = (
+            str(header.get("XTENSION", "")).strip().upper() == "TABLE"
+        )
+
+    # Scaled columns (TSCALn/TZEROn beyond the unsigned conventions) cannot be
+    # decoded from raw mmap bytes; route to the buffered CFITSIO reader, which
+    # applies scaling in-memory (same fallback as the non-streaming read).
+    scaled_columns = False
+    if mmap and not ascii_table:
+        try:
+            from ..fits_schema import iter_table_columns
+
+            hdr = header if header is not None else None
+            if hdr is None:
+                import torchfits as _tf
+
+                hdr = _tf.read_header(file_path, hdu)
+            selected = set(col_list) if col_list else None
+            for col in iter_table_columns(hdr, selected=selected):
+                tscal = col.tscal if col.tscal is not None else 1.0
+                tzero = col.tzero if col.tzero is not None else 0.0
+                is_unsigned = (tscal == 1.0) and (
+                    abs(tzero - 32768.0) < 1e-5
+                    or abs(tzero + 32768.0) < 1e-5
+                    or abs(tzero - 2147483648.0) < 1e-5
+                )
+                if (tscal != 1.0 or tzero != 0.0) and not is_unsigned:
+                    scaled_columns = True
+                    break
+        except Exception:
+            scaled_columns = False
 
     row = start_row
     emitted = 0
-    if mmap and not ascii_table and hasattr(cpp, "read_fits_table_rows"):
+    if mmap and not ascii_table and not scaled_columns and hasattr(cpp, "read_fits_table_rows"):
         while row <= total_rows:
             remaining = total_rows - row + 1
             size = min(chunk_rows, remaining)

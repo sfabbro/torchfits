@@ -352,15 +352,24 @@ def read_fallback_table(
 
     table_data = _squeeze_scalar_columns(table_data)
 
-    if (start_row > 1 or num_rows != -1) and not hasattr(
-        cpp_module, "read_fits_table_rows"
-    ):
-        end_row = None
-        for key, value in table_data.items():
-            if isinstance(value, torch.Tensor):
-                if end_row is None:
-                    end_row = start_row + num_rows - 1 if num_rows != -1 else len(value)
-                table_data[key] = value[start_row - 1 : end_row]
+    if start_row > 1 or num_rows != -1:
+        if not hasattr(cpp_module, "read_fits_table_rows"):
+            # Slice every row-aligned column (tensors *and* lists) so the
+            # window can never produce mismatched lengths across columns.
+            total = None
+            for value in table_data.values():
+                if isinstance(value, (torch.Tensor, list)):
+                    total = len(value)
+                    break
+            end_row = (
+                start_row + num_rows - 1
+                if num_rows != -1
+                else (total if total is not None else start_row - 1)
+            )
+            for key, value in table_data.items():
+                if isinstance(value, (torch.Tensor, list)):
+                    table_data[key] = value[start_row - 1 : end_row]
+        # else: the C++ row reader already applied the window upstream.
 
     if use_cache and cache_key is not None:
         store_cached_read(

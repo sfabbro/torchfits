@@ -53,6 +53,27 @@ from ._read_scan import (  # noqa: F401
 )
 
 
+_COMPLEX_ERR = (
+    "complex table columns (TFORM 'C'/'M') are not supported by the Arrow "
+    "table APIs (pyarrow has no complex type); use torchfits.read_torch() or "
+    "torchfits.read(..., mode='table') for torch complex tensors"
+)
+
+
+def _reject_complex_columns(path: str, hdu: int | str) -> None:
+    """Raise a clear error when the target HDU holds complex columns."""
+    import torchfits as _tf
+    from ..fits_schema import complex_column_names
+
+    try:
+        header = _tf.read_header(path, hdu)
+    except Exception:
+        return
+    names = sorted(complex_column_names(header))
+    if names:
+        raise NotImplementedError(f"{_COMPLEX_ERR} (columns: {names})")
+
+
 def scan(
     path: str,
     hdu: int | str = 1,
@@ -70,6 +91,9 @@ def scan(
 ) -> Iterator[Any]:
     # Eager guard: a generator body would defer this until first next().
     guard_fits_path(path)
+    if isinstance(hdu, str):
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
+    _reject_complex_columns(path, hdu)
     return _scan_iter(
         path,
         hdu=hdu,
@@ -90,6 +114,7 @@ def scan(
 def read(
     path: str,
     hdu: int | str = 1,
+
     columns: Optional[list[str]] = None,
     row_slice: Optional[slice | tuple[int, int]] = None,
     rows: Optional[list[int]] = None,
@@ -108,6 +133,7 @@ def read(
     pa = _require_pyarrow()
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
+    _reject_complex_columns(path, hdu)
 
     if backend in {"auto", "cpp"} and not should_skip_cpp_for_where(backend, where):
         single = _read_cpp_table_chunk(

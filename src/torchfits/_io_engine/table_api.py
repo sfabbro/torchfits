@@ -46,7 +46,14 @@ def _apply_row_window(
     stop = None if int(num_rows) < 0 else start0 + int(num_rows)
     out: dict[str, Any] = {}
     for key, value in data.items():
-        out[key] = value[start0:stop] if isinstance(value, torch.Tensor) else value
+        # Slice every row-aligned payload (tensors *and* VLA/string lists) so
+        # a windowed read can never return columns with mismatched lengths.
+        if isinstance(value, torch.Tensor):
+            out[key] = value[start0:stop]
+        elif isinstance(value, list):
+            out[key] = value[start0:stop]
+        else:
+            out[key] = value
     return out
 
 

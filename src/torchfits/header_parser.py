@@ -157,13 +157,9 @@ class FastHeaderParser:
                     elif keyword in string_keywords:
                         value = value_str
                     elif first_char in "+-0123456789.":
-                        try:
-                            if "." in value_str or "e" in value_str or "E" in value_str:
-                                value = float(value_str)
-                            else:
-                                value = int(value_str)
-                        except ValueError:
-                            pass
+                        parsed = _parse_fits_number(value_str)
+                        if parsed is not None:
+                            value = parsed
 
                     if value is None:
                         if value_str == "T":
@@ -265,13 +261,9 @@ class FastHeaderParser:
                         elif fc2 == '"':
                             value2 = vstr.strip('"')
                         elif fc2 in "+-0123456789.":
-                            try:
-                                if "." in vstr or "e" in vstr or "E" in vstr:
-                                    value2 = float(vstr)
-                                else:
-                                    value2 = int(vstr)
-                            except ValueError:
-                                pass
+                            parsed2 = _parse_fits_number(vstr)
+                            if parsed2 is not None:
+                                value2 = parsed2
                         if value2 is None:
                             if vstr == "T":
                                 value2 = True
@@ -464,6 +456,28 @@ class FastHeaderParser:
             return quoted_str[1:].replace("''", "'").rstrip()
         # Add 1 back to end_idx because we searched in quoted_str[1:]
         return quoted_str[1 : end_idx + 1].replace("''", "'").rstrip()
+
+
+def _parse_fits_number(text: str) -> "float | int | None":
+    """Parse a FITS numeric literal; return None when it is not one.
+
+    Accepts Fortran-style D exponents (``1D5``), which legacy headers use and
+    Python's float() rejects. Rejects Python-only spellings that are not FITS
+    numbers (underscore separators such as ``1_0``).
+    """
+    cleaned = text.strip()
+    if "_" in cleaned or not cleaned:
+        return None
+    try:
+        if "." in cleaned or "e" in cleaned or "E" in cleaned:
+            return float(cleaned.replace("D", "E").replace("d", "e"))
+        return int(cleaned)
+    except ValueError:
+        try:
+            return float(cleaned.replace("D", "E").replace("d", "e"))
+        except ValueError:
+            return None
+
 
 
 def fast_parse_header(header_string: str) -> Dict[str, Any]:

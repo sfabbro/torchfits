@@ -420,8 +420,11 @@ def read_batch(
 ) -> Any:
     """Read the same HDU from multiple FITS files.
 
-    Returns a ``list`` of tensors (one per successfully read file). With
-    ``strict=False`` (default), failures are skipped with a warning.
+    Returns a ``list`` of tensors containing only the successfully read
+    files, in input order (with ``strict=False``, the default, failures are
+    skipped with a warning naming each failed path — so result positions do
+    not map 1:1 onto ``file_paths`` when any read fails). Pass
+    ``strict=True`` to raise on the first failure instead.
     """
     return _read_batch_impl(
         read_func=read,

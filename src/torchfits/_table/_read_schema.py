@@ -284,10 +284,14 @@ def _arrow_type_from_tform(
         "K": pa.int64(),
         "E": pa.float32(),
         "D": pa.float64(),
-        "C": pa.float64(),
-        "M": pa.float64(),
+        # Complex columns (C/M) have no scalar Arrow equivalent that matches
+        # the data path (complex64/complex128); returning a float type here
+        # made the header-only schema disagree with scan results. Report None
+        # so callers fall back to the data-driven schema, per the contract.
         "A": pa.utf8() if decode_bytes else pa.binary(),
     }
+    if code in ("C", "M"):
+        return None
     base = _SCALAR.get(code)
     if base is None:
         return None

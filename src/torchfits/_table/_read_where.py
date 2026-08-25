@@ -283,6 +283,21 @@ def _try_torch_tensor_where_filter(
     return pa.Table.from_arrays(arrays, names=names_out)
 
 
+def _aligned_scalar(pa: Any, column: Any, value: Any) -> Any:
+    """Build an Arrow scalar that matches the C++ pushdown comparison rule.
+
+    Both engines must select identical rows for a given predicate. The C++
+    mmap-filtered scan casts the literal to the column's storage precision
+    before comparing, so the Arrow engine must do the same for float32
+    columns instead of comparing against a float64 scalar (which would drop
+    rows whose stored float32 equals the literal). Wider/integer columns keep
+    Arrow's exact widening.
+    """
+    if pa.types.is_float32(column.type):
+        return pa.scalar(float(value), type=column.type)
+    return pa.scalar(value)
+
+
 def _where_mask_for_table(
     table: Any, where: str, parsed_ast: Any = None
 ) -> "np.ndarray":
@@ -316,7 +331,7 @@ def _where_mask_for_table(
                 return pc.invert(pc.is_null(column))
             raise ValueError("where comparisons with null only support == and !=")
 
-        scalar = pa.scalar(literal)
+        scalar = _aligned_scalar(pa, column, literal)
         if op == "==":
             return pc.equal(column, scalar)
         if op == "!=":
@@ -337,7 +352,12 @@ def _where_mask_for_table(
         has_null = any(v is None for v in literals)
 
         if non_null:
-            value_set = _pa_array(pa, non_null)
+            if pa.types.is_float32(column.type):
+                value_set = pa.array(
+                    [float(v) for v in non_null], type=column.type
+                )
+            else:
+                value_set = _pa_array(pa, non_null)
             mask = pc.is_in(column, value_set=value_set)
         else:
             mask = _pa_array(pa, [False] * int(len(column)))
@@ -354,8 +374,8 @@ def _where_mask_for_table(
         column = _get_predicate_column(column_name)
         if low is None or high is None:
             raise ValueError("where BETWEEN does not support NULL bounds")
-        low_s = pa.scalar(low)
-        high_s = pa.scalar(high)
+        low_s = _aligned_scalar(pa, column, low)
+        high_s = _aligned_scalar(pa, column, high)
         ge = pc.greater_equal(column, low_s)
         le = pc.less_equal(column, high_s)
         mask = pc.and_(ge, le)

@@ -282,6 +282,20 @@ def column_tnull_map(header_map: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def complex_column_names(header: Mapping[str, Any]) -> set[str]:
+    """Names of columns with FITS complex TFORM codes (``C`` / ``M``).
+
+    Arrow has no complex scalar type, so the Arrow table APIs cannot serve
+    these columns; callers use this to raise a clear error instead of a
+    cryptic conversion failure.
+    """
+    out: set[str] = set()
+    for col in iter_table_columns(header):
+        if col.tform_info.code in ("C", "M"):
+            out.add(col.name)
+    return out
+
+
 def build_table_schema_dict(
     header: Mapping[str, Any],
     *,

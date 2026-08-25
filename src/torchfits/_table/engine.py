@@ -41,7 +41,9 @@ def _read_ranges_as_chunk(
             buf: Any = out_sorted.get(name)
             if buf is None:
                 if isinstance(value, torch.Tensor):
-                    buf = torch.empty(
+                    # Zero-initialized: an empty reader segment must surface
+                    # as zeros, never uninitialized memory (M8).
+                    buf = torch.zeros(
                         (n_total,) + tuple(value.shape[1:]), dtype=value.dtype
                     )
                 else:
