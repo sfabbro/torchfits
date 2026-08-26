@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- build: Portable sha256 verification in vendor.sh (macOS runners)
+- changelog: Rank final tags above prereleases in latest_tag
+
 ## [1.1.0] — 2026-08-26
 
 Feature + correctness release on the same 2.13 torch ABI lane. New
