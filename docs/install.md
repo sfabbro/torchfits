@@ -28,7 +28,7 @@ pip install torchfits "torch==2.13.0+cpu" --extra-index-url https://download.pyt
 
 ### 3. Specific CUDA toolkit versions
 
-To match a specific CUDA version installed on your system (e.g. `cu126`, `cu128`, `cu129`, `cu130`):
+To match a specific CUDA version installed on your system (e.g. `cu126`, `cu129`, `cu130`):
 
 ```bash
 pip install "torchfits[cuda]" --extra-index-url https://download.pytorch.org/whl/cu129
@@ -40,17 +40,9 @@ pip install torchfits "torch==2.13.0+cu129" --extra-index-url https://download.p
 
 ## PyTorch Version Compatibility
 
-The default PyPI release matches **PyTorch 2.13.x** (`torch>=2.13,<2.14`). If you have an existing environment with **PyTorch 2.11** or **PyTorch 2.12** and prefer not to upgrade PyTorch, prebuilt wheels are published directly on [GitHub Releases](https://github.com/astroai/torchfits/releases):
+The PyPI release is built against one PyTorch ABI lane at a time; the current lane is **PyTorch 2.13.x** (`torch>=2.13,<2.14`). Wheels are ABI-matched to that minor, so keep your PyTorch on 2.13.x.
 
-```bash
-# For PyTorch 2.12 (e.g. Python 3.11 on Linux x86_64):
-pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch212-cp311-cp311-manylinux_2_28_x86_64.whl
-
-# For PyTorch 2.11 (e.g. Python 3.11 on Linux x86_64):
-pip install https://github.com/astroai/torchfits/releases/download/v1.0.0/torchfits-1.0.0+torch211-cp311-cp311-linux_x86_64.whl
-```
-
-For other PyTorch versions (**≥ 2.10**), install from source against your environment (see below).
+If you must stay on an older PyTorch (**≥ 2.10**), install from source against your environment (see below) — prebuilt wheels are not published for other lanes.
 
 ---
 

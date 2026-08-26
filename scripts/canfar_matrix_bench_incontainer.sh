@@ -14,8 +14,9 @@ set -euo pipefail
 : "${TORCHFITS_BENCH_PYTHON:=3.13}"
 : "${TORCHFITS_BENCH_TORCH:=2.13}"
 : "${TORCHFITS_BENCH_CUDA:=0}"
-# cu flavor defaults per lane (2.10-2.12 ship cu128; 2.13 defaults cu129,
-# cu130 is the spot leg); overridable per leg.
+# cu flavor defaults for the lane (scripts/torch_lanes.json currently
+# defines only 2.13: default cu129, cu130 spot leg; no cu128 wheels exist);
+# overridable per leg.
 : "${TORCHFITS_BENCH_CU_FLAVOR:=}"
 
 SCRATCH="${TMP_SCRATCH_DIR:-/scratch}"
@@ -41,8 +42,8 @@ PY="${TORCHFITS_BENCH_PYTHON}"
 LANE="${TORCHFITS_BENCH_TORCH}"
 PY_TAG="py${PY//./}"
 if [[ -z "${TORCHFITS_BENCH_CU_FLAVOR}" ]]; then
-  # PyTorch wheel flavors: 2.10/2.11 ship cu128; 2.12+ ship cu129 only
-  # (no cu128 wheels exist for 2.12/2.13).
+  # Historical fallbacks for retired lanes; scripts/torch_lanes.json now
+  # defines only 2.13 (no cu128 wheels exist for 2.12+).
   if [[ "${LANE}" == "2.13" ]]; then
     TORCHFITS_BENCH_CU_FLAVOR="cu129"
   elif [[ "${LANE}" == "2.12" ]]; then

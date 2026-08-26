@@ -72,7 +72,12 @@ print(lane)')"
       pytest numpy pyarrow \
       --extra-index-url https://download.pytorch.org/whl/cpu
     TORCH_LIB="$("$venv/bin/python" -c 'import os, torch; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')"
-    export LD_LIBRARY_PATH="$TORCH_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # Mirror scripts/cibw_test.sh: torch libs resolve at runtime on both platforms.
+    if [[ "$(uname)" == "Darwin" ]]; then
+      export DYLD_FALLBACK_LIBRARY_PATH="$TORCH_LIB${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+    else
+      export LD_LIBRARY_PATH="$TORCH_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
     echo "== $(basename "$wheel"): import + CLI + release smoke =="
     "$venv/bin/python" -c 'import torchfits; print("import ok:", torchfits.__version__)'
     "$venv/bin/torchfits" --help >/dev/null

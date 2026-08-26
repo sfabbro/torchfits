@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Launch the full deep-review benchmark grid on CANFAR headless:
-# python 3.10-3.14 x torch lanes 2.10-2.13 x {CPU, CUDA}, plus one cu130
-# spot leg on 2.13/py3.13. Each leg gets a unique run-id; logs/results are
-# collected per-session in VOSpace and fetched back by each poller.
+# Launch the benchmark grid on CANFAR headless:
+# python 3.10-3.14 x the torch lane(s) in scripts/torch_lanes.json
+# (currently 2.13) x {CPU, CUDA}, plus one cu130 spot leg on 2.13/py3.13.
+# Each leg gets a unique run-id; logs/results are collected per-session
+# in VOSpace and fetched back by each poller.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

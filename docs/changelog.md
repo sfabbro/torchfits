@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.1.0] — 2026-08-26
+
 Feature + correctness release on the same 2.13 torch ABI lane. New
 capabilities: checksum-stamped writes, GIL-free hot reads, clean
 truncated-file errors, high-fidelity Astropy interop, memory-bounded
@@ -1369,7 +1371,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/astroai/torchfits/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.0.0
 [1.0.0rc5]: https://github.com/astroai/torchfits/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/astroai/torchfits/compare/v1.0.0rc3...v1.0.0rc4

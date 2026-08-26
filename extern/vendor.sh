@@ -88,7 +88,7 @@ fetch_and_extract() {
   local repo="$1"
   local tag="$2"
   local dest="$3"
-  local archive="${TMP_DIR}/$(basename "${dest}")-${tag}.tar.gz"
+  local archive="$4"
 
   rm -rf "${dest}"
   mkdir -p "${TMP_DIR}"
@@ -131,11 +131,13 @@ if [[ -n "${CFITSIO_SPEC_FILE}" && -f "${CFITSIO_SPEC_FILE}" ]]; then
 fi
 
 compute_archive_hash() {
-  sha256sum "${TMP_DIR}/cfitsio-${CFITSIO_VERSION}.tar.gz" | cut -d' ' -f1
+  sha256sum "${CFITSIO_ARCHIVE}" | cut -d' ' -f1
 }
 
 mkdir -p "${EXTERN_DIR}"
-fetch_and_extract "${CFITSIO_REPO}" "${CFITSIO_VERSION}" "${EXTERN_DIR}/cfitsio"
+# Single source of truth for the archive path, shared by fetch + hash record.
+CFITSIO_ARCHIVE="${TMP_DIR}/$(basename "${EXTERN_DIR}/cfitsio")-${CFITSIO_VERSION}.tar.gz"
+fetch_and_extract "${CFITSIO_REPO}" "${CFITSIO_VERSION}" "${EXTERN_DIR}/cfitsio" "${CFITSIO_ARCHIVE}"
 
 # Apply any patches for this exact vendored version.  Patch file names are
 # "<tag>-<name>.patch"; a patch whose <tag> does not match the vendored

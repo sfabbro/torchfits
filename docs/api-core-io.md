@@ -445,13 +445,20 @@ Write a single PyTorch Tensor to a FITS image extension.
 
 ```python
 torchfits.write_tensor(
-    path, tensor, header=None, overwrite=False, compress=False, quantize=None
+    path,
+    tensor,
+    header=None,
+    overwrite=False,
+    compress=False,
+    quantize=None,
+    checksum=False,
 )
 ```
 
 ```python
 torchfits.write_tensor("out.fits", tensor, header={"OBJECT": "M31"}, overwrite=True)
 torchfits.write_tensor("packed.fits", tensor, quantize="robust", overwrite=True)
+torchfits.write_tensor("checked.fits", tensor, checksum=True, overwrite=True)
 ```
 
 ---

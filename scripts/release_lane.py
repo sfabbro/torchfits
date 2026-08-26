@@ -387,6 +387,9 @@ def main() -> int:
         return 0
 
     if args.lane is None:
+        if args.apply:
+            # Refuse to silently no-op a release-critical rewrite.
+            parser.error("--apply requires --lane (e.g. --lane 2.13)")
         lane = current_lane()
         print(f"current lane: {lane}", flush=True)
         return 0

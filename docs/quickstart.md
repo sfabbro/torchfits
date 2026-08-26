@@ -12,7 +12,7 @@ Install the prebuilt binary wheel:
 pip install torchfits
 ```
 
-Prebuilt binary wheels include vendored CFITSIO (no C++ compiler or external dependencies required). For CPU-only installs, custom CUDA builds, or existing PyTorch 2.11/2.12 environments, see the [Installation guide](install.md).
+Prebuilt binary wheels include vendored CFITSIO (no C++ compiler or external dependencies required). For CPU-only installs, custom CUDA builds, or other PyTorch versions, see the [Installation guide](install.md).
 
 ---
 
