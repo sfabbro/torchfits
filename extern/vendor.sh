@@ -80,7 +80,30 @@ resolve_cfitsio_version() {
 
 require_cmd curl
 require_cmd tar
-require_cmd sha256sum
+# GNU coreutils sha256sum on Linux; macOS runners ship only perl shasum
+# (its coreutils namesake rejects --check/--status, which broke the first
+# tagged build that exercised checksum verification).
+if ! command -v sha256sum >/dev/null 2>&1; then
+  require_cmd shasum
+fi
+
+# Portable sha256 helpers: digest a file / verify a "HASH  file" checklist.
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+sha256_check() {
+  # $1 = expected hash, $2 = archive path; fails on mismatch.
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "${1}  ${2}" | sha256sum --check --status
+  else
+    echo "${1}  ${2}" | shasum -a 256 -c -s -
+  fi
+}
 
 CFITSIO_VERSION="$(resolve_cfitsio_version "${CFITSIO_VERSION}")"
 
@@ -99,7 +122,7 @@ fetch_and_extract() {
 
   if [[ -n "${CFITSIO_SHA256}" ]]; then
     echo "Verifying sha256 (${CFITSIO_SHA256})"
-    echo "${CFITSIO_SHA256}  ${archive}" | sha256sum --check --status ||
+    sha256_check "${CFITSIO_SHA256}" "${archive}" ||
       { echo "sha256 MISMATCH for ${repo}@${tag}: refusing to vendor" >&2; exit 1; }
   elif [[ "${TORCHFITS_VENDOR_ALLOW_UNPINNED:-0}" != "1" ]]; then
     echo "No cfitsio_sha256 recorded for ${tag}." >&2
@@ -131,7 +154,7 @@ if [[ -n "${CFITSIO_SPEC_FILE}" && -f "${CFITSIO_SPEC_FILE}" ]]; then
 fi
 
 compute_archive_hash() {
-  sha256sum "${CFITSIO_ARCHIVE}" | cut -d' ' -f1
+  sha256_file "${CFITSIO_ARCHIVE}"
 }
 
 mkdir -p "${EXTERN_DIR}"
