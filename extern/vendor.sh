@@ -80,28 +80,33 @@ resolve_cfitsio_version() {
 
 require_cmd curl
 require_cmd tar
-# GNU coreutils sha256sum on Linux; macOS runners ship only perl shasum
-# (its coreutils namesake rejects --check/--status, which broke the first
-# tagged build that exercised checksum verification).
-if ! command -v sha256sum >/dev/null 2>&1; then
+# GNU coreutils sha256sum on Linux. macOS runners expose a limited
+# sha256sum shim that rejects --check/--status ("usage: sha256sum
+# [-bctwz]"), which broke the v1.1.0 tag build twice — select by OS,
+# not by binary presence: Darwin always ships perl shasum.
+IS_DARWIN="0"
+[[ "$(uname -s)" == "Darwin" ]] && IS_DARWIN="1"
+if [[ "${IS_DARWIN}" == "1" ]]; then
   require_cmd shasum
+else
+  require_cmd sha256sum
 fi
 
 # Portable sha256 helpers: digest a file / verify a "HASH  file" checklist.
 sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
-  else
+  if [[ "${IS_DARWIN}" == "1" ]]; then
     shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    sha256sum "$1" | cut -d' ' -f1
   fi
 }
 
 sha256_check() {
   # $1 = expected hash, $2 = archive path; fails on mismatch.
-  if command -v sha256sum >/dev/null 2>&1; then
-    echo "${1}  ${2}" | sha256sum --check --status
-  else
+  if [[ "${IS_DARWIN}" == "1" ]]; then
     echo "${1}  ${2}" | shasum -a 256 -c -s -
+  else
+    echo "${1}  ${2}" | sha256sum --check --status
   fi
 }
 
