@@ -194,20 +194,49 @@ def merge_generated(text: str, bullets: list[tuple[str, str]]) -> str:
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
-def latest_tag(*, include_prereleases: bool = True) -> str | None:
+def _release_tag_key(tag: str) -> tuple[int, int, int, int, int]:
+    """PEP 440-ish ordering for v* tags.
+
+    git's ``--sort=version:refname`` ranks ``v1.1.0b1`` above ``v1.1.0``
+    (a suffix sorts greater than end-of-string), so after cutting a final
+    release the generator would keep diffing against the stale beta tag
+    forever. Rank explicitly: final > rc > b > a within the same X.Y.Z.
+    """
+    m = re.fullmatch(r"v(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:([ab]|rc)(\d+))?", tag)
+    if m is None:
+        return (0, 0, 0, -1, 0)
+    phase = {"a": 0, "b": 1, "rc": 2}.get(m.group(4) or "", 3)
+    return (
+        int(m.group(1)),
+        int(m.group(2) or 0),
+        int(m.group(3) or 0),
+        phase,
+        int(m.group(5) or 0),
+    )
+
+
+def _list_vtags() -> list[str]:
     tags = subprocess.run(
-        ["git", "tag", "--list", "v*", "--sort=-version:refname"],
+        ["git", "tag", "--list", "v*"],
         capture_output=True,
         text=True,
         cwd=ROOT,
         check=False,
     )
     if tags.returncode != 0:
+        return []
+    return tags.stdout.split()
+
+
+def latest_tag(*, include_prereleases: bool = True) -> str | None:
+    tags = [
+        t
+        for t in _list_vtags()
+        if include_prereleases or not re.search(r"[a-zA-Z]", t[1:])
+    ]
+    if not tags:
         return None
-    for tag in tags.stdout.split():
-        if include_prereleases or not re.search(r"[a-zA-Z]", tag[1:]):
-            return tag
-    return None
+    return max(tags, key=_release_tag_key)
 
 
 def previous_stable_version(text: str) -> str | None:

@@ -197,6 +197,28 @@ def test_issue_id_regex_ignores_plain_words() -> None:
     assert changelog._issue_ids("M16 bench harness") == {"M16"}
 
 
+def test_release_tag_key_ranks_final_above_prerelease() -> None:
+    # git --sort=version:refname gets this wrong (b1 sorts above final);
+    # the generator must diff against the newest FINAL tag once it exists.
+    tags = ["v1.1.0b1", "v1.1.0", "v1.0.0", "v1.0.0rc5", "v0.9.3"]
+    ordered = sorted(tags, key=changelog._release_tag_key)
+    assert ordered[-1] == "v1.1.0"
+    assert ordered[-2] == "v1.1.0b1"
+    assert changelog._release_tag_key("v2.0.0rc1") > changelog._release_tag_key(
+        "v1.9.9"
+    )
+
+
+def test_latest_tag_prefers_final_over_prerelease(monkeypatch) -> None:
+    monkeypatch.setattr(
+        changelog, "_list_vtags", lambda: ["v1.1.0b1", "v1.1.0", "v1.0.0"]
+    )
+    assert changelog.latest_tag() == "v1.1.0"
+    monkeypatch.setattr(changelog, "_list_vtags", lambda: ["v1.2.0b1"])
+    assert changelog.latest_tag() == "v1.2.0b1"  # beta soak keeps working
+    assert changelog.latest_tag(include_prereleases=False) is None
+
+
 def test_release_notes_extracts_stamped_then_unreleased(tmp_path) -> None:
     import release_notes as rn  # noqa: PLC0415  (sys.path set by conftest-ish header)
 
