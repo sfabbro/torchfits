@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - changelog: Rank final tags above prereleases in latest_tag
 - build: Select sha256 tooling by OS, not binary presence
 
-- Close the 1.1 audit register for silent NaN/TNULL/copy bugs
+- Close the 1.1 audit register for silent NaN/TNULL/copy bugs (#237)
 ### Changed
 - `torchfits._cpp` no longer re-exports undocumented `_C` names (H1).
 - Root `to_astropy(path)` delegates to `table.to_astropy` (H11).
