@@ -21,7 +21,7 @@ from .cmds_stats import add_parser as add_stats
 from .cmds_table import add_parser as add_table
 from .cmds_transform import add_parser as add_transform
 from .cmds_verify import add_parser as add_verify
-from .common import CliError, EXIT_IO, EXIT_OK, EXIT_USAGE
+from .common import CliError, EXIT_INTERRUPT, EXIT_IO, EXIT_OK
 
 _SUBCOMMANDS: tuple[tuple[str, Callable[..., None], str], ...] = (
     ("info", add_info, "HDU inventory"),
@@ -31,7 +31,7 @@ _SUBCOMMANDS: tuple[tuple[str, Callable[..., None], str], ...] = (
     ("stats", add_stats, "image statistics"),
     ("table", add_table, "table schema/preview"),
     ("convert", add_convert, "convert to parquet/csv/tsv/arrow or PNG"),
-    ("copy", add_copy, "copy HDUs"),
+    ("copy", add_copy, "byte-copy FITS file(s)"),
     ("arith", add_arith, "image ±×÷ scalar or image"),
     ("cutout", add_cutout, "pixel cutout"),
     ("compress", add_compress, "tile-compress (--out-dir / --split hdu)"),
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         return exc.exit_code
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
-        return EXIT_USAGE
+        return EXIT_INTERRUPT
     except BrokenPipeError:
         return EXIT_OK
     except OSError as exc:

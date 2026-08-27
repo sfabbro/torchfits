@@ -1,16 +1,21 @@
-"""``torchfits copy`` — FITS→FITS copy preserving MEF structure."""
+"""``torchfits copy`` — byte-identical FITS copy (not an HDU rewrite)."""
 
 from __future__ import annotations
 
 import argparse
+import shutil
+import urllib.request
 
-import torchfits
+from torchfits._io_engine.paths import cfitsio_base_path, guard_fits_path
+from torchfits.http_util import HttpBlockedError, http_open
 
 from .common import (
     EXIT_OK,
     IoError,
     UsageError,
     add_file_jobs_arg,
+    is_remote_path,
+    reject_same_path,
     resolve_batch_io_pairs,
     resolve_file_jobs,
     run_file_jobs,
@@ -20,9 +25,9 @@ from .common import (
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser(
         "copy",
-        help="copy FITS file(s) preserving HDUs",
+        help="byte-copy FITS file(s)",
         description=(
-            "MEF-preserving FITS→FITS copy. "
+            "Exact binary copy of FITS file bytes (preserves CompImage tiles). "
             "Multiple inputs need --out-dir; -J fans out across files."
         ),
     )
@@ -41,13 +46,31 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.set_defaults(func=run)
 
 
+def _copy_remote(src: str, output_path: str) -> None:
+    lowered = src.lower()
+    if lowered.startswith(("vos:", "vault:")):
+        raise IoError(f"{src}: vos/vault remote copy is not supported")
+    if lowered.startswith(("http://", "https://")):
+        with http_open(src) as response, open(output_path, "wb") as dest:
+            shutil.copyfileobj(response, dest)
+        return
+    urllib.request.urlretrieve(src, output_path)
+
+
 def _copy_one(pair: tuple[str, str]) -> None:
     input_path, output_path = pair
+    reject_same_path(input_path, output_path)
+    src = cfitsio_base_path(input_path)
     try:
-        with torchfits.open(input_path) as hdul:
-            hdul.write(output_path, overwrite=True)
-    except UsageError:
+        guard_fits_path(src)
+        if is_remote_path(src):
+            _copy_remote(src, output_path)
+        else:
+            shutil.copy2(src, output_path)
+    except (UsageError, IoError):
         raise
+    except HttpBlockedError as exc:
+        raise IoError(str(exc)) from exc
     except Exception as exc:
         raise IoError(f"{input_path}: {exc}") from exc
 
@@ -57,6 +80,7 @@ def run(args: argparse.Namespace) -> int:
         [str(p) for p in args.paths],
         out=args.out,
         out_dir=args.out_dir,
+        refuse_same_path=True,
     )
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
     run_file_jobs(pairs, _copy_one, file_jobs)

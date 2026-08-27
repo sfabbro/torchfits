@@ -77,7 +77,11 @@ def sample_cache_root() -> Path:
 
 
 class CacheConfig:
-    """Cache configuration for different environments."""
+    """Cache configuration for different environments.
+
+    ``max_files`` and ``max_memory_mb`` are unused: the C++ handle pool was
+    removed. ``disk_cache_gb`` still describes on-disk remote/sample roots.
+    """
 
     # The individual detectors are cheap (cached torch.cuda probe, two
     # sysconf calls, env-var lookups), but ``for_environment`` is a documented

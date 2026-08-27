@@ -121,6 +121,10 @@ def _is_compressed(cards: dict[str, Any]) -> bool:
 
 
 def _is_scaled(cards: dict[str, Any]) -> bool:
+    if "BLANK" in cards:
+        # Identity BSCALE/BZERO + BLANK still needs CFITSIO nulval; Range
+        # copies would return the sentinel code.
+        return True
     bscale = cards.get("BSCALE", 1.0)
     bzero = cards.get("BZERO", 0.0)
     try:

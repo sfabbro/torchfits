@@ -130,8 +130,8 @@ Quick local smoke (not a published scorecard): `pixi run bench-all` /
 Repository: https://github.com/astroai/torchfits.
 
 **PyPI publishing:** `astroai/torchfits` is registered; tag pushes trigger
-`.github/workflows/build_wheels.yml` (publishes via a PyPI API token,
-`secrets.PYPI_API_TOKEN`).
+`.github/workflows/build_wheels.yml` (publishes via OIDC trusted
+publishing on the `pypi` GitHub Environment; no API token).
 
 Do not make new performance claims unless the benchmark run is archived and the
 comparison target is listed in `docs/parity.md`.
@@ -208,8 +208,9 @@ Publishing triggers `.github/workflows/build_wheels.yml`, which:
 2. Builds wheels (Linux x86_64 + aarch64, macOS arm64, cp310–cp314, torch
    pinned to the lane via `scripts/cibw_before_build.sh`). An sdist is
    attached to the GitHub Release only — **not** uploaded to PyPI.
-3. Uploads **wheels** to [PyPI](https://pypi.org/project/torchfits/) via a
-   PyPI API token (`secrets.PYPI_API_TOKEN`), not trusted publishing.
+3. Uploads **wheels** to [PyPI](https://pypi.org/project/torchfits/) via
+   OIDC trusted publishing (`id-token: write` on the `pypi` Environment).
+   There is no `password:` / `PYPI_API_TOKEN` in the workflow.
 
 Local / out-of-band builds (same `[tool.cibuildwheel]` config):
 

@@ -81,6 +81,18 @@ def test_keep_zero_all_nonpositive():
     packed = quantize_int16_robust(values, keep_zero=True)
     assert packed.zero == 0.0
     assert torch.all(packed.codes == 0)
+    assert packed.blank_code is None
+
+
+def test_keep_zero_all_nonpositive_nan_sets_blank():
+    from torchfits._io_engine.quantize import BLANK_CODE
+
+    values = torch.tensor([-2.0, 0.0, float("nan")])
+    packed = quantize_int16_robust(values, keep_zero=True)
+    assert packed.blank_code == BLANK_CODE
+    assert int(packed.codes[2].item()) == BLANK_CODE
+    assert int(packed.codes[0].item()) == 0
+    assert int(packed.codes[1].item()) == 0
 
 
 def test_empty_and_nonfinite_raise():

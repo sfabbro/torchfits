@@ -84,7 +84,7 @@ duckdb = ">=1.5.5,<2"
 dev = "pip install -e . --no-build-isolation"
 build = "pixi build"
 test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
-release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py -q && pixi run docs-contract && pixi run docs-links"
+release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py tests/test_audit_register.py -q && pixi run docs-contract && pixi run docs-links"
 lint = "ruff check . && ruff format ."
 preflight-push = "ruff check . && ruff format --check . && mypy src/torchfits && python -m compileall -q src/torchfits tests && pixi run check-lane && pixi run changelog-check"
 # Verify the committed release-lane pins match scripts/torch_lanes.json.
@@ -194,6 +194,9 @@ gpu-env-check = "bash -c 'source scripts/gpu-env-loader.sh && python -c \"import
 # Keep the project env hermetic: user-site packages (e.g. an older pyarrow or
 # torch installed under ~/.local) would otherwise shadow the conda env.
 PYTHONNOUSERSITE = "1"
+# Harmless on Linux; required on macOS when both PyTorch and the extension
+# link libomp (import torchfits, or pixi, before a second libomp loads).
+KMP_DUPLICATE_LIB_OK = "TRUE"
 
 # Per-python benchmark environments for the CANFAR grid (deep-review matrix):
 # python 3.10-3.14 x torch lanes 2.10-2.13 x {cpu, cuda}. The torch lane is

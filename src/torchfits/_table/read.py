@@ -55,8 +55,8 @@ from ._read_scan import (  # noqa: F401
 
 _COMPLEX_ERR = (
     "complex table columns (TFORM 'C'/'M') are not supported by the Arrow "
-    "table APIs (pyarrow has no complex type); use torchfits.read_torch() or "
-    "torchfits.read(..., mode='table') for torch complex tensors"
+    "table APIs (pyarrow has no complex type); use torchfits.table.read_torch() "
+    "or torchfits.read(..., mode='table') for torch complex tensors"
 )
 
 
@@ -207,8 +207,9 @@ def read_torch(
     dataframes use :func:`read` / :func:`read_arrow`.
 
     ``hdu`` is an index or EXTNAME (not ``None`` / ``\"auto\"``). Optional
-    ``where`` uses C++ ``read_fits_table_filtered`` for simple numeric
-    predicates (same dialect as ``table.read``).
+    ``where`` accepts only simple numeric predicates (compare / ``BETWEEN`` /
+    ``AND``). ``OR`` / ``IN`` / ``NOT`` / ``IS NULL`` raise ``ValueError``;
+    use :func:`read` for the full dialect. TNULL sentinels never match.
     """
     guard_fits_path(path)
     import torchfits
@@ -295,7 +296,16 @@ def reader(
     it = iter(batches)
     first = next(it, None)
     if first is None:
-        return pa.RecordBatchReader.from_batches(pa.schema([]), [])
+        empty = _empty_table_with_schema(
+            pa,
+            path,
+            int(hdu) if isinstance(hdu, int) else 1,
+            columns,
+            decode_bytes,
+            include_fits_metadata,
+        )
+        schema = empty.schema if empty is not None else pa.schema([])
+        return pa.RecordBatchReader.from_batches(schema, [])
     return pa.RecordBatchReader.from_batches(first.schema, itertools.chain([first], it))
 
 

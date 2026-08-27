@@ -50,6 +50,7 @@ def read_fallback(
     read_check_cache: Callable[..., tuple[bool, Any, Any]],
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
     read_header: Callable[[Any, int, bool], Any],
+    raw_scale: bool = False,
 ) -> Any:
     """Generic fallback read path for image/table HDUs."""
     hit, cached_res, cache_key = read_check_cache(
@@ -63,6 +64,8 @@ def read_fallback(
         num_rows,
         return_header,
         cache_capacity,
+        mmap,
+        raw_scale,
     )
     if hit:
         return cached_res
@@ -140,6 +143,7 @@ def read_fallback(
                         use_cache=cache_capacity > 0,
                         resolve_image_mmap=resolve_image_mmap,
                         read_header=read_header,
+                        raw_scale=raw_scale,
                     )
                 except (RuntimeError, TypeError):
                     if force_image:
@@ -207,6 +211,7 @@ def read_fallback_image(
     use_cache: bool,
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
     read_header: Callable[[Any, int, bool], Any],
+    raw_scale: bool = False,
 ) -> Any:
     """Read an image HDU in the generic fallback path."""
     effective_mmap = resolve_image_mmap(path, hdu_num, mmap, cache_capacity)
@@ -218,7 +223,15 @@ def read_fallback_image(
             header = Header(header_data)
         except Exception:
             header = None
-    data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
+    if raw_scale:
+        if not effective_mmap and hasattr(cpp_module, "read_full_unmapped_raw"):
+            data = cpp_module.read_full_unmapped_raw(path, hdu_num)
+        elif hasattr(cpp_module, "read_full_raw"):
+            data = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
+        else:
+            data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
+    else:
+        data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
 
     if fp16:
         data = data.to(torch.float16)

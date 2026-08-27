@@ -1,3 +1,4 @@
+import pytest
 from torchfits.hdu import Header
 from torchfits.header_parser import fast_parse_header_cards
 
@@ -105,3 +106,8 @@ def test_header_pop_removes_all_history_cards():
     assert h.pop("HISTORY") == "c"
     assert "HISTORY" not in h
     assert list(h.cards) == []
+
+
+def test_header_rejects_unparseable_cards() -> None:
+    with pytest.raises((TypeError, ValueError)):
+        Header(["not-a-card"])

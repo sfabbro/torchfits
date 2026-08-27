@@ -42,7 +42,7 @@ class DataView:
         # Respect the FITS integer conventions so metadata matches the
         # tensors the readers actually produce (uint16/uint32/int8), not the
         # raw storage BITPIX (L1).
-        if self._header is not None and bitpix in (8, 16, 32):
+        if self._header is not None and bitpix in (8, 16, 32, 64):
             try:
                 bscale = float(self._header.get("BSCALE", 1.0))
                 bzero = float(self._header.get("BZERO", 0.0))
@@ -59,6 +59,9 @@ class DataView:
                 and abs(bzero - 2147483648.0) < tol
             ):
                 return torch.uint32
+            # Identity integer storage with BLANK is read as scaled float+NaN.
+            if "BLANK" in self._header:
+                return torch.float32
         return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:
@@ -72,7 +75,10 @@ class DataView:
             slice_spec = (slice_spec, slice(None))
 
         if len(slice_spec) != 2:
-            raise ValueError("Subset slicing supports exactly 2 dimensions (y, x)")
+            raise ValueError(
+                "Subset slicing supports exactly 2 dimensions (y, x); "
+                "N-D cubes should use read_subset / open_subset_reader"
+            )
 
         def _normalize_index(s: Any, dim: int) -> tuple[int, int]:
             if isinstance(s, int):

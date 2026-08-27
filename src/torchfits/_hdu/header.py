@@ -43,10 +43,7 @@ class Header(dict[str, Any]):
                         if key not in {"HISTORY", "COMMENT"}:
                             setitem(key, value)
                     else:
-                        try:
-                            parsed = self._coerce_card(card)
-                        except (TypeError, ValueError):
-                            continue
+                        parsed = self._coerce_card(card)
                         self._append_card(parsed, update_mapping=True, bump=False)
 
     def __setitem__(self, key: str, value: Any) -> None:

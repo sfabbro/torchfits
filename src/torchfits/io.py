@@ -105,6 +105,8 @@ def _read_check_cache(*args: Any, **kwargs: Any) -> Any:
         return_header=args[8],
         cache_capacity=args[9],
         invalidate_path=_invalidate_path_caches,
+        mmap=kwargs.get("mmap", args[10] if len(args) > 10 else "auto"),
+        raw_scale=kwargs.get("raw_scale", args[11] if len(args) > 11 else False),
     )
 
 
@@ -461,7 +463,10 @@ def clear_file_cache(
     cpp: bool = True,
     cpp_module: Any = None,
 ) -> None:
-    """Clear the FITS file handle and metadata caches selectively."""
+    """Clear the FITS metadata caches selectively.
+
+    ``handles`` is accepted for compatibility and ignored.
+    """
     return _clear_file_cache_impl(
         data=data,
         handles=handles,

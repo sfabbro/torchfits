@@ -170,16 +170,12 @@ python examples/example_megapipe_cutout_collage.py
 
 ### Benchmarking Cutout Performance
 
-When pulling 1,000 random $64 \times 64$ galaxy stamps from a 1.74 GB mosaic:
-
-| Method | Total Wall Time (1,000 cutouts) | Mean Time per Stamp | Speedup |
-|---|---|---|---|
-| `torchfits.open_subset_reader` | **0.060 s** | **0.060 ms** | **1.0× (Fastest)** |
-| `astropy.io.fits` (`memmap=True` + `.copy()`) | 0.149 s | 0.149 ms | 2.5× slower |
-| `torchfits.read_subset` | 0.165 s | 0.165 ms | 2.7× slower |
-| `fitsio` | 0.297 s | 0.297 ms | 5.0× slower |
-
-`torchfits.open_subset_reader` maps the uncompressed data segment once and performs row-level slicing and endian swapping directly into PyTorch tensors, eliminating file open/close overhead in high-throughput training loops.
+`torchfits.open_subset_reader` maps the uncompressed data segment once and
+performs row-level slicing and endian swapping into PyTorch tensors, so a
+training loop does not reopen the mosaic on every stamp. Time a given mosaic
+on your host with `examples/example_megapipe_cutout_collage.py`; published
+MegaCam cutout CSVs under `docs/assets/bench/` are 40 Rice CCD stamps, not
+this 1.74 GB stack.
 
 ![MegaPipe multi-band cutout collage](assets/gallery/megapipe_cutout_collage.png)
 

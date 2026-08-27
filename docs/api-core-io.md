@@ -482,7 +482,9 @@ Stamp CFITSIO `DATASUM`/`CHECKSUM` while writing with `checksum=True`
 torchfits.write("img.fits", data, checksum=True)  # stamped at write time
 torchfits.write_checksums(path, hdu=0)
 result = torchfits.verify_checksums(path, hdu=0)
-# result: dict with "datastatus", "hdustatus", "ok", and "status" ("ok" / "no_checksums" / "fail")
+# result: dict with "datastatus", "hdustatus", "ok", "present", and "status"
+# ("ok" / "no_checksums" / "fail"). Missing stamps set present=False; ok
+# stays True only because there was nothing to verify.
 ```
 
 ---
@@ -514,7 +516,10 @@ files under `cache_root()`.
 
 `clear_file_cache` keyword-only flags (all default `True`): `data`, `handles`,
 `meta`, `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the
-extension module used for the C++ clear.
+extension module used for the C++ clear. `handles=` is accepted for
+compatibility and ignored: there is no shared CFITSIO handle pool.
+
+`CacheConfig.max_files` and `max_memory_mb` do not size any live cache.
 
 Advanced helpers on `torchfits.io`: `cache_subsystem_policy(name)` /
 `clear_cache_subsystem(name)` (`"all"` clears every subsystem).

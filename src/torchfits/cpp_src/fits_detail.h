@@ -175,6 +175,15 @@ struct ScaleDetectionResult {
 inline ScaleDetectionResult detect_scale_info_fast(fitsfile* fptr, int bitpix) {
     ScaleDetectionResult out;
     if (!fptr || bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG) return out;
+
+    // BLANK means undefined pixels. Identity BSCALE/BZERO is otherwise the
+    // unscaled-int16 fast path, which cannot hold NaN — promote to scaled
+    // float so nulval=NaN applies (quantize + integer images with BLANK).
+    int blank_status = 0;
+    long blank_val = 0;
+    fits_read_key(fptr, TLONG, "BLANK", &blank_val, nullptr, &blank_status);
+    const bool has_blank = (blank_status == 0);
+
     int equiv_status = 0;
     int equiv_type = bitpix;
     fits_get_img_equivtype(fptr, &equiv_type, &equiv_status);
@@ -182,8 +191,9 @@ inline ScaleDetectionResult detect_scale_info_fast(fitsfile* fptr, int bitpix) {
         // CFITSIO has no unsigned 64-bit convention: fits_get_img_equivtype
         // reports TLONGLONG for BITPIX=64 regardless of BZERO, so the shortcut
         // would hide a uint64 convention (BZERO=2^63). Always read BSCALE/BZERO
-        // for LONGLONG_IMG.
-        if (equiv_type == bitpix && bitpix != LONGLONG_IMG) return out;
+        // for LONGLONG_IMG. BLANK also skips the shortcut so we still load
+        // BSCALE/BZERO before marking scaled.
+        if (equiv_type == bitpix && bitpix != LONGLONG_IMG && !has_blank) return out;
         if (bitpix == BYTE_IMG && equiv_type == SBYTE_IMG) {
             out.scaled = true; out.bscale = 1.0; out.bzero = -128.0;
             return out;
@@ -208,6 +218,7 @@ inline ScaleDetectionResult detect_scale_info_fast(fitsfile* fptr, int bitpix) {
         out.scaled = true; out.trusted = false;
     }
     if (equiv_status == 0 && equiv_type != bitpix) out.scaled = true;
+    if (has_blank) out.scaled = true;
     return out;
 }
 
@@ -417,6 +428,26 @@ inline size_t datatype_elem_size(int datatype) {
     }
 }
 
+// CFITSIO fnan() (fitsio2.h FNANMASK) treats Inf *and* exponent-zero
+// (signed zero, subnormals) as undefined whenever a nulval pointer is
+// non-NULL. Native IEEE HDUs must pass nullptr so Inf / -0 survive.
+// Pass NaN only for compressed tiles (undefined → 0 otherwise) or
+// integer storage read as float (BLANK).
+inline void* cfitsio_float_nulval_ptr(
+    int bitpix, bool compressed, int datatype, float* fnull, double* dnull
+) {
+    if (datatype != TFLOAT && datatype != TDOUBLE) {
+        return nullptr;
+    }
+    const bool native_ieee =
+        !compressed && (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG);
+    if (native_ieee) {
+        return nullptr;
+    }
+    return (datatype == TFLOAT) ? static_cast<void*>(fnull)
+                                : static_cast<void*>(dnull);
+}
+
 // ---------------------------------------------------------------------------
 // read_tensor_canonical — shared core for all image read paths
 // ---------------------------------------------------------------------------
@@ -586,15 +617,13 @@ inline torch::Tensor read_tensor_canonical(
         }
     }
 
-    // CFITSIO fallback. Compressed images may hold undefined pixels; always
-    // substitute NaN so nulls can never masquerade as 0 (CFITSIO only applies
-    // nulval where a pixel is actually undefined, so this is free otherwise).
+    // CFITSIO fallback. nulval=NaN only for compressed tiles or integer
+    // storage read as float (BLANK). Native IEEE must pass nullptr —
+    // fnan() would turn Inf and signed zero into NaN / +0.
     float fnullval = NAN;
     double dnullval = NAN;
-    void* nullval_ptr = nullptr;
-    if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-        nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
-    }
+    void* nullval_ptr = cfitsio_float_nulval_ptr(
+        bitpix, compressed, datatype, &fnullval, &dnullval);
 
     int status = 0;
     if (!use_chunking) {

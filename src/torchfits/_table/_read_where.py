@@ -106,18 +106,23 @@ def _torch_cmp_mask(tensor: torch.Tensor, op: str, literal: Any) -> torch.Tensor
             tensor = tensor.to(torch.int64)
 
     if op == "==":
-        return torch.eq(tensor, literal)
-    if op == "!=":
-        return torch.ne(tensor, literal)
-    if op == ">":
-        return torch.gt(tensor, literal)
-    if op == ">=":
-        return torch.ge(tensor, literal)
-    if op == "<":
-        return torch.lt(tensor, literal)
-    if op == "<=":
-        return torch.le(tensor, literal)
-    raise ValueError(f"Unsupported where operator '{op}'")
+        out = torch.eq(tensor, literal)
+    elif op == "!=":
+        out = torch.ne(tensor, literal)
+    elif op == ">":
+        out = torch.gt(tensor, literal)
+    elif op == ">=":
+        out = torch.ge(tensor, literal)
+    elif op == "<":
+        out = torch.lt(tensor, literal)
+    elif op == "<=":
+        out = torch.le(tensor, literal)
+    else:
+        raise ValueError(f"Unsupported where operator '{op}'")
+    # Scaled TNULL/BLANK pixels are NaN; SQL three-valued logic never matches NULL.
+    if tensor.is_floating_point():
+        out = out & ~torch.isnan(tensor)
+    return out
 
 
 def _try_torch_tensor_where_filter(

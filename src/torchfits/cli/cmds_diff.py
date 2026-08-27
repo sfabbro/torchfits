@@ -35,10 +35,11 @@ def _image_record(path: str, index: int) -> dict[str, Any]:
     tensor = torchfits.read_tensor(path, hdu=index)
     if not isinstance(tensor, torch.Tensor):
         raise IoError(f"{path}:{index} read_tensor did not return a tensor")
+    stats_t = tensor if tensor.dtype.is_floating_point else tensor.float()
     return {
         "shape": list(tensor.shape),
-        "min": float(tensor.min()),
-        "max": float(tensor.max()),
+        "min": float(stats_t.min()),
+        "max": float(stats_t.max()),
         "mean": float(tensor.float().mean()),
     }
 

@@ -15,6 +15,8 @@
 #include <new>
 #include <mutex>
 #include <algorithm>
+#include <cctype>
+#include <limits>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -180,7 +182,12 @@ public:
                  continue;
             }
 
-            col.repeat = (int)repeat_long;
+            if (repeat_long < 0 ||
+                repeat_long > static_cast<long>(std::numeric_limits<int>::max())) {
+                throw std::runtime_error(
+                    std::string("TFORM repeat count overflows int for column ") + ttype);
+            }
+            col.repeat = static_cast<int>(repeat_long);
             col.name = std::string(ttype);
             col.width = 1;  // Will be set based on type
             col.fits_typecode = typecode;
@@ -405,15 +412,25 @@ public:
         const int i = col_idx + 1;
         snprintf(scale_key, FLEN_KEYWORD, "TSCAL%d", i);
         fits_read_key(fptr_, TDOUBLE, scale_key, &col.tscale, nullptr, &scale_status);
+        const bool has_tscal = (scale_status == 0);
         if (scale_status != 0) {
             scale_status = 0;
             col.tscale = 1.0;
         }
         snprintf(scale_key, FLEN_KEYWORD, "TZERO%d", i);
         fits_read_key(fptr_, TDOUBLE, scale_key, &col.tzero, nullptr, &scale_status);
+        const bool has_tzero = (scale_status == 0);
         if (scale_status != 0) {
             scale_status = 0;
             col.tzero = 0.0;
+        }
+        snprintf(scale_key, FLEN_KEYWORD, "TNULL%d", i);
+        long long tnull_val = 0;
+        int tnull_status = 0;
+        fits_read_key(fptr_, TLONGLONG, scale_key, &tnull_val, nullptr, &tnull_status);
+        if (tnull_status == 0) {
+            col.has_tnull = true;
+            col.tnull = tnull_val;
         }
         col.scaled = (col.tscale != 1.0 || col.tzero != 0.0);
         const int typecode = col.fits_typecode;
@@ -433,6 +450,11 @@ public:
                 col.unsigned_target_type = torch::kUInt32;
                 col.scaled = false;
             }
+        }
+        // Quantize writes TSCAL/TZERO even when they are identity; TNULL on
+        // that path must become NaN after the linear map (same as BLANK images).
+        if (col.has_tnull && (has_tscal || has_tzero) && !col.is_unsigned_int) {
+            col.scaled = true;
         }
     }
 
@@ -711,12 +733,20 @@ public:
             if (it == result.end() || !it->second.fixed_data.defined()) {
                 continue;
             }
-            torch::Tensor scaled = it->second.fixed_data.to(torch::kFloat64);
+            torch::Tensor raw = it->second.fixed_data;
+            torch::Tensor null_mask;
+            if (col.has_tnull && at::isIntegralType(raw.scalar_type(), /*includeBool=*/false)) {
+                null_mask = raw.to(torch::kInt64).eq(static_cast<int64_t>(col.tnull));
+            }
+            torch::Tensor scaled = raw.to(torch::kFloat64);
             if (col.tscale != 1.0) {
                 scaled.mul_(col.tscale);
             }
             if (col.tzero != 0.0) {
                 scaled.add_(col.tzero);
+            }
+            if (null_mask.defined()) {
+                scaled.masked_fill_(null_mask, std::numeric_limits<double>::quiet_NaN());
             }
             it->second.fixed_data = scaled;
         }
@@ -1008,6 +1038,11 @@ public:
                             memcpy(row_out, in, repeat);
                         }
                     });
+                    if (col.type == FITSColumnType::BYTE && col.fits_typecode == TSBYTE) {
+                        detail::_xor_sign_bit_u8(
+                            out,
+                            static_cast<size_t>(num_rows) * static_cast<size_t>(repeat));
+                    }
                 } else if (col.type == FITSColumnType::BIT) {
                     bool* out = tensor.data_ptr<bool>();
                     at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
@@ -2588,6 +2623,11 @@ public:
                      std::memcpy(dest + i * total_width, buffer + i * row_stride + col_offset, total_width);
                  }
              });
+             if (col.type == FITSColumnType::BYTE && col.fits_typecode == TSBYTE) {
+                 detail::_xor_sign_bit_u8(
+                     dest,
+                     static_cast<size_t>(num_rows) * static_cast<size_t>(total_width));
+             }
         } else if (col_width == 2) {
             const int repeat = col.repeat;
             for_rows([&](long start, long end) {
@@ -2648,8 +2688,24 @@ public:
     // must route through CFITSIO instead (native .bz2 support).
     bool direct_io_ok() const {
         if (filename_.empty()) return false;
-        if (filename_.size() >= 4 &&
-            filename_.compare(filename_.size() - 4, 4, ".bz2") == 0) {
+        auto ends_with_ci = [](const std::string& s, const char* suf) {
+            const size_t n = std::strlen(suf);
+            if (s.size() < n) return false;
+            for (size_t i = 0; i < n; ++i) {
+                const unsigned char c =
+                    static_cast<unsigned char>(s[s.size() - n + i]);
+                if (std::tolower(c) != static_cast<unsigned char>(suf[i])) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (ends_with_ci(filename_, ".bz2") || ends_with_ci(filename_, ".gz") ||
+            ends_with_ci(filename_, ".zip")) {
+            return false;
+        }
+        if (filename_.size() >= 2 && filename_[filename_.size() - 2] == '.' &&
+            (filename_.back() == 'Z' || filename_.back() == 'z')) {
             return false;
         }
         if (filename_.find("://") != std::string::npos) return false;

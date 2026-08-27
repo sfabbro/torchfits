@@ -24,6 +24,7 @@ from .common import (
     resolve_file_jobs,
     run_file_jobs,
     selected_hdu_indices,
+    reject_same_path,
 )
 
 
@@ -101,20 +102,21 @@ def _resolve_file_pairs(args: argparse.Namespace) -> list[tuple[str, str]]:
         ensure_unique_basenames(paths)
         directory = Path(out_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        return [(path, str(directory / Path(path).name)) for path in paths]
-
-    if out_flag:
+        pairs = [(path, str(directory / Path(path).name)) for path in paths]
+    elif out_flag:
         if len(paths) != 1:
             raise UsageError("-o/--out requires exactly one input path")
-        return [(paths[0], str(out_flag))]
-
-    if len(paths) == 2:
-        return [(paths[0], paths[1])]
-
-    if len(paths) == 1:
+        pairs = [(paths[0], str(out_flag))]
+    elif len(paths) == 2:
+        pairs = [(paths[0], paths[1])]
+    elif len(paths) == 1:
         raise UsageError("output path required (-o/--out or positional OUTPUT)")
+    else:
+        raise UsageError("multiple inputs require --out-dir")
 
-    raise UsageError("multiple inputs require --out-dir")
+    for src, dst in pairs:
+        reject_same_path(src, dst)
+    return pairs
 
 
 def _rewrite_file(

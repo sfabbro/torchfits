@@ -101,6 +101,7 @@ def run(args: argparse.Namespace) -> int:
         [str(p) for p in args.paths],
         out=args.out,
         out_dir=args.out_dir,
+        refuse_same_path=True,
     )
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
     run_file_jobs(

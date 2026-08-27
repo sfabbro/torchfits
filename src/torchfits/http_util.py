@@ -1,6 +1,10 @@
 """Shared HTTP(S) helpers: SSRF-safe redirects, auth env, timeouts.
 
 Used by ``torchfits probe`` and remote Dataset/cache downloads.
+
+Residual: ``guard_cfitsio_remote_path`` resolves DNS once; urllib/CFITSIO may
+re-resolve later (TOCTOU / DNS rebinding). Public http(s)/ftp still go to
+CFITSIO; private/loopback stays blocked at the guard.
 """
 
 from __future__ import annotations

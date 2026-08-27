@@ -9,9 +9,9 @@ Checks:
 - Every relative ``href``/``src`` in every ``site/**/*.html`` resolves to a
   file that exists on disk (directories resolve to their ``index.html``).
 - Every page has a non-empty ``<body>``.
-- External ``http(s)://`` links get a best-effort HEAD/GET probe and are
-  reported as warnings only — flaky networks or third-party outages must
-  never fail this gate.
+- External ``http(s)://`` links get a best-effort HEAD/GET probe.
+  First-party 404s (github.com/astroai/torchfits, astroai.github.io) fail
+  the gate; other external failures are warnings only.
 
 Exit 0 on success (no broken local links, no empty pages), exit 1 otherwise.
 """
@@ -137,6 +137,16 @@ def check_local_links(html_files: list[Path]) -> tuple[list[str], list[str]]:
     return broken, sorted(external)
 
 
+def _is_first_party(url: str) -> bool:
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if host in {"astroai.github.io", "www.astroai.github.io"}:
+        return True
+    if host in {"github.com", "www.github.com"}:
+        return parts.path.startswith("/astroai/torchfits")
+    return False
+
+
 def _probe(url: str) -> str | None:
     request = urllib.request.Request(url, method="HEAD")
     try:
@@ -152,12 +162,20 @@ def _probe(url: str) -> str | None:
         return str(exc)
 
 
-def warn_external_links(external: list[str]) -> None:
+def warn_external_links(external: list[str]) -> list[str]:
+    """Probe externals. Return first-party HTTP 404s (hard failures)."""
     unique = sorted({url.split("#", 1)[0] for url in external})
+    first_party_404: list[str] = []
     with ThreadPoolExecutor(max_workers=16) as pool:
         for url, result in zip(unique, pool.map(_probe, unique)):
-            if result is not None:
+            if result is None:
+                continue
+            if _is_first_party(url) and result == "HTTP 404":
+                first_party_404.append(f"{url} -> {result}")
+                print(f"  [FAIL] {url} -> {result}")
+            else:
                 print(f"  [warn] {url} -> {result}")
+    return first_party_404
 
 
 def main() -> int:
@@ -173,17 +191,23 @@ def main() -> int:
     broken, external = check_local_links(html_files)
 
     print(f"Scanned {len(html_files)} pages, {len(external)} unique external links.")
+    first_party_404: list[str] = []
     if external:
-        print("Probing external links (warnings only, never fail the gate):")
-        warn_external_links(external)
+        print("Probing external links (first-party 404s fail; others warn):")
+        first_party_404 = warn_external_links(external)
 
     if broken:
         print(f"\n[FAIL] {len(broken)} broken local link(s)/empty page(s):")
         for item in broken:
             print(f"  - {item}")
+    if first_party_404:
+        print(f"\n[FAIL] {len(first_party_404)} first-party 404(s):")
+        for item in first_party_404:
+            print(f"  - {item}")
+    if broken or first_party_404:
         return 1
 
-    print("[OK] no broken local links, no empty pages.")
+    print("[OK] no broken local links, no empty pages, no first-party 404s.")
     return 0
 
 

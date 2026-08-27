@@ -379,7 +379,7 @@ std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::stri
 // ---------------------------------------------------------------------------
 // read_images_batch
 // ---------------------------------------------------------------------------
-std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& paths, int hdu_num) {
+std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& paths, int hdu_num, bool use_mmap) {
     size_t n = paths.size();
     std::vector<torch::Tensor> results(n);
     std::vector<std::string> errors(n);
@@ -391,7 +391,7 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
     auto t0 = std::chrono::steady_clock::now();
     try {
         FITSFile file(paths[0].c_str(), 0);
-        results[0] = file.read_tensor(hdu_num);
+        results[0] = file.read_tensor(hdu_num, use_mmap);
     } catch (const std::exception& e) {
         errors[0] = e.what();
     }
@@ -418,7 +418,7 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
         for (size_t i = 1; i < n; ++i) {
             try {
                 FITSFile file(paths[i].c_str(), 0);
-                results[i] = file.read_tensor(hdu_num);
+                results[i] = file.read_tensor(hdu_num, use_mmap);
             } catch (const std::exception& e) {
                 errors[i] = e.what();
             }
@@ -430,7 +430,7 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
             threads.emplace_back([&, i]() {
                 try {
                     FITSFile file(paths[i].c_str(), 0);
-                    results[i] = file.read_tensor(hdu_num);
+                    results[i] = file.read_tensor(hdu_num, use_mmap);
                 } catch (const std::exception& e) {
                     errors[i] = e.what();
                 }
@@ -556,12 +556,8 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         int anynul = 0;
         float fnullval = NAN;
         double dnullval = NAN;
-        void* nullval_ptr = nullptr;
-        // Compressed images may hold undefined pixels; always substitute NaN
-        // for float reads so nulls never decode as 0.
-        if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-            nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
-        }
+        void* nullval_ptr = d::cfitsio_float_nulval_ptr(
+            bitpix, compressed, datatype, &fnullval, &dnullval);
 
         static LONGLONG firstpixels[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
         fits_read_pixll(
@@ -675,33 +671,6 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
             return torch::empty({0}, torch::TensorOptions().dtype(dtype));
         }
 
-        // Float/double (incl. CompImage): direct CFITSIO→tensor, no mmap/scale probes.
-        const bool float_like = (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG);
-        if (float_like) {
-            LONGLONG nelements = d::checked_nelements_product(naxes_ll.data(), naxis);
-            int64_t torch_shape[9];
-            for (int i = 0; i < naxis; ++i)
-                torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]);
-            const auto dtype = (bitpix == FLOAT_IMG) ? torch::kFloat32 : torch::kFloat64;
-            const int datatype = (bitpix == FLOAT_IMG) ? TFLOAT : TDOUBLE;
-            auto tensor = torch::empty(
-                at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
-            int anynul = 0;
-            status = 0;
-            fits_read_img(
-                fptr, datatype, 1, nelements, nullptr, tensor.data_ptr(), &anynul, &status);
-            if (status != 0) {
-                close_guard();
-                char err_text[31];
-                fits_get_errstatus(status, err_text);
-                throw std::runtime_error(
-                    "Error reading image data: status=" + std::to_string(status) +
-                    " msg=" + std::string(err_text));
-            }
-            close_guard();
-            return tensor;
-        }
-
         bool compressed = false;
         bool compressed_cached = false;
         if (shared_meta) {
@@ -721,6 +690,37 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
                 std::unique_lock<std::shared_mutex> lock(shared_meta->mutex);
                 shared_meta->compressed_cache[hdu_num] = compressed;
             }
+        }
+
+        // Float/double (incl. CompImage): direct CFITSIO→tensor, no mmap/scale probes.
+        const bool float_like = (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG);
+        if (float_like) {
+            LONGLONG nelements = d::checked_nelements_product(naxes_ll.data(), naxis);
+            int64_t torch_shape[9];
+            for (int i = 0; i < naxis; ++i)
+                torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]);
+            const auto dtype = (bitpix == FLOAT_IMG) ? torch::kFloat32 : torch::kFloat64;
+            const int datatype = (bitpix == FLOAT_IMG) ? TFLOAT : TDOUBLE;
+            auto tensor = torch::empty(
+                at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
+            int anynul = 0;
+            float fnullval = NAN;
+            double dnullval = NAN;
+            void* nullval_ptr = d::cfitsio_float_nulval_ptr(
+                bitpix, compressed, datatype, &fnullval, &dnullval);
+            status = 0;
+            fits_read_img(
+                fptr, datatype, 1, nelements, nullval_ptr, tensor.data_ptr(), &anynul, &status);
+            if (status != 0) {
+                close_guard();
+                char err_text[31];
+                fits_get_errstatus(status, err_text);
+                throw std::runtime_error(
+                    "Error reading image data: status=" + std::to_string(status) +
+                    " msg=" + std::string(err_text));
+            }
+            close_guard();
+            return tensor;
         }
 
         bool scaled = false;
@@ -1537,11 +1537,26 @@ void bind_fits(nb::module_& m) {
         nb::object out;
         void* dst = nullptr;
 
+        const bool unsigned_short = scaled && bitpix == SHORT_IMG &&
+            scale_info.bscale == 1.0 && d::is_unsigned_short_offset(scale_info.bzero);
+        const bool unsigned_long = scaled && bitpix == LONG_IMG &&
+            scale_info.bscale == 1.0 && d::is_unsigned_long_offset(scale_info.bzero);
+
         if (scaled) {
             if (bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0) {
                 auto arr = alloc_numpy_array<int8_t>(shape);
                 dst = (void*) arr.data();
                 datatype = TSBYTE;
+                out = arr.cast();
+            } else if (unsigned_short) {
+                auto arr = alloc_numpy_array<uint16_t>(shape);
+                dst = (void*) arr.data();
+                datatype = TUSHORT;
+                out = arr.cast();
+            } else if (unsigned_long) {
+                auto arr = alloc_numpy_array<uint32_t>(shape);
+                dst = (void*) arr.data();
+                datatype = TUINT;
                 out = arr.cast();
             } else {
                 auto arr = alloc_numpy_array<float>(shape);
@@ -1674,12 +1689,11 @@ void bind_fits(nb::module_& m) {
         void* nullval_ptr = nullptr;
 
         {
-            // Phase 3 (no GIL): CFITSIO read. Compressed images may hold
-            // undefined pixels; always substitute NaN for float reads.
+            // Phase 3 (no GIL): CFITSIO read. nulval=NaN only for compressed
+            // tiles or integer→float (BLANK); native IEEE keeps Inf / -0.
             nb::gil_scoped_release release;
-            if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed) {
-                nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
-            }
+            nullval_ptr = d::cfitsio_float_nulval_ptr(
+                bitpix, compressed, datatype, &fnullval, &dnullval);
 
             status = 0;
             std::vector<LONGLONG> dims;
@@ -2101,9 +2115,9 @@ void bind_fits(nb::module_& m) {
         return tensor_to_python(tensor);
     });
 
-    m.def("read_images_batch", [](const std::vector<std::string>& paths, int hdu_num) {
+    m.def("read_images_batch", [](const std::vector<std::string>& paths, int hdu_num, bool use_mmap) {
         nb::gil_scoped_release release;
-        auto tensors = read_images_batch(paths, hdu_num);
+        auto tensors = read_images_batch(paths, hdu_num, use_mmap);
         nb::gil_scoped_acquire acquire;
 
         nb::list result;
@@ -2111,7 +2125,7 @@ void bind_fits(nb::module_& m) {
             result.append(tensor_to_python(t));
         }
         return result;
-    });
+    }, nb::arg("paths"), nb::arg("hdu_num"), nb::arg("use_mmap") = true);
 
     m.def("read_hdus_batch", [](const std::string& path, const std::vector<int>& hdus, bool use_mmap) {
         nb::gil_scoped_release release;

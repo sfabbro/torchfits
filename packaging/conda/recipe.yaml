@@ -76,7 +76,9 @@ about:
   repository: https://github.com/astroai/torchfits
   documentation: https://astroai.github.io/torchfits/
   license: MIT
-  license_file: LICENSE
+  license_file:
+    - LICENSE
+    - extern/licenses/CFITSIO-LICENSE.txt
   summary: FITS I/O for PyTorch with native tensor reads, datasets, and transforms
   description: |
     torchfits provides FITS I/O for PyTorch with native tensor reads,

@@ -65,12 +65,19 @@ def test_compressed_null_parity_with_astropy(tmp_path):
 
 
 def test_uncompressed_float_nan_still_nan(tmp_path):
-    """Guard: the unconditional-nulval change must not affect plain images."""
+    """Guard: nulval on native IEEE must not destroy NaN, Inf, or signed zero."""
     path = str(tmp_path / "plain.fits")
-    data = np.arange(16, dtype=np.float32).reshape(4, 4)
-    data[1, 1] = np.nan
+    data = np.array(
+        [[0.0, -0.0, 1.0, np.nan], [np.inf, -np.inf, 2.0, 3.0]],
+        dtype=np.float32,
+    )
     afits.PrimaryHDU(data=data).writeto(path)
 
-    got = torchfits.read_tensor(path, hdu=0, mmap=False)
-    assert bool(torch.isnan(got[1, 1]))
-    assert torch.equal(got[~torch.isnan(got)], torch.from_numpy(data[~np.isnan(data)]))
+    for mmap in (True, False):
+        got = torchfits.read_tensor(path, hdu=0, mmap=mmap).numpy()
+        assert bool(np.isnan(got[0, 3])), f"mmap={mmap}: NaN lost"
+        np.testing.assert_array_equal(
+            got[~np.isnan(data)],
+            data[~np.isnan(data)],
+            err_msg=f"mmap={mmap}: Inf or signed zero destroyed",
+        )

@@ -1102,6 +1102,25 @@ def test_http_probe_blocks_internal_ssrf():
     assert "access to internal or private networks is blocked" in result.stderr
 
 
+def test_copy_blocks_internal_ssrf(tmp_path):
+    """``copy`` must SSRF-block private URLs before urllib fetches them."""
+    dest = tmp_path / "stolen.fits"
+    result = _run_cli("copy", "http://127.0.0.1:9/x.fits", str(dest))
+    assert result.returncode == 3, result.stderr
+    assert "access to internal or private networks is blocked" in result.stderr
+    assert not dest.exists()
+
+    result = _run_cli("copy", "ftp://192.168.1.1/x.fits", str(dest))
+    assert result.returncode == 3, result.stderr
+    assert "access to internal or private networks is blocked" in result.stderr
+    assert not dest.exists()
+
+    result = _run_cli("copy", "HTTP://127.0.0.1:9/x.fits", str(dest))
+    assert result.returncode == 3, result.stderr
+    assert "access to internal or private networks is blocked" in result.stderr
+    assert not dest.exists()
+
+
 def test_cli_rejects_ftp_remote_paths():
     """CLI local-file commands must reject ftp:// (not only http/https/vos)."""
     result = _run_cli("info", "ftp://example.com/x.fits")

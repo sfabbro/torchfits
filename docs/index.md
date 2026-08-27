@@ -23,11 +23,11 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
 
     [:octicons-arrow-right-24: Installation Guide](install.md)
 
--   :material-memory:{ .lg .middle } **Direct GPU Tensor Placement**
+-   :material-memory:{ .lg .middle } **GPU Tensor Placement**
 
     ---
 
-    Load 2D and 3D images directly onto CUDA GPUs or Apple Silicon unified memory (`device="cuda"` / `"mps"`) in a single call.
+    Decode on the host, then place the result on CUDA or Apple Silicon unified memory in one call (`device="cuda"` / `"mps"`).
 
     [:octicons-arrow-right-24: Core I/O Workflows](python-workflows.md#images-and-hdus)
 

@@ -137,6 +137,20 @@ def _decode_uint8_matrix_to_arrow(
 # -- main numpy/torch → Arrow conversion -------------------------------------------
 
 
+def _null_mask(arr: "np.ndarray", sentinel: Any) -> Any:
+    """True where *arr* matches a FITS TNULL sentinel.
+
+    Scaled integer TNULL is already NaN in the tensor (quantize / TSCAL),
+    so a float compare against the raw sentinel would miss those rows.
+    """
+    import numpy as np
+
+    mask = arr == sentinel
+    if arr.dtype.kind == "f":
+        mask = np.isnan(arr) | mask
+    return mask
+
+
 def _numpy_to_arrow_array(
     pa: Any,
     value: "np.ndarray",
@@ -157,7 +171,7 @@ def _numpy_to_arrow_array(
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
             return _pa_array(pa, arr)
-        mask = arr == sentinel
+        mask = _null_mask(arr, sentinel)
         if mask.any():
             return _pa_array(pa, arr, mask=mask)
         return _pa_array(pa, arr)
@@ -173,7 +187,7 @@ def _numpy_to_arrow_array(
         if sentinel is None:
             values = _pa_array(pa, flat)
         else:
-            flat_mask = flat == sentinel
+            flat_mask = _null_mask(flat, sentinel)
             values = (
                 _pa_array(pa, flat, mask=flat_mask)
                 if flat_mask.any()
@@ -302,7 +316,7 @@ def _vla_tuple_to_arrow_array(
     if sentinel is None:
         values = _pa_array(pa, flat)
     else:
-        mask = flat == sentinel
+        mask = _null_mask(flat, sentinel)
         values = _pa_array(pa, flat, mask=mask) if mask.any() else _pa_array(pa, flat)
 
     if int(offsets64[-1]) <= np.iinfo(np.int32).max:

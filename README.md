@@ -20,7 +20,7 @@ Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.g
 pip install torchfits
 ```
 
-Prebuilt wheels automatically enable GPU acceleration (CUDA on Linux, MPS on macOS) when available, or fall back to CPU. For CPU-only installs, custom CUDA builds, or other PyTorch versions, see the [Installation guide](docs/install.md).
+Prebuilt wheels decode FITS on the host, then `device="cuda"` / `"mps"` copies the tensor onto the GPU when those runtimes are available. For CPU-only installs, custom CUDA builds, or other PyTorch versions, see the [Installation guide](docs/install.md).
 
 ## At a glance
 

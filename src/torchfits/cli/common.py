@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,6 +19,7 @@ EXIT_DIFF = 1
 EXIT_USAGE = 2
 EXIT_IO = 3
 EXIT_VERIFY_FAIL = 4
+EXIT_INTERRUPT = 130
 
 _REMOTE_PREFIXES = ("http://", "https://", "ftp://", "vos://", "vos:", "vault:")
 _EMIT_FORMATS = ("text", "json", "jsonl")
@@ -130,6 +132,25 @@ def json_default(value: Any) -> Any:
     if hasattr(value, "tolist"):
         return value.tolist()
     return str(value)
+
+
+def _json_safe(value: Any) -> Any:
+    """Replace NaN/Inf with None so dumps(..., allow_nan=False) is valid JSON."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def reject_same_path(src: str, dst: str) -> None:
+    """Refuse OUTPUT that resolves to the same file as INPUT."""
+    src_real = os.path.realpath(cfitsio_base_path(src))
+    dst_real = os.path.realpath(dst)
+    if src_real == dst_real:
+        raise UsageError(f"refusing same-path rewrite in place: {src}")
 
 
 def add_hdu_arg(
@@ -315,6 +336,7 @@ def resolve_batch_io_pairs(
     out: str | None,
     out_dir: str | None,
     positional_output: str | None = None,
+    refuse_same_path: bool = False,
 ) -> list[tuple[str, str]]:
     """Resolve ``INPUT [OUTPUT]``, ``-o``, or multi-input ``--out-dir`` pairs."""
     if out and positional_output and out != positional_output:
@@ -328,23 +350,25 @@ def resolve_batch_io_pairs(
         ensure_unique_basenames(paths)
         directory = Path(out_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        return [
+        pairs = [
             (path, str(directory / Path(cfitsio_base_path(path)).name))
             for path in paths
         ]
-
-    if out_flag:
+    elif out_flag:
         if len(paths) != 1:
             raise UsageError("-o/--out requires exactly one input path")
-        return [(paths[0], str(out_flag))]
-
-    if len(paths) == 2:
-        return [(paths[0], paths[1])]
-
-    if len(paths) == 1:
+        pairs = [(paths[0], str(out_flag))]
+    elif len(paths) == 2:
+        pairs = [(paths[0], paths[1])]
+    elif len(paths) == 1:
         raise UsageError("output path required (-o/--out or positional OUTPUT)")
+    else:
+        raise UsageError("multiple inputs require --out-dir")
 
-    raise UsageError("multiple inputs require --out-dir")
+    if refuse_same_path:
+        for src, dst in pairs:
+            reject_same_path(src, dst)
+    return pairs
 
 
 def add_split_arg(parser: Any) -> None:
@@ -401,10 +425,18 @@ def emit_records(
     items = list(records)
     if format == "jsonl":
         for record in items:
-            print(json.dumps(record, default=json_default), file=out)
+            print(
+                json.dumps(_json_safe(record), default=json_default, allow_nan=False),
+                file=out,
+            )
         return
     if format == "json":
-        print(json.dumps(items, default=json_default, indent=2), file=out)
+        print(
+            json.dumps(
+                _json_safe(items), default=json_default, indent=2, allow_nan=False
+            ),
+            file=out,
+        )
         return
     for record in items:
         parts = [f"{key}={record[key]!r}" for key in sorted(record)]

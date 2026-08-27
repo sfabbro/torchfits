@@ -34,6 +34,7 @@
 #include "fits_detail.h"
 #include "fits_file.h"
 #include "fits_rw.h"
+#include "internal_utils.h"
 
 namespace torchfits {
 
@@ -375,11 +376,8 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
     int anynul = 0;
     float fnullval = NAN;
     double dnullval = NAN;
-    void* nullval_ptr = nullptr;
-    // Compressed images may hold undefined pixels; always substitute NaN for
-    // float reads so nulls never decode as 0 (see read_tensor_canonical).
-    if ((datatype == TFLOAT || datatype == TDOUBLE) && compressed)
-        nullval_ptr = (datatype == TFLOAT) ? (void*)&fnullval : (void*)&dnullval;
+    void* nullval_ptr = detail::cfitsio_float_nulval_ptr(
+        bitpix, compressed, datatype, &fnullval, &dnullval);
     fits_read_img(fptr_, datatype, 1, nelements, nullval_ptr, tensor.data_ptr(), &anynul, &status);
     if (status != 0) {
         char err_text[31];
@@ -416,7 +414,10 @@ bool FITSFile::write_image(nb::ndarray<> tensor, int hdu_num, double bscale, dou
         throw std::runtime_error("Error creating image: status=" + std::to_string(status) +
                                  " msg=" + std::string(err_text));
     }
-    fits_write_img(fptr_, datatype, 1, nelements, tensor.data(), &status);
+    std::vector<uint8_t> contig_buf;
+    void* data_ptr = torchfits::internal::ensure_c_contiguous_ndarray(
+        tensor, nelements, contig_buf);
+    fits_write_img(fptr_, datatype, 1, nelements, data_ptr, &status);
     if (status != 0) {
         char err_text[31];
         fits_get_errstatus(status, err_text);
@@ -552,8 +553,13 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
         lpixel[i] = naxes[i];
     }
     int anynul = 0;
+    float fnullval = NAN;
+    double dnullval = NAN;
+    const bool compressed = is_compressed_image_cached(hdu_num);
+    void* nullval_ptr = detail::cfitsio_float_nulval_ptr(
+        bitpix, compressed, datatype, &fnullval, &dnullval);
     fits_read_subset(fptr_, datatype, fpixel.data(), lpixel.data(), inc.data(),
-                     nullptr, tensor.data_ptr(), &anynul, &status);
+                     nullval_ptr, tensor.data_ptr(), &anynul, &status);
     if (status != 0) {
         char err_text[31];
         fits_get_errstatus(status, err_text);
@@ -820,7 +826,10 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
         }
         long nelements = static_cast<long>(
             torchfits::detail::checked_nelements_product(naxes));
-        fits_write_img(fptr_, datatype, 1, nelements, tensor.data(), &status);
+        std::vector<uint8_t> contig_buf;
+        void* data_ptr = torchfits::internal::ensure_c_contiguous_ndarray(
+            tensor, nelements, contig_buf);
+        fits_write_img(fptr_, datatype, 1, nelements, data_ptr, &status);
         if (status != 0) {
             char err_text[31];
             fits_get_errstatus(status, err_text);
@@ -1100,8 +1109,13 @@ torch::Tensor SubsetReader::read(long x1, long y1, long x2, long y2) {
         lpixel[i] = naxes_[i];
     }
     int status = 0, anynul = 0;
+    float fnullval = NAN;
+    double dnullval = NAN;
+    const bool compressed = file_.is_compressed_image_cached(hdu_num_);
+    void* nullval_ptr = detail::cfitsio_float_nulval_ptr(
+        bitpix_, compressed, datatype_, &fnullval, &dnullval);
     fits_read_subset(file_.get_fptr(), datatype_, fpixel.data(), lpixel.data(), inc.data(),
-                     nullptr, tensor.data_ptr(), &anynul, &status);
+                     nullval_ptr, tensor.data_ptr(), &anynul, &status);
     if (status != 0) {
         char err_text[31];
         fits_get_errstatus(status, err_text);

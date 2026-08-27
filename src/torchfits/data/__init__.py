@@ -171,7 +171,7 @@ def _eager_table_columns(
             col_list = list(columns) if columns else []
             chunk = cpp.read_fits_table(path, hdu, col_list, _resolve_table_mmap(mmap))
             if chunk:
-                return _move_table_chunk(_normalize_cpp_chunk(chunk), device)
+                return _move_table_chunk(chunk, device)
         except Exception:
             _log.debug(
                 "C++ table read failed for %r, falling back to pyarrow",
@@ -206,18 +206,6 @@ def _eager_table_columns(
         else:
             result[col_name] = col.to_pylist()
     return result
-
-
-def _normalize_cpp_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for name, value in chunk.items():
-        if isinstance(value, torch.Tensor):
-            out[name] = value
-        elif isinstance(value, list):
-            out[name] = value
-        else:
-            out[name] = value
-    return out
 
 
 def _tensor_columns_from_record_batch(batch: Any) -> dict[str, torch.Tensor | None]:

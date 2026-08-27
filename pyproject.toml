@@ -74,6 +74,10 @@ bench = [
 test = [
     "pytest>=9.0",
     "pytest-cov>=7.0",
+    "astropy>=8.0",
+    "fitsio>=1.4.0",
+    "psutil",
+    "pyarrow>=5.0",
 ]
 examples = [
     "matplotlib>=3.11",
@@ -131,7 +135,7 @@ exclude = [".cursor/**", ".pixi/**", ".github/**"]
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_* *-manylinux_i686 *-win32 cp31?t-*"
-test-requires = ["numpy", "pyarrow", "pytest"]
+test-requires = ["numpy", "pyarrow", "pytest", "astropy"]
 build-frontend = { name = "pip", args = ["--no-build-isolation"] }
 before-build = "bash {project}/scripts/cibw_before_build.sh"
 test-command = "bash {project}/scripts/cibw_test.sh {project}"
@@ -141,7 +145,7 @@ test-command = "bash {project}/scripts/cibw_test.sh {project}"
 archs = ["auto"]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-before-all = "bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt"
+before-all = "yum install -y bzip2-devel && bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt"
 environment = { PIP_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cpu" }
 repair-wheel-command = "auditwheel repair --exclude libtorch_python.so --exclude libtorch_cpu.so --exclude libtorch.so --exclude libc10.so -w {dest_dir} {wheel}"
 

@@ -406,6 +406,7 @@ def read_unified(
         read_check_cache=read_check_cache,
         resolve_image_mmap=resolve_image_mmap,
         read_header=read_header,
+        raw_scale=raw_scale,
     )
 
 
@@ -458,11 +459,11 @@ def _read_batch_paths(
     # The batch C++ fast path has no fp16/bf16/raw_scale support; route
     # around it so list inputs honor the same conversion contract as single
     # reads instead of silently returning differently-scaled data.
-    if mmap is not False and not (fp16 or bf16 or raw_scale):
+    if mmap is True and not (fp16 or bf16 or raw_scale):
         for item_path in path:
             require_bz2_support(item_path)
         try:
-            data_list = cpp_module.read_images_batch(list(path), hdu)
+            data_list = cpp_module.read_images_batch(list(path), hdu, True)
             if device != "cpu":
                 data_list = batch_to_device(data_list, device)
             return cast(list[Any], data_list)
@@ -544,14 +545,17 @@ def _read_batch_hdus(
     # read_hdus_batch has no fp16/bf16/raw_scale support; keep list-of-HDU
     # inputs consistent with the per-HDU conversion contract.
     if not (fp16 or bf16 or raw_scale) and hasattr(cpp_module, "read_hdus_batch"):
-        try:
-            data = cpp_module.read_hdus_batch(path, list(hdu))
-        except TypeError:
-            effective_mmap = True if isinstance(mmap, str) else mmap
-            data = cpp_module.read_hdus_batch(path, list(hdu), effective_mmap)
-        if device != "cpu":
-            data = batch_to_device(data, device)
-        return data
+        if mmap is False:
+            use_mmap = False
+        elif mmap is True:
+            use_mmap = True
+        else:
+            use_mmap = None
+        if use_mmap is not None:
+            data = cpp_module.read_hdus_batch(path, list(hdu), use_mmap)
+            if device != "cpu":
+                data = batch_to_device(data, device)
+            return data
     return [
         read_unified(
             cpp_module=cpp_module,

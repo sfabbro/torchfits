@@ -49,6 +49,15 @@ def tensor_to_arrow_array(tensor: torch.Tensor, pa: Any) -> Any:
     if not tensor.is_contiguous():
         tensor = tensor.contiguous()
 
+    if tensor.ndim == 2:
+        width = int(tensor.shape[1])
+        flat = tensor_to_arrow_array(tensor.reshape(-1), pa)
+        return pa.FixedSizeListArray.from_arrays(flat, width)
+    if tensor.ndim != 1:
+        raise ValueError(
+            f"tensor_to_arrow_array expects 1-D or 2-D tensors, got shape {tuple(tensor.shape)}"
+        )
+
     arrow_name = _TORCH_DTYPE_ARROW.get(tensor.dtype)
     if arrow_name is None:
         # Unsupported buffer dtype (bool, complex, bfloat16, …) — fall back.

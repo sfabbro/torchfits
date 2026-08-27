@@ -3,7 +3,7 @@
 The raw nanobind bindings are an implementation detail. Import from
 ``torchfits`` / ``torchfits.io`` / ``torchfits.table`` instead; every
 attribute access through this module emits a :class:`DeprecationWarning`
-and will be removed in a future release (M2).
+and will be removed in 2.0.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 from torchfits import _cpp as _impl
 
 _DEPRECATION = (
-    "torchfits.cpp is deprecated and will be removed in a future release; "
+    "torchfits.cpp is deprecated and will be removed in 2.0; "
     "the raw binding surface is private (torchfits._cpp). Use the public "
     "Python API instead."
 )

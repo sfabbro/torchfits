@@ -109,6 +109,38 @@ def _unsigned_image_storage_for_fits_write(
     return tensor, {}
 
 
+_INTEGER_STORAGE_SCALE_KEYS = ("BSCALE", "BZERO", "BLANK")
+
+
+def _drop_stale_integer_scale_cards(
+    header: Optional[Dict[str, Any]],
+    tensor: Tensor,
+) -> Optional[Dict[str, Any]]:
+    """Drop integer-storage scale cards copied onto an already-decoded float.
+
+    CFITSIO applies BSCALE/BZERO to BITPIX=-32 payloads. Replaying a quantized
+    source header (BITPIX=16 plus a tiny BSCALE) onto physical floats
+    double-scales on the next read. Quantize runs first and leaves int16, so
+    those writes keep the cards. Float headers (BITPIX < 0) keep an explicit
+    BSCALE.
+    """
+    if header is None or not tensor.is_floating_point():
+        return header
+    getter = getattr(header, "get", None)
+    bitpix = getter("BITPIX") if getter is not None else None
+    try:
+        bp = int(bitpix) if bitpix is not None else None
+    except (TypeError, ValueError):
+        bp = None
+    if bp is None or bp < 0:
+        return header
+    out = Header(header)
+    for key in _INTEGER_STORAGE_SCALE_KEYS:
+        if key in out:
+            del out[key]
+    return out
+
+
 def _apply_image_quantize(
     tensor: Tensor,
     header: Optional[Dict[str, Any]],
@@ -133,7 +165,6 @@ def _apply_image_quantize(
     )
     extra = {"BSCALE": packed.scale, "BZERO": packed.zero}
     if packed.blank_code is not None:
-        # Reserved sentinel code for the non-finite pixels (B4).
         extra["BLANK"] = int(packed.blank_code)
     return packed.codes, _merge_fits_write_header(header, extra)
 
@@ -145,6 +176,7 @@ def _image_hdu_dict_for_fits_write(
     quantize: Any = None,
 ) -> Dict[str, Any]:
     tensor, header = _apply_image_quantize(tensor, header, quantize)
+    header = _drop_stale_integer_scale_cards(header, tensor)
     data, extra_header = _unsigned_image_storage_for_fits_write(tensor)
     hdu_dict: Dict[str, Any] = {"data": data}
     if header or extra_header:

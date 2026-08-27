@@ -244,11 +244,23 @@ def quantize_int16_robust(
         # Weight/mask path: force BZERO=0; negatives clip to 0 (poloka KEEPZERO).
         positive = finite[finite > 0.0]
         if positive.numel() == 0:
-            codes = torch.zeros(flat.shape, dtype=torch.int16).reshape(shape)
+            n_clipped = int((~finite_mask).sum().item())
+            codes = torch.zeros(flat.shape, dtype=torch.int16)
+            blank_code = None
+            if n_clipped:
+                codes[~finite_mask] = BLANK_CODE
+                blank_code = BLANK_CODE
+            codes = codes.reshape(shape)
             if device.type != "cpu":
                 codes = codes.to(device)
             return QuantizeInt16Result(
-                codes=codes, scale=1.0, zero=0.0, lo=0.0, hi=0.0, n_clipped=0
+                codes=codes,
+                scale=1.0,
+                zero=0.0,
+                lo=0.0,
+                hi=0.0,
+                n_clipped=n_clipped,
+                blank_code=blank_code,
             )
         sample = _percentile_sample(positive, 0.0, hi_q)
         hi = _percentile(sample, hi_q)
@@ -304,7 +316,7 @@ def quantize_int16_robust(
 
     codes_flat = _pack_codes(clipped, scale, zero).reshape(-1)
     blank_code = None
-    if not keep_zero and not bool(finite_mask.all()):
+    if not bool(finite_mask.all()):
         codes_flat[~finite_mask] = BLANK_CODE
         blank_code = BLANK_CODE
     codes = codes_flat.reshape(shape)

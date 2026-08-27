@@ -50,18 +50,23 @@ def cfitsio_base_path(path: str) -> str:
 
     CFITSIO extended filenames look like ``image.fits[10:100,20:200]`` or
     ``file.fits[1]``. Existence checks must use the base file, not the filter.
+    Brackets in a directory component (``/tmp/[data]/file.fits``) are not
+    filters: only ``[`` after the last ``/`` that closes with a trailing ``]``.
     """
-    bracket = path.find("[")
+    if not path.endswith("]"):
+        return path
+    last_slash = path.rfind("/")
+    search_start = last_slash + 1 if last_slash >= 0 else 0
+    bracket = path.find("[", search_start)
     if bracket < 0:
         return path
     return path[:bracket]
 
 
 def has_cfitsio_filter(path: str) -> bool:
-    """True when ``path`` includes any CFITSIO ``[...]`` extended-filename bracket.
-
-    This is a bracket presence test, not an image-section detector: HDU selectors
-    like ``file.fits[1]`` / ``[EVENTS]`` also match. Prefer ``hdu=`` / EXTNAME for
-    those; only image pixel sections are a smoke-tested torchfits surface today.
-    """
-    return "[" in path
+    """True when the final path component has a CFITSIO ``[...]`` section."""
+    if not path.endswith("]"):
+        return False
+    last_slash = path.rfind("/")
+    search_start = last_slash + 1 if last_slash >= 0 else 0
+    return "[" in path[search_start:]

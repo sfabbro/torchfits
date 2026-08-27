@@ -236,7 +236,7 @@ def read_table(
                     device="cpu",
                     mmap=mmap,
                 )
-            except Exception:
+            except (RuntimeError, OSError, ValueError, TypeError, MemoryError):
                 data = None
             if data is None:
                 try:
@@ -249,7 +249,7 @@ def read_table(
                         device="cpu",
                         mmap=mmap,
                     )
-                except Exception:
+                except (RuntimeError, OSError, ValueError, TypeError, MemoryError):
                     data = None
                 if data is not None:
                     data = _apply_row_window(data, start_row, num_rows)
@@ -266,7 +266,7 @@ def read_table(
                         device="cpu",
                         mmap=mmap,
                     )
-                except Exception:
+                except (RuntimeError, OSError, ValueError, TypeError, MemoryError):
                     data = None
                 if data is not None:
                     data = _apply_row_window(data, start_row, num_rows)
@@ -285,7 +285,7 @@ def read_table(
                     device="cpu",
                     mmap=mmap,
                 )
-            except Exception:
+            except (RuntimeError, OSError, ValueError, TypeError, MemoryError):
                 data = None
 
         if data is None:
@@ -314,25 +314,22 @@ def read_table(
 
         import numpy as np
 
+        import torchfits
+        from torchfits._table._read_where import _torch_cmp_mask
+        from torchfits.fits_schema import column_tnull_map
+
+        header = torchfits.read_header(path, hdu=hdu)
+        tnull_map = column_tnull_map(header)
+
         mask: torch.Tensor | None = None
         for col, op, lit in predicates:
             values = data[col]
             if not isinstance(values, torch.Tensor):
                 values = torch.as_tensor(values)
-            if op == ">":
-                part = values > lit
-            elif op == ">=":
-                part = values >= lit
-            elif op == "<":
-                part = values < lit
-            elif op == "<=":
-                part = values <= lit
-            elif op == "==":
-                part = values == lit
-            elif op == "!=":
-                part = values != lit
-            else:
-                raise ValueError(f"Unsupported where operator {op!r}")
+            part = _torch_cmp_mask(values, op, lit)
+            sentinel = tnull_map.get(col)
+            if sentinel is not None:
+                part = part & torch.ne(values, sentinel)
             mask = part if mask is None else (mask & part)
         assert mask is not None
         keep_cols = list(columns) if columns is not None else list(data.keys())

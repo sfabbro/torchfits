@@ -20,9 +20,6 @@ class FastHeaderParser:
     FITS keyword handling.
     """
 
-    # Pre-compiled regex patterns for maximum performance
-    _KEYWORD_PATTERN = re.compile(r"^(.{8})(=)\s*(.{70})$|^(.{8})\s*(.{72})$")
-
     # FITS value type patterns
     _STRING_PATTERN = re.compile(r"'([^']*(?:''[^']*)*)'")
     _COMPLEX_PATTERN = re.compile(
@@ -342,13 +339,9 @@ class FastHeaderParser:
                     elif keyword in cls._STRING_KEYWORDS:
                         value = pv
                     elif fc in "+-0123456789.":
-                        try:
-                            if "." in pv or "e" in pv or "E" in pv:
-                                value = float(pv)
-                            else:
-                                value = int(pv)
-                        except ValueError:
-                            pass
+                        parsed = _parse_fits_number(pv)
+                        if parsed is not None:
+                            value = parsed
                     if value is None:
                         if pv == "T":
                             value = True

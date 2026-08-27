@@ -12,9 +12,9 @@ For standard environments (Linux with NVIDIA GPU, CPU-only Linux, or macOS Apple
 pip install torchfits
 ```
 
-- **On Linux with an NVIDIA GPU:** unlocks GPU acceleration automatically (`device="cuda"`).
+- **On Linux with an NVIDIA GPU:** `device="cuda"` copies the host-decoded tensor onto CUDA.
 - **On Linux without a GPU:** falls back to CPU automatically (`device="cpu"`).
-- **On macOS (Apple Silicon):** supports both CPU and Apple Silicon GPU acceleration (`device="mps"`).
+- **On macOS (Apple Silicon):** `device="mps"` copies the host-decoded tensor onto Metal.
 
 ### 2. CPU-only install (Minimal footprint)
 
@@ -89,11 +89,8 @@ Building from source is only needed if you are developing torchfits or targeting
 
 === "Windows"
 
-    Install Visual Studio 2019+ with C++ workload, then:
-
-    ```bash
-    pip install cmake ninja
-    ```
+    Windows is **unsupported**. There are no wheels, and the native extension
+    is not tested with MSVC. Use WSL2, Linux, or macOS.
 
 ### Build steps
 
@@ -134,7 +131,7 @@ pixi run bench-all      # benchmarks
 |---|---|---|
 | `torchfits[dev]` | pytest, ruff, mypy, astropy, fitsio, pandas, matplotlib | Full development suite |
 | `torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking suite |
-| `torchfits[test]` | pytest, pytest-cov | Unit testing |
+| `torchfits[test]` | pytest, pytest-cov, astropy, fitsio, psutil, pyarrow | Unit testing extras (`pip install torchfits[test]`) |
 | `torchfits[examples]` | matplotlib | Running tutorial scripts |
 
 PyArrow is installed automatically for tabular operations (`torchfits.table`). Interoperability with [Pandas](https://pandas.pydata.org/), [Polars](https://pola.rs/), and [DuckDB](https://duckdb.org/) is supported seamlessly:
@@ -149,7 +146,7 @@ pip install pandas polars duckdb
 
 **`No matching distribution found for torchfits`**
 
-Prebuilt binary wheels are available for Linux (x86_64, aarch64) and macOS (Apple Silicon arm64) on CPython 3.10–3.14. If you are on an unsupported platform (e.g. Windows or x86_64 macOS), please build from source using the steps above.
+Prebuilt binary wheels are available for Linux (x86_64, aarch64) and macOS (Apple Silicon arm64) on CPython 3.10–3.14. Windows and x86_64 macOS are unsupported (no wheels, no tested MSVC recipe).
 
 **`ImportError: ... ABI mismatch`**
 

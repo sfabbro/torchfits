@@ -284,8 +284,19 @@ def _scan_iter(
 
     import torchfits
 
+    pa = _require_pyarrow()
     start_row, num_rows = _normalize_row_slice(row_slice)
     if num_rows == 0:
+        empty = _empty_table_with_schema(
+            pa,
+            path,
+            hdu,
+            columns,
+            decode_bytes,
+            include_fits_metadata,
+        )
+        if empty is not None and empty.schema.names:
+            yield from empty.to_batches()
         return
     selected = set(columns) if columns else None
 

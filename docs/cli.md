@@ -83,6 +83,7 @@ Each command invocation starts the Python interpreter and loads the PyTorch runt
 | `2` | Usage error | Missing arguments, invalid flags, or unknown syntax |
 | `3` | I/O error | File not found, permission denied, or invalid FITS structure |
 | `4` | Checksum verification failure | `torchfits verify` detected invalid `DATASUM` or `CHECKSUM` |
+| `130` | Interrupted | `KeyboardInterrupt` / Ctrl-C |
 
 ---
 
@@ -98,7 +99,7 @@ Each command invocation starts the Python interpreter and loads the PyTorch runt
 | [`table`](#table) | Inspect binary/ASCII table schemas and preview rows |
 | [`cutout`](#cutout) | Extract sub-regions using pixel coordinates or CFITSIO sections |
 | [`convert`](#convert) | Export tables to Parquet, CSV, TSV, Arrow, or render 1–7 band RGB PNGs |
-| [`copy`](#copy) | Lossless copy of single or multi-extension FITS files |
+| [`copy`](#copy) | Byte-identical copy of a FITS file (CompImage tiles stay compressed) |
 | [`arith`](#arith) | Perform scalar or image-to-image arithmetic (+, -, *, /) |
 | [`compress`](#compress) | Tile-compress images using Rice, Gzip, or Hcompress algorithms |
 | [`decompress`](#decompress) | Uncompress tile-compressed FITS files to standard FITS |
@@ -270,7 +271,10 @@ torchfits convert multi_band.fits -o preview.png --bands 0,1,2 --to png
 
 ### `copy`
 
-Performs an exact, lossless binary copy of a FITS file. Supports batch operations across directories with thread pool concurrency.
+Performs an exact byte-for-byte copy of a FITS file (`shutil.copy2` locally).
+CompImage tiles stay compressed. Same-path `INPUT OUTPUT` is refused.
+Private/loopback `http`/`https`/`ftp` URLs are blocked; public `http`/`https`
+are fetched with the same redirect checks as `probe`.
 
 ```bash
 # Copy single file
@@ -419,7 +423,7 @@ torchfits probe vos:username/data/sample.fits
 | `table` | [`asttable`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-asttable.html) (Gnuastro), `tablist` (NASA HEASARC FTOOLS) | Preview binary/ASCII table schema and row values |
 | `cutout` | [`astcrop`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astcrop.html) (Gnuastro), CFITSIO image sections | Extract sub-regions using pixel ranges (`[x1:x2, y1:y2]`) or bounding boxes |
 | `convert` | [`astconvertt`](https://www.gnu.org/software/gnuastro/manual/html_node/Invoking-astconvertt.html) (Gnuastro), [`STILTS`](https://www.star.bristol.ac.uk/~mbt/stilts/) (Starlink) | Export tables to Parquet/CSV/Arrow with SQL filters; render 1–7 band RGB PNGs |
-| `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (CFITSIO) | Lossless copy of single or multi-extension FITS files |
+| `copy` | [`fitscopy` / `imcopy`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (CFITSIO) | Byte-identical copy (not an HDU rewrite) |
 | `arith` | [`imarith`](https://iraf.net/irafdocs/imarith.php) (IRAF) | Perform scalar or image-to-image addition, subtraction, multiplication, division |
 | `compress` / `decompress` | [`fpack` / `funpack`](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) (NASA HEASARC) | Lossless / lossy tile compression (Rice, Gzip, Hcompress) and expansion |
 | `transform` | [`imfunction`](https://iraf.net/irafdocs/imfunction.php) (IRAF) | Apply astronomical stretches (Arcsinh, Sqrt, Log) and ZScale / percentile scaling |

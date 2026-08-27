@@ -16,4 +16,7 @@ else
   export LD_LIBRARY_PATH="${TORCH_LIB}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-python -m pytest -c /dev/null --noconftest "${PROJECT}/tests/test_release_smoke.py" -q
+python -c 'import torchfits._C as C; assert C.HAS_BZIP2, "wheel must link libbz2 (HAS_BZIP2)"'
+python -m pytest -c /dev/null --noconftest \
+  "${PROJECT}/tests/test_release_smoke.py" \
+  "${PROJECT}/tests/test_bz2.py" -q

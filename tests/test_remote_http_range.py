@@ -245,6 +245,45 @@ def test_compressed_remote_falls_back_to_full_cache(
         server.shutdown()
 
 
+def test_blank_integer_remote_falls_back_and_returns_nan(
+    tmp_path, allow_loopback, monkeypatch
+):
+    """Identity BSCALE + BLANK must not Range-copy the sentinel as data."""
+    import torch
+
+    path = tmp_path / "blank.fits"
+    data = np.arange(64 * 64, dtype=np.int16).reshape(64, 64)
+    data[0, 0] = -32767
+    hdu = fits.PrimaryHDU(data)
+    hdu.header["BLANK"] = -32767
+    hdu.writeto(str(path), overwrite=True)
+    body = path.read_bytes()
+
+    class Handler(_CountingHandler):
+        pass
+
+    Handler.body = body
+    Handler.transferred = 0
+    Handler.redirected_from = None
+    Handler.require_auth = None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    monkeypatch.setenv("TORCHFITS_REMOTE_CACHE", str(tmp_path / "cache"))
+    from torchfits import read_subset
+
+    try:
+        out = read_subset(f"http://127.0.0.1:{port}/data.fits", 0, 0, 0, 2, 2)
+        assert out.dtype.is_floating_point
+        assert bool(torch.isnan(out[0, 0])), f"expected NaN, got {out[0, 0]}"
+        assert float(out[0, 1]) == pytest.approx(1.0)
+        assert Handler.transferred >= len(body)
+    finally:
+        server.shutdown()
+
+
 def test_range_ignored_falls_back_to_full_cache(tmp_path, allow_loopback, monkeypatch):
     """Servers that answer Range with HTTP 200 must not yield wrong pixels."""
     path = tmp_path / "img.fits"

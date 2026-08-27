@@ -22,36 +22,37 @@ jobs:
         os: [ubuntu-latest, macos-15]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: prefix-dev/setup-pixi@v0.9.5
         with:
-          python-version: "3.12"
-      - name: Resolve torch ABI lane
-        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
+          environments: test
+          locked: true
+          cache: true
       - name: Vendor CFITSIO
         run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
-      - uses: astral-sh/setup-uv@v5
-      - name: Install dependencies
-        run: |
-          uv venv .venv-san
-          uv pip install --python .venv-san/bin/python "torch$TORCH_PIN" \
-            --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --python .venv-san/bin/python numpy astropy pytest nanobind scikit-build-core ninja pyarrow psutil
       - name: Build with ASan+UBSan
         env:
           CC: clang
           CXX: clang++
         run: |
-          .venv-san/bin/python -m pip install -e . --no-build-isolation --no-deps --config-settings=cmake.args=-DCMAKE_CXX_FLAGS=-fsanitize=address\ -fsanitize=undefined\ -fno-omit-frame-pointer\ -shared-libasan;-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address
+          # `-shared-libasan` is Linux clang; Apple clang links the ASan dylib
+          # from `-fsanitize=address` and rejects that flag.
+          cxx_flags="-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer"
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            cxx_flags="${cxx_flags} -shared-libasan"
+          fi
+          pixi run -e test -- pip install -e . --no-build-isolation --no-deps \
+            --config-settings=cmake.define.CMAKE_CXX_FLAGS="${cxx_flags}" \
+            --config-settings=cmake.define.CMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
         shell: bash
       - name: Native-heavy smoke under sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
           TORCHFITS_TABLE_BUFFERED: "1"
-        run: |
-          .venv-san/bin/python -m pytest \
-            tests/test_write_fidelity.py tests/test_byteswap.py \
-            tests/test_compression_matrix.py tests/test_truncated_table_errors.py \
-            tests/test_multichunk_buffered_read.py tests/test_malformed_fits.py \
-            tests/test_table_file_ops.py tests/test_compressed_nulls.py \
-            -q --no-header
+        run: >
+          pixi run -e test -- pytest
+          tests/test_write_fidelity.py tests/test_byteswap.py
+          tests/test_compression_matrix.py tests/test_truncated_table_errors.py
+          tests/test_multichunk_buffered_read.py tests/test_malformed_fits.py
+          tests/test_table_file_ops.py tests/test_compressed_nulls.py
+          -q --no-header

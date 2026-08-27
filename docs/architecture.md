@@ -131,6 +131,10 @@ Caches sit in three places:
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
 `clear_file_cache(...)` clears the I/O metadata layers only.
+`CacheConfig.max_files` / `max_memory_mb` and `configure_cpp_cache()` are
+documented no-ops (the C++ handle pool was removed; live shared state is
+SharedReadMeta). `clear_file_cache(handles=)` is ignored for the same
+reason — there is no shared `fitsfile*` pool.
 `clear_all_caches()` (or `clear_cache(disk=True)`) also removes on-disk
 roots under `cache_root()`. See
 [Cache Utilities](api-core-io.md#cache-utilities).

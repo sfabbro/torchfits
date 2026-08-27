@@ -35,7 +35,7 @@ smoke() {
    # Documented CPU-only one-liner (docs/install.md): local wheel + the
    # torch ABI lane pin rendered from scripts/torch_lanes.json, so this
    # smoke cannot rot when the lane moves.
-   TORCH_PIN="$(python "$ROOT_DIR/scripts/release_lane.py" --print-pins | sed 's/.*torch=//')"
+   TORCH_PIN="$(python "$ROOT/scripts/release_lane.py" --print-pins | sed 's/.*torch=//')"
    python -m pip install -q "$WHEEL" "torch$TORCH_PIN" --extra-index-url https://download.pytorch.org/whl/cpu
   python - <<'PY'
 import tempfile

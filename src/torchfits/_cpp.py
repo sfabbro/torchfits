@@ -180,8 +180,8 @@ for _name in __all__:
 
 
 def __getattr__(name: str) -> Any:
-    return getattr(_C, name)
+    raise AttributeError(f"module 'torchfits._cpp' has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(dir(_C)))
+    return sorted(__all__)

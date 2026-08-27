@@ -82,15 +82,24 @@ class TestIORead:
 
     def test_read_batch_paths(self, mock_cpp):
         """Test reading a list of paths."""
-        io.read(["file1.fits", "file2.fits"], hdu=0)
+        io.read(["file1.fits", "file2.fits"], hdu=0, mmap=True)
         mock_cpp.read_images_batch.assert_called_once_with(
-            ["file1.fits", "file2.fits"], 0
+            ["file1.fits", "file2.fits"], 0, True
         )
+
+    def test_read_batch_paths_mmap_auto_skips_c_batch(self, mock_cpp):
+        """mmap='auto' is per-file so compressed HDUs are not forced through mmap."""
+        io.read(["file1.fits", "file2.fits"], hdu=0)
+        mock_cpp.read_images_batch.assert_not_called()
 
     def test_read_batch_hdus(self, mock_cpp):
         """Test reading multiple HDUs from a single path."""
-        io.read("file.fits", hdu=[0, 1])
-        mock_cpp.read_hdus_batch.assert_called_once_with("file.fits", [0, 1])
+        io.read("file.fits", hdu=[0, 1], mmap=True)
+        mock_cpp.read_hdus_batch.assert_called_once_with("file.fits", [0, 1], True)
+
+    def test_read_batch_hdus_mmap_false(self, mock_cpp):
+        io.read("file.fits", hdu=[0, 1], mmap=False)
+        mock_cpp.read_hdus_batch.assert_called_once_with("file.fits", [0, 1], False)
 
     def test_read_fp16(self, mock_cpp):
         """Test fp16 conversion."""

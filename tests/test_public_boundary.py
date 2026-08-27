@@ -82,6 +82,16 @@ def test_cpp_public_surface_is_explicit_and_resolves():
     )
 
 
+def test_cpp_getattr_rejects_undocumented_native_names():
+    import torchfits._C as native
+    import torchfits._cpp as cpp
+
+    assert hasattr(native, "HAS_BZIP2")
+    with pytest.raises(AttributeError, match="HAS_BZIP2"):
+        getattr(cpp, "HAS_BZIP2")
+    assert "HAS_BZIP2" not in dir(cpp)
+
+
 def test_where_public_surface_matches_table_predicate_semantics():
     ast = where.parse_where_expression("A > 1 AND B IS NOT NULL")
     mask = where.evaluate_where(

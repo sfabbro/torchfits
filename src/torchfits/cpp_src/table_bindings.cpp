@@ -330,8 +330,8 @@ void bind_table(nb::module_& m) {
     });
 
     m.def("read_fits_table_from_handle", [](nb::object file_obj, int hdu_num) -> nb::object {
-        nb::gil_scoped_release release;
         fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        nb::gil_scoped_release release;
         torchfits::TableReader reader(fptr, hdu_num);
         auto result_map = reader.read_columns({}, 1, -1, true);
         nb::gil_scoped_acquire acquire;
@@ -341,8 +341,8 @@ void bind_table(nb::module_& m) {
     m.def("read_fits_table_rows_from_handle", [](nb::object file_obj, int hdu_num,
                                                  const std::vector<std::string>& column_names,
                                                  long start_row, long num_rows) -> nb::object {
-        nb::gil_scoped_release release;
         fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        nb::gil_scoped_release release;
         torchfits::TableReader reader(fptr, hdu_num);
         auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
         nb::gil_scoped_acquire acquire;
@@ -400,8 +400,8 @@ void bind_table(nb::module_& m) {
     m.def("read_fits_table_rows_numpy_from_handle", [](nb::object file_obj, int hdu_num,
                                                        const std::vector<std::string>& column_names,
                                                        long start_row, long num_rows) -> nb::object {
-        nb::gil_scoped_release release;
         fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        nb::gil_scoped_release release;
         torchfits::TableReader reader(fptr, hdu_num);
         auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
         nb::gil_scoped_acquire acquire;

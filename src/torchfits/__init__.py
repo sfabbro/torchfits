@@ -10,6 +10,13 @@ Transforms live under :mod:`torchfits.transforms`. Arrow tables under
 
 from __future__ import annotations
 
+import os
+
+# Must run before libomp is loaded (import torch after torchfits, or pixi
+# activation.env for torch-first). Harmless on Linux; required on macOS when
+# both PyTorch and the extension link libomp.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import threading
 from importlib import import_module
 from typing import TYPE_CHECKING, Any

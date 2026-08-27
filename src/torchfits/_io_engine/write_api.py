@@ -23,6 +23,7 @@ from ._write_helpers import (
     _apply_image_quantize,
     _can_use_cpp_table_writer,
     _coerce_compressed_hdu_item,
+    _drop_stale_integer_scale_cards,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
     _is_skippable_empty_primary,
@@ -191,6 +192,7 @@ def write(
                 if isinstance(data, np.ndarray):
                     data = torch.as_tensor(data)
                 data, header = _apply_image_quantize(data, header, quantize)
+                header = _drop_stale_integer_scale_cards(header, data)
                 img, img_header = _unsigned_image_storage_for_fits_write(data)
                 compressed_hdus = [
                     TensorHDU(
@@ -199,6 +201,11 @@ def write(
                     )
                 ]
             elif isinstance(data, HDUList):
+                if quantize is not None:
+                    raise ValueError(
+                        "quantize= is ignored for HDUList writes; quantize each "
+                        "image tensor before assembling the list"
+                    )
                 compressed_hdus = list(getattr(data, "_hdus", []))
             elif isinstance(data, dict):
                 if "data" in data:
@@ -245,6 +252,11 @@ def write(
             return
 
         if isinstance(data, HDUList):
+            if quantize is not None:
+                raise ValueError(
+                    "quantize= is ignored for HDUList writes; quantize each "
+                    "image tensor before assembling the list"
+                )
             _write_hdus_uncompressed(path, list(getattr(data, "_hdus", [])), overwrite)
             if checksum:
                 _write_all_checksums(path)
@@ -348,7 +360,7 @@ def write(
         # contract so callers cannot accidentally swallow validation bugs.
         if not path_exists and os.path.exists(path):
             os.remove(path)
-        if "uint64" in str(e):
+        if "uint64" in str(e) or "quantize=" in str(e):
             raise
         raise RuntimeError(f"Failed to write FITS file '{path}': {e}") from e
     except Exception as e:

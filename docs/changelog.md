@@ -8,9 +8,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- `table.read_torch(where=)` drops TNULL sentinels and uses range-safe
+  compares, matching Arrow `table.read` (B1, B2).
+- Robust-quantize BLANK pixels are NaN on `torchfits.read`, including
+  uncompressed scaled images (B6, H29). Native IEEE float/double HDUs
+  keep Inf and signed zero (`fits_read_img` nulval is only for BLANK
+  and compressed tiles; CFITSIO `fnan` would otherwise replace them).
+- `torchfits copy` is a byte copy (`shutil.copy2`); same-path I/O is
+  refused; `HDUList.write` to an existing path uses tempfile+replace
+  (B3, B5, M11).
+- `TableHDURef.head` composes an existing row window (H3).
+- Header cache hits clone `Header` from cards; `raw_scale` reaches the
+  fallback reader (H23, H24).
+- `replace_hdu` strips stale `Z*` cards; checksum rewrites restamp when
+  the input had stamps; `verify_checksums` reports `present` (H25, H26).
+- Table `.fits.gz` / `.zip` refuse the buffered pread path; TSBYTE mmap
+  matches CFITSIO; TFORM repeat overflow raises (H14, H34, M4).
+- CLI: unsigned `diff` min/max, Ctrl-C exit 130, JSON without NaN (H4, H5, H6).
+- HTTP Range cutouts of integer images with `BLANK` fall back to CFITSIO
+  so missing pixels are NaN rather than the sentinel code.
+- Writing an already-decoded float with a copied integer header drops
+  `BSCALE`/`BZERO`/`BLANK` so CFITSIO does not scale twice (CLI cutout
+  and arith).
+- Quantized table `TNULL` values are Arrow nulls, so `where="V IS NULL"`
+  matches. Native float NaN without `TNULLn` is unchanged.
+- Import sets `KMP_DUPLICATE_LIB_OK` when unset (macOS libomp).
 - build: Portable sha256 verification in vendor.sh (macOS runners)
 - changelog: Rank final tags above prereleases in latest_tag
 - build: Select sha256 tooling by OS, not binary presence
+
+- Close the 1.1 audit register for silent NaN/TNULL/copy bugs
+### Changed
+- `torchfits._cpp` no longer re-exports undocumented `_C` names (H1).
+- Root `to_astropy(path)` delegates to `table.to_astropy` (H11).
+- `read(hdu=[...], mmap=False)` and path-list batch honor mmap (H27).
+- `quantize=` on `HDUList` + `compress=` raises instead of being ignored (H28).
+- Linux wheels install `bzip2-devel` in manylinux so `HAS_BZIP2` matches
+  macOS (H20).
+- Sanitizer CI uses the pixi `test` env (not uv) and quotes cmake
+  define flags so bash does not split on `;`.
+
+### Docs
+- Benchmark headline cites git-mirrored `exhaustive_*_20260807_013736`
+  (B4). GPU copy is host-decode then `device=` (H16, M7). Complex columns
+  are Partial on Arrow (H2). Release runbook uses OIDC, not a PyPI token
+  (H21). Windows is unsupported (M15). `CacheConfig.max_files` is a no-op
+  (M3, M10).
+- harness: Record 2026-08-26 major-release audit
 
 ## [1.1.0] — 2026-08-26
 
@@ -220,22 +264,20 @@ thread-safety, and supply-chain fixes.
   sub-millisecond. If a cached-hot workload regresses measurably for you,
   `read(..., cache_capacity=0)` restores v1.0 semantics at the cost of
   re-reading.
-- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless (final
-  runs `exhaustive_cpu_20260822_213823` / `exhaustive_cuda_20260822_213846`;
-  lab profile, mmap on+off matrix, 3057 + 4315 rows): **100% of
-  significant image comparisons won on both hosts**; the dense/selective
-  `predicate_filter` cluster no longer registers. Exactly one case
-  family remains where a peer leads: narrow-table full reads with
-  `mmap=False` trail fitsio by 6-17% (buffered path stages whole rows;
-  single-pass decode lands in 1.2). Every other lag row is sub-1.13x
-  noise on shared-CFITSIO decompression or sub-0.15 ms GPU launch
-  overhead. A double-buffered chunk prefetch now overlaps the buffered
-  path's I/O with decode for payloads >= 64 MB (gated from an earlier
-  4 MB threshold after CANFAR A/B showed thread handoff regressing
-  warm-cache 13 MB tables). Benchmark
-   harness fairness fixes: device synchronization on GPU timings, seeded
-   interleaving order, medians over means, and cache-symmetric peer
-   comparisons (M16).
+- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless (published
+  CSVs `exhaustive_cpu_20260807_013736` / `exhaustive_cuda_20260807_013736`
+  under `docs/assets/bench/`; lab profile, mmap on+off matrix, 3057 + 4315
+  rows): **100% of significant image comparisons won on both hosts**.
+  Exactly one case family remains where a peer leads: narrow-table full
+  reads with `mmap=False` trail fitsio by 21-36% on CPU and 8% on CUDA
+  (buffered path stages whole rows; single-pass decode lands in 1.2).
+  Image HCOMPRESS lags vs fitsio are sub-1.03× noise. A double-buffered
+  chunk prefetch now overlaps the buffered path's I/O with decode for
+  payloads >= 64 MB (gated from an earlier 4 MB threshold after CANFAR
+  A/B showed thread handoff regressing warm-cache 13 MB tables).
+  Benchmark harness fairness fixes: device synchronization on GPU timings,
+  seeded interleaving order, medians over means, and cache-symmetric peer
+  comparisons (M16).
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only

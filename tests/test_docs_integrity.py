@@ -113,6 +113,27 @@ def test_public_docs_do_not_claim_torchfits_owns_sky_domain_features() -> None:
     assert not offenders, "\n".join(offenders)
 
 
+def test_public_docs_do_not_claim_native_gpu_decode() -> None:
+    docs = [
+        ROOT / "README.md",
+        ROOT / "docs" / "index.md",
+        ROOT / "docs" / "install.md",
+    ]
+    forbidden_claims = [
+        "automatically enable GPU acceleration",
+        "unlocks GPU acceleration automatically",
+        "directly onto CUDA GPUs",
+        "Native GPU decode",
+    ]
+    offenders: list[str] = []
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        for claim in forbidden_claims:
+            if claim in text:
+                offenders.append(f"{path.relative_to(ROOT)} contains {claim!r}")
+    assert not offenders, "\n".join(offenders)
+
+
 def test_public_docs_do_not_reference_missing_root_cache_aliases() -> None:
     """Cache tuning lives on torchfits.cache; root exposes I/O cache helpers only."""
     docs = [

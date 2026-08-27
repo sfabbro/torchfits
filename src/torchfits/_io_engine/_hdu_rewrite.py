@@ -168,6 +168,27 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
     import torchfits._C as cpp
 
     guard_fits_path(path)
+    if overwrite and os.path.isfile(path):
+        target = os.path.realpath(path)
+        target_dir = os.path.dirname(target) or "."
+        original_mode = stat.S_IMODE(os.stat(target).st_mode)
+        fd, temp_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(target)}.", suffix=".tmp.fits", dir=target_dir
+        )
+        os.close(fd)
+        os.unlink(temp_path)
+        try:
+            _write_hdus_uncompressed(temp_path, hdus, overwrite=False)
+            os.chmod(temp_path, original_mode)
+            os.replace(temp_path, target)
+            _invalidate_path_caches(path)
+            if target != path:
+                _invalidate_path_caches(target)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        return
+
     payload: List[Any] = []
     for idx, hdu in enumerate(hdus):  # noqa: B007
         table_proxy = _prepare_table_hdu_for_payload(hdu)
@@ -188,6 +209,45 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
 
     _invalidate_path_caches(path)
     cpp.write_fits_file(path, payload, overwrite)
+
+
+_COMPRESSION_HEADER_KEYS = frozenset(
+    {
+        "ZIMAGE",
+        "ZCMPTYPE",
+        "ZBITPIX",
+        "ZNAXIS",
+        "ZPCOUNT",
+        "ZGCOUNT",
+        "ZCHECKSUM",
+        "ZDATASUM",
+        "ZQUANTIZ",
+        "ZBLANK",
+    }
+)
+_COMPRESSION_HEADER_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL")
+
+
+def _strip_compression_cards(header: Header) -> Header:
+    """Drop CompImage Z* cards so an uncompressed rewrite cannot lie."""
+    preserved = Header(header)
+    for key in list(preserved.keys()):
+        ku = str(key).upper()
+        if ku in _COMPRESSION_HEADER_KEYS or any(
+            ku.startswith(prefix) for prefix in _COMPRESSION_HEADER_PREFIXES
+        ):
+            del preserved[key]
+    return preserved
+
+
+def _hdus_have_checksums(hdus: List[Any]) -> bool:
+    for hdu in hdus:
+        header = getattr(hdu, "header", None)
+        if header is None:
+            continue
+        if "CHECKSUM" in header or "DATASUM" in header:
+            return True
+    return False
 
 
 def _write_hdus_with_optional_compression(
@@ -240,7 +300,11 @@ def _write_hdus_with_optional_compression(
 
 
 def _atomic_rewrite_hdus(
-    path: str, hdus: List[Any], compress: Union[bool, str] = False
+    path: str,
+    hdus: List[Any],
+    compress: Union[bool, str] = False,
+    *,
+    restamp_checksums: bool = False,
 ) -> None:
     """Rewrite an existing HDU sequence without exposing a partial file."""
     target = os.path.realpath(path)
@@ -262,6 +326,10 @@ def _atomic_rewrite_hdus(
         _invalidate_path_caches(path)
         if target != path:
             _invalidate_path_caches(target)
+        if restamp_checksums:
+            from .write_api import _write_all_checksums
+
+            _write_all_checksums(path)
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
@@ -293,11 +361,12 @@ def insert_hdu(
         raise ValueError(f"Unsupported HDU data type: {type(data)}")
 
     hdus = _detach_hdus_for_rewrite(path)
+    restamp = _hdus_have_checksums(hdus)
 
     if index < 0 or index > len(hdus):
         raise IndexError(f"index {index} out of range for {len(hdus)} HDUs")
     hdus.insert(index, new_hdu)
-    _atomic_rewrite_hdus(path, hdus, compress=compress)
+    _atomic_rewrite_hdus(path, hdus, compress=compress, restamp_checksums=restamp)
 
 
 def replace_hdu(
@@ -325,6 +394,7 @@ def replace_hdu(
         raise ValueError(f"Unsupported HDU data type: {type(data)}")
 
     hdus = _detach_hdus_for_rewrite(path)
+    restamp = _hdus_have_checksums(hdus)
 
     if isinstance(hdu, int):
         if hdu < 0 or hdu >= len(hdus):
@@ -350,16 +420,17 @@ def replace_hdu(
         old_header = getattr(hdus[target], "header", None)
         if old_header is not None:
             preserved = Header(old_header)
-            for stale_key in ("BSCALE", "BZERO", "DATASUM", "CHECKSUM"):
+            for stale_key in ("BSCALE", "BZERO", "BLANK", "DATASUM", "CHECKSUM"):
                 if stale_key in preserved:
                     del preserved[stale_key]
+            preserved = _strip_compression_cards(preserved)
             if isinstance(new_hdu, TensorHDU):
                 new_hdu._header = preserved
             else:
                 new_hdu.header = preserved
 
     hdus[target] = new_hdu
-    _atomic_rewrite_hdus(path, hdus, compress=compress)
+    _atomic_rewrite_hdus(path, hdus, compress=compress, restamp_checksums=restamp)
 
 
 def delete_hdu(
@@ -369,6 +440,7 @@ def delete_hdu(
 ) -> None:
     """Delete an HDU by index or EXTNAME."""
     hdus = _detach_hdus_for_rewrite(path)
+    restamp = _hdus_have_checksums(hdus)
 
     if isinstance(hdu, int):
         if hdu < 0 or hdu >= len(hdus):
@@ -386,4 +458,4 @@ def delete_hdu(
         raise TypeError("hdu must be an int index or EXTNAME string")
 
     del hdus[target]
-    _atomic_rewrite_hdus(path, hdus, compress=compress)
+    _atomic_rewrite_hdus(path, hdus, compress=compress, restamp_checksums=restamp)

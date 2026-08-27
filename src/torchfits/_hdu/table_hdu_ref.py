@@ -132,12 +132,29 @@ class TableHDURef:
     def head(self, n: int) -> "TableHDURef":
         if n < 0:
             raise ValueError("n must be >= 0")
+        existing = self._row_slice
+        if existing is None:
+            new_slice: slice | tuple[int, int] = slice(0, n)
+        elif isinstance(existing, tuple):
+            start, stop = existing
+            start = int(start)
+            if stop is None:
+                new_slice = (start, start + n)
+            else:
+                new_slice = (start, min(int(stop), start + n))
+        else:
+            start = 0 if existing.start is None else int(existing.start)
+            stop = existing.stop
+            if stop is None:
+                new_slice = slice(start, start + n)
+            else:
+                new_slice = slice(start, min(int(stop), start + n))
         return TableHDURef(
             header=self.header,
             source_path=self._source_path,
             source_hdu=self._source_hdu,
             columns=list(self._columns) if self._columns is not None else None,
-            row_slice=slice(0, n),
+            row_slice=new_slice,
         )
 
     def filter(self, condition: str) -> "TableHDU":

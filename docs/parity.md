@@ -60,7 +60,7 @@ Status values:
 | **Numeric Columns** | `B`, `I`, `J`, `K`, `E`, `D` | **Supported** | Full integer and floating-point support. |
 | **Fixed-Width Strings** | `nA` | **Supported** | Decoded as Arrow string arrays with automatic space padding on update. |
 | **Boolean Bitmasks** | `X` | **Supported** | Bit-level MSB-first decoding into boolean tensors. |
-| **Complex Numbers** | `C`, `M` | **Supported** | Decoded directly into `torch.complex64` and `torch.complex128`. |
+| **Complex Numbers** | `C`, `M` | **Partial** | Tensor path (`table.read_torch`) decodes `torch.complex64` / `complex128`. Arrow `table.read` raises `NotImplementedError`. |
 | **Variable-Length Arrays (VLA)** | `P`, `Q` | **Partial** | Supported via buffered CFITSIO reading; memory-mapped updates not supported. |
 | **Scaled Columns (`TSCALn`/`TZEROn`)** | `TSCAL`, `TZERO` | **Supported** | Linear physical count scaling to floating-point tensors. |
 

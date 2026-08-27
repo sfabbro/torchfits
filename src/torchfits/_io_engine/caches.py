@@ -214,6 +214,8 @@ def check_read_cache(
     return_header: bool,
     cache_capacity: int,
     invalidate_path: Any,
+    mmap: bool | str = "auto",
+    raw_scale: bool = False,
 ) -> tuple[bool, Any, Any]:
     """Check the Python-side read cache under the cache lock."""
     with cache_lock:
@@ -229,6 +231,8 @@ def check_read_cache(
             return_header=return_header,
             cache_capacity=cache_capacity,
             invalidate_path=invalidate_path,
+            mmap=mmap,
+            raw_scale=raw_scale,
         )
 
 
@@ -245,6 +249,8 @@ def _check_read_cache_locked(
     return_header: bool,
     cache_capacity: int,
     invalidate_path: Any,
+    mmap: bool | str = "auto",
+    raw_scale: bool = False,
 ) -> tuple[bool, Any, Any]:
     """Check the Python-side read cache and update cache counters."""
     import torch
@@ -265,6 +271,8 @@ def _check_read_cache_locked(
                 start_row,
                 num_rows,
                 return_header,
+                mmap,
+                raw_scale,
             )
         except TypeError:
             cache_key = None
@@ -314,9 +322,10 @@ def _check_read_cache_locked(
                         # Hand out a private copy so callers mutating their
                         # result cannot alias (and corrupt) the cached entry.
                         out_data = _clone_read_value(cached_data)
+                    out_header = _clone_read_value(cached_header)
                     return (
                         True,
-                        ((out_data, cached_header) if return_header else out_data),
+                        ((out_data, out_header) if return_header else out_data),
                         cache_key,
                     )
             else:
@@ -338,6 +347,10 @@ def _clone_read_value(value: Any) -> Any:
     """
     import torch
 
+    from torchfits.hdu import Header
+
+    if isinstance(value, Header):
+        return Header(list(value.cards))
     if isinstance(value, torch.Tensor):
         return value.clone()
     if isinstance(value, dict):
@@ -498,7 +511,12 @@ def clear_python_caches(
     hdu_types: bool = True,
     stats: bool = True,
 ) -> None:
-    """Clear Python-side root FITS I/O caches."""
+    """Clear Python-side root FITS I/O caches.
+
+    ``handles`` is accepted for compatibility and ignored: there is no
+    shared ``fitsfile*`` pool after Option A.
+    """
+    _ = handles
     with cache_lock:
         if data:
             file_cache.clear()
@@ -528,7 +546,10 @@ def clear_file_cache(
     cpp: bool = True,
     cpp_module: Any = None,
 ) -> None:
-    """Clear Python/C++ FITS I/O caches."""
+    """Clear Python/C++ FITS I/O caches.
+
+    ``handles`` is ignored (no shared CFITSIO handle pool).
+    """
     clear_python_caches(
         data=data,
         handles=handles,

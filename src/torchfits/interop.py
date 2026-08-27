@@ -97,13 +97,22 @@ def to_polars(
 
 
 def to_astropy(
-    data: Dict[str, Any],
+    data: Dict[str, Any] | str,
     decode_bytes: bool = False,
     encoding: str = "ascii",
     strip: bool = True,
     vla_policy: str = "list",
 ) -> Any:
-    """Convert a dictionary of PyTorch tensors to an Astropy Table."""
+    """Convert a dictionary of PyTorch tensors, or a FITS table path, to Astropy.
+
+    A file path uses :func:`torchfits.table.to_astropy` (MaskedColumn / TUNIT).
+    A tensor dict is a numpy Table without FITS TNULL/TUNIT metadata.
+    """
+    if isinstance(data, str):
+        from torchfits._table.interop import to_astropy as table_to_astropy
+
+        return table_to_astropy(data)
+
     import importlib
 
     try:
