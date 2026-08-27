@@ -329,15 +329,17 @@ class TableHDU:
         )
 
     def head(self, n: int) -> "TableHDU":
-        if n < 0:
-            raise ValueError("n must be non-negative")
+        current_rows = self.num_rows
+        keep = current_rows + n if n < 0 else min(current_rows, n)
+        keep = max(0, keep)
+
         if self._raw_data:
             new_dict: Dict[str, Any] = {}
             for k, v in self._raw_data.items():
                 if isinstance(v, torch.Tensor) and v.dim() > 0:
-                    new_dict[k] = v[:n]
+                    new_dict[k] = v[:keep]
                 elif isinstance(v, list):
-                    new_dict[k] = v[:n]
+                    new_dict[k] = v[:keep]
                 else:
                     new_dict[k] = v
             return TableHDU(new_dict, {}, self.header)

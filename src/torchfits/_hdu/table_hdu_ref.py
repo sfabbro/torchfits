@@ -130,25 +130,20 @@ class TableHDURef:
         )
 
     def head(self, n: int) -> "TableHDURef":
-        if n < 0:
-            raise ValueError("n must be >= 0")
+        current_rows = self.num_rows
+        keep = current_rows + n if n < 0 else min(current_rows, n)
+        keep = max(0, keep)
+
         existing = self._row_slice
         if existing is None:
-            new_slice: slice | tuple[int, int] = slice(0, n)
+            new_slice: slice | tuple[int, int] = slice(0, keep)
         elif isinstance(existing, tuple):
-            start, stop = existing
-            start = int(start)
-            if stop is None:
-                new_slice = (start, start + n)
-            else:
-                new_slice = (start, min(int(stop), start + n))
+            start = int(existing[0])
+            new_slice = (start, start + keep)
         else:
             start = 0 if existing.start is None else int(existing.start)
-            stop = existing.stop
-            if stop is None:
-                new_slice = slice(start, start + n)
-            else:
-                new_slice = slice(start, min(int(stop), start + n))
+            new_slice = slice(start, start + keep)
+
         return TableHDURef(
             header=self.header,
             source_path=self._source_path,
