@@ -32,6 +32,10 @@ jobs:
         run: python3 scripts/check_duplicate_cpp.py
       - name: Torch flavor extras resolve on PyTorch indexes
         run: python scripts/check_torch_extra_pins.py
+      - name: Release lane pins check
+        run: python scripts/release_lane.py --check
+      - name: Changelog freshness check
+        run: python scripts/update_changelog.py --check
       - name: Ruff check
         run: ruff check .
       - name: Ruff format

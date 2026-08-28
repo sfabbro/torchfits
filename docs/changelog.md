@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - build: Select sha256 tooling by OS, not binary presence
 
 - Close the 1.1 audit register for silent NaN/TNULL/copy bugs (#237)
+- Close major-release audit 2026-08-27 (A-01..A-19)
 ### Changed
 - `torchfits._cpp` no longer re-exports undocumented `_C` names (H1).
 - Root `to_astropy(path)` delegates to `table.to_astropy` (H11).
@@ -55,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (H21). Windows is unsupported (M15). `CacheConfig.max_files` is a no-op
   (M3, M10).
 - harness: Record 2026-08-26 major-release audit
+- changelog: Record PR #237 merge in Unreleased
 
 ## [1.1.0] — 2026-08-26
 

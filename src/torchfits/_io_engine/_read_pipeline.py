@@ -22,47 +22,13 @@ from .caches import (
     get_cached_hdu_type,
 )
 
-_CPP_ATTR_CACHE: dict[
-    str, bool
-] = {}  # Cached ReadOptions field names — computed once at module import.
 _READ_OPTION_FIELD_NAMES: frozenset[str] = frozenset(
     f.name for f in fields(ReadOptions)
 )
 
 
-def _is_cpp_module_mocked(cpp_module: Any) -> bool:
-    """Detect if *cpp_module* (or its ``read_full``) is a mock object.
-
-    Avoid importing ``unittest.mock``. Mock objects set ``_mock_name`` when
-    instantiated; real extension modules never carry this attribute. Covers
-    both ``patch("torchfits.cpp", ...)`` (module mocked) and patching only
-    ``read_full`` on a real module. The CPU fast path is skipped for mocks so
-    tests that patch the C++ module fall through to the generic/fallback path.
-    """
-    if getattr(cpp_module, "_mock_name", None) is not None:
-        return True
-    read_full = getattr(cpp_module, "read_full", None)
-    return getattr(read_full, "_mock_name", None) is not None
-
-
 def _cpp_has(cpp_module: Any, attr: str) -> bool:
-    try:
-        return _CPP_ATTR_CACHE[attr]
-    except KeyError:
-        result = hasattr(cpp_module, attr)
-        _CPP_ATTR_CACHE[attr] = result
-        return result
-
-
-def _clear_cpp_attr_cache() -> None:
-    """Reset the cached ``hasattr(cpp_module, ...)`` results.
-
-    The cache assumes the C++ extension's attribute surface is stable for the
-    process lifetime. Tests that reload the extension (``importlib.reload``) or
-    monkeypatch capability attributes must call this to avoid stale ``False``
-    entries for attributes that are now present.
-    """
-    _CPP_ATTR_CACHE.clear()
+    return hasattr(cpp_module, attr)
 
 
 def _bit_columns_from_header(header: Header | None) -> set[str]:
@@ -319,15 +285,12 @@ def read_unified(
         )
 
     # --- strategy 1: CPU image fast path ---
-    cpp_is_mocked = _is_cpp_module_mocked(cpp_module)
-
     if (
         scale_on_device
         and not raw_scale
         and device == "cpu"
         and not return_header
         and isinstance(hdu, int)
-        and not cpp_is_mocked
         and columns is None
         and start_row == 1
         and num_rows == -1
@@ -694,28 +657,28 @@ def _read_generic_fast_path(
             # Thin device path: logical host tensor → one H2D. No size heuristics.
             if device != "cpu":
                 if debug_scale:
-                    print("TORCHFITS_DEBUG_SCALE: thin_device_logical")
+                    logger.debug("TORCHFITS_DEBUG_SCALE: thin_device_logical")
                 data = cpp_module.read_full(path, hdu, effective_mmap)
                 data = to_device(data, device)
             else:
                 # CPU logical scale is applied inside read_full; do not detour
                 # through read_full_raw_with_scale (extra host ops vs fitsio).
                 if debug_scale:
-                    print("TORCHFITS_DEBUG_SCALE: thin_cpu_logical")
+                    logger.debug("TORCHFITS_DEBUG_SCALE: thin_cpu_logical")
                 if cache_capacity <= 0 and hasattr(cpp_module, "read_full_nocache"):
                     data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
                 else:
                     data = cpp_module.read_full(path, hdu, effective_mmap)
         elif raw_scale:
             if debug_scale:
-                print("TORCHFITS_DEBUG_SCALE: raw_scale")
+                logger.debug("TORCHFITS_DEBUG_SCALE: raw_scale")
             if not effective_mmap and _cpp_has(cpp_module, "read_full_unmapped_raw"):
                 data = cpp_module.read_full_unmapped_raw(path, hdu)
             else:
                 data = cpp_module.read_full_raw(path, hdu, effective_mmap)
         else:
             if debug_scale:
-                print("TORCHFITS_DEBUG_SCALE: unscaled")
+                logger.debug("TORCHFITS_DEBUG_SCALE: unscaled")
             if cache_capacity <= 0 and hasattr(cpp_module, "read_full_nocache"):
                 data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
             else:

@@ -1,8 +1,10 @@
 #pragma once
+// ponytail: 2818-line megafile mixing schema, decode, mmap filter, VLA, row update, LRU.
+// Ceiling is high blast radius; 2.0 will split by concern (schema/decode/filter/mmap).
+// No logic change in 1.x; this note documents the deferral (A-10).
 
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <cstring>
 #include <cmath>
 #include <nanobind/nanobind.h>

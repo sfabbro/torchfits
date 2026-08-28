@@ -18,6 +18,14 @@ from .quantize import (
 )
 
 
+class UInt64WriteError(ValueError):
+    """FITS has no native uint64 storage (BITPIX=-64 is non-standard)."""
+
+
+class QuantizeError(ValueError):
+    """Invalid quantize= specification or misuse."""
+
+
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
     _invalidate_io_path_caches(path)
@@ -94,7 +102,7 @@ def _unsigned_image_storage_for_fits_write(
     """
     tensor = _host_tensor_for_fits_write(tensor)
     if tensor.dtype == torch.uint64:
-        raise ValueError(
+        raise UInt64WriteError(
             "torchfits does not support writing uint64 image tensors: FITS has "
             "no native uint64 storage (BITPIX=-64 is not standard), and a "
             "BZERO=2**64 pseudo-unsigned convention is not interoperable. "
@@ -155,9 +163,9 @@ def _apply_image_quantize(
     if opts is None:
         return tensor, header
     if not isinstance(tensor, Tensor):
-        raise TypeError("quantize= requires a torch.Tensor image")
+        raise QuantizeError("quantize= requires a torch.Tensor image")
     if not tensor.is_floating_point():
-        raise TypeError(
+        raise QuantizeError(
             f"quantize= requires a floating-point image tensor, got dtype={tensor.dtype}"
         )
     packed = quantize_int16_robust(
@@ -606,7 +614,7 @@ def _prepare_unsigned_table_data_for_write(
             isinstance(value, torch.Tensor) and value.dtype == torch.uint64
         ) or (isinstance(value, np.ndarray) and value.dtype == np.uint64)
         if is_uint64:
-            raise ValueError(
+            raise UInt64WriteError(
                 f"torchfits does not support writing uint64 table column "
                 f"{col_name!r}: FITS has no native uint64 storage (BITPIX=-64 "
                 f"is not standard), and a BZERO=2**64 pseudo-unsigned "

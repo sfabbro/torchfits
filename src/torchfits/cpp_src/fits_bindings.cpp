@@ -1321,6 +1321,11 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
             double val = nb::cast<double>(item.second);
             fits_update_key(fptr, TDOUBLE, key.c_str(), &val, nullptr, &status);
+        } else {
+            throw std::runtime_error(
+                "Unsupported FITS header value type for key '" + key +
+                "': expected str, bool, int, or float"
+            );
         }
     }
 
@@ -2010,6 +2015,11 @@ void bind_fits(nb::module_& m) {
             } else if (nb::isinstance<float>(value) || nb::isinstance<double>(value)) {
                 double val = nb::cast<double>(value);
                 fits_update_key(fptr, TDOUBLE, key.c_str(), &val, comment_ptr, &key_status);
+            } else {
+                throw std::runtime_error(
+                    "Unsupported FITS header value type for key '" + key +
+                    "': expected str, bool, int, or float"
+                );
             }
             if (key_status != 0) {
                 status = key_status;

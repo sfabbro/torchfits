@@ -645,12 +645,15 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
                     key_upper == "PCOUNT" || key_upper == "GCOUNT" || key_upper == "TFIELDS" ||
                     key_upper == "THEAP" || key_upper.rfind("NAXIS", 0) == 0) continue;
                 int key_status = 0;
+                bool matched = false;
                 if (nb::isinstance<bool>(item.second)) {
                     int val = nb::cast<bool>(item.second) ? 1 : 0;
                     fits_update_key(fptr_, TLOGICAL, key.c_str(), &val, nullptr, &key_status);
+                    matched = true;
                 } else if (nb::isinstance<nb::str>(item.second)) {
                     std::string val = detail::sanitize_fits_string(nb::cast<std::string>(item.second));
                     fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
+                    matched = true;
                 } else if (PyLong_Check(item.second.ptr())) {
                     int overflow = 0;
                     long long val = PyLong_AsLongLongAndOverflow(
@@ -663,9 +666,19 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
                         );
                     }
                     fits_update_key(fptr_, TLONGLONG, key.c_str(), &val, nullptr, &key_status);
+                    matched = true;
                 } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
                     double val = nb::cast<double>(item.second);
                     fits_update_key(fptr_, TDOUBLE, key.c_str(), &val, nullptr, &key_status);
+                    matched = true;
+                } else {
+                    throw std::runtime_error(
+                        "Unsupported FITS header value type for key '" + key +
+                        "': expected str, bool, int, or float"
+                    );
+                }
+                if (!matched) {
+                    // unreachable: matched handles all branches, kept for symmetry
                 }
                 if (key_status != 0) {
                     throw std::runtime_error("Failed to write FITS header keyword: " + key);
@@ -730,6 +743,11 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
             } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
                     double val = nb::cast<double>(item.second);
                     fits_update_key(fptr_, TDOUBLE, key.c_str(), &val, nullptr, &key_status);
+            } else {
+                throw std::runtime_error(
+                    "Unsupported FITS header value type for key '" + key +
+                    "': expected str, bool, int, or float"
+                );
             }
             if (key_status != 0) {
                 throw std::runtime_error("Failed to write FITS header keyword: " + key);

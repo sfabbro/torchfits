@@ -216,13 +216,13 @@ def _normalize_between(where: str) -> str:
         + _BOUNDARY_VALUE
         + r"\s+AND\s+"
         + _BOUNDARY_VALUE,
-        r"_not_between(\1, \2, \3)",
+        r"not_between(\1, \2, \3)",
         where,
         flags=re.IGNORECASE,
     )
     where = re.sub(
         r"\b(\w+)\s+BETWEEN\s+" + _BOUNDARY_VALUE + r"\s+AND\s+" + _BOUNDARY_VALUE,
-        r"_between(\1, \2, \3)",
+        r"between(\1, \2, \3)",
         where,
         flags=re.IGNORECASE,
     )
@@ -231,12 +231,12 @@ def _normalize_between(where: str) -> str:
 
 def _normalize_nulls(where: str) -> str:
     where = re.sub(
-        r"\b(\w+)\s+IS\s+NOT\s+NULL\b", r"_isnotnull(\1)", where, flags=re.IGNORECASE
+        r"\b(\w+)\s+IS\s+NOT\s+NULL\b", r"isnotnull(\1)", where, flags=re.IGNORECASE
     )
     where = re.sub(
-        r"\b(\w+)\s+NOT\s+NULL\b", r"_isnotnull(\1)", where, flags=re.IGNORECASE
+        r"\b(\w+)\s+NOT\s+NULL\b", r"isnotnull(\1)", where, flags=re.IGNORECASE
     )
-    where = re.sub(r"\b(\w+)\s+IS\s+NULL\b", r"_isnull(\1)", where, flags=re.IGNORECASE)
+    where = re.sub(r"\b(\w+)\s+IS\s+NULL\b", r"isnull(\1)", where, flags=re.IGNORECASE)
     return where
 
 
@@ -317,22 +317,21 @@ def _to_custom_ast(node: Any) -> tuple[Any, ...]:
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
-            if func_name in {"_between", "_not_between"}:
+            if func_name in {"_between", "_not_between", "between", "not_between"}:
                 if len(node.args) != 3 or not isinstance(node.args[0], ast.Name):
                     raise ValueError("Invalid between call")
                 col_name = node.args[0].id
                 low = _get_constant_val(node.args[1])
                 high = _get_constant_val(node.args[2])
-                negate = func_name == "_not_between"
+                negate = func_name in {"_not_between", "not_between"}
                 return ("between", col_name, low, high, negate)
 
-            if func_name in {"_isnull", "_isnotnull"}:
+            if func_name in {"_isnull", "_isnotnull", "isnull", "isnotnull"}:
                 if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
                     raise ValueError("Invalid null check call")
                 col_name = node.args[0].id
-                negate = func_name == "_isnotnull"
+                negate = func_name in {"_isnotnull", "isnotnull"}
                 return ("isnull", col_name, negate)
-
     raise ValueError(
         "where expects a comparison operator or IN/BETWEEN/IS NULL variants after column identifier"
     )

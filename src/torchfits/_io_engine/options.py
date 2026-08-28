@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -24,3 +25,11 @@ class ReadOptions:
     handle_cache_capacity: int = 16
     fast_header: bool = True
     mode: str = "auto"
+
+    def __post_init__(self) -> None:
+        if self.handle_cache_capacity != 16:
+            warnings.warn(
+                "ReadOptions.handle_cache_capacity is deprecated and ignored; handles are no longer cached",
+                DeprecationWarning,
+                stacklevel=2,
+            )

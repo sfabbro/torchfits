@@ -30,6 +30,13 @@ def _read_ranges_as_chunk(
 
     out_sorted: dict[str, Any] = {}
     n_total = sum(length for _, length in ranges)
+    if n_total == 0:
+        return {}
+    # ponytail: pre-allocate placeholders for requested columns so an initial
+    # empty range doesn't leave tensor vs list defaults inconsistent later.
+    # Real buffers are materialized on first non-empty segment.
+    for col in col_list:
+        out_sorted[col] = None
 
     cursor = 0
     for start0, length in ranges:
@@ -67,4 +74,6 @@ def _read_ranges_as_chunk(
             else:
                 buf[cursor : cursor + length] = [value] * length
         cursor += length
+    # Drop columns that never returned data (e.g., all ranges empty)
+    out_sorted = {k: v for k, v in out_sorted.items() if v is not None}
     return out_sorted

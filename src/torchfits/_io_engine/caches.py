@@ -394,7 +394,8 @@ def _register_open_hdulist(path: str, handle: Any, hdulist: Any) -> None:
         real = os.path.realpath(path)
     except Exception:
         real = os.path.abspath(path)
-    _open_hdulist_registry.setdefault(real, []).append((handle, hdulist))
+    with cache_lock:
+        _open_hdulist_registry.setdefault(real, []).append((handle, hdulist))
     try:
         hdulist._registry_key = real
     except Exception:
@@ -411,7 +412,8 @@ def _close_hdulist_for_path(path: str) -> None:
         real = os.path.realpath(path)
     except Exception:
         real = os.path.abspath(path)
-    entries = _open_hdulist_registry.pop(real, [])
+    with cache_lock:
+        entries = _open_hdulist_registry.pop(real, [])
     if not entries:
         return
     for handle, hdulist in entries:
@@ -548,8 +550,15 @@ def clear_file_cache(
 ) -> None:
     """Clear Python/C++ FITS I/O caches.
 
-    ``handles`` is ignored (no shared CFITSIO handle pool).
+    ``handles`` is deprecated and ignored (no shared CFITSIO handle pool since Option A).
+    It will be removed in 2.0.
     """
+    if handles is not True:
+        warnings.warn(
+            "clear_file_cache(handles=...) is deprecated and ignored; handles are no longer cached",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     clear_python_caches(
         data=data,
         handles=handles,

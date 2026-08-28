@@ -60,13 +60,13 @@ from ._io_engine.write_api import delete_hdu as _delete_hdu_impl
 from ._io_engine.write_api import insert_hdu as _insert_hdu_impl
 from ._io_engine.write_api import replace_hdu as _replace_hdu_impl
 from ._io_engine.write_api import write as _write_impl
-from ._io_engine.write_api import (
+from ._io_engine.write_api import (  # type: ignore[attr-defined]
     _normalize_cpp_table_data as _normalize_cpp_table_data_impl,
 )
-from ._io_engine.write_api import (
+from ._io_engine.write_api import (  # type: ignore[attr-defined]
     _delete_header_key_if_supported as _delete_header_key_if_supported_impl,
 )
-from ._io_engine.write_api import (
+from ._io_engine.write_api import (  # type: ignore[attr-defined]
     _write_header_cards_if_supported as _write_header_cards_if_supported_impl,
 )
 

@@ -19,6 +19,8 @@ from ._hdu_rewrite import (
     _write_hdus_with_optional_compression,
 )
 from ._write_helpers import (
+    QuantizeError,
+    UInt64WriteError,
     _TableHDUWriteProxy,
     _apply_image_quantize,
     _can_use_cpp_table_writer,
@@ -63,30 +65,6 @@ __all__ = [
     "insert_hdu",
     "replace_hdu",
     "delete_hdu",
-    "_TableHDUWriteProxy",
-    "_atomic_rewrite_hdus",
-    "_can_use_cpp_table_writer",
-    "_coerce_compressed_hdu_item",
-    "_delete_header_key_if_supported",
-    "_detach_hdus_for_rewrite",
-    "_host_tensor_for_fits_write",
-    "_merge_fits_write_header",
-    "_normalize_cpp_table_data",
-    "_normalize_list_sequence",
-    "_normalize_ndarray_column",
-    "_normalize_vla_item",
-    "_prepare_quantized_table_data_for_write",
-    "_prepare_unsigned_table_data_for_write",
-    "_resolve_compression_algorithm",
-    "_sanitize_header_for_compressed_write",
-    "_sanitize_table_header_for_write",
-    "_table_schema_scale_header_cards",
-    "_unsigned_image_storage_for_fits_write",
-    "_unsigned_table_storage_for_fits_write",
-    "_unsigned_table_tform",
-    "_write_hdus_uncompressed",
-    "_write_hdus_with_optional_compression",
-    "_write_header_cards_if_supported",
 ]
 
 
@@ -202,7 +180,7 @@ def write(
                 ]
             elif isinstance(data, HDUList):
                 if quantize is not None:
-                    raise ValueError(
+                    raise QuantizeError(
                         "quantize= is ignored for HDUList writes; quantize each "
                         "image tensor before assembling the list"
                     )
@@ -253,7 +231,7 @@ def write(
 
         if isinstance(data, HDUList):
             if quantize is not None:
-                raise ValueError(
+                raise QuantizeError(
                     "quantize= is ignored for HDUList writes; quantize each "
                     "image tensor before assembling the list"
                 )
@@ -306,7 +284,7 @@ def write(
 
         elif hasattr(data, "__iter__") and not isinstance(data, (str, Tensor)):
             if quantize is not None:
-                raise ValueError(
+                raise QuantizeError(
                     "quantize= is supported for a single image tensor or dict table, "
                     "not multi-HDU sequences"
                 )
@@ -354,14 +332,13 @@ def write(
             _write_all_checksums(path)
         _invalidate_path_caches(path)
 
-    except ValueError as e:
-        # uint64 rejections are documented as ValueError with guidance;
-        # every other write failure keeps the historical RuntimeError
-        # contract so callers cannot accidentally swallow validation bugs.
+    except (UInt64WriteError, QuantizeError):
         if not path_exists and os.path.exists(path):
             os.remove(path)
-        if "uint64" in str(e) or "quantize=" in str(e):
-            raise
+        raise
+    except ValueError as e:
+        if not path_exists and os.path.exists(path):
+            os.remove(path)
         raise RuntimeError(f"Failed to write FITS file '{path}': {e}") from e
     except Exception as e:
         if not path_exists and os.path.exists(path):

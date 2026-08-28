@@ -82,8 +82,10 @@ class DataView:
 
         def _normalize_index(s: Any, dim: int) -> tuple[int, int]:
             if isinstance(s, int):
+                if s < -dim or s >= dim:
+                    raise IndexError(f"index {s} out of range for dimension size {dim}")
                 idx = s + dim if s < 0 else s
-                return max(0, min(dim, idx)), max(0, min(dim, idx + 1))
+                return idx, idx + 1
             if isinstance(s, slice):
                 if s.step not in (None, 1):
                     raise ValueError("Only step=1 slices are supported")

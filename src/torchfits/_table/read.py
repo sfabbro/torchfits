@@ -18,7 +18,7 @@ from ._read_scan import (
     _scan_torch_iter,
 )
 from ._read_schema import schema
-from ._read_where import (
+from ._read_where import (  # noqa: F401  # re-export private but keep internal use
     _compile_where_to_simple_predicates,
     _read_table_with_where,
     _where_mask_for_table,
@@ -371,29 +371,4 @@ __all__ = [
     "scan_torch",
     "scanner",
     "schema",
-    # Backward-compatible private re-exports
-    "_TORCH_WHERE_MAX_ROWS",
-    "_arrow_type_from_tform",
-    "_build_fits_metadata",
-    "_can_use_full_read_path",
-    "_can_use_mmap_row_path_for_full_read",
-    "_can_use_torch_table_path_for_full_read",
-    "_column_tform_code_and_repeat",
-    "_column_tforms_for_decode",
-    "_compile_where_to_simple_predicates",
-    "_empty_table_with_schema",
-    "_filter_table_with_where",
-    "_fits_tform_is_bit",
-    "_iter_chunks_cpp_table",
-    "_read_cpp_table_chunk",
-    "_read_table_unfiltered",
-    "_read_table_with_where",
-    "_resolve_rows_from_where_cpp",
-    "_row_slice_from_start_num",
-    "_schema_from_header",
-    "_torch_cmp_mask",
-    "_try_cpp_where_pushdown",
-    "_try_torch_tensor_where_filter",
-    "_unsigned_column_dtypes",
-    "_where_mask_for_table",
 ]

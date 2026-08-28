@@ -206,7 +206,7 @@ def read_table(
         raise TypeError(f"hdu must be int or str, got {type(hdu)!r}")
 
     if where is not None and str(where).strip():
-        from torchfits._table.read import _compile_where_to_simple_predicates
+        from torchfits._table.read import _compile_where_to_simple_predicates  # type: ignore[attr-defined]
 
         predicates = _compile_where_to_simple_predicates(str(where))
         if predicates is None:

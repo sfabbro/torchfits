@@ -17,7 +17,7 @@ def validate_device(device: str | torch.device) -> str:
         and not dev_str.startswith("cuda:")
         and not dev_str.startswith("mps:")
     ):
-        raise ValueError("device must be 'cpu', 'cuda', 'mps' or 'cuda:N'")
+        raise ValueError("device must be 'cpu', 'cuda', 'cuda:N', 'mps' or 'mps:N'")
     return dev_str
 
 

@@ -145,16 +145,23 @@ def test_cache_manager_owns_private_config_copy():
     assert CacheConfig.for_environment().max_files != 123456
 
 
-# --- P2-7: the C++ capability cache can be cleared for test reloads ---------
+# --- P2-7: the C++ capability probe is now stateless (no cache) ---------
 def test_clear_cpp_attr_cache():
     from torchfits._io_engine import _read_pipeline as rp
 
     dummy = mock.Mock(spec=["present"])
     assert rp._cpp_has(dummy, "present") is True
     assert rp._cpp_has(dummy, "absent") is False
-    assert rp._CPP_ATTR_CACHE  # populated
-    rp._clear_cpp_attr_cache()
-    assert rp._CPP_ATTR_CACHE == {}
+    # Legacy cache was removed (A-03); _clear_cpp_attr_cache is gone or no-op.
+    if hasattr(rp, "_CPP_ATTR_CACHE"):
+        assert rp._CPP_ATTR_CACHE  # populated (legacy)
+        rp._clear_cpp_attr_cache()
+        assert rp._CPP_ATTR_CACHE == {}
+    else:
+        # No cache to clear — probe is stateless via hasattr.
+        assert not hasattr(rp, "_CPP_ATTR_CACHE") or rp._CPP_ATTR_CACHE == {}
+        if hasattr(rp, "_clear_cpp_attr_cache"):
+            rp._clear_cpp_attr_cache()
 
 
 # --- P2-10: capability probes swallow only expected I/O errors --------------

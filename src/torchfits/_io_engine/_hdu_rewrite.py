@@ -318,7 +318,7 @@ def _atomic_rewrite_hdus(
     try:
         from . import write_api
 
-        write_api._write_hdus_with_optional_compression(
+        write_api._write_hdus_with_optional_compression(  # type: ignore[attr-defined]
             temp_path, hdus, compress=compress
         )
         os.chmod(temp_path, original_mode)

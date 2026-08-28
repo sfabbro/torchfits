@@ -196,7 +196,7 @@ class HDUList:
                 hdu.mark_closed()
 
     def write(self, path: str, overwrite: bool = False) -> None:
-        from .._io_engine.write_api import _write_hdus_uncompressed
+        from .._io_engine.write_api import _write_hdus_uncompressed  # type: ignore[attr-defined]
 
         _write_hdus_uncompressed(path, list(self._hdus), overwrite)
 

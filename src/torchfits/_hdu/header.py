@@ -7,6 +7,26 @@ from typing import Any
 from .card import Card
 
 
+def _normalize_header_value(value: Any) -> Any:
+    """Coerce numpy scalars / 0-d arrays to plain Python scalars.
+
+    ponytail: handles np.generic via .item() so header writes never silently skip;
+    ceiling is that exotic dtypes fall through to C++ which now raises.
+    """
+    if type(value) in (str, bool, int, float, bytes):
+        return value
+    try:
+        import numpy as np
+
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray) and value.ndim == 0:
+            return value.item()
+    except Exception:
+        pass
+    return value
+
+
 class Header(dict[str, Any]):
     def __init__(self, cards: Any = None) -> None:
         super().__init__()
@@ -178,6 +198,10 @@ class Header(dict[str, Any]):
     @staticmethod
     def _coerce_card(card: Card | tuple[str, Any] | tuple[str, Any, str]) -> Card:
         if isinstance(card, Card):
+            # Normalize Card values that may hold numpy scalars.
+            norm = _normalize_header_value(card.value)
+            if norm is not card.value:
+                return Card(card.key, norm, card.comment)
             return card
         if not isinstance(card, (list, tuple)):
             raise TypeError("card must be a Card or tuple")
@@ -188,7 +212,11 @@ class Header(dict[str, Any]):
             comment = ""
         else:
             raise ValueError("card tuples must have 2 or 3 items")
-        return Card(str(key), value, "" if comment is None else str(comment))
+        return Card(
+            str(key),
+            _normalize_header_value(value),
+            "" if comment is None else str(comment),
+        )
 
     def _append_card(
         self, card: Card, *, update_mapping: bool, bump: bool = True
@@ -200,6 +228,7 @@ class Header(dict[str, Any]):
             self._version += 1
 
     def _set_card(self, key: str, value: Any, comment: str, *, bump: bool) -> None:
+        value = _normalize_header_value(value)
         card = Card(key, value, comment)
         if key in {"HISTORY", "COMMENT"}:
             self._append_card(card, update_mapping=True, bump=bump)

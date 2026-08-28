@@ -8,14 +8,14 @@ Transforms live under :mod:`torchfits.transforms`. Arrow tables under
 :mod:`torchfits.hdu`.
 """
 
-from __future__ import annotations
-
 import os
+import sys
 
 # Must run before libomp is loaded (import torch after torchfits, or pixi
-# activation.env for torch-first). Harmless on Linux; required on macOS when
-# both PyTorch and the extension link libomp.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# activation.env for torch-first). Required on macOS when both PyTorch and the
+# extension link libomp; harmless elsewhere but process-wide so scope to Darwin.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import threading
 from importlib import import_module
