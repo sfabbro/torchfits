@@ -71,7 +71,7 @@ class TestIORead:
     def test_read_invalid_device(self):
         """Test read with invalid device raises ValueError."""
         with pytest.raises(
-            ValueError, match="device must be 'cpu', 'cuda', 'mps' or 'cuda:N'"
+            ValueError, match="device must be 'cpu', 'cuda', 'cuda:N', 'mps' or 'mps:N'"
         ):
             io.read("file.fits", device="invalid_device")
 
