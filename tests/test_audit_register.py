@@ -406,6 +406,7 @@ def test_kmp_duplicate_lib_ok_set_on_import() -> None:
         val = os.environ.get("KMP_DUPLICATE_LIB_OK")
         assert val in (None, "TRUE", "true", "1")
 
+
 def test_hdulist_write_same_path_does_not_corrupt(tmp_path: Path) -> None:
     path = tmp_path / "inplace.fits"
     torchfits.write(path.as_posix(), torch.arange(16.0).reshape(4, 4), overwrite=True)
