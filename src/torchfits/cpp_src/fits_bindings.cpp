@@ -1309,7 +1309,11 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         } else if (nb::isinstance<nb::str>(item.second)) {
             std::string val = nb::cast<std::string>(item.second);
             val = d::sanitize_fits_string(val);
-            fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
+            if (val.size() > 68) {
+                fits_update_key_longstr(fptr, key.c_str(), val.c_str(), nullptr, &status);
+            } else {
+                fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
+            }
         } else if (PyLong_Check(item.second.ptr())) {
             int overflow = 0;
             long long val = PyLong_AsLongLongAndOverflow(item.second.ptr(), &overflow);

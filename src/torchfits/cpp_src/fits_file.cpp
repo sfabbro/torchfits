@@ -652,7 +652,11 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
                     matched = true;
                 } else if (nb::isinstance<nb::str>(item.second)) {
                     std::string val = detail::sanitize_fits_string(nb::cast<std::string>(item.second));
-                    fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
+                    if (val.size() > 68) {
+                        fits_update_key_longstr(fptr_, key.c_str(), val.c_str(), nullptr, &key_status);
+                    } else {
+                        fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
+                    }
                     matched = true;
                 } else if (PyLong_Check(item.second.ptr())) {
                     int overflow = 0;
@@ -727,7 +731,11 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
                 fits_update_key(fptr_, TLOGICAL, key.c_str(), &val, nullptr, &key_status);
             } else if (nb::isinstance<nb::str>(item.second)) {
                     std::string val = detail::sanitize_fits_string(nb::cast<std::string>(item.second));
-                    fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
+                    if (val.size() > 68) {
+                        fits_update_key_longstr(fptr_, key.c_str(), val.c_str(), nullptr, &key_status);
+                    } else {
+                        fits_update_key(fptr_, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &key_status);
+                    }
             } else if (PyLong_Check(item.second.ptr())) {
                     int overflow = 0;
                     long long val = PyLong_AsLongLongAndOverflow(

@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - harness: Record 2026-08-26 major-release audit
 - changelog: Record PR #237 merge in Unreleased
 
+### Added
+- 1.1.1 identity suite and cookbook tributes
+
 ## [1.1.0] — 2026-08-26
 
 Feature + correctness release on the same 2.13 torch ABI lane. New
