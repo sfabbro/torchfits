@@ -334,9 +334,13 @@ class TableHDU:
         keep = max(0, keep)
 
         if self._raw_data:
+            import numpy as np
+
             new_dict: Dict[str, Any] = {}
             for k, v in self._raw_data.items():
                 if isinstance(v, torch.Tensor) and v.dim() > 0:
+                    new_dict[k] = v[:keep]
+                elif isinstance(v, np.ndarray) and v.ndim > 0:
                     new_dict[k] = v[:keep]
                 elif isinstance(v, list):
                     new_dict[k] = v[:keep]

@@ -40,3 +40,16 @@ def test_tablehdu_head_negative():
     # Negative head should truncate from the tail like pandas.
     hdu2 = hdu.head(-2)
     assert hdu2["x"].shape[0] == 8, f"Got {hdu2['x'].shape[0]}"
+
+
+def test_tablehdu_head_numpy():
+    import numpy as np
+
+    data = {"x": np.zeros(10)}
+    hdu = TableHDU(data)
+
+    hdu2 = hdu.head(3)
+    assert hdu2["x"].shape[0] == 3
+
+    hdu3 = hdu.head(-2)
+    assert hdu3["x"].shape[0] == 8
