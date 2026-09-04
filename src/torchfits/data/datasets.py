@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import glob as _glob
 import os
 import random
@@ -774,7 +775,9 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         paths: str | list[str],
         cutouts_per_file: int = 100,
         cutout_size: int | tuple[int, int] = 128,
-        hdu: HduRef = 0,
+        hdu: HduSpec = 0,
+        ivar_hdu: HduSpec | None = None,
+        mask_hdu: HduSpec | None = None,
         *,
         staging_dir: str | Path | None = None,
         cleanup: bool = True,
@@ -796,7 +799,14 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
             self.cutout_size = (cutout_size, cutout_size)
         else:
             self.cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
-        self.hdu = hdu
+        self.hdus = _as_hdu_list(hdu)
+        self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
+        self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
+        if self.ivar_hdus is not None and len(self.ivar_hdus) != len(self.hdus):
+            raise ValueError("ivar_hdu must match hdu arity")
+        if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
+            raise ValueError("mask_hdu must match hdu arity")
+        self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
         self.staging_dir = Path(staging_dir) if staging_dir is not None else None
         self.cleanup = cleanup
         self.cutout_generator = cutout_generator
@@ -869,10 +879,39 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
             )
 
             try:
-                with open_subset_reader(
-                    local_path, hdu=self.hdu, device=self.device
-                ) as reader:
-                    height, width = reader.shape
+                with contextlib.ExitStack() as stack:
+                    flux_readers = [
+                        stack.enter_context(
+                            open_subset_reader(local_path, hdu=h, device=self.device)
+                        )
+                        for h in self.hdus
+                    ]
+                    ivar_readers = (
+                        [
+                            stack.enter_context(
+                                open_subset_reader(
+                                    local_path, hdu=h, device=self.device
+                                )
+                            )
+                            for h in self.ivar_hdus
+                        ]
+                        if self.ivar_hdus is not None
+                        else []
+                    )
+                    mask_readers = (
+                        [
+                            stack.enter_context(
+                                open_subset_reader(
+                                    local_path, hdu=h, device=self.device
+                                )
+                            )
+                            for h in self.mask_hdus
+                        ]
+                        if self.mask_hdus is not None
+                        else []
+                    )
+
+                    height, width = flux_readers[0].shape
                     for _ in range(self.cutouts_per_file):
                         if self.cutout_generator is not None:
                             x1, y1, x2, y2 = self.cutout_generator(
@@ -882,12 +921,63 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
                             x1, y1, x2, y2 = self._default_cutout_coords(
                                 height, width, ch, cw, rng
                             )
-                        cutout = reader.read_subset(x1, y1, x2, y2)
-                        if self.add_channel_dim and cutout.ndim == 2:
-                            cutout = cutout.unsqueeze(0)
+
+                        flux_cuts = [
+                            r.read_subset(x1, y1, x2, y2) for r in flux_readers
+                        ]
+                        if len(flux_cuts) == 1:
+                            flux = (
+                                flux_cuts[0].unsqueeze(0)
+                                if self.add_channel_dim and flux_cuts[0].ndim == 2
+                                else flux_cuts[0]
+                            )
+                        else:
+                            flux = torch.stack(flux_cuts, dim=0)
+
+                        if self.ivar_hdus is not None:
+                            ivar_cuts = [
+                                r.read_subset(x1, y1, x2, y2) for r in ivar_readers
+                            ]
+                            ivar = (
+                                torch.stack(ivar_cuts, dim=0)
+                                if len(ivar_cuts) > 1
+                                else (
+                                    ivar_cuts[0].unsqueeze(0)
+                                    if self.add_channel_dim and ivar_cuts[0].ndim == 2
+                                    else ivar_cuts[0]
+                                )
+                            )
+                        else:
+                            ivar = None
+
+                        if self.mask_hdus is not None:
+                            mask_cuts = [
+                                r.read_subset(x1, y1, x2, y2) for r in mask_readers
+                            ]
+                            mask = (
+                                torch.stack(mask_cuts, dim=0)
+                                if len(mask_cuts) > 1
+                                else (
+                                    mask_cuts[0].unsqueeze(0)
+                                    if self.add_channel_dim and mask_cuts[0].ndim == 2
+                                    else mask_cuts[0]
+                                )
+                            )
+                        else:
+                            mask = None
+
+                        if ivar is not None or mask is not None:
+                            payload: Any = {"flux": flux}
+                            if ivar is not None:
+                                payload["ivar"] = ivar
+                            if mask is not None:
+                                payload["mask"] = mask
+                        else:
+                            payload = flux
+
                         if self.transform is not None:
-                            cutout = self.transform(cutout)
-                        yield cutout
+                            payload = self.transform(payload)
+                        yield payload
             finally:
                 if self.cleanup and is_remote:
                     cleanup_downloaded_file(local_path)

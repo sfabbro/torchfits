@@ -500,11 +500,13 @@ ds = FitsStagedCutoutIterableDataset(
 | `paths` | `str` or `list[str]` | *(required)* | Mosaic file paths or remote URLs |
 | `cutouts_per_file` | `int` | `100` | Number of cutouts to sample per mosaic |
 | `cutout_size` | `int` or `tuple[int, int]` | `128` | Output cutout dimensions `(H, W)` |
-| `hdu` | `int` or `str` | `0` | Image HDU index or name |
+| `hdu` | `int` or `str` or `sequence` | `0` | Primary/flux HDU(s); sequence stacks channels |
+| `ivar_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion inverse variance HDU(s) |
+| `mask_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion mask HDU(s) |
 | `staging_dir` | `str` or `Path` or `None` | `None` | Ephemeral scratch directory (defaults to `$SLURM_TMPDIR` / `$TMPDIR`) |
 | `cleanup` | `bool` | `True` | Automatically delete downloaded mosaic after sampling |
 | `cutout_generator` | `callable` or `None` | `None` | Custom spatial coordinate sampler `(height, width, ch, cw) -> (x1, y1, x2, y2)` |
-| `transform` | `callable` or `None` | `None` | Applied to each cutout tensor |
+| `transform` | `callable` or `None` | `None` | Applied to each cutout tensor or companion dict |
 | `shuffle_files` | `bool` | `False` | Shuffle mosaic order per epoch |
 | `shuffle_buffer_size` | `int` or `None` | `None` | In-flight reservoir shuffle across mosaic stamps |
 

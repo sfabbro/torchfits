@@ -142,3 +142,64 @@ def test_ephemeral_scratch_dir(monkeypatch, tmp_path):
     scratch = ephemeral_scratch_dir()
     assert str(slurm_dir) in str(scratch)
     assert scratch.is_dir()
+
+
+def test_staged_cutout_multi_hdu_and_companions(tmp_path):
+    """Test multi-HDU channel stacking and companion ivar/mask payloads."""
+    from torchfits.transforms import InterquantileScale
+
+    path = tmp_path / "multihdu_mosaic.fits"
+    sci0 = np.ones((60, 60), dtype=np.float32) * 10.0
+    sci1 = np.ones((60, 60), dtype=np.float32) * 20.0
+    ivar0 = np.ones((60, 60), dtype=np.float32) * 0.1
+    ivar1 = np.ones((60, 60), dtype=np.float32) * 0.2
+    mask0 = np.ones((60, 60), dtype=np.int16)
+    mask1 = np.ones((60, 60), dtype=np.int16)
+
+    hdul = fits.HDUList(
+        [
+            fits.PrimaryHDU(sci0),
+            fits.ImageHDU(sci1, name="SCI1"),
+            fits.ImageHDU(ivar0, name="IVAR0"),
+            fits.ImageHDU(ivar1, name="IVAR1"),
+            fits.ImageHDU(mask0, name="MASK0"),
+            fits.ImageHDU(mask1, name="MASK1"),
+        ]
+    )
+    hdul.writeto(str(path), overwrite=True)
+
+    # 1. Multi-HDU flux stacking without companions
+    ds_flux = FitsStagedCutoutIterableDataset(
+        str(path),
+        hdu=[0, 1],
+        cutouts_per_file=2,
+        cutout_size=16,
+    )
+    samples_flux = list(ds_flux)
+    assert len(samples_flux) == 2
+    assert samples_flux[0].shape == (2, 16, 16)
+    assert (samples_flux[0][0] == 10.0).all()
+    assert (samples_flux[0][1] == 20.0).all()
+
+    # 2. Multi-HDU flux with companion ivar and mask + InterquantileScale
+    scaler = InterquantileScale(zero_preserving=True)
+    ds_comp = FitsStagedCutoutIterableDataset(
+        str(path),
+        hdu=[0, 1],
+        ivar_hdu=[2, 3],
+        mask_hdu=[4, 5],
+        cutouts_per_file=2,
+        cutout_size=16,
+        transform=scaler,
+    )
+    samples_comp = list(ds_comp)
+    assert len(samples_comp) == 2
+    payload = samples_comp[0]
+    assert isinstance(payload, dict)
+    assert "flux" in payload and "ivar" in payload and "mask" in payload
+    assert payload["flux"].shape == (2, 16, 16)
+    assert payload["ivar"].shape == (2, 16, 16)
+    assert payload["mask"].shape == (2, 16, 16)
+    # Color ratio 20.0 / 10.0 == 2.0 must be preserved after scaling
+    ratio = payload["flux"][1] / payload["flux"][0]
+    assert torch.allclose(ratio, torch.full_like(ratio, 2.0))

@@ -1,7 +1,7 @@
 # Major-release audit — Python surface (HDU / CLI / data / transforms)
 
 **Date:** 2026-08-26
-**Repo:** `/Users/fabbros/src/torchfits`
+**Repo:** `/Users/fabbros/src/astroai/torchfits`
 **Method:** Read-only. No fixes. Current `src/` plus tests/docs, not git history.
 **Scope:** `_hdu/` + `hdu.py`; `cli/`; `data/`; `transforms/`.
 

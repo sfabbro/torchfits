@@ -46,7 +46,7 @@ def _get_valid_mask(x: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
     """
     valid = ~torch.isnan(x)
     if mask is not None:
-        valid = valid & mask
+        valid = valid & mask.to(torch.bool)
     return valid
 
 

@@ -170,6 +170,54 @@ for name in ('torch', 'numpy', 'pyarrow', 'torchfits._C'):
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
+def test_import_sets_kmp_duplicate_lib_ok() -> None:
+    if sys.platform != "darwin":
+        return
+    script = """
+import os
+os.environ.pop("KMP_DUPLICATE_LIB_OK", None)
+import torchfits
+assert os.environ.get("KMP_DUPLICATE_LIB_OK") == "TRUE", os.environ.get("KMP_DUPLICATE_LIB_OK")
+"""
+    env = {**os.environ}
+    env.pop("KMP_DUPLICATE_LIB_OK", None)
+    subprocess.run([sys.executable, "-c", script], env=env, check=True)
+
+
+def test_duplicate_libomp_survives_after_import() -> None:
+    """Homebrew libomp + PyTorch libomp abort with OMP Error #15 unless the
+    import guard ran first. Skip when Homebrew's dylib is not installed."""
+    if sys.platform != "darwin":
+        return
+    brew_omp = next(
+        (
+            path
+            for path in (
+                Path("/opt/homebrew/opt/libomp/lib/libomp.dylib"),
+                Path("/usr/local/opt/libomp/lib/libomp.dylib"),
+            )
+            if path.is_file()
+        ),
+        None,
+    )
+    if brew_omp is None:
+        return
+    script = f"""
+import ctypes, os
+os.environ.pop("KMP_DUPLICATE_LIB_OK", None)
+import torchfits
+assert os.environ.get("KMP_DUPLICATE_LIB_OK") == "TRUE"
+lib = ctypes.CDLL({str(brew_omp)!r}, mode=ctypes.RTLD_GLOBAL)
+lib.omp_get_max_threads.restype = ctypes.c_int
+lib.omp_get_max_threads()
+import torch
+print(torch.__version__, flush=True)
+"""
+    env = {**os.environ}
+    env.pop("KMP_DUPLICATE_LIB_OK", None)
+    subprocess.run([sys.executable, "-c", script], env=env, check=True)
+
+
 def test_removed_native_cache_environment_is_ignored() -> None:
     """The removed TORCHFITS_CFITSIO_CACHE_* knobs must not break imports."""
     env = {

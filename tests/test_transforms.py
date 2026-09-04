@@ -17,6 +17,8 @@ from torchfits.transforms import (
     FITSScaleColumns,
     FITSTransform,
     GlobalScalarNorm,
+    InterquantileNormalize,
+    InterquantileScale,
     LogStretch,
     MinMaxNormalize,
     PercentileClipNormalize,
@@ -1084,6 +1086,107 @@ class TestGlobalScalarNorm:
         r = repr(GlobalScalarNorm(stat="rms", dim=(-1,)))
         assert "GlobalScalarNorm" in r
         assert "rms" in r
+
+
+class TestInterquantileScale:
+    def test_alias(self) -> None:
+        assert InterquantileNormalize is InterquantileScale
+
+    def test_zero_preserving_scale_roundtrip(self) -> None:
+        x = torch.randn(4, 64, 64) * 50.0 + 10.0
+        # Include explicit zero to verify it stays zero
+        x[0, 0, 0] = 0.0
+        t = InterquantileScale(q_low=0.05, q_high=0.95, zero_preserving=True)
+        out = t.forward(x)
+        assert out[0, 0, 0].item() == 0.0
+        restored = t.inverse(out)
+        assert torch.allclose(restored, x, atol=1e-5)
+
+    def test_multi_channel_color_invariance(self) -> None:
+        # Multi-band scene: 3 bands with distinct flux levels
+        # (e.g. g=100, r=200, i=300)
+        g = torch.rand(32, 32) * 50.0 + 50.0
+        r = g * 2.0  # constant color ratio r / g == 2.0
+        i = g * 3.5  # constant color ratio i / g == 3.5
+        cube = torch.stack([g, r, i], dim=0)  # [3, 32, 32]
+
+        # Joint multi-channel scale: dim=None or dim=(-3, -2, -1)
+        t = InterquantileScale(dim=None, zero_preserving=True)
+        scaled = t.forward(cube)
+
+        # Color ratios must be perfectly preserved
+        ratio_rg_orig = r / g
+        ratio_rg_scaled = scaled[1] / scaled[0]
+        assert torch.allclose(ratio_rg_orig, ratio_rg_scaled, atol=1e-6)
+
+        ratio_ig_orig = i / g
+        ratio_ig_scaled = scaled[2] / scaled[0]
+        assert torch.allclose(ratio_ig_orig, ratio_ig_scaled, atol=1e-6)
+
+    def test_centered_mode_median_subtraction(self) -> None:
+        x = torch.randn(2, 64, 64) * 20.0 + 500.0
+        t = InterquantileScale(zero_preserving=False)
+        out = t.forward(x)
+        assert abs(out.median().item()) < 0.1
+        restored = t.inverse(out)
+        assert torch.allclose(restored, x, atol=1e-5)
+
+    def test_companion_dict_payload(self) -> None:
+        flux = torch.randn(3, 32, 32) * 10.0 + 20.0
+        ivar = torch.ones_like(flux) * 0.5
+        mask = torch.ones_like(flux, dtype=torch.bool)
+        payload = {"flux": flux, "ivar": ivar, "mask": mask}
+
+        t = InterquantileScale(zero_preserving=True)
+        out = t.forward(payload)
+
+        # Flux should be scaled by 1/s
+        scale = t._last_scale
+        assert torch.allclose(out["flux"], flux / scale, atol=1e-5)
+        # IVAR should be scaled by s**2
+        assert torch.allclose(out["ivar"], ivar * (scale**2), atol=1e-5)
+        assert out["mask"] is mask
+
+        # Inverse should restore original values
+        restored = t.inverse(out)
+        assert torch.allclose(restored["flux"], flux, atol=1e-5)
+        assert torch.allclose(restored["ivar"], ivar, atol=1e-5)
+
+    def test_mask_and_nan_awareness(self) -> None:
+        x = torch.randn(32, 32) * 10.0 + 50.0
+        x[0, 0] = float("nan")
+        mask = torch.ones(32, 32, dtype=torch.bool)
+        mask[0, 0] = False
+        mask[0, 1] = False
+        x[0, 1] = 999999.0  # masked outlier
+
+        t = InterquantileScale(zero_preserving=True)
+        out = t.forward(x, mask=mask)
+        assert out is not None
+        assert not torch.isnan(t._last_scale)
+        assert t._last_scale.item() < 500.0  # Outlier ignored
+
+    def test_constant_tensor_no_div_by_zero(self) -> None:
+        x = torch.ones(16, 16) * 42.0
+        t = InterquantileScale(eps=1e-6)
+        out = t.forward(x)
+        assert torch.isfinite(out).all()
+        assert torch.allclose(t._last_scale, torch.tensor(1e-6))
+
+    def test_invalid_quantiles_raises(self) -> None:
+        with pytest.raises(ValueError, match="0.0 <= q_low < q_high <= 1.0"):
+            InterquantileScale(q_low=0.9, q_high=0.1)
+
+    def test_inverse_without_forward_raises(self) -> None:
+        t = InterquantileScale()
+        with pytest.raises(RuntimeError, match="prior forward"):
+            t.inverse(torch.zeros(4))
+
+    def test_repr(self) -> None:
+        r = repr(InterquantileScale(q_low=0.1, q_high=0.9, zero_preserving=True))
+        assert "InterquantileScale" in r
+        assert "q_low=0.1" in r
+        assert "zero_preserving=True" in r
 
 
 # ---------------------------------------------------------------------------
