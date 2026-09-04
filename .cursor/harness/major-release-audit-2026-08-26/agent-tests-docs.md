@@ -1,6 +1,6 @@
 # Major-release audit — tests, docs, examples, benchmarks
 
-**Repo:** `/Users/fabbros/src/torchfits`
+**Repo:** `/Users/fabbros/src/astroai/torchfits`
 **Scope date:** 2026-08-26
 **Product version in tree:** `1.1.0` (`src/torchfits/__init__.py`, `pyproject.toml`, `pixi.toml`, `scripts/torch_lanes.json`)
 **This document:** tests + docs + examples + benches + `docs/assets`. No code changes.

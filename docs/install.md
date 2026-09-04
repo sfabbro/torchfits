@@ -49,8 +49,8 @@ If you must stay on an older PyTorch (**≥ 2.10**), install from source against
 ## Verify your installation
 
 ```python
-import torch
 import torchfits
+import torch
 
 print(f"torchfits {torchfits.__version__} with torch {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
@@ -143,6 +143,14 @@ pip install pandas polars duckdb
 ---
 
 ## Troubleshooting
+
+**`OMP: Error #15: Initializing libomp.dylib`**
+
+Two OpenMP libraries are loaded in the same process — typical on macOS when PyTorch's `libomp` meets Homebrew or conda `llvm-openmp`. Importing `torchfits` sets `KMP_DUPLICATE_LIB_OK=TRUE` before PyTorch loads. Import `torchfits` first, or export that variable in the shell before `import torch`:
+
+```bash
+export KMP_DUPLICATE_LIB_OK=TRUE
+```
 
 **`No matching distribution found for torchfits`**
 

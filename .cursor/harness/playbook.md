@@ -35,6 +35,9 @@
 - id: setkey-no-rewrite
   desc: setkey delete/rename must use CFITSIO fits_delete_key (+ binary copy for --out), never HDUList.write rewrite — rewrite decompresses CompImage and leaves stale Z* cards.
 
+- id: macos-libomp-dup
+  desc: macOS OMP Error #15 is two libomp.dylib copies (PyTorch + Homebrew/conda). setdefault KMP_DUPLICATE_LIB_OK in torchfits/__init__.py and pixi activation.env; import torchfits before torch.
+
 - id: cfitsio-http-ssrf
   desc: guard_fits_path on I/O façades + torchfits.cpp path APIs before CFITSIO; put guards outside generator bodies and before optional imports (e.g. polars). Public http(s)/ftp still CFITSIO; private blocked. CLI is_remote_path includes ftp. CLI copy must guard then http_open (redirect-safe), never bare urlretrieve. Case-fold sh:// in security.h.
 
