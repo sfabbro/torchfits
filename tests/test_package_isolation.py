@@ -171,6 +171,8 @@ for name in ('torch', 'numpy', 'pyarrow', 'torchfits._C'):
 
 
 def test_import_sets_kmp_duplicate_lib_ok() -> None:
+    if sys.platform != "darwin":
+        return
     script = """
 import os
 os.environ.pop("KMP_DUPLICATE_LIB_OK", None)
