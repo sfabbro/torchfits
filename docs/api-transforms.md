@@ -252,6 +252,36 @@ $\sqrt{\text{mean}(x^2)}$ (RMS).
     When you want the simplest possible normalization — just scale by the
     typical value. Good for quick per-image scaling before comparison.
 
+### `InterquantileScale(q_low=0.05, q_high=0.95, dim=None, zero_preserving=True, eps=1e-9)`
+
+Zero-preserving or centered interquantile scale normalization.
+
+$$s = \max(Q_{q_{\text{high}}}(x) - Q_{q_{\text{low}}}(x),\ \text{eps})$$
+
+In zero-preserving mode (default):
+
+$$\text{output} = \frac{x}{s}$$
+
+In centered mode (`zero_preserving=False`):
+
+$$\text{output} = \frac{x - \text{median}(x)}{s}$$
+
+**Inverse:** $x = \text{output} \times s + \text{offset}$
+
+| Param | Default | Description |
+|---|---|---|
+| `q_low` | `0.05` | Lower quantile (0.0 to 1.0) |
+| `q_high` | `0.95` | Upper quantile (0.0 to 1.0) |
+| `dim` | `None` | Dimensions for joint quantiles (None = all dims) |
+| `zero_preserving` | `True` | Scale without subtracting offset (preserves colours and zero-point) |
+| `eps` | `1e-9` | Divisor floor |
+
+!!! info "When to use"
+    Standard choice for multi-band astronomical images where relative colour
+    ratios ($f_g / f_r$) must remain strictly invariant (e.g. photometric
+    redshift models). Supports both plain tensors and `{"flux", "ivar"?, "mask"?}`
+    companion dicts (where `ivar` scales by $s^2$).
+
 ---
 
 ## Outlier Rejection
@@ -521,6 +551,8 @@ from torchfits.transforms import (
     LogStretch,
     SqrtStretch,
     GlobalScalarNorm,
+    InterquantileScale,
+    InterquantileNormalize,
     AsymmetricSigmaClip,
     SigmaClip,
     FITSScaleColumns,

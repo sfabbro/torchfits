@@ -27,6 +27,8 @@ from .helpers import estimate_background, safe_arcsinh, safe_log, zscale_limits
 from .normalize import (
     BackgroundSubtract,
     GlobalScalarNorm,
+    InterquantileNormalize,
+    InterquantileScale,
     MinMaxNormalize,
     PercentileClipNormalize,
     RobustNormalize,
@@ -51,6 +53,8 @@ __all__ = [
     "PercentileClipNormalize",
     "MinMaxNormalize",
     "GlobalScalarNorm",
+    "InterquantileScale",
+    "InterquantileNormalize",
     "FITSHeaderScale",
     "FITSScaleColumns",
     "TNullToNan",
