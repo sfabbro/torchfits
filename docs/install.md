@@ -40,9 +40,9 @@ pip install torchfits "torch==2.13.0+cu129" --extra-index-url https://download.p
 
 ## PyTorch Version Compatibility
 
-The PyPI release is built against one PyTorch ABI lane at a time; the current lane is **PyTorch 2.13.x** (`torch>=2.13,<2.14`). Wheels are ABI-matched to that minor, so keep your PyTorch on 2.13.x.
+The PyPI release is built against one PyTorch minor version at a time (an "ABI lane"); the current lane is **PyTorch 2.13.x** (`torch>=2.13,<2.14`). Wheels are ABI-matched to that minor, so keep your PyTorch on 2.13.x.
 
-If you must stay on an older PyTorch (**≥ 2.10**), install from source against your environment (see below) — prebuilt wheels are not published for other lanes.
+If you must stay on an older PyTorch (**≥ 2.10**), install from source against your environment (see below) — prebuilt wheels are not published for other lanes (PyTorch minor versions).
 
 ---
 

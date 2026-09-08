@@ -6,7 +6,7 @@
 git clone https://github.com/astroai/torchfits.git
 cd torchfits
 pixi install
-pixi run preflight-push   # fast gate while editing
+pixi run preflight-push   # quick check while editing
 pixi run test             # full unit suite
 ```
 
@@ -135,7 +135,7 @@ Quick FITS benchmark sweep:
 pixi run bench-all
 ```
 
-Published multi-host scorecard (release docs): see [Release Checklist](release.md#6-benchmark-evidence)
+Published multi-host benchmark runs (release docs): see [Release Checklist](release.md#6-benchmark-evidence)
 (`bench-exhaustive-local` + CANFAR CPU/CUDA + `bench-release-scorecard`).
 
 Include benchmark evidence in PRs that touch performance-sensitive paths.

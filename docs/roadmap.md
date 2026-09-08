@@ -16,7 +16,7 @@ The 1.0 release established the high-performance core for FITS tensor and table 
 - **Command-Line Suite:** Unix-style CLI tools (`info`, `header`, `cutout`, `convert`, `verify`).
 - **Feature Parity:** Comprehensive format support verified against standard FITS test suites.
 
-### 1.1 — Streaming, Correctness & Remote Hardening (beta soak)
+### 1.1 — Streaming, Correctness & Remote Hardening (beta)
 
 On the same PyTorch ABI lane; the [changelog](changelog.md) carries the full list:
 

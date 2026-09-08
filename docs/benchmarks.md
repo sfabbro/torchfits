@@ -1,6 +1,6 @@
 # Benchmarks
 
-> **Headline (v1.1.0, CANFAR Linux, lab profile, mmap on+off matrix;
+> **Headline (v1.1.0, CANFAR Linux, extended `lab` timing profile, mmap on+off matrix;
 > git-mirrored `exhaustive_cpu_20260807_013736` /
 > `exhaustive_cuda_20260807_013736`):**
 > torchfits wins **100% of significant image comparisons** on both CPU and
@@ -18,7 +18,7 @@
 `torchfits` benchmarks cover FITS **tensor** I/O (IMAGE HDUs, typically 1D–4D)
 and FITS **table** I/O vs Astropy and fitsio across CPU and GPU hardware.
 
-**Honesty:** Headline ratios below are lab medians from reproducible benchmark runs across our test suites — not guarantees on your specific filesystem, file mix, or PyTorch version. Check [Performance comparisons & limitations](#performance-deficits) for a transparent breakdown of cases where peer libraries are competitive or faster.
+**A note on fairness:** Headline ratios below are medians from reproducible benchmark runs across our test suites (the `lab` timing profile uses more warmup and repetitions than the quick `user` profile) — not guarantees on your specific filesystem, file mix, or PyTorch version. Check [Performance comparisons & limitations](#performance-deficits) for a transparent breakdown of cases where peer libraries are competitive or faster.
 
 ## How to read this page
 
@@ -32,7 +32,7 @@ and FITS **table** I/O vs Astropy and fitsio across CPU and GPU hardware.
 | Every measured configuration | [Exhaustive benchmark results](#exhaustive-benchmark-results) |
 | Raw CSV | [Published CSVs](#published-csvs) |
 
-Published GPU/CPU numbers come from the multi-host release scorecard
+Published GPU/CPU numbers come from the multi-host benchmark runs
 (`exhaustive_mps_*`, `exhaustive_cpu_*`, `exhaustive_cuda_*`). Manual
 `workflow_dispatch` on `.github/workflows/bench-report.yml` is CPU-only and
 does not refresh GPU cells.
@@ -232,9 +232,9 @@ endian swap into torch tensors — see
 [ML with FITS](examples-ml.md#survey-mosaic-cutouts-cfht-megapipe). Rice `.fz`
 MegaCam cutouts remain a separate comparison (tile decompress inside CFITSIO).
 
-## Correctness Gates
+## Correctness checks
 
-| Gate | Command | Validates |
+| Check | Command | Validates |
 |---|---|---|
 | fitsio parity | `pixi run pytest tests/test_fitsio_upstream_smoke.py -q` | Common fitsio image, header, table, compression, and checksum workflows |
 | Astropy parity | `pixi run pytest tests/test_astropy_upstream_smoke.py -q` | Common Astropy HDU, header, image, compressed-image, table, and scaled-data workflows |
@@ -279,7 +279,7 @@ mmap-on and mmap-off peers are never cross-compared.
 | `bench_all.py` | fits / fitstable | FITS benchmark orchestrator |
 | `bench_fits_io.py` | fits | Image I/O across dtypes, sizes, compression, scaling, MEF, and cutouts |
 | `bench_fitstable_io.py` | fitstable | Table I/O across row counts, schemas, projection, row slicing, predicates, and streaming |
-| `bench_all.py` / `bench-fits` | fits | Scorecard path |
+| `bench_all.py` / `bench-fits` | fits | Published-results path |
 | `bench_table.py` | fitstable | Table API timing |
 | `bench_arrow_tables.py` | fitstable | Arrow-oriented table workflows |
 | `bench_gpu_transports.py` | fits (GPU) | CUDA/MPS image reads, cutouts, repeated cutouts (`disk→CPU→GPU` / `disk→RAM→GPU` rows) |
@@ -406,7 +406,7 @@ aggregation rules.
   `disk→CPU→GPU`, `disk→RAM→GPU`).
 - Columns are **backends** (`torchfits` / `astropy` / `fitsio` / `cfitsio-direct`).
 - Pure-C CFITSIO (vendored): `pixi run bench-cfitsio-direct` runs the **full**
-  image+table scorecard fixture set with op→API mapping in
+  image+table benchmark fixture set with op→API mapping in
   `benchmarks/cfitsio_direct/bench_cfitsio_direct.c`
   (`fits_read_img` / `fits_read_subset` / `fits_read_record` /
   `fits_read_tblbytes` / `fits_read_col`). CSV:
@@ -436,8 +436,8 @@ CPU category rows aggregate the CPU exhaustive
 (`exhaustive_cpu_20260807_013736`, source of the generated
 [highlights](#performance-highlights) and [full table](#exhaustive-benchmark-results)
 above); the GPU (CUDA) rows come from `exhaustive_cuda_20260807_013736`
-(see host scorecard for deficit honesty — all lags listed, floors label
-noise vs significant). Category ranges are the last regenerated aggregation
+(see Published runs by platform below — all lags are listed, floors
+labeled as noise vs significant). Category ranges are the last regenerated aggregation
 shape; for absolute times prefer the generated tables above.
 
 ### FITS image I/O
@@ -455,7 +455,7 @@ shape; for absolute times prefer the generated tables above.
 | **Time series frames** (5 frames) | 5 | 64–91 μs | 492–663 μs | 143–195 μs | **6.5–7.8×** | **1.95–2.3×** |
 | **Header read** (all fixture types) | 87 | 14–51 μs | 257 μs – 2.46 ms | 25–267 μs | **15.1–48.2×** | **1.58–5.2×** |
 
-**GPU (CUDA) device lanes** — 85 comparable `read_full` / cutout cases:
+**GPU (CUDA) results** — 85 comparable `read_full` / cutout cases:
 
 | Category | torchfits median | astropy median | fitsio median | Typical speedup vs astropy | Typical speedup vs fitsio |
 |---|---:|---:|---:|---:|---:|
@@ -1015,7 +1015,7 @@ Cases where torchfits is **not** first in its comparison family (CPU and GPU). G
 | Linux x86_64 / CUDA | table | typed_100000 [predicate_filter] | off | 2.10 ms | 738.1 | fitsio/fitsio | 1.03× |
 <!-- BENCH_DEFICITS_END -->
 
-### Host scorecard
+### Published runs by platform
 
 | Platform | Run ID | Rows | Time deficits | Median peak RSS (MB) | Notes |
 |---|---|---:|---:|---:|---|
@@ -1024,7 +1024,7 @@ Cases where torchfits is **not** first in its comparison family (CPU and GPU). G
 | Linux x86_64 / CUDA | `exhaustive_cuda_20260807_013736` | 4315 | 26 | 719.3 | lab + mmap-matrix + GPU |
 <!-- BENCH_HOSTS_END -->
 
-Round-3 soak (post thin-I/O): MPS `exhaustive_mps_20260719_143706` (local);
+Historical July 2026 runs: MPS `exhaustive_mps_20260719_143706` (local);
 CANFAR staging CPU `exhaustive_cpu_20260719_144337` and CUDA
 `exhaustive_cuda_20260719_144457` (clone `bench/thin-io-scorecard` @ 9b9e7cf).
 ML loader: `ml_20260719_145743`. MegaCam: `20260719_075555`.

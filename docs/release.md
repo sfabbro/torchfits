@@ -33,7 +33,7 @@ pixi run check-lane
 - `packaging/conda/recipe.yaml` (torch_pin)
 - `src/torchfits/__init__.py` (`__version__`)
 
-Release candidates (pre-tag soaks) render the lane base plus a PEP 440
+Release candidates (pre-tag validation runs) render the lane base plus a PEP 440
 prerelease suffix:
 
 ```bash
@@ -101,7 +101,7 @@ pixi run pytest tests/test_package_isolation.py tests/test_docs_integrity.py -q
 
 ## 6. Benchmark evidence
 
-Published multi-host scorecard (MPS + CANFAR CPU + CANFAR CUDA):
+Published multi-host benchmark runs (MPS + CANFAR CPU + CANFAR CUDA):
 
 ```bash
 pixi run bench-install
@@ -123,7 +123,7 @@ pixi run bench-release-scorecard -- \
 Mirror CSVs into `docs/assets/bench/<run-id>/` and update Published paths in
 `docs/benchmarks.md`. Companion suites: `pixi run bench-megacam`, `bench-ml`.
 
-Quick local smoke (not a published scorecard): `pixi run bench-all` /
+Quick local check (not a published run): `pixi run bench-all` /
 `pixi run bench-mps`. Manual CI refresh: `.github/workflows/bench-report.yml`
 (`workflow_dispatch` only; CPU-only).
 

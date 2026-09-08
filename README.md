@@ -10,7 +10,7 @@
 FITS I/O for PyTorch: read and write FITS as tensors and tables — cutouts,
 predicate filters, and a shell CLI (C++ engine, vendored CFITSIO).
 
-Prebuilt binary wheels for **Python 3.10–3.14** on **PyTorch 2.13.x** (the wheel ABI lane) — Linux (x86_64, aarch64) and macOS (Apple Silicon arm64), with vendored CFITSIO.
+Prebuilt binary wheels for **Python 3.10–3.14** on **PyTorch 2.13.x** (ABI-matched wheels) — Linux (x86_64, aarch64) and macOS (Apple Silicon arm64), with vendored CFITSIO.
 
 Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.github.io/torchfits/edge/) (`main` tip)
 
@@ -61,7 +61,7 @@ torchfits cutout 'science.fits[100:256,100:256]' cutout.fits
 | [Documentation](https://astroai.github.io/torchfits/) | Quick start, Python workflows, API, CLI |
 | [Python workflows](https://astroai.github.io/torchfits/python-workflows/) | Which API for images, tables, cutouts, training |
 | [Examples](https://astroai.github.io/torchfits/examples/) | Runnable scripts + transform plots |
-| [Benchmarks](https://astroai.github.io/torchfits/benchmarks/) | Methodology and scorecards |
+| [Benchmarks](https://astroai.github.io/torchfits/benchmarks/) | Methodology and published results |
 | [Changelog](https://astroai.github.io/torchfits/changelog/) | Release notes |
 
 ## Develop

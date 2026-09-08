@@ -91,7 +91,7 @@ and after cleaning, a count of faint structure, the background median, and
 aperture flux ratios at bright local maxima. Because no clean science target
 exists, these values are reported as diagnostics rather than accuracy scores.
 
-The noise injection probe adds the difference of two training darks to a
+The noise-injection test adds the difference of two training darks to a
 science window and measures how much the conservative path changes. It provides
 a stress test of that path.
 

@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suffixes; `stats` upcasts integer images once.
 - `bench_arrow_tables.py` uses the current `table.read` signature.
 
+- Close repo-wide audit across transforms, tables, IO, HDU/header, HTTP, CLI
 ### Changed
 - Derived `TableHDU`s (`filter`, `select`, `head`, `add_column`, ...) own
   a copy of the source header, so later mutations of the derived header
@@ -57,22 +58,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `table.read_torch(where=)` drops TNULL sentinels and uses range-safe
-  compares, matching Arrow `table.read` (B1, B2).
+  compares, matching Arrow `table.read`.
 - Robust-quantize BLANK pixels are NaN on `torchfits.read`, including
-  uncompressed scaled images (B6, H29). Native IEEE float/double HDUs
+  uncompressed scaled images. Native IEEE float/double HDUs
   keep Inf and signed zero (`fits_read_img` nulval is only for BLANK
   and compressed tiles; CFITSIO `fnan` would otherwise replace them).
 - `torchfits copy` is a byte copy (`shutil.copy2`); same-path I/O is
-  refused; `HDUList.write` to an existing path uses tempfile+replace
-  (B3, B5, M11).
-- `TableHDURef.head` composes an existing row window (H3).
+  refused; `HDUList.write` to an existing path uses tempfile+replace.
+- `TableHDURef.head` composes an existing row window.
 - Header cache hits clone `Header` from cards; `raw_scale` reaches the
-  fallback reader (H23, H24).
+  fallback reader.
 - `replace_hdu` strips stale `Z*` cards; checksum rewrites restamp when
-  the input had stamps; `verify_checksums` reports `present` (H25, H26).
+  the input had stamps; `verify_checksums` reports `present`.
 - Table `.fits.gz` / `.zip` refuse the buffered pread path; TSBYTE mmap
-  matches CFITSIO; TFORM repeat overflow raises (H14, H34, M4).
-- CLI: unsigned `diff` min/max, Ctrl-C exit 130, JSON without NaN (H4, H5, H6).
+  matches CFITSIO; TFORM repeat overflow raises.
+- CLI: unsigned `diff` min/max, Ctrl-C exit 130, JSON without NaN.
 - HTTP Range cutouts of integer images with `BLANK` fall back to CFITSIO
   so missing pixels are NaN rather than the sentinel code.
 - Writing an already-decoded float with a copied integer header drops
@@ -85,29 +85,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - changelog: Rank final tags above prereleases in latest_tag
 - build: Select sha256 tooling by OS, not binary presence
 
-- Close the 1.1 audit register for silent NaN/TNULL/copy bugs (#237)
-- Close major-release audit 2026-08-27 (A-01..A-19)
+- Completed the 1.1 correctness review for silent NaN/TNULL/copy bugs (#237)
+- Completed the 1.1.1 release-readiness review (19 tracked findings closed)
+
 ### Changed
-- `torchfits._cpp` no longer re-exports undocumented `_C` names (H1).
-- Root `to_astropy(path)` delegates to `table.to_astropy` (H11).
-- `read(hdu=[...], mmap=False)` and path-list batch honor mmap (H27).
-- `quantize=` on `HDUList` + `compress=` raises instead of being ignored (H28).
+- `torchfits._cpp` no longer re-exports undocumented `_C` names.
+- Root `to_astropy(path)` delegates to `table.to_astropy`.
+- `read(hdu=[...], mmap=False)` and path-list batch honor mmap.
+- `quantize=` on `HDUList` + `compress=` raises instead of being ignored.
 - Linux wheels install `bzip2-devel` in manylinux so `HAS_BZIP2` matches
-  macOS (H20).
+  macOS.
 - Sanitizer CI uses the pixi `test` env (not uv) and quotes cmake
   define flags so bash does not split on `;`.
 
 ### Docs
-- Benchmark headline cites git-mirrored `exhaustive_*_20260807_013736`
-  (B4). GPU copy is host-decode then `device=` (H16, M7). Complex columns
-  are Partial on Arrow (H2). Release runbook uses OIDC, not a PyPI token
-  (H21). Windows is unsupported (M15). `CacheConfig.max_files` is a no-op
-  (M3, M10).
-- harness: Record 2026-08-26 major-release audit
-- changelog: Record PR #237 merge in Unreleased
+- Benchmark headline cites git-mirrored `exhaustive_*_20260807_013736`.
+  GPU copy is host-decode then `device=`. Complex columns are Partial on
+  Arrow. Release runbook uses OIDC, not a PyPI token. Windows is
+  unsupported. `CacheConfig.max_files` is a no-op.
 
 ### Added
-- 1.1.1 identity suite and cookbook tributes
+- 1.1.1 identity-check test suite and example-gallery additions
 
 ## [1.1.0] — 2026-08-26
 
@@ -116,7 +114,7 @@ capabilities: checksum-stamped writes, GIL-free hot reads, clean
 truncated-file errors, high-fidelity Astropy interop, memory-bounded
 streaming filters, multiprocess-safe remote downloads, auto-adaptive
 FITS RGB, and native whole-file `.bz2` FITS reads — plus a
-major-release-readiness audit that cleared a round of silent-corruption,
+major-release-readiness review that cleared a round of silent-corruption,
 thread-safety, and supply-chain fixes.
 
 ### Features
@@ -198,27 +196,26 @@ thread-safety, and supply-chain fixes.
 
 - `torchfits.cpp` is deprecated in favor of private `torchfits._cpp`;
   every attribute access warns. No-op native cache stubs (`configure_cache`,
-  `get_cache_size`, `clear_file_cache`) left the public surface (M2).
+  `get_cache_size`, `clear_file_cache`) left the public surface.
 - `TORCHFITS_CFITSIO_CACHE_MB/_FILES` env vars removed; they configured a
   native cache that no longer exists. `cache.configure_cache()` /
   `CacheManager.configure_cpp_cache()` remain as documented no-ops emitting
-  DeprecationWarning for one cycle (M1).
-- `write_tensor()` accepts `checksum=` for parity with `write()` (L3).
+  DeprecationWarning for one cycle.
+- `write_tensor()` accepts `checksum=` for parity with `write()`.
 - `torchfits.open()` accepts only `mode="r"`; in-place update modes are
-  rejected with an actionable error (L5).
+  rejected with an actionable error.
 - `TensorHDU.chunks()` is implemented: lazy row-band slabs equal to slices
   of `to_tensor()`. It previously called a binding that never existed and
-  always raised AttributeError (B5).
+  always raised AttributeError.
 - `DataView.dtype` reports convention dtypes (uint16/uint32/int8) matching
-  reader output rather than raw storage BITPIX (L1).
+  reader output rather than raw storage BITPIX.
 - TableHDU schema caches hold strong header refs so GC id-reuse cannot
-  serve stale schemas (L4); `select()` rejects unknown columns and
-  `head()` validates its argument (L2).
+  serve stale schemas; `select()` rejects unknown columns and
+  `head()` validates its argument.
 - Vendored CFITSIO fetches are sha256-pinned and verified; unpinned tags
   fail closed unless `TORCHFITS_VENDOR_ALLOW_UNPINNED=1`; "latest"
   resolution removed. Conda/pixi builds compile the same pinned+patched
-  CFITSIO as the wheels — PLIO buffer fix + BZIP2_1 on every channel
-  (H4, H5).
+  CFITSIO as the wheels — PLIO buffer fix + BZIP2_1 on every channel.
 
 ### Fixed
 
@@ -260,41 +257,41 @@ thread-safety, and supply-chain fixes.
 - **Compressed-image null pixels decode as NaN** (was silent 0): the null
   probe targeted a CFITSIO symbol that exists in no upstream release.
   ZBLANK is probed directly and float CompImage reads always pass NaN
-  nulval (B1). Regression suite vs astropy: tests/test_compressed_nulls.py.
+  nulval. Regression suite vs astropy: tests/test_compressed_nulls.py.
 - **`torchfits arith` no longer wraps/truncates integer images**: ops run
   in int64/float64 with saturating cast-back plus warning; `--dtype`
-  overrides; div produces floats under `auto` (B2).
+  overrides; div produces floats under `auto`.
 - **`torchfits stats` works on unsigned-convention images**: min/max run
-  after upcast instead of raising on missing uint reduction kernels (B3).
+  after upcast instead of raising on missing uint reduction kernels.
 - **`quantize="robust"` maps NaN/Inf to BLANK sentinel codes** with the
   keyword written, instead of packing non-finite values into valid codes
-  that dequantize as real data (B4).
-- **WHERE float equality is engine-independent** (H2); **schema() stops
-  lying about complex columns** (H3); **row windows keep VLA/string
-  columns aligned** (H7); **scan(mmap=True) handles scaled tables and
-  ASCII HDUs** (H8); chunk buffers zero-initialized (M8); read_batch
-  warnings document skip semantics (M9); interop kwargs no longer leak to
-  pandas (M12); FITS numeric parsing accepts D-exponents / rejects `1_0`.
+  that dequantize as real data.
+- **WHERE float equality is engine-independent**; **schema() stops
+  lying about complex columns**; **row windows keep VLA/string
+  columns aligned**; **scan(mmap=True) handles scaled tables and
+  ASCII HDUs**; chunk buffers zero-initialized; read_batch
+  warnings document skip semantics; interop kwargs no longer leak to
+  pandas; FITS numeric parsing accepts D-exponents / rejects `1_0`.
 - **Transforms are functional** (no caller-tensor mutation via `.to()`
-  aliasing, M6); medians interpolate like numpy/astropy (M7);
-  SigmaClip/AsymmetricSigmaClip gain `fill="nan"` (M5).
-- **Random Groups images fail loudly** instead of decoding garbage (M13).
+  aliasing); medians interpolate like numpy/astropy;
+  SigmaClip/AsymmetricSigmaClip gain `fill="nan"`.
+- **Random Groups images fail loudly** instead of decoding garbage.
 - **`torchfits diff` treats NaN == NaN**: byte-identical files containing
-  NaN pixels compare clean instead of reporting spurious differences (H6).
+  NaN pixels compare clean instead of reporting spurious differences.
 - `torchfits --transform -J` fan-out builds one transform instance per
   worker file, so stateful transforms never share `_last_state` across
-  threads (M10).
+  threads.
 - **Thread-safety**: TensorHDU reads use private per-call handles; shared
-  TableReader instances serialize I/O (H1). Stale-cache windows after
+  TableReader instances serialize I/O. Stale-cache windows after
   header mutations closed by invalidating SharedReadMeta/readers in the
-  header-card/key/checksum writers (M3).
+  header-card/key/checksum writers.
 
 <!-- Per-commit one-liners below are maintained by
      scripts/update_changelog.py; do not delete without checking
      `pixi run changelog-check`. -->
-- packaging: SPDX license expression for license-files; boundary test tracks _cpp move (W14 gate)
+- packaging: SPDX license expression for license-files; boundary test tracks _cpp move
 - tables: Engine-aligned WHERE floats, honest complex schema, aligned windows, streaming fallbacks
-- cli: Integer-safe arith (B2), uint stats (B3), NaN-aware diff (H6), per-worker transforms (M10)
+- cli: Integer-safe arith, uint stats, NaN-aware diff, per-worker transforms
 
 ### Security
 
@@ -317,7 +314,7 @@ thread-safety, and supply-chain fixes.
   sub-millisecond. If a cached-hot workload regresses measurably for you,
   `read(..., cache_capacity=0)` restores v1.0 semantics at the cost of
   re-reading.
-- Full CPU + CUDA exhaustive re-soaks on Linux CANFAR headless (published
+- Full CPU + CUDA exhaustive benchmark re-runs on Linux CANFAR headless (published
   CSVs `exhaustive_cpu_20260807_013736` / `exhaustive_cuda_20260807_013736`
   under `docs/assets/bench/`; lab profile, mmap on+off matrix, 3057 + 4315
   rows): **100% of significant image comparisons won on both hosts**.
@@ -330,7 +327,7 @@ thread-safety, and supply-chain fixes.
   A/B showed thread handoff regressing warm-cache 13 MB tables).
   Benchmark harness fairness fixes: device synchronization on GPU timings,
   seeded interleaving order, medians over means, and cache-symmetric peer
-  comparisons (M16).
+  comparisons.
 - Multi-HDU writes flush process-global caches once per operation instead
   of twice per HDU.
 - BIT (`'X'`) writes now issue one `fits_write_col` call per row; only
@@ -355,9 +352,10 @@ thread-safety, and supply-chain fixes.
 
 - Scalar-column shape contract documented; architecture note reconciled
   with the wheel-vs-conda CFITSIO split.
-- Fix all audit falsehoods (M14/F1-F14); tone down unverifiable claims (F14)
+- Corrected inaccurate benchmark and compatibility claims in the docs and
+  toned down unverifiable ones
 - changelog: Versionless Unreleased + generator tooling; refresh roadmap
-- changelog: Audit entries under Unreleased (W13); changelog-check green
+- Changelog entries curated under Unreleased; changelog-check green
 - io: Document BZIP2_1 availability, lossiness and interop caveat in write()
 
 ## [1.0.0] — 2026-08-09
@@ -366,7 +364,7 @@ Version cut on the 2.13 torch ABI lane: buffered table reads through a
 thread-local reader cache (process-wide eviction, stat-identity stale guard),
 single-open insert/update of table rows, and torch-mask predicate
 materialization. Final pre-release checks complete; awaiting collaborator
-docs/usability soak before the tag.
+docs/usability testing before the tag.
 
 ### Added
 
@@ -378,7 +376,7 @@ docs/usability soak before the tag.
 - MegaCam cosmic-ray denoise example (`example_megacam_cr_denoise.py`):
   Noise2Noise on real dark/bias calibration twins (zero-field N2N), with
   self-normalizing pair transforms, held-out CCD evaluation, and honest
-  transfer metrics (CR suppression, star fluxes, background, noise probe).
+  transfer metrics (CR suppression, star fluxes, background, noise-injection test).
   Full rationale and results: [Denoise pipeline](denoise-pipeline.md).
 - `scripts/fetch_cfht_calib_frames.sh`: idempotent download of CFHT MegaCam
   darks/biases from the CADC data service.
@@ -400,7 +398,7 @@ docs/usability soak before the tag.
   drop from ~5861 to ~750 minor faults per read after warmup; isolated
   `narrow_1000000` `read_full` window 17.8 ms -> 6.7 ms (lab window,
   `exhaustive_cpu_20260807_082144_reader_cache`).
-- `exhaustive_cpu_20260807_082931_reader_cache` scorecard: fitstable
+- `exhaustive_cpu_20260807_082931_reader_cache` run: fitstable
   `read_full` ratio vs astropy 1.365x -> 1.072x; `predicate_filter` on
   `narrow_1000000` 16.60 -> 11.01 ms (1.21x -> 1.64x vs astropy); selective
   10.68 -> 9.33 ms (1.50x -> 1.71x) via torch-gather `where=` (mmap off, lab).
@@ -447,7 +445,7 @@ docs/usability soak before the tag.
 
 ### Docs
 
-- Scorecards refreshed from the 2026-08-07 exhaustive runs (CPU + CUDA);
+- Benchmark tables refreshed from the 2026-08-07 exhaustive runs (CPU + CUDA);
   `docs/assets/bench/` mirrors the surviving 2026-08-07 CPU/CUDA run CSVs.
 - Denoise pipeline page with honest dark-vs-bias results and stated
   limitations; MegaCam CR-cleaning section in the ML guide; examples index
@@ -484,7 +482,7 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
   — macOS no-ops, MPS ships in the default wheel) plus one-line CUDA/CPU
   install recipes (PyPI's default torch already bundles CUDA on Linux
   x86_64; CUDA builds also run on GPU-less machines via CPU fallback).
-- Docs: full docs↔code sync audit — one-line pinned installs in quickstart /
+- Docs: full docs↔code sync review — one-line pinned installs in quickstart /
   CLI docs, `write()` payload types corrected (no top-level ndarray),
   CLI-recipe transform kwargs documented, architecture freshness rc5.
 - CI/scripts: `check-torch-pins` resolves the `[cpu]` / `[cuda]` extra pins
@@ -512,7 +510,7 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
   `TORCHFITS_USE_BZIP2`, default ON when libbz2 is available; not part of
   the FITS standard — astropy refuses it).
 - CANFAR matrix bench mode: any python × torch lane × device grid from a VOS
-  wheel bundle (`scripts/launch_canfar_matrix_grid.sh`), 41-leg grid soak.
+  wheel bundle (`scripts/launch_canfar_matrix_grid.sh`), 41-leg grid run.
 
 ### Changed
 - `open_subset_reader` mmap path covers unsigned FITS conventions (BZERO/BSCALE).
@@ -555,14 +553,14 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
 - Concurrency: Python FITS-cache LRUs and the thread-local metadata cache are
   lock-protected / size-bounded for concurrent reads; uint16 BZERO offset is
   fused into the SIMD bswap mmap path.
-- Bench docs: multi-host GPU/CPU scorecard from the CANFAR matrix grid.
-- Bench docs: rc5 re-soak snapshot — CANFAR CPU
+- Bench docs: multi-host GPU/CPU results from the CANFAR matrix grid.
+- Bench docs: rc5 re-run snapshot — CANFAR CPU
   `exhaustive_cpu_20260806_012620`, CUDA `exhaustive_cuda_20260806_012651`,
   local CPU `exhaustive_cpu_20260806_022603`. CUDA 100% fits win rate
   (smart/specialized), fitstable ≥98.9%; only residual lags are
   table `read_full` / predicate rows (≤1.15×, fitsio/astropy) and
   HCOMPRESS_1 (≤1.03×).
-- Bench labeling: host scorecard derives the platform from the benchmark
+- Bench labeling: the per-platform results table derives the platform from the benchmark
   data (`metadata` device field / `host` column token), not the run-id tag —
   the local bench script names every run `exhaustive_mps_*` regardless of
   platform, so a CPU run on a Linux box used to be mislabeled "macOS arm64 /
@@ -600,7 +598,7 @@ tooling, a root cache reset entry point, and the macOS compressed-float parity f
 
 ## [1.0.0rc4] — 2026-07-20
 
-Fourth release candidate for collaborator soak after prep / deep-review cleanup.
+Fourth release candidate for collaborator testing after prep / deep-review cleanup.
 
 ### Removed
 - Root aliases `read_table`, `stream_table`, `read_table_rows`, `get_header`,
@@ -682,7 +680,7 @@ Fourth release candidate for collaborator soak after prep / deep-review cleanup.
   `read_table_rows` / `get_header` / `get_batch_info`.
 - Core I/O cache section documents root vs `torchfits.cache` layers.
 - Examples: `open_table_reader` + EXTNAME `table.read_torch`.
-- Round-3 scorecard (post thin-I/O): MPS `exhaustive_mps_20260719_143706`,
+- July 2026 CANFAR/local benchmark refresh: MPS `exhaustive_mps_20260719_143706`,
   CANFAR CPU `exhaustive_cpu_20260719_144337`, CUDA
   `exhaustive_cuda_20260719_144457`; MegaCam `20260719_075555`; ML
   `ml_20260719_145743`.
@@ -701,10 +699,10 @@ Fourth release candidate for collaborator soak after prep / deep-review cleanup.
 
 ## [1.0.0rc3] — 2026-07-18
 
-Third release candidate for collaborator soak.
+Third release candidate for collaborator testing.
 
 ### Docs
-- Persona pass on user-facing pages: rc honesty, corrected migration threading
+- Readability pass on user-facing pages: rc honesty, corrected migration threading
   (private CFITSIO handles since rc2), API notes for EXTNAME / 3D `read_subset`,
   cache vs disk-cache / `make_loader` layering.
 - Examples gallery: MaNGA LOGCUBE (`example_manga_logcube.py`), Lupton RGB from
@@ -714,9 +712,10 @@ Third release candidate for collaborator soak.
   cache, when `optimize_cache` no-ops on table datasets, `make_loader` vs plain
   `DataLoader`.
 
-### Agent / Jules
-- `AGENTS.md` + `JULES.md`: weekly Jules retarget to bug/perf-only deep passes;
-  ledger in `.cursor/jules-ledger.md`; out-of-scope cosmetic PRs.
+### Developer workflow
+- Added `AGENTS.md` + `JULES.md` agent configuration: weekly automation
+  retargets to bug/perf-only passes; ledger in `.cursor/jules-ledger.md`;
+  out-of-scope cosmetic PRs are out of scope.
 
 ### Fixed
 - **String HDU / EXTNAME:** `read_tensor` and `read_subset` accept `hdu="EXTNAME"`
@@ -742,7 +741,7 @@ Third release candidate for collaborator soak.
 ## [1.0.0rc2] — 2026-07-18
 
 Second release candidate on the 1.0 line. CFITSIO concurrent-read correctness,
-leftover API/docs/CLI, and audit cleanup. SemVer `1.0.0` still waits for soak.
+leftover API/docs/CLI, and cleanup. SemVer `1.0.0` still waits for extended testing.
 
 ### Install / compatibility
 - Runtime / build metadata: `torch>=2.10` (wheels and pixi stay on the 2.10 ABI
@@ -788,7 +787,7 @@ leftover API/docs/CLI, and audit cleanup. SemVer `1.0.0` still waits for soak.
   a failed post-insert write.
 - FITS header integer keys use `PyLong_Check` + overflow-checked `TLONGLONG`.
 - Empty-primary MEF compressed write HDU indexing fixed.
-- Jules integrations: probe SSRF (#216), hoist inner classes (#214), HDU HTML a11y
+- Automation integrations: probe SSRF (#216), hoist inner classes (#214), HDU HTML a11y
   (#213/#219).
 
 ### Benchmarks / tests
@@ -797,13 +796,13 @@ leftover API/docs/CLI, and audit cleanup. SemVer `1.0.0` still waits for soak.
 - GPU transports: pass `quick=` into table `_build_cases`.
 - Table filter tests assert exact fixture row counts.
 - Concurrent same-file image/table read smoke tests.
-- Scorecard: new local MPS run `exhaustive_mps_20260718_180230`; Linux CPU/CUDA
-  hosts remain the rc1 soak runs until CANFAR is re-driven against this tag.
+- Benchmarks: new local MPS run `exhaustive_mps_20260718_180230`; Linux CPU/CUDA
+  hosts remain the rc1 benchmark runs until CANFAR is re-driven against this tag.
 
 ### Docs / transforms
 - Mermaid diagrams in architecture (zensical superfences).
 - Architecture: per-read handles, deliberate skip of CFITSIO iterator/`where`.
-- Roadmap: CFITSIO 1.1 leftovers + permanent design choices from the audit.
+- Roadmap: CFITSIO 1.1 leftovers + permanent design choices from the design review.
 - Advanced transforms frozen for 1.0; Lupton RGB wrapper in `transforms.lupton_rgb`;
   richer multi-band RGB deferred to 1.1.
 - MegaCam cutout bench: ZNAXIS-aware HDU discovery; peer fitsio ranking;
@@ -814,7 +813,7 @@ leftover API/docs/CLI, and audit cleanup. SemVer `1.0.0` still waits for soak.
 
 ## [1.0.0rc1] — 2026-07-17
 
-Release candidate for the 1.0 API. SemVer `1.0.0` waits for post-rc soak; do
+Release candidate for the 1.0 API. SemVer `1.0.0` waits for post-rc extended testing; do
 not treat this tag as the final 1.0.0 freeze.
 
 ### Changed
@@ -871,7 +870,7 @@ not treat this tag as the final 1.0.0 freeze.
 
 ### Benchmark evidence
 
-- Multi-host scorecard (from b1 same-day refresh, still current for rc1):
+- Multi-host benchmark results (from b1 same-day refresh, still current for rc1):
   `exhaustive_mps_20260717_040150`, `exhaustive_cpu_20260717_040146`,
   `exhaustive_cuda_20260717_042840`.
 - Local release-suite (`20260717_212321`, Mac MPS, mmap matrix, `--no-gpu`):
@@ -885,7 +884,7 @@ not treat this tag as the final 1.0.0 freeze.
 ## [1.0b1] — 2026-07-17
 
 Beta freeze of the public FITS → tensor / dataframe story. Not a SemVer 1.0.0
-API freeze (rc line followed for soak + blockers).
+API freeze (rc line followed for extended testing + blockers).
 
 ### Added
 
@@ -930,7 +929,7 @@ API freeze (rc line followed for soak + blockers).
   for `BandMath`, `PhaseFold`, `AsymmetricLeastSquares`, `AlphaShapeContinuum`;
   invertibility + helpers tables.
 - Parquet convert uses streaming `write_parquet(..., stream=True)` (out-of-core).
-- Multi-host scorecard refresh (`exhaustive_mps_20260717_040150`,
+- Multi-host benchmark refresh (`exhaustive_mps_20260717_040150`,
   `exhaustive_cpu_20260717_040146`, `exhaustive_cuda_20260717_042840`): CUDA **0**
   deficits, CPU **1**, MPS **16**.
 - `scripts/gpu-bootstrap.sh` pins `torch>=2.10,<2.11` so CANFAR cu128 installs
@@ -974,7 +973,7 @@ API freeze (rc line followed for soak + blockers).
 - One-shot image reads use thin `cpp.read_full` instead of handle-cache
   scaffolding on the cold path.
 - Repeated cutout benches use the persistent subset reader (open once).
-- Deficit scorecard: images any lag above ε; Arrow tables allow ≤1.05×; fitsio
+- Deficit table: images any lag above ε; Arrow tables allow ≤1.05×; fitsio
   excluded from mmap-on peers. Linux CPU/CUDA strict-gate **0** deficits; Mac
   MPS **4** on `exhaustive_mps_20260717_000853`.
 
@@ -1323,7 +1322,7 @@ API freeze (rc line followed for soak + blockers).
 - **Jupyter:** Scrollable, sticky-header HTML repr for `Header` and `HDUList`.
 - `tests/test_scale_on_device.py` — signed-byte, unsigned, and fitsio parity checks.
 - Release gate includes `test_scale_on_device.py`.
-- `.cursor/skills/release-api-freeze-review/` — pre-tag API/feature freeze audit workflow.
+- `.cursor/skills/release-api-freeze-review/` — pre-tag API/feature freeze review workflow.
 - **`_table/engine.py`** — shared C++ table read dispatch module with extracted
   `_read_ranges_as_chunk` helper (de-duplicated from `_read_cpp_numpy_table`).
 
@@ -1423,7 +1422,7 @@ API freeze (rc line followed for soak + blockers).
 
 - Patched `fitstable` specialised column projection and row slicing benchmark errors due to invalid `policy` argument.
 - Cleaned up C++ build flags in `bench-gpu` to remove strict CUDA and Torch pins.
-- Audited C++ codebase for potential memory leaks, redundant hardware heuristics, and API bounds.
+- Reviewed C++ codebase for potential memory leaks, redundant hardware heuristics, and API bounds.
 
 ### Added
 
