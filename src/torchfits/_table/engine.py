@@ -49,7 +49,7 @@ def _read_ranges_as_chunk(
             if buf is None:
                 if isinstance(value, torch.Tensor):
                     # Zero-initialized: an empty reader segment must surface
-                    # as zeros, never uninitialized memory (M8).
+                    # as zeros, never uninitialized memory.
                     buf = torch.zeros(
                         (n_total,) + tuple(value.shape[1:]), dtype=value.dtype
                     )

@@ -314,19 +314,10 @@ void bind_table(nb::module_& m) {
         torchfits::TableReader reader(filename, hdu_num);
         auto result_map = reader.read_columns({}, 1, -1, true);
         nb::gil_scoped_acquire acquire;
-        nb::dict result_dict;
-        for (auto& [key, col_data] : result_map) {
-            if (col_data.is_vla) {
-                nb::list vla_list;
-                for (const auto& tensor : col_data.vla_data) {
-                    vla_list.append(tensor_to_python(tensor));
-                }
-                result_dict[key.c_str()] = vla_list;
-            } else {
-                result_dict[key.c_str()] = tensor_to_python(col_data.fixed_data);
-            }
-        }
-        return result_dict;
+        // table_result_to_python handles both flat (values+offsets) and
+        // per-row VLA layouts; reading vla_data here unconditionally
+        // returned [] for flat results.
+        return table_result_to_python(result_map, false);
     });
 
     m.def("read_fits_table_from_handle", [](nb::object file_obj, int hdu_num) -> nb::object {

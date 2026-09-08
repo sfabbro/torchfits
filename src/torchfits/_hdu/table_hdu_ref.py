@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import html
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import torch
 from torch import Tensor
 
+from ._repr import render_html_table
 from .header import Header
 from .table_hdu import TableHDU
 
@@ -467,6 +467,10 @@ class TableHDURef:
         new_header = Header(self.header)
         new_columns = list(self.columns)
         one_based = new_columns.index(name) + 1
+        # The engine applies format/unit/dim/tnull/tscal/tzero to the file's
+        # rewritten header; mirror them here so ref.schema() matches the file.
+        if format is not None:
+            new_header[f"TFORM{one_based}"] = format
         if unit is not None:
             new_header[f"TUNIT{one_based}"] = unit
         if dim is not None:
@@ -530,36 +534,8 @@ class TableHDURef:
         return f"TableHDURef(name='{name}', rows={self.num_rows}{proj})"
 
     def _repr_html_(self) -> str:
-        name = html.escape(str(self.header.get("EXTNAME", "TABLE")))
-        container_style = (
-            "max-height: 400px; overflow: auto; "
-            "border: 1px solid rgba(128, 128, 128, 0.3); margin-bottom: 1em;"
-        )
-        table_style = "border-collapse: collapse; width: 100%; margin: 0;"
-        th_col_style = (
-            "text-align: left; padding: 8px; position: sticky; top: 0; "
-            "background-color: var(--theme-ui-colors-background, white); "
-            "border-bottom: 2px solid rgba(128, 128, 128, 0.3); z-index: 1;"
-        )
-        th_row_style = (
-            "font-weight: normal; text-align: left; padding: 8px; "
-            "border-bottom: 1px solid rgba(128, 128, 128, 0.2);"
-        )
-        td_style = (
-            "text-align: left; padding: 8px; "
-            "border-bottom: 1px solid rgba(128, 128, 128, 0.2);"
-        )
-        return (
-            f'<div tabindex="0" aria-label="TableHDURef" style=\'{container_style}\'>'
-            f"<table style='{table_style}'>"
-            f"<thead><tr>"
-            f"<th scope=\"col\" style='{th_col_style}'>Name</th>"
-            f"<th scope=\"col\" style='{th_col_style}'>Rows</th>"
-            f"<th scope=\"col\" style='{th_col_style}'>Columns</th>"
-            f"</tr></thead>"
-            f"<tbody><tr>"
-            f"<th scope=\"row\" style='{th_row_style}'>{name}</th>"
-            f"<td style='{td_style}'>{self.num_rows}</td>"
-            f"<td style='{td_style}'>{len(self.columns)}</td>"
-            f"</tr></tbody></table></div>"
+        return render_html_table(
+            "TableHDURef",
+            ["Name", "Rows", "Columns"],
+            [[self.header.get("EXTNAME", "TABLE"), self.num_rows, len(self.columns)]],
         )

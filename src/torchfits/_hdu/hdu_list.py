@@ -12,10 +12,11 @@ from torchfits._io_engine.paths import (
     is_cfitsio_network_url,
 )
 
+from ._repr import render_html_table
 from .header import Header
-from .tensor_hdu import TensorHDU
 from .table_hdu import TableHDU
 from .table_hdu_ref import TableHDURef
+from .tensor_hdu import TensorHDU
 
 
 @dataclass(frozen=True)
@@ -87,11 +88,9 @@ class HDUList:
                 pass
 
             for info in hdu_infos:
-                try:
-                    header_cards = cpp.read_header(handle, info.index)
-                except Exception:
-                    header_cards = info.header
-                header = Header(header_cards)
+                # info.header already holds the full card list from the single
+                # batch read above; re-reading would double header I/O per open.
+                header = Header(info.header)
 
                 hdu_type = info.type
                 i = info.index
@@ -272,25 +271,7 @@ class HDUList:
         return "\n".join(lines)
 
     def _repr_html_(self) -> str:
-        html = [
-            '<div tabindex="0" aria-label="FITS HDU List" style=\'max-height: 400px; overflow: auto; border: 1px solid rgba(128, 128, 128, 0.3); margin-bottom: 1em;\'>',
-            "<table style='border-collapse: collapse; width: 100%; margin: 0;'>",
-            "<thead><tr>",
-        ]
-        headers = ["No.", "Name", "Type", "Cards", "Dimensions", "Format"]
-        styles = (
-            ["text-align: left;"] * 3
-            + ["text-align: right;"]
-            + ["text-align: left;"] * 2
-        )
-        for h, s in zip(headers, styles):
-            html.append(
-                f'<th scope="col" style=\'{s} padding: 8px; position: sticky; top: 0; '
-                f"background-color: var(--theme-ui-colors-background, white); "
-                f"border-bottom: 2px solid rgba(128, 128, 128, 0.3); z-index: 1;'>{h}</th>"
-            )
-        html.append("</tr></thead><tbody>")
-
+        rows = []
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
             if isinstance(hdu, (TableHDU, TableHDURef)):
@@ -310,25 +291,14 @@ class HDUList:
                 if hasattr(hdu.header, "_cards")
                 else len(hdu.header)
             )
+            rows.append((idx, name, hdu_type, cards, dims, fmt))
 
-            row = [idx, name, hdu_type, cards, dims, fmt]
-            html.append("<tr>")
-            import html as pyhtml
-
-            for col_idx, (val, s) in enumerate(zip(row, styles)):
-                escaped_val = pyhtml.escape(str(val))
-                if col_idx == 0:
-                    html.append(
-                        f"<th scope=\"row\" style='font-weight: normal; {s} padding: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.2);'>{escaped_val}</th>"
-                    )
-                else:
-                    html.append(
-                        f"<td style='{s} padding: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.2);'>{escaped_val}</td>"
-                    )
-            html.append("</tr>")
-
-        html.append("</tbody></table></div>")
-        return "".join(html)
+        return render_html_table(
+            "FITS HDU List",
+            ["No.", "Name", "Type", "Cards", "Dimensions", "Format"],
+            rows,
+            aligns=["left", "left", "left", "right", "left", "left"],
+        )
 
     def __repr__(self) -> str:
         return self._get_summary()

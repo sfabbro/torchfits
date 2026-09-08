@@ -431,6 +431,21 @@ torchfits.write(
     packs table columns via `table.write(..., quantize=)`. See
     [`example_quantize_int16.py`](published-examples/example_quantize_int16.py).
 
+!!! note "The `write()` data-type convention"
+    `write()` dispatches on the *type* of `data`: a `dict` (of tensors or
+    arrays) always writes a **table**, a `Tensor`/numpy array always writes
+    an **image**, and an `HDUList` writes its HDUs verbatim. A dict of
+    1-D equal-length columns and a 1-D image tensor are therefore easy to
+    confuse — prefer `write_tensor()` for images and `table.write()` for
+    tables when the payload shape is ambiguous.
+
+!!! note "Duplicate header keywords"
+    The `header=` argument is a mapping, so it holds each keyword once.
+    Repeatable keywords (`HISTORY`, `COMMENT`) can only be appended via
+    the `Header` object API (`add_history`, `add_comment`) after opening
+    the written file — passing `{"HISTORY": ...}` in `header=` sets a
+    single card.
+
 !!! note "uint64 payloads are rejected"
     FITS has no native uint64 storage (`BITPIX=-64` is not standard, and a
     `BZERO=2**64` pseudo-unsigned convention is not interoperable).

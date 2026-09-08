@@ -4,8 +4,8 @@
 Every file is written in *multiple* ways and read back in *multiple* ways;
 all paths must yield byte-identical or data-identical results.
 
-Covers the bug classes from the 2026-08-27 audit:
-  - header numpy scalars (A-01)
+Covers:
+  - header numpy scalars
   - image scaling / unsigned (BZERO) / BLANK nulval
   - table TNULL/TSCAL/TDIM/VLA/string
   - compression (RICE/GZIP) – lossless round-trip

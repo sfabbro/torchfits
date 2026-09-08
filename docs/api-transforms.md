@@ -64,6 +64,8 @@ pipeline.inverse(normalized, mask=finite_mask)
     The normalizers and `ArcsinhStretch` require float tensors — integer
     inputs raise `RuntimeError`. Convert first (`image.float()`); `LogStretch`,
     `SqrtStretch`, and `FITSHeaderScale` accept integer tensors.
+    Non-identity `FITSHeaderScale` / `FITSScaleColumns` **return float**
+    (physical values); they do not cast back to the storage dtype.
 
 Stateless stretches are the most likely to work under `torch.compile`;
 data-dependent normalizers cache Python-side state and may graph-break.

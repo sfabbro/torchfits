@@ -17,7 +17,7 @@ def test_image_with_more_than_nine_axes_is_rejected_safely(tmp_path):
 
 
 def test_read_path_with_literal_bracket_in_directory(tmp_path):
-    """Regression (deep review C2): a literal '[' in a directory component
+    """Regression: a literal '[' in a directory component
     (not a trailing CFITSIO extended-filename section) must not be
     misdetected as extension syntax. CFITSIO's URL-aware `fits_open_file`
     genuinely fails to parse such paths ("parse error in input file URL"),

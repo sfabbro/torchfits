@@ -5,9 +5,16 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+# Allow standalone import (python -m benchmarks.bench_fits_write / direct run)
+# even though bench_all.py normally provides the repo-root sys.path entry.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 import numpy as np
 import torch

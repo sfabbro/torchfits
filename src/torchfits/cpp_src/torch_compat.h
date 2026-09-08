@@ -5,9 +5,10 @@
 #include <ATen/DLConvertor.h>
 #include <Python.h>
 #include <vector>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <nanobind/ndarray.h>
-
 namespace nb = nanobind;
 
 // Forward declare THPVariableClass
@@ -41,10 +42,18 @@ inline nb::ndarray<nb::numpy, T, nb::c_contig> alloc_numpy_array(
 ) {
     size_t nelem = 1;
     for (size_t d : shape) {
+        if (d != 0 && nelem > SIZE_MAX / d) {
+            throw std::runtime_error("numpy array shape overflows size_t");
+        }
         nelem *= d;
     }
+    if (nelem > SIZE_MAX / sizeof(T)) {
+        throw std::runtime_error("numpy array byte size overflows size_t");
+    }
     const size_t nbytes = nelem * sizeof(T);
-
+    if (nbytes > static_cast<size_t>(std::numeric_limits<Py_ssize_t>::max())) {
+        throw std::runtime_error("numpy array exceeds addressable buffer size");
+    }
     PyObject* ba = PyByteArray_FromStringAndSize(nullptr, (Py_ssize_t) nbytes);
     if (!ba) {
         throw std::runtime_error("Failed to allocate bytearray for numpy result");
@@ -53,6 +62,11 @@ inline nb::ndarray<nb::numpy, T, nb::c_contig> alloc_numpy_array(
     void* data = (void*) PyByteArray_AsString(owner.ptr());
     if (!data) {
         throw std::runtime_error("Failed to get bytearray buffer for numpy result");
+    }
+    // Zero-size views must not expose a null data pointer to nanobind.
+    if (nbytes == 0) {
+        static uint8_t kEmptyByte = 0;
+        data = &kEmptyByte;
     }
     return nb::ndarray<nb::numpy, T, nb::c_contig>(
         data, shape.size(), shape.data(), owner

@@ -570,8 +570,11 @@ inline torch::Tensor read_tensor_canonical(
                     const size_t map_len = static_cast<size_t>(nbytes + (data_offset - page_offset));
                     void* map_ptr = mmap(nullptr, map_len, PROT_READ, MAP_SHARED, raw_fd, page_offset);
                     if (map_ptr != MAP_FAILED) {
-#if defined(MADV_SEQUENTIAL) && defined(MADV_WILLNEED)
-                        madvise(map_ptr, map_len, MADV_SEQUENTIAL | MADV_WILLNEED);
+#if defined(MADV_SEQUENTIAL)
+                        madvise(map_ptr, map_len, MADV_SEQUENTIAL);
+#endif
+#if defined(MADV_WILLNEED)
+                        madvise(map_ptr, map_len, MADV_WILLNEED);
 #endif
                         const size_t src_offset = static_cast<size_t>(data_offset - page_offset);
                         if (host_is_little_endian()) {

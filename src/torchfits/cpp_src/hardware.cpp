@@ -47,10 +47,10 @@ MMapHandle::MMapHandle(const std::string& filename, bool writable) {
 }
 
 void MMapHandle::cleanup() {
-    if (ptr) {
+    if (ptr != nullptr && ptr != MAP_FAILED && size > 0) {
         munmap(ptr, size);
-        ptr = nullptr;
     }
+    ptr = nullptr;
     if (owner && fd != -1) {
         close(fd);
         fd = -1;

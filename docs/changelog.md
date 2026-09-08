@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- `FITSHeaderScale` / `FITSScaleColumns` keep integer inputs as float after
+  `BSCALE*x+BZERO` (the unsigned convention `BZERO=32768` on int16 no
+  longer wraps; fractional BSCALE is no longer truncated).
+- `_median` / `_quantile` promote float16/bfloat16 to float32 (`torch.quantile`
+  rejects half dtypes); `LogStretch` upcasts before `1 + a*x` so float16
+  no longer overflows to inf.
+- `SigmaClip(dim=(), fill="median")` fills with the global median instead
+  of a per-element identity.
+- `FITSHeaderNormalize` maps integer counts through float64 when the
+  storage width is 32 bits or more, so values above `2**24` stay distinct.
+- `table.read_torch(where=...)` with no `columns=` returns every column
+  (matching Arrow `table.read`); `table.schema(columns=[...])` uses the
+  requested field order.
+- `FITSFile::read_subset` returns the image's true dtype for degenerate
+  (zero-width/height) cutout boxes instead of always float32.
+- `HDUList.fromfile` no longer reads every header twice (headers from
+  the batch open are reused), and the `HDUInfo.header` binding preserves
+  duplicate HISTORY/COMMENT cards.
+- `TableHDURef.replace_column_file` mirrors the new `TFORM` into the
+  in-memory header (matching `insert_column_file`).
+- `Header` constructed from 3-tuples normalizes keys and scalar values
+  like every other set path.
+- HTTP Range HDU walks account for BINTABLE heap size (`PCOUNT`/`THEAP`),
+  so cutouts past VLA columns or compressed images no longer fall back
+  to a full-file download when the heap exceeds the scan cap.
+- CLI `arith --hdu2` reads operand B once instead of per A-HDU;
+  `arith`/`compress` `--out-dir` names strip CFITSIO `[section]`
+  suffixes; `stats` upcasts integer images once.
+- `bench_arrow_tables.py` uses the current `table.read` signature.
+
+### Changed
+- Derived `TableHDU`s (`filter`, `select`, `head`, `add_column`, ...) own
+  a copy of the source header, so later mutations of the derived header
+  no longer leak into the parent.
+- CLI `transform` preserves safe header keys (WCS, EXTNAME, etc.) on
+  float outputs instead of dropping the whole header; only scaling
+  keywords (`BSCALE`/`BZERO`/`BLANK`, `DATAMIN`/`DATAMAX`) and checksum
+  stamps are dropped.
+- CLI `compress` resolves IO pairs through the shared batch resolver.
+- `get_cache_stats` no longer reports counters that were never updated.
+- Removed the unreachable `tzero is None` branch in `fits_schema`.
+
+### Added
+- transforms,data: Add InterquantileScale and multi-HDU companion support to FitsStagedCutoutIterableDataset (#241)
+
 ## [1.1.1] — 2026-08-29
 
 ### Fixed

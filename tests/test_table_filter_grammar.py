@@ -1,11 +1,15 @@
-import pytest
+"""TableHDU.filter grammar, injection rejection, and Arrow WHERE masks."""
+
 import numpy as np
+import pyarrow as pa
+import pytest
 import torch
+
+from torchfits._table.read import _where_mask_for_table
 from torchfits.hdu import TableHDU
 
 
-def test_tablehdu_filter_security():
-    # Create a simple table
+def test_tablehdu_filter_accepts_grammar_and_rejects_python():
     data = {
         "x": torch.tensor([1, 2, 3]),
         "y": torch.tensor([4, 5, 6]),
@@ -39,10 +43,6 @@ def test_tablehdu_filter_security():
 
 
 def test_where_mask_for_table_direct():
-    """WHERE expressions evaluated via pyarrow.compute (replaces old evaluate_where)."""
-    import pyarrow as pa
-    from torchfits._table.read import _where_mask_for_table
-
     data = {"a": np.array([1, 2, 3, 4, 5])}
     table = pa.table(data)
 

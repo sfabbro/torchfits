@@ -1,4 +1,4 @@
-"""Wave-2 deep-review safety regressions."""
+"""Closed TensorHDU access, prefetch errors, and NAXIS overflow."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def test_table_data_accessor_preserves_rank():
 
 
 def test_pathological_naxis_product_raises(tmp_path):
-    """P2-9: absurd NAXISn values must fail before under-allocating a buffer."""
+    """Absurd NAXISn values must fail before under-allocating a buffer."""
     cards = [
         f"{'SIMPLE':<8}= {'T':>20}",
         f"{'BITPIX':<8}= {-32:>20}",

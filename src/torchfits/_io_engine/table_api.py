@@ -213,10 +213,14 @@ def read_table(
             raise ValueError(f"Unsupported where expression for read_torch: {where!r}")
 
         pred_cols = [col for col, _op, _lit in predicates]
-        read_cols = list(columns) if columns is not None else []
-        for name in pred_cols:
-            if name not in read_cols:
-                read_cols.append(name)
+        # columns=None means "return every column" (same contract as the Arrow
+        # engine): read the full projection instead of just the predicate
+        # columns, which used to silently drop all non-predicate output.
+        read_cols: Optional[list[str]] = list(columns) if columns is not None else None
+        if read_cols is not None:
+            for name in pred_cols:
+                if name not in read_cols:
+                    read_cols.append(name)
 
         # Filter-within-window contract (matches read(row_slice=..., where=...)
         # and the Arrow engine): clamp the caller's row window FIRST, then
@@ -253,7 +257,12 @@ def read_table(
                     data = None
                 if data is not None:
                     data = _apply_row_window(data, start_row, num_rows)
-            if data is None and columns is not None and len(read_cols) > len(columns):
+            if (
+                data is None
+                and columns is not None
+                and read_cols is not None
+                and len(read_cols) > len(columns)
+            ):
                 # Retry with the full projection: the failure may come from a
                 # predicate-only column rather than the requested window.
                 try:

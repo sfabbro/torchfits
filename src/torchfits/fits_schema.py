@@ -263,11 +263,11 @@ def unsigned_column_dtypes_from_header(
         tscal = col.tscal if col.tscal is not None else 1.0
         if abs(tscal - 1.0) > 1e-5:
             continue
-        if col.tzero is None:
-            continue
-        if code == "I" and abs(col.tzero - 32768.0) < 1e-5:
+        # iter_table_columns always yields a float tzero (0.0 default).
+        tzero = col.tzero if col.tzero is not None else 0.0
+        if code == "I" and abs(tzero - 32768.0) < 1e-5:
             out[col.name] = torch.uint16
-        elif code == "J" and abs(col.tzero - 2147483648.0) < 1e-5:
+        elif code == "J" and abs(tzero - 2147483648.0) < 1e-5:
             out[col.name] = torch.uint32
     return out
 

@@ -44,7 +44,7 @@ class ZScaleNormalize(FITSTransform):
                 "to capture the per-image limits."
             )
         z1, z2 = self._last_state
-        # Functional: inverses never mutate their input (M6).
+        # Functional: inverses never mutate their input.
         return x * (z2 - z1) + z1
 
     def __repr__(self) -> str:
@@ -241,7 +241,7 @@ class GlobalScalarNorm(FITSTransform):
             elif self.stat == "max":
                 scalar = _amax(x, dim, mask=mask)
             else:  # mean / rms
-                xf = x.float() if x.dtype != torch.int64 else x.double()
+                xf = _stats_upcast(x)
                 # Exclude user-masked AND non-finite values from the
                 # statistic: a single NaN must not poison the whole frame.
                 valid = torch.isfinite(xf)

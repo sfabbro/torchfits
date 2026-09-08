@@ -308,7 +308,12 @@ def _arith_one_file(
         rights = [scalar_b] * len(tensors)
     else:
         assert operand2 is not None
-        rights = [_b_tensor(operand2, index, hdu2) for index in indices]
+        if hdu2 is not None:
+            # --hdu2 pins operand B to one HDU: read it once, reuse per A HDU.
+            b_fixed = _b_tensor(operand2, indices[0], hdu2)
+            rights = [b_fixed] * len(tensors)
+        else:
+            rights = [_b_tensor(operand2, index, hdu2) for index in indices]
         for index, left, right in zip(indices, tensors, rights, strict=True):
             if not isinstance(right, torch.Tensor):
                 continue
@@ -398,7 +403,8 @@ def run(args: argparse.Namespace) -> int:
 
     def _one(path_a: str) -> None:
         if out_dir is not None and args.split == "file":
-            out_path = str(out_dir / Path(path_a).name)
+            # Match ensure_unique_basenames: strip CFITSIO [section] suffixes.
+            out_path = str(out_dir / Path(cfitsio_base_path(path_a)).name)
         else:
             out_path = args.out
         _arith_one_file(

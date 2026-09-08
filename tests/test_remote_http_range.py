@@ -15,6 +15,7 @@ import pytest
 from astropy.io import fits
 
 from torchfits import http_util
+from torchfits._io_engine.http_subset import HttpRangeUnsupported, read_subset_http
 from torchfits.vos_uri import is_vos_path, normalize_vos_uri
 
 
@@ -587,5 +588,69 @@ def test_download_http_partial_without_validator_is_discarded(tmp_path, allow_lo
         assert Path(local).read_bytes() == body
         assert _ProbeHandler.seen_range == [None]  # no Range: clean restart
         assert not partial.exists()
+    finally:
+        server.shutdown()
+
+
+def _serve_fits_bytes(body: bytes):
+    class Handler(_CountingHandler):
+        pass
+
+    Handler.body = body
+    Handler.transferred = 0
+    Handler.last_range = None
+    Handler.last_auth = None
+    Handler.redirected_from = None
+    Handler.require_auth = None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/data.fits"
+    return server, url
+
+
+def test_http_range_walks_past_large_vla_heap(tmp_path, allow_loopback) -> None:
+    rng = np.random.default_rng(1)
+    vla = [rng.integers(0, 100, size=80_000).tolist() for _ in range(5)]
+    image = np.arange(36, dtype=np.float32).reshape(9, 4) + 100
+    path = tmp_path / "mef.fits"
+    fits.HDUList(
+        [
+            fits.PrimaryHDU(np.arange(16, dtype=np.float32).reshape(4, 4)),
+            fits.BinTableHDU.from_columns(
+                [fits.Column(name="V", format="PJ()", array=vla)]
+            ),
+            fits.ImageHDU(image, name="TARGET"),
+        ]
+    ).writeto(str(path), overwrite=True)
+
+    server, url = _serve_fits_bytes(path.read_bytes())
+    try:
+        with fits.open(str(path)) as hdul:
+            expected = hdul["TARGET"].data[:, 1:3]
+        out = read_subset_http(url, "TARGET", 1, 0, 3, 2)
+        assert np.allclose(out.numpy(), expected[:2])
+    finally:
+        server.shutdown()
+
+
+def test_http_range_walks_past_compressed_image(tmp_path, allow_loopback) -> None:
+    rng = np.random.default_rng(2)
+    image = np.arange(36, dtype=np.float32).reshape(9, 4) + 100
+    path = tmp_path / "comp.fits"
+    fits.HDUList(
+        [
+            fits.PrimaryHDU(),
+            fits.CompImageHDU(rng.normal(size=(64, 64)).astype(np.float32)),
+            fits.ImageHDU(image, name="TARGET"),
+        ]
+    ).writeto(str(path), overwrite=True)
+
+    server, url = _serve_fits_bytes(path.read_bytes())
+    try:
+        out = read_subset_http(url, "TARGET", 1, 0, 3, 2)
+        assert out[0].tolist() == [101.0, 102.0]
+    except HttpRangeUnsupported:
+        pytest.fail("compressed-image walk desynced offsets")
     finally:
         server.shutdown()

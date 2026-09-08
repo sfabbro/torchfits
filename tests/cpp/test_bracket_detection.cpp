@@ -1,4 +1,4 @@
-// Standalone self-check for has_cfitsio_extended_filename_syntax (deep review C2).
+// Standalone self-check for has_cfitsio_extended_filename_syntax.
 // No test framework needed: header-only, plain asserts.
 //
 // Run:

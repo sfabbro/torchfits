@@ -216,20 +216,13 @@ class CacheManager:
         self.config = (
             config if config is not None else CacheConfig.for_environment().copy()
         )
-        self._stats = {
-            "hits": 0,
-            "misses": 0,
-            "evictions": 0,
-            "memory_usage_mb": 0,
-            "disk_usage_gb": 0,
-        }
 
     def configure_cpp_cache(self) -> None:
         """Deprecated no-op.
 
         The C++ handle-pool cache was removed (private per-call handles);
         ``max_files`` / ``max_memory_mb`` never configured live state and the
-        knobs are scheduled for removal (M1).
+        knobs are scheduled for removal.
         """
         warnings.warn(
             "CacheManager.configure_cpp_cache is a deprecated no-op: the "
@@ -250,14 +243,14 @@ class CacheManager:
         except Exception:
             pass
 
-        merged_hits = self._stats["hits"] + io_stats.get("hits", 0)
-        merged_misses = self._stats["misses"] + io_stats.get("misses", 0)
-        merged_total = merged_hits + merged_misses
+        hits = io_stats.get("hits", 0)
+        misses = io_stats.get("misses", 0)
 
         return {
-            **self._stats,
-            "io_hits": io_stats.get("hits", 0),
-            "io_misses": io_stats.get("misses", 0),
+            "hits": hits,
+            "misses": misses,
+            "io_hits": hits,
+            "io_misses": misses,
             "io_total_requests": io_stats.get("total_requests", 0),
             "cpp_cache_size": 0,  # native handle pool removed (Option A)
             "config": {
@@ -266,7 +259,7 @@ class CacheManager:
                 "disk_cache_gb": self.config.disk_cache_gb,
                 "prefetch_enabled": self.config.prefetch_enabled,
             },
-            "hit_rate": merged_hits / max(1, merged_total),
+            "hit_rate": hits / max(1, hits + misses),
         }
 
     def clear(self) -> None:
@@ -278,8 +271,6 @@ class CacheManager:
                 cpp.clear_file_cache()
         except (ImportError, AttributeError):
             pass
-
-        self._stats = {key: 0 for key in self._stats}
 
     def optimize_for_dataset(
         self, file_paths: list[str], avg_file_size_mb: float
@@ -387,7 +378,7 @@ def stats() -> Dict[str, Any]:
 def configure_cache(
     max_files: int, max_memory_mb: int, disk_cache_gb: int = 10
 ) -> None:
-    """Deprecated no-op (M1): retained for one release cycle.
+    """Deprecated no-op: retained for one release cycle.
 
     The native cache these arguments targeted no longer exists.
     """

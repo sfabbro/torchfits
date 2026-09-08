@@ -57,7 +57,7 @@ def test_root_functions_preserve_real_signatures():
 
 
 def test_cpp_public_surface_is_explicit_and_resolves():
-    """M2: the raw binding surface is private (_cpp) and the legacy
+    """The raw binding surface is private (_cpp) and the legacy
     torchfits.cpp alias warns on use."""
     import warnings
 

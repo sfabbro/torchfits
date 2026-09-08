@@ -176,6 +176,22 @@ def test_tablehduref_column_mutators_roundtrip(tmp_path):
         assert int(table.header.get("TNULL3")) == -999
 
 
+def test_replace_column_file_mirrors_tform(tmp_path) -> None:
+    path = tmp_path / "t.fits"
+    torchfits.write(str(path), {"X": [1.0, 2.0, 3.0]})
+    ref = torchfits.open(str(path))[1]
+    ref2 = ref.replace_column_file("X", [10, 20, 30], format="J")
+
+    file_header = torchfits.read_header(str(path), hdu=1)
+    assert str(file_header.get("TFORM1", "")).strip() == "J"
+    assert str(ref2.header.get("TFORM1", "")).strip() == "J"
+    schema_cols = ref2.schema["columns"]
+    assert schema_cols[0]["tform"] == "J"
+    values = ref2.read()["X"]
+    assert values.tolist() == [10, 20, 30]
+    assert values.dtype == torch.int32
+
+
 def test_hdulist_write_preserves_table_extension_metadata(tmp_path):
     src = tmp_path / "table_src.fits"
     dst = tmp_path / "table_dst.fits"

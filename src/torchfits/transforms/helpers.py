@@ -100,17 +100,19 @@ def _median(
     excluded; an all-masked group yields NaN.
     """
     x = _stats_upcast(x)
-    valid = _get_valid_mask(x, mask)
-    if not x.dtype.is_floating_point:
-        # NaN sentinel needs a float dtype; masked integer medians upcast.
-        x = x.float() if x.dtype != torch.int64 else x.double()
+    if x.dtype in (torch.float16, torch.bfloat16):
+        # torch.quantile only accepts float32/float64.
+        x = x.float()
+    if mask is not None:
         valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(valid, x, _mask_fill(x, "nan"))
+        x = torch.where(valid, x, _mask_fill(x, "nan"))
+    # With no explicit mask, nanquantile already skips NaN pixels; the
+    # isnan+where pass below would be a value-preserving copy.
 
     def nan_median(t: torch.Tensor, d: int, keepdim: bool) -> torch.Tensor:
         return torch.nanquantile(t, 0.5, dim=d, keepdim=keepdim)
 
-    return _reduce_keepdim(x_clean, dim, nan_median)
+    return _reduce_keepdim(x, dim, nan_median)
 
 
 def _amin(
@@ -149,13 +151,14 @@ def _quantile(
 ) -> torch.Tensor:
     """Mask-aware torch.quantile over tuple dim."""
     x = _stats_upcast(x)
-    if not x.dtype.is_floating_point:
-        # torch.quantile only supports float dtypes.
-        x = x.float() if x.dtype != torch.int64 else x.double()
-    valid = _get_valid_mask(x, mask)
-    x_clean = torch.where(valid, x, _mask_fill(x, "nan"))
+    if x.dtype in (torch.float16, torch.bfloat16):
+        # torch.quantile only accepts float32/float64.
+        x = x.float()
+    if mask is not None:
+        valid = _get_valid_mask(x, mask)
+        x = torch.where(valid, x, _mask_fill(x, "nan"))
     return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.nanquantile(t, q, dim=d, keepdim=k)
+        x, dim, lambda t, d, k: torch.nanquantile(t, q, dim=d, keepdim=k)
     )
 
 

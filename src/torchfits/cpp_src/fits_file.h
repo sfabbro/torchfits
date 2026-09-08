@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 #include <array>
 #include <tuple>
 #include <cstdint>
@@ -113,6 +114,10 @@ private:
     // Refcounted fd keeps the backing file descriptor alive while mapped and
     // guards against invalidation closing it mid-mmap.
     std::shared_ptr<detail::RawFdHolder> raw_fd_holder_;
+    // Serializes read()/close() when one persistent reader is shared across
+    // Python threads (mirrors TableReader::io_mutex_): the CFITSIO cursor,
+    // the lazy mmap init, and the closed_ flag are not thread-safe.
+    mutable std::mutex io_mutex_;
 };
 
 } // namespace torchfits

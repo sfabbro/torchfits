@@ -482,3 +482,22 @@ def test_scan_where_streams_in_batches(tmp_path):
     empty = list(scan(str(path), hdu=1, where="V > 999999999", batch_size=512))
     assert len(empty) == 1 and empty[0].num_rows == 0
     assert empty[0].schema.names == ["V", "W"]
+
+
+def test_read_torch_where_returns_all_columns(tmp_path) -> None:
+    path = tmp_path / "t.fits"
+    torchfits.write(
+        str(path),
+        {
+            "A": np.arange(10, dtype=np.int32),
+            "B": (np.arange(10) * 10).astype(np.int32),
+        },
+    )
+    result = torchfits.table.read_torch(str(path), hdu=1, where="B > 50")
+    assert sorted(result.keys()) == ["A", "B"]
+    assert result["A"].tolist() == [6, 7, 8, 9]
+    assert result["B"].tolist() == [60, 70, 80, 90]
+    projected = torchfits.table.read_torch(
+        str(path), hdu=1, columns=["A"], where="B > 50"
+    )
+    assert list(projected.keys()) == ["A"]

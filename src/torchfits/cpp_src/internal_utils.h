@@ -78,9 +78,8 @@ inline uint16_t bswap_16(uint16_t x) { return __builtin_bswap16(x); }
 inline uint32_t bswap_32(uint32_t x) { return __builtin_bswap32(x); }
 inline uint64_t bswap_64(uint64_t x) { return __builtin_bswap64(x); }
 
-/// Canonical aliases for code that expects the undecorated names.
-inline uint32_t bswap32(uint32_t x) { return bswap_32(x); }
-inline uint64_t bswap64(uint64_t x) { return bswap_64(x); }
+/// Scalar single-value helpers are spelled `bswap_XX`; no undecorated aliases
+/// (they duplicated the canonical names and had zero call sites).
 
 /// Vectorized big-endian → host endian copies for image mmap paths.
 inline void bswap16_copy(const uint16_t* src, uint16_t* dst, size_t n) {
@@ -178,8 +177,37 @@ inline void bswap32_copy(const uint32_t* src, uint32_t* dst, size_t n) {
 
 inline void bswap32_copy_u32_offset(const uint32_t* src, uint32_t* dst, size_t n,
                                     uint32_t offset) {
-    bswap32_copy(src, dst, n);
-    for (size_t i = 0; i < n; ++i) dst[i] += offset;
+    size_t i = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    const uint32x4_t off = vdupq_n_u32(offset);
+    for (; i + 4 <= n; i += 4) {
+        uint32x4_t v = vld1q_u32(src + i);
+        uint8x16_t b = vrev32q_u8(vreinterpretq_u8_u32(v));
+        vst1q_u32(dst + i, vaddq_u32(vreinterpretq_u32_u8(b), off));
+    }
+#elif defined(__AVX2__)
+    const __m256i shuffle = _mm256_set_epi8(
+        28, 29, 30, 31, 24, 25, 26, 27, 20, 21, 22, 23, 16, 17, 18, 19,
+        12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
+    const __m256i off = _mm256_set1_epi32(static_cast<int32_t>(offset));
+    for (; i + 8 <= n; i += 8) {
+        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
+        v = _mm256_shuffle_epi8(v, shuffle);
+        v = _mm256_add_epi32(v, off);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i), v);
+    }
+#elif defined(__SSSE3__)
+    const __m128i shuffle = _mm_set_epi8(
+        12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
+    const __m128i off = _mm_set1_epi32(static_cast<int32_t>(offset));
+    for (; i + 4 <= n; i += 4) {
+        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+        v = _mm_shuffle_epi8(v, shuffle);
+        v = _mm_add_epi32(v, off);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i), v);
+    }
+#endif
+    for (; i < n; ++i) dst[i] = bswap_32(src[i]) + offset;
 }
 
 inline void bswap64_copy(const uint64_t* src, uint64_t* dst, size_t n) {
@@ -233,10 +261,10 @@ inline bool ndarray_is_c_contiguous(const nb::ndarray<>& t) {
     return true;
 }
 
-/// Copy a possibly non-contiguous 1D/2D ndarray view into `buf` (grown as
-/// needed) and return a pointer to contiguous data; returns the source
-/// pointer unchanged when already contiguous. Strides are signed byte
-/// offsets: negative strides address earlier bytes, so use ptrdiff_t.
+/// Copy a possibly non-contiguous ndarray view into `buf` (grown as needed)
+/// and return a pointer to contiguous data; returns the source pointer
+/// unchanged when already contiguous. Strides are signed element offsets:
+/// negative strides address earlier elements, so use ptrdiff_t.
 inline void* ensure_c_contiguous_ndarray(
     nb::ndarray<>& t, long nelements, std::vector<uint8_t>& buf
 ) {
@@ -244,10 +272,17 @@ inline void* ensure_c_contiguous_ndarray(
     if (ndarray_is_c_contiguous(t)) {
         return t.data();
     }
+    if (nelements < 0) {
+        throw std::runtime_error("negative element count for contiguous copy");
+    }
+    if (item != 0 && static_cast<uint64_t>(nelements) > SIZE_MAX / item) {
+        throw std::runtime_error("array byte size overflows size_t");
+    }
     buf.resize(static_cast<size_t>(nelements) * item);
     auto* dst = buf.data();
     const auto* base = static_cast<const uint8_t*>(t.data());
-    if (t.ndim() == 1) {
+    const size_t ndim = t.ndim();
+    if (ndim == 1) {
         const std::ptrdiff_t s0 =
             static_cast<std::ptrdiff_t>(t.stride(0)) * static_cast<std::ptrdiff_t>(item);
         for (long i = 0; i < nelements; ++i) {
@@ -256,7 +291,7 @@ inline void* ensure_c_contiguous_ndarray(
         }
         return dst;
     }
-    if (t.ndim() == 2) {
+    if (ndim == 2) {
         const size_t n0 = static_cast<size_t>(t.shape(0));
         const size_t n1 = static_cast<size_t>(t.shape(1));
         const std::ptrdiff_t s0 =
@@ -274,9 +309,27 @@ inline void* ensure_c_contiguous_ndarray(
         }
         return dst;
     }
-    throw std::runtime_error(
-        "non-contiguous table column with ndim>2; call contiguous() before write"
-    );
+    // Generic N-dim strided copy: row-major linear index -> byte offset.
+    std::vector<std::ptrdiff_t> strides(ndim);
+    std::vector<size_t> shape(ndim);
+    for (size_t d = 0; d < ndim; ++d) {
+        shape[d] = static_cast<size_t>(t.shape(d));
+        strides[d] = static_cast<std::ptrdiff_t>(t.stride(d)) * static_cast<std::ptrdiff_t>(item);
+    }
+    const size_t n = static_cast<size_t>(nelements);
+    for (size_t lin = 0; lin < n; ++lin) {
+        size_t rem = lin;
+        std::ptrdiff_t off = 0;
+        for (size_t d = ndim; d-- > 0;) {
+            const size_t dim = shape[d];
+            if (dim == 0) break;
+            const size_t idx = rem % dim;
+            rem /= dim;
+            off += static_cast<std::ptrdiff_t>(idx) * strides[d];
+        }
+        std::memcpy(dst + lin * item, base + off, item);
+    }
+    return dst;
 }
 
 /// Pad/truncate string values to a FITS character-column width: longer values

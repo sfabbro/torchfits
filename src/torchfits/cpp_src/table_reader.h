@@ -1,7 +1,7 @@
 #pragma once
 // ponytail: 2818-line megafile mixing schema, decode, mmap filter, VLA, row update, LRU.
 // Ceiling is high blast radius; 2.0 will split by concern (schema/decode/filter/mmap).
-// No logic change in 1.x; this note documents the deferral (A-10).
+// No logic change in 1.x; this note documents the deferral.
 
 #include <string>
 #include <vector>
@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <cstdint>
+#include <cerrno>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -105,7 +107,9 @@ public:
     // construction. Path-based readers cached in the thread-local LRU call
     // this on acquire; a file replaced by another thread's writer (new inode,
     // size or mtime) makes the cached handle and pread fd stale, so the cache
-    // must drop it and open fresh.
+    // must drop it and open fresh. Compares mtime at nanosecond resolution:
+    // second-granularity st_mtime misses in-place rewrites within the same
+    // second when size and inode are unchanged.
     bool file_unchanged() const {
         if (!stat_valid_) {
             return false;
@@ -114,10 +118,17 @@ public:
         if (::stat(filename_.c_str(), &st) != 0) {
             return false;
         }
-        return st.st_dev == file_stat_.st_dev &&
-               st.st_ino == file_stat_.st_ino &&
-               st.st_size == file_stat_.st_size &&
-               st.st_mtime == file_stat_.st_mtime;
+        if (st.st_dev != file_stat_.st_dev || st.st_ino != file_stat_.st_ino ||
+            st.st_size != file_stat_.st_size) {
+            return false;
+        }
+#if defined(__APPLE__)
+        return st.st_mtimespec.tv_sec == file_stat_.st_mtimespec.tv_sec &&
+               st.st_mtimespec.tv_nsec == file_stat_.st_mtimespec.tv_nsec;
+#else
+        return st.st_mtim.tv_sec == file_stat_.st_mtim.tv_sec &&
+               st.st_mtim.tv_nsec == file_stat_.st_mtim.tv_nsec;
+#endif
     }
 
     void analyze_table() {
@@ -717,60 +728,93 @@ public:
             read_column_by_column();
         }
 
-        // Apply FITS TSCAL/TZERO in-memory. This preserves physical values
-        // while keeping the read path raw and fast. FLOAT/DOUBLE columns are
-        // scaled too (legal FITS; CFITSIO's fits_read_col applies TSCAL/TZERO
-        // to any numeric type) — only complex/string/logical/VLA are exempt.
+        // Post-process with one map lookup per column. The per-column order
+        // is scale -> BIT-coerce -> unsigned-offset, exactly matching the
+        // three legacy passes (columns are independent, so fusing the outer
+        // loop changes nothing observable). In particular a TSCAL/TZERO BIT
+        // column scales first and coerces second, as before.
+        // Null masks compare in the raw dtype when TNULL fits, avoiding a
+        // full int64 upcast copy of the column just for the comparison.
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
-            if (!col.scaled ||
-                col.type == FITSColumnType::COMPLEX_FLOAT ||
-                col.type == FITSColumnType::COMPLEX_DOUBLE ||
-                col.type == FITSColumnType::STRING ||
-                col.type == FITSColumnType::LOGICAL ||
-                col.type == FITSColumnType::VARIABLE) {
-                continue;
-            }
             auto it = result.find(col.name);
             if (it == result.end() || !it->second.fixed_data.defined()) {
                 continue;
             }
-            torch::Tensor raw = it->second.fixed_data;
-            torch::Tensor null_mask;
-            if (col.has_tnull && at::isIntegralType(raw.scalar_type(), /*includeBool=*/false)) {
-                null_mask = raw.to(torch::kInt64).eq(static_cast<int64_t>(col.tnull));
+            // (1) FITS TSCAL/TZERO in-memory (float64). FLOAT/DOUBLE columns
+            // are scaled too — only complex/string/logical/VLA are exempt
+            // (BIT is NOT exempt: it scales here, coerces below).
+            if (col.scaled &&
+                col.type != FITSColumnType::COMPLEX_FLOAT &&
+                col.type != FITSColumnType::COMPLEX_DOUBLE &&
+                col.type != FITSColumnType::STRING &&
+                col.type != FITSColumnType::LOGICAL &&
+                col.type != FITSColumnType::VARIABLE) {
+                torch::Tensor raw = it->second.fixed_data;
+                torch::Tensor null_mask;
+                if (col.has_tnull && at::isIntegralType(raw.scalar_type(), /*includeBool=*/false)) {
+                    const long long null_ll = col.tnull;
+                    bool compared = false;
+                    switch (raw.scalar_type()) {
+                        case torch::kInt8:
+                            if (null_ll >= std::numeric_limits<int8_t>::min() &&
+                                null_ll <= std::numeric_limits<int8_t>::max()) {
+                                null_mask = raw.eq(static_cast<int8_t>(null_ll));
+                                compared = true;
+                            }
+                            break;
+                        case torch::kUInt8:
+                            if (null_ll >= 0 &&
+                                null_ll <= static_cast<long long>(std::numeric_limits<uint8_t>::max())) {
+                                null_mask = raw.eq(static_cast<uint8_t>(null_ll));
+                                compared = true;
+                            }
+                            break;
+                        case torch::kInt16:
+                            if (null_ll >= std::numeric_limits<int16_t>::min() &&
+                                null_ll <= std::numeric_limits<int16_t>::max()) {
+                                null_mask = raw.eq(static_cast<int16_t>(null_ll));
+                                compared = true;
+                            }
+                            break;
+                        case torch::kInt32:
+                            if (null_ll >= std::numeric_limits<int32_t>::min() &&
+                                null_ll <= std::numeric_limits<int32_t>::max()) {
+                                null_mask = raw.eq(static_cast<int32_t>(null_ll));
+                                compared = true;
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    if (!compared) {
+                        null_mask = raw.to(torch::kInt64).eq(static_cast<int64_t>(null_ll));
+                    }
+                }
+                torch::Tensor scaled = raw.to(torch::kFloat64);
+                if (col.tscale != 1.0) {
+                    scaled.mul_(col.tscale);
+                }
+                if (col.tzero != 0.0) {
+                    scaled.add_(col.tzero);
+                }
+                if (null_mask.defined()) {
+                    scaled.masked_fill_(null_mask, std::numeric_limits<double>::quiet_NaN());
+                }
+                it->second.fixed_data = scaled;
             }
-            torch::Tensor scaled = raw.to(torch::kFloat64);
-            if (col.tscale != 1.0) {
-                scaled.mul_(col.tscale);
+            // (2) BIT->bool coercion.
+            if (col.type == FITSColumnType::BIT) {
+                it->second.fixed_data = it->second.fixed_data.to(torch::kBool);
             }
-            if (col.tzero != 0.0) {
-                scaled.add_(col.tzero);
+            // (3) Unsigned integer offset for the uint16/uint32 convention.
+            // Unsigned columns never enter block (1) (scaled == false), so
+            // this only runs on unscaled integer storage, as before.
+            if (col.is_unsigned_int) {
+                torch::Tensor converted = it->second.fixed_data.to(torch::kInt64);
+                converted.add_(col.unsigned_offset);
+                it->second.fixed_data = converted.to(col.unsigned_target_type);
             }
-            if (null_mask.defined()) {
-                scaled.masked_fill_(null_mask, std::numeric_limits<double>::quiet_NaN());
-            }
-            it->second.fixed_data = scaled;
-        }
-
-        // Apply BIT→bool coercion directly in C++.
-        for (int col_idx : col_indices) {
-            const auto& col = columns_[col_idx];
-            if (col.type != FITSColumnType::BIT) continue;
-            auto it = result.find(col.name);
-            if (it == result.end() || !it->second.fixed_data.defined()) continue;
-            it->second.fixed_data = it->second.fixed_data.to(torch::kBool);
-        }
-
-        // Apply unsigned integer offset for uint16/uint32 FITS convention.
-        for (int col_idx : col_indices) {
-            const auto& col = columns_[col_idx];
-            if (!col.is_unsigned_int) continue;
-            auto it = result.find(col.name);
-            if (it == result.end() || !it->second.fixed_data.defined()) continue;
-            torch::Tensor converted = it->second.fixed_data.to(torch::kInt64);
-            converted.add_(col.unsigned_offset);
-            it->second.fixed_data = converted.to(col.unsigned_target_type);
         }
 
         // Order by file/request column index (see signature comment).
@@ -800,6 +844,34 @@ public:
     {
         constexpr size_t elem_size = sizeof(RawT);
         static_assert(sizeof(OutT) == sizeof(RawT));
+
+        // Contiguous layout (single-column table or tightly packed repeat):
+        // one SIMD bulk byte-swap instead of per-element memcpy + scalar
+        // swap through a function pointer (which blocks vectorization).
+        if (num_rows > 0 && repeat > 0 &&
+            static_cast<uint64_t>(num_rows) <= SIZE_MAX / static_cast<uint64_t>(repeat)) {
+            const size_t total = static_cast<size_t>(num_rows) * static_cast<size_t>(repeat);
+            const bool contiguous =
+                (repeat == 1 && row_width_bytes == static_cast<long>(elem_size)) ||
+                (repeat > 1 && row_width_bytes == static_cast<long>(elem_size * static_cast<size_t>(repeat)));
+            if (contiguous && total > 0) {
+                const auto* src = reinterpret_cast<const RawT*>(col_ptr);
+                auto* dst = reinterpret_cast<RawT*>(out);
+                if constexpr (sizeof(RawT) == 2) {
+                    internal::bswap16_copy(reinterpret_cast<const uint16_t*>(src),
+                                           reinterpret_cast<uint16_t*>(dst), total);
+                } else if constexpr (sizeof(RawT) == 4) {
+                    internal::bswap32_copy(reinterpret_cast<const uint32_t*>(src),
+                                           reinterpret_cast<uint32_t*>(dst), total);
+                } else if constexpr (sizeof(RawT) == 8) {
+                    internal::bswap64_copy(reinterpret_cast<const uint64_t*>(src),
+                                           reinterpret_cast<uint64_t*>(dst), total);
+                } else {
+                    for (size_t k = 0; k < total; ++k) dst[k] = bswap_fn(src[k]);
+                }
+                return;
+            }
+        }
 
         if (repeat == 1) {
             at::parallel_for(0, num_rows, 2048, [&](long start, long end) {
@@ -958,11 +1030,14 @@ public:
         std::unordered_map<std::string, torch::Tensor> result;
         const uint8_t* base_ptr = static_cast<const uint8_t*>(map_ptr) + data_offset;
 
-        // Calculate start offset based on start_row (0-based offset)
-        size_t row_start_offset = (start_row - 1) * row_width_bytes_;
+        // Calculate start offset based on start_row (0-based offset).
+        // Validated against the file size by ensure_extent_within_file above.
+        size_t row_start_offset = static_cast<size_t>(start_row - 1) * static_cast<size_t>(row_width_bytes_);
 
 #if defined(POSIX_MADV_SEQUENTIAL)
-        size_t byte_len = static_cast<size_t>(num_rows) * row_width_bytes_;
+        // Hint only: saturate instead of wrapping on absurd headers.
+        const uint64_t hint_len = static_cast<uint64_t>(num_rows) * static_cast<uint64_t>(row_width_bytes_);
+        const size_t byte_len = hint_len > SIZE_MAX ? SIZE_MAX : static_cast<size_t>(hint_len);
         posix_madvise(const_cast<uint8_t*>(base_ptr + row_start_offset), byte_len, POSIX_MADV_SEQUENTIAL);
 #endif
 
@@ -1290,7 +1365,9 @@ public:
         // Hints: sequential access pattern for kernel prefetch
 #if defined(POSIX_MADV_SEQUENTIAL)
         {
-            size_t byte_len = static_cast<size_t>(nrows_) * row_width_bytes_;
+            const uint64_t hint_len =
+                static_cast<uint64_t>(nrows_) * static_cast<uint64_t>(row_width_bytes_);
+            const size_t byte_len = hint_len > SIZE_MAX ? SIZE_MAX : static_cast<size_t>(hint_len);
             posix_madvise(const_cast<uint8_t*>(data_ptr), byte_len, POSIX_MADV_SEQUENTIAL);
         }
 #endif
@@ -1798,7 +1875,9 @@ public:
         if (start_row < 1 || start_row > nrows_) {
             throw std::runtime_error("Invalid start row");
         }
-        if (start_row + num_rows - 1 > nrows_) {
+        // Reordered comparison (cf. read_columns): start_row + num_rows - 1
+        // can overflow long for adversarial inputs.
+        if (num_rows > nrows_ - start_row + 1) {
             throw std::runtime_error("Row range exceeds table length");
         }
 
@@ -2143,8 +2222,13 @@ public:
                 }
             }
         }
-
-        msync(map_ptr, sb.st_size, MS_SYNC);
+        if (msync(map_ptr, sb.st_size, MS_SYNC) != 0) {
+            const int sync_errno = errno;
+            munmap(map_ptr, sb.st_size);
+            close(fd);
+            throw std::runtime_error(
+                "mmap update msync failed: " + std::string(strerror(sync_errno)));
+        }
         munmap(map_ptr, sb.st_size);
         close(fd);
     }
@@ -2219,6 +2303,7 @@ public:
         switch (col.torch_type) {
             case torch::kFloat32: type_code = TFLOAT; break;
             case torch::kFloat64: type_code = TDOUBLE; break;
+            case torch::kInt8: type_code = TSBYTE; break;
             case torch::kInt32: type_code = TINT; break;
             case torch::kInt16: type_code = TSHORT; break;
             case torch::kInt64: type_code = TLONGLONG; break;
@@ -2226,10 +2311,10 @@ public:
             case torch::kBool: type_code = TLOGICAL; break;
             default: type_code = TFLOAT;
         }
-
         size_t elem_bytes = 0;
         switch (values.scalar_type()) {
-            case torch::kUInt8: elem_bytes = 1; break;
+            case torch::kUInt8:
+            case torch::kInt8: elem_bytes = 1; break;
             case torch::kInt16: elem_bytes = 2; break;
             case torch::kInt32:
             case torch::kFloat32: elem_bytes = 4; break;
@@ -2248,23 +2333,44 @@ public:
         bool heap_contiguous =
             heap_pread_enabled && direct_io_ok() &&
             (elem_bytes > 0 && total > 0);
-        long expect_off = -1;
-        long first_heap = -1;
+        // uint64 math: long offsets × repeats from hostile headers must not
+        // wrap and fake contiguity (wrong bytes out, silently). Negative
+        // heap offsets disqualify the fast path outright.
+        uint64_t expect_off = 0;
+        uint64_t first_heap = 0;
+        bool have_first = false;
         for (long i = 0; i < num_rows && heap_contiguous; i++) {
             if (repeats[i] <= 0) {
                 continue;
             }
-            if (first_heap < 0) {
-                first_heap = heap_offsets[i];
-                expect_off = heap_offsets[i] + repeats[i] * static_cast<long>(elem_bytes);
-            } else if (heap_offsets[i] != expect_off) {
+            if (heap_offsets[i] < 0) {
+                heap_contiguous = false;
+                break;
+            }
+            const uint64_t off = static_cast<uint64_t>(heap_offsets[i]);
+            const uint64_t eb = static_cast<uint64_t>(elem_bytes);
+            if (eb == 0 || static_cast<uint64_t>(repeats[i]) > UINT64_MAX / eb) {
+                heap_contiguous = false;
+                break;
+            }
+            const uint64_t len = static_cast<uint64_t>(repeats[i]) * eb;
+            if (off > UINT64_MAX - len) {
+                heap_contiguous = false;
+                break;
+            }
+            if (!have_first) {
+                first_heap = off;
+                expect_off = off + len;
+                have_first = true;
+            } else if (off != expect_off) {
                 heap_contiguous = false;
             } else {
-                expect_off = heap_offsets[i] + repeats[i] * static_cast<long>(elem_bytes);
+                expect_off = off + len;
             }
         }
 
-        if (heap_contiguous && first_heap >= 0) {
+        if (heap_contiguous && have_first &&
+            first_heap <= static_cast<uint64_t>(std::numeric_limits<LONGLONG>::max())) {
             LONGLONG headstart = 0, datastart = 0, dataend = 0;
             status = 0;
             fits_get_hduaddrll(fptr_, &headstart, &datastart, &dataend, &status);
@@ -2275,8 +2381,8 @@ public:
                 theap = row_width_bytes_ * nrows_;
             }
             if (status == 0) {
-                const off_t file_off =
-                    static_cast<off_t>(datastart + static_cast<LONGLONG>(theap) + first_heap);
+                const off_t file_off = static_cast<off_t>(
+                    datastart + static_cast<LONGLONG>(theap) + static_cast<LONGLONG>(first_heap));
                 const size_t nbytes = static_cast<size_t>(total) * elem_bytes;
                 int fd = ::open(filename_.c_str(), O_RDONLY);
                 if (fd >= 0) {
@@ -2287,7 +2393,12 @@ public:
                         const ssize_t n = ::pread(
                             fd, raw.data() + got, nbytes - got,
                             file_off + static_cast<off_t>(got));
-                        if (n <= 0) {
+                        if (n < 0) {
+                            if (errno == EINTR) continue;
+                            ok = false;
+                            break;
+                        }
+                        if (n == 0) {
                             ok = false;
                             break;
                         }
@@ -2344,6 +2455,9 @@ public:
                     break;
                 case torch::kUInt8:
                     dst = static_cast<void*>(values.data_ptr<uint8_t>() + cursor);
+                    break;
+                case torch::kInt8:
+                    dst = static_cast<void*>(values.data_ptr<int8_t>() + cursor);
                     break;
                 case torch::kInt16:
                     dst = static_cast<void*>(values.data_ptr<int16_t>() + cursor);
@@ -2479,7 +2593,11 @@ public:
                 while (got < nbytes) {
                     const ssize_t n = ::pread(data_fd, dst + got, nbytes - got,
                                               off + static_cast<off_t>(got));
-                    if (n <= 0) {
+                    if (n < 0) {
+                        if (errno == EINTR) continue;
+                        return false;
+                    }
+                    if (n == 0) {
                         return false;
                     }
                     got += static_cast<size_t>(n);
@@ -2568,6 +2686,7 @@ public:
         switch (tensor.scalar_type()) {
             case torch::kBool: return tensor.data_ptr<bool>() + offset;
             case torch::kUInt8: return tensor.data_ptr<uint8_t>() + offset;
+            case torch::kInt8: return tensor.data_ptr<int8_t>() + offset;
             case torch::kInt16: return tensor.data_ptr<int16_t>() + offset;
             case torch::kInt32: return tensor.data_ptr<int32_t>() + offset;
             case torch::kInt64: return tensor.data_ptr<int64_t>() + offset;
@@ -2578,10 +2697,15 @@ public:
     }
 
     void extract_column_data(const uint8_t* buffer, long num_rows, const ColumnInfo& col, uint8_t* dest) {
-        size_t col_width = col.width; // bytes per element
-        size_t total_width = col.width * col.repeat; // bytes per cell
-        size_t row_stride = row_width_bytes_;
-        size_t col_offset = col.byte_offset;
+        // int→size_t: width/repeat come from TFORM cards and must be positive;
+        // a negative would wrap huge and drive wild memcpy lengths below.
+        if (col.width <= 0 || col.repeat <= 0 || row_width_bytes_ <= 0) {
+            throw std::runtime_error("extract_column_data: invalid column geometry");
+        }
+        const size_t col_width = static_cast<size_t>(col.width);  // bytes per element
+        const size_t total_width = col_width * static_cast<size_t>(col.repeat);  // bytes per cell
+        const size_t row_stride = static_cast<size_t>(row_width_bytes_);
+        const size_t col_offset = static_cast<size_t>(col.byte_offset);
 
         // Optimized loops for common types.
         // FITS binary tables are big-endian; swap on little-endian hosts only.

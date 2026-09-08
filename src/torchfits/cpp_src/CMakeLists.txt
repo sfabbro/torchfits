@@ -429,10 +429,22 @@ else()
         # system via FIND_PACKAGE(BZip2) so wheel builds get it too.
         option(TORCHFITS_USE_BZIP2 "Build vendored CFITSIO with bzip2 support" ON)
         if(TORCHFITS_USE_BZIP2)
-            if(DEFINED ENV{CONDA_PREFIX} AND EXISTS "$ENV{CONDA_PREFIX}/include/bzlib.h")
+            # Prefer the HOST prefix: in pixi/rattler builds CONDA_PREFIX can
+            # point at the build prefix, whose include dir would leak a
+            # source-tree path ($BUILD_PREFIX/include lives under .pixi/bld/)
+            # into cfitsio's PUBLIC interface and fail CMake generate — and
+            # link the wrong-prefix archive when cross-compiling.
+            set(_TORCHFITS_BZIP2_ROOT "")
+            foreach(_pfx IN ITEMS "$ENV{PREFIX}" "$ENV{CONDA_PREFIX}")
+                if(_pfx AND EXISTS "${_pfx}/include/bzlib.h")
+                    set(_TORCHFITS_BZIP2_ROOT "${_pfx}")
+                    break()
+                endif()
+            endforeach()
+            if(_TORCHFITS_BZIP2_ROOT AND EXISTS "${_TORCHFITS_BZIP2_ROOT}/lib/libbz2.a")
                 set(USE_BZIP2 ON CACHE BOOL "Enable bzip2 support" FORCE)
-                set(BZIP2_INCLUDE_DIR "$ENV{CONDA_PREFIX}/include" CACHE FILEPATH "bzip2 include dir" FORCE)
-                set(BZIP2_LIBRARY "$ENV{CONDA_PREFIX}/lib/libbz2.a" CACHE FILEPATH "bzip2 library" FORCE)
+                set(BZIP2_INCLUDE_DIR "${_TORCHFITS_BZIP2_ROOT}/include" CACHE FILEPATH "bzip2 include dir" FORCE)
+                set(BZIP2_LIBRARY "${_TORCHFITS_BZIP2_ROOT}/lib/libbz2.a" CACHE FILEPATH "bzip2 library" FORCE)
             else()
                 find_package(BZip2 QUIET)
                 if(BZIP2_FOUND)
@@ -451,6 +463,20 @@ else()
         # Build and link CFITSIO, but do not install its headers, static archive,
         # pkg-config file, or CMake metadata into the Python wheel.
         add_subdirectory("${CFITSIO_SOURCE_DIR}" cfitsio_build EXCLUDE_FROM_ALL)
+
+        # The vendored cfitsio CMakeLists publishes its dependency include
+        # dirs (zlib/curl/bzip2) as PUBLIC usage requirements. A dep resolved
+        # inside the source tree (e.g. pixi's .pixi/bld/ build prefix) fails
+        # CMake generate ("INTERFACE_INCLUDE_DIRECTORIES ... prefixed in the
+        # source directory"). cfitsio links statically into _C — a leaf
+        # module whose sources only need fitsio.h itself (wired PRIVATE
+        # below) — so demote those dirs to PRIVATE: cfitsio's own .c files
+        # still see them, but they no longer propagate.
+        get_target_property(_cfitsio_iface_inc cfitsio INTERFACE_INCLUDE_DIRECTORIES)
+        if(_cfitsio_iface_inc)
+            target_include_directories(cfitsio PRIVATE ${_cfitsio_iface_inc})
+        endif()
+        set_target_properties(cfitsio PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
 
         # CFITSIO target is named 'cfitsio'
         set(CFITSIO_LIBRARY cfitsio)

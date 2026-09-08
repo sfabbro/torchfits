@@ -1,4 +1,4 @@
-"""Regressions for the 2026-08-26 major-release audit register."""
+"""IO invariants: TNULL/BLANK/NaN, binary copy, checksums, and where= agreement."""
 
 from __future__ import annotations
 
@@ -395,8 +395,9 @@ def test_to_arrow_keeps_vector_column_rows() -> None:
 
 
 def test_kmp_duplicate_lib_ok_set_on_import() -> None:
-    # ``__init__`` uses setdefault on Darwin only (A-05): process-wide side effect scoped to macOS.
-    # On Linux the import must NOT set KMP_DUPLICATE_LIB_OK; it is set via pixi activation env if needed.
+    # ``__init__`` uses setdefault on Darwin only: process-wide side effect
+    # scoped to macOS. On Linux the import must not set KMP_DUPLICATE_LIB_OK;
+    # it is set via pixi activation env if needed.
     if sys.platform == "darwin":
         assert os.environ.get("KMP_DUPLICATE_LIB_OK") is not None
     else:

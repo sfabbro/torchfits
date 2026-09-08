@@ -109,6 +109,31 @@ def _padded_data_nbytes(raw: int) -> int:
     return ((raw + _BLOCK - 1) // _BLOCK) * _BLOCK
 
 
+def _hdu_data_span(cards: dict[str, Any]) -> int:
+    """Total data-area bytes consumed by an HDU (main data + heap).
+
+    BINTABLEs carry extra bytes after the main table: a variable-length-array
+    / compressed-image heap of ``PCOUNT`` bytes, optionally starting at a
+    ``THEAP`` offset (default: right after the main data). Ignoring the heap
+    under-advances the HDU walk and desyncs every following offset.
+    """
+    raw = _data_nbytes(cards)
+    xtension = str(cards.get("XTENSION", "") or "").strip().upper()
+    if xtension != "BINTABLE":
+        return raw
+    try:
+        pcount = int(cards.get("PCOUNT", 0) or 0)
+    except (TypeError, ValueError):
+        pcount = 0
+    if pcount <= 0:
+        return raw
+    try:
+        theap = int(cards["THEAP"])
+    except (KeyError, TypeError, ValueError):
+        return raw + pcount
+    return max(raw, theap + pcount)
+
+
 def _is_compressed(cards: dict[str, Any]) -> bool:
     if cards.get("ZIMAGE") in (True, "T", "t"):
         return True
@@ -167,8 +192,7 @@ def locate_uncompressed_2d(url: str, hdu: int | str) -> dict[str, Any]:
                 "elem_bytes": _bitpix_elem_bytes(bitpix),
                 "dtype": _torch_dtype(bitpix),
             }
-        raw = _data_nbytes(cards)
-        offset = data_start + _padded_data_nbytes(raw)
+        offset = data_start + _padded_data_nbytes(_hdu_data_span(cards))
     raise HttpRangeUnsupported(f"HDU {hdu!r} not found in Range scan")
 
 

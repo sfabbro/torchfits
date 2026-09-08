@@ -424,15 +424,24 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
             }
         }
     } else {
+        // Cap workers: one thread per file exhausts threads/stack on large
+        // batches (10k files = 10k threads). Strided dispatch over a
+        // hardware-sized pool; error scan below stays index-ordered, so the
+        // reported failure is identical to the serial path.
+        size_t max_workers = std::thread::hardware_concurrency();
+        if (max_workers == 0) max_workers = 4;
+        max_workers = std::min(max_workers, n - 1);
         std::vector<std::thread> threads;
-        threads.reserve(n - 1);
-        for (size_t i = 1; i < n; ++i) {
-            threads.emplace_back([&, i]() {
-                try {
-                    FITSFile file(paths[i].c_str(), 0);
-                    results[i] = file.read_tensor(hdu_num, use_mmap);
-                } catch (const std::exception& e) {
-                    errors[i] = e.what();
+        threads.reserve(max_workers);
+        for (size_t w = 0; w < max_workers; ++w) {
+            threads.emplace_back([&, w]() {
+                for (size_t i = 1 + w; i < n; i += max_workers) {
+                    try {
+                        FITSFile file(paths[i].c_str(), 0);
+                        results[i] = file.read_tensor(hdu_num, use_mmap);
+                    } catch (const std::exception& e) {
+                        errors[i] = e.what();
+                    }
                 }
             });
         }
@@ -468,6 +477,9 @@ std::vector<torch::Tensor> read_hdus_batch(const std::string& path, const std::v
 // read_hdus_sequence_last
 // ---------------------------------------------------------------------------
 torch::Tensor read_hdus_sequence_last(const std::string& path, const std::vector<int>& hdus, bool use_mmap) {
+    if (hdus.empty()) {
+        throw std::runtime_error("read_hdus_sequence_last requires at least one HDU");
+    }
     FITSFile file(path.c_str(), 0);
     torch::Tensor out;
     for (int hdu_num : hdus) {
@@ -547,11 +559,11 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
             torch_shape[i] = static_cast<int64_t>(naxes_ll[naxis - 1 - i]);
         }
 
-        auto tensor = torch::empty(at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
         LONGLONG nelements = 0;
         if (naxis > 0) {
             nelements = d::checked_nelements_product(naxes_ll.data(), naxis);
         }
+        auto tensor = torch::empty(at::IntArrayRef(torch_shape, naxis), torch::TensorOptions().dtype(dtype));
 
         int anynul = 0;
         float fnullval = NAN;
@@ -559,7 +571,9 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         void* nullval_ptr = d::cfitsio_float_nulval_ptr(
             bitpix, compressed, datatype, &fnullval, &dnullval);
 
-        static LONGLONG firstpixels[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+        // Local origin array: a static would be shared across threads and
+        // CFITSIO takes a mutable pointer.
+        LONGLONG firstpixels[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
         fits_read_pixll(
             fptr,
             datatype,
@@ -599,13 +613,13 @@ torch::Tensor read_full_unmapped_raw(const std::string& path, int hdu_num) {
 // ---------------------------------------------------------------------------
 // read_full_nocache — cold open/read/close (no handle pool). Float/CompImage
 // stays ultra-thin; integer/scaled paths keep shared meta + raw_fd so mmap/pread
-// and one-time scale probes still win the scorecard.
-// ---------------------------------------------------------------------------
 torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_mmap) {
+    // Security first: get_shared_meta_for_path stats and inserts a global-map
+    // entry, so it must never run on a rejected path (cache pollution).
+    check_fits_filename_security(path);
     fitsfile* fptr = nullptr;
     int status = 0;
     auto shared_meta = d::get_shared_meta_for_path(path);
-    check_fits_filename_security(path);
     status = d::open_fits_readonly(&fptr, path);
     if (status != 0 || !fptr) {
         throw std::runtime_error("Could not open FITS file: " + path);
@@ -621,10 +635,20 @@ torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_m
 
     try {
         status = 0;
-        fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
-        if (status != 0) {
-            close_guard();
-            throw std::runtime_error("Could not move to HDU");
+        // Extended-syntax paths (file.fits[2]) open already positioned on the
+        // selected HDU: resolve the absolute target like read_full_unmapped
+        // instead of blindly adding +1 twice.
+        int start_hdu = 1;
+        fits_get_hdu_num(fptr, &start_hdu);
+        const int target_hdu = hdu_num + start_hdu;
+        if (!(hdu_num == 0 && start_hdu == 1)) {
+            fits_movabs_hdu(fptr, target_hdu, nullptr, &status);
+            if (status != 0) {
+                close_guard();
+                throw std::runtime_error("Could not move to HDU");
+            }
+        } else {
+            status = 0;
         }
 
         int bitpix = 0;
@@ -880,7 +904,11 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         size_t i = 0;
         long repeat = 0;
         while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
-            repeat = repeat * 10 + (s[i] - '0');
+            const int digit = s[i] - '0';
+            if (repeat > (std::numeric_limits<long>::max() - digit) / 10) {
+                throw std::runtime_error("TFORM repeat count overflows long: " + tform);
+            }
+            repeat = repeat * 10 + digit;
             i++;
         }
         if (repeat > 0) {
@@ -1056,9 +1084,18 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             nb::dlpack::dtype dt{};
             bool dtype_set = false;
             for (auto elem : seq) {
+                if (elem.is_none()) {
+                    throw std::runtime_error(
+                        "VLA column has a None row but no dtype context: pass an empty "
+                        "typed array instead (None rows are normalized upstream only "
+                        "for table mutations, not creates)");
+                }
                 nb::ndarray<> arr = nb::cast<nb::ndarray<>>(elem);
                 if (arr.ndim() > 1) {
                     throw std::runtime_error("VLA column rows must be 1D");
+                }
+                if (arr.size() > static_cast<size_t>(std::numeric_limits<long>::max())) {
+                    throw std::runtime_error("VLA row exceeds supported element count");
                 }
                 if (arr.size() > 0) {
                     if (!dtype_set) {
@@ -1194,6 +1231,9 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     if (num_rows < 0) {
         num_rows = 0;
     }
+    if (columns.empty()) {
+        throw std::runtime_error("write_table_hdu requires at least one column");
+    }
 
     int num_cols = static_cast<int>(columns.size());
     std::vector<std::string> ttype_store(static_cast<size_t>(num_cols));
@@ -1202,7 +1242,6 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     std::vector<char*> ttype(static_cast<size_t>(num_cols));
     std::vector<char*> tform(static_cast<size_t>(num_cols));
     std::vector<char*> tunit(static_cast<size_t>(num_cols));
-
     for (int i = 0; i < num_cols; ++i) {
         const auto& col = columns[i];
         ttype_store[static_cast<size_t>(i)] = col.name;
@@ -1212,7 +1251,6 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         tform[static_cast<size_t>(i)] = tform_store[static_cast<size_t>(i)].data();
         tunit[static_cast<size_t>(i)] = tunit_store[static_cast<size_t>(i)].data();
     }
-
     fits_create_tbl(fptr, is_ascii ? ASCII_TBL : BINARY_TBL, num_rows, num_cols,
                     ttype.data(), tform.data(), tunit.data(), "Table", &status);
 
@@ -1225,19 +1263,29 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         if (col.is_vla) {
             for (long row = 0; row < num_rows; ++row) {
                 const auto& arr = col.vla_rows[static_cast<size_t>(row)];
+                if (arr.size() > static_cast<size_t>(std::numeric_limits<long>::max())) {
+                    throw std::runtime_error("VLA row exceeds supported element count");
+                }
                 long nelements = static_cast<long>(arr.size());
-                void* data_ptr = arr.size() ? arr.data() : nullptr;
+                // A strided view (slice/transpose) must be densified first:
+                // fits_write_col reads nelements packed elements.
+                std::vector<uint8_t> contig_buf;
+                void* data_ptr = nullptr;
+                if (nelements > 0) {
+                    nb::ndarray<> row_view = arr;
+                    data_ptr = ensure_c_contiguous_ndarray(row_view, nelements, contig_buf);
+                }
                 std::vector<unsigned char> logical;
                 if (col.datatype == TLOGICAL && nelements > 0) {
                     nb::dlpack::dtype dt = arr.dtype();
                     logical.resize(static_cast<size_t>(nelements));
                     if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                        const bool* src = static_cast<const bool*>(arr.data());
+                        const bool* src = static_cast<const bool*>(data_ptr);
                         for (long idx = 0; idx < nelements; ++idx) {
                             logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                         }
                     } else {
-                        const uint8_t* src = static_cast<const uint8_t*>(arr.data());
+                        const uint8_t* src = static_cast<const uint8_t*>(data_ptr);
                         for (long idx = 0; idx < nelements; ++idx) {
                             logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                         }
@@ -1259,10 +1307,16 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                            const_cast<char**>(ptrs.data()), &status);
         } else {
             nb::ndarray<> tensor = col.fixed;
+            if (num_rows > 0 && col.repeat > 0 &&
+                static_cast<uint64_t>(num_rows) >
+                    static_cast<uint64_t>(std::numeric_limits<long>::max()) /
+                        static_cast<uint64_t>(col.repeat)) {
+                throw std::runtime_error("table column element count overflows long");
+            }
             long nelements = num_rows * col.repeat;
             if (col.datatype == TLOGICAL || col.datatype == TBIT) {
                 nb::dlpack::dtype dt = tensor.dtype();
-                std::vector<unsigned char> logical(nelements);
+                std::vector<unsigned char> logical(static_cast<size_t>(nelements));
                 if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
                     const bool* src = static_cast<const bool*>(tensor.data());
                     for (long idx = 0; idx < nelements; ++idx) {
@@ -1532,7 +1586,8 @@ void bind_fits(nb::module_& m) {
             std::vector<long> shape_long = file->get_shape(hdu_num);
             shape.reserve(shape_long.size());
             for (long d : shape_long) {
-                shape.push_back((size_t) d);
+                if (d < 0) throw std::runtime_error("FITS image dimension is negative");
+                shape.push_back(static_cast<size_t>(d));
             }
         }
 
@@ -1670,17 +1725,23 @@ void bind_fits(nb::module_& m) {
                                 }
                                 return out;
                             }
-
-                            void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
-                            if (map_ptr != MAP_FAILED) {
-                                const uint8_t* src = static_cast<const uint8_t*>(map_ptr) + data_offset;
-                                std::memcpy(dst, src, nbytes);
-                                munmap(map_ptr, sb.st_size);
-                                ::close(fd);
-                                if (signed_byte_scaled) {
-                                    d::_xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                            // Pread failed after the size check passed: the file
+                            // may have been truncated concurrently. Re-stat
+                            // before mapping — memcpy past EOF would SIGBUS.
+                            struct stat fresh_sb {};
+                            if (fstat(fd, &fresh_sb) == 0 &&
+                                (size_t) fresh_sb.st_size >= (size_t) data_offset + nbytes) {
+                                void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+                                if (map_ptr != MAP_FAILED) {
+                                    const uint8_t* src = static_cast<const uint8_t*>(map_ptr) + data_offset;
+                                    std::memcpy(dst, src, nbytes);
+                                    munmap(map_ptr, sb.st_size);
+                                    ::close(fd);
+                                    if (signed_byte_scaled) {
+                                        d::_xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                                    }
+                                    return out;
                                 }
-                                return out;
                             }
                         }
                         ::close(fd);
@@ -1966,7 +2027,8 @@ void bind_fits(nb::module_& m) {
             } else {
                 nb::tuple tup = nb::cast<nb::tuple>(card);
                 if (tup.size() < 2) {
-                    continue;
+                    throw std::runtime_error(
+                        "header card tuples must be (key, value[, comment])");
                 }
                 key = nb::cast<std::string>(tup[0]);
                 value = nb::borrow<nb::object>(tup[1]);
@@ -2166,11 +2228,13 @@ void bind_fits(nb::module_& m) {
         .def_prop_rw("index", [](HDUInfo& t) { return t.index; }, [](HDUInfo& t, int v) { t.index = v; })
         .def_prop_rw("type", [](HDUInfo& t) { return t.type; }, [](HDUInfo& t, std::string v) { t.type = v; })
         .def_prop_ro("header", [](HDUInfo& t) {
-            nb::dict d;
+            // Full card list (may contain duplicates like HISTORY/COMMENT).
+            // A dict here would silently collapse repeated keywords.
+            nb::list cards;
             for (const auto& kv : t.header) {
-                d[std::get<0>(kv).c_str()] = std::get<1>(kv);
+                cards.append(nb::make_tuple(std::get<0>(kv), std::get<1>(kv), std::get<2>(kv)));
             }
-            return d;
+            return cards;
         });
 
     m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::list {
@@ -2326,6 +2390,9 @@ void bind_fits(nb::module_& m) {
             naxes_ll.fill(0);
             {
                 nb::gil_scoped_release release;
+                // Security before get_shared_meta_for_path: it stats and
+                // inserts a global-map entry for the path.
+                check_fits_filename_security(filename);
                 // Warm SharedReadMeta: skip CFITSIO open when image params
                 // were already populated by a prior read / SubsetReader.
                 auto meta = d::get_shared_meta_for_path(filename);

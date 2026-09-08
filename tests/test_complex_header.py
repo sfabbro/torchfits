@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 from astropy.io import fits
 
 import torchfits
@@ -64,6 +65,26 @@ def test_complex_header():
     finally:
         if os.path.exists(filename):
             os.remove(filename)
+
+
+def test_fromfile_keeps_duplicate_history_and_comment(tmp_path) -> None:
+    path = tmp_path / "hist.fits"
+    header = fits.Header()
+    header["OBJECT"] = "M13"
+    header.add_history("first history entry")
+    header.add_history("second history entry")
+    header.add_comment("first comment")
+    header.add_comment("second comment")
+    fits.PrimaryHDU(data=np.arange(4, dtype=np.float32), header=header).writeto(
+        str(path), overwrite=True
+    )
+
+    with torchfits.HDUList.fromfile(str(path)) as hdul:
+        hdr = hdul[0].header
+        assert hdr.get_history() == ["first history entry", "second history entry"]
+        assert hdr.get_comment() == ["first comment", "second comment"]
+        history_cards = [c for c in hdr.cards if c.key == "HISTORY"]
+        assert len(history_cards) == 2
 
 
 if __name__ == "__main__":

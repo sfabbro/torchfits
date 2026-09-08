@@ -64,13 +64,14 @@ class TestCaching:
         # Verify it's a dictionary
         assert isinstance(stats, dict)
 
-        # Check for expected keys
+        # Check for expected keys (dead never-updated counters removed:
+        # evictions/memory_usage_mb/disk_usage_gb were always 0 and are gone).
         expected_keys = {
             "hits",
             "misses",
-            "evictions",
-            "memory_usage_mb",
-            "disk_usage_gb",
+            "io_hits",
+            "io_misses",
+            "io_total_requests",
             "cpp_cache_size",
             "config",
             "hit_rate",
@@ -707,23 +708,14 @@ class TestCacheManagerFunctions:
     def test_clear_cache(self):
         from torchfits.cache import get_cache_manager, clear_cache, get_cache_stats
 
-        # Set some state
+        # The manager no longer keeps fake never-updated counters; hits/misses
+        # come straight from the I/O engine. Clearing must reset them.
         manager = get_cache_manager()
-        manager._stats["hits"] = 10
-        manager._stats["misses"] = 5
-
-        # Verify state is set
-        stats_before = get_cache_stats()
-        assert stats_before["hits"] == 10
-        assert stats_before["misses"] == 5
-
-        # Clear cache
         clear_cache()
-
-        # Verify state is reset
-        stats_after = get_cache_stats()
-        assert stats_after["hits"] == 0
-        assert stats_after["misses"] == 0
+        stats_before = get_cache_stats()
+        assert stats_before["hits"] == 0
+        assert stats_before["misses"] == 0
+        assert not hasattr(manager, "_stats")
 
 
 def test_cached_reads_are_isolated_from_caller_mutation(tmp_path):

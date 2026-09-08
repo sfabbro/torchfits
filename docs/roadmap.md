@@ -56,6 +56,17 @@ The 2.0 major release aims to drop external legacy C library dependencies in fav
 - **Asynchronous Batch Execution:** Fully non-blocking multi-file decoders scheduled via CUDA streams and CPU worker pools.
 - **Stable Python API:** Maintaining full backwards compatibility with the 1.x `read_tensor`, `table.read`, and `torchfits.data` APIs.
 
+### Scheduled 2.0 removals
+
+Deprecated 1.x shims that will be dropped in 2.0:
+
+- `configure_cpp_cache` (deprecated in favor of the cache-manager
+  configuration path).
+- `handle_cache_capacity` (per-path handle caching was removed; the
+  argument is accepted and ignored).
+- Legacy `write()` dict-vs-tensor argument conventions are documented
+  but will be tightened to explicit keyword-only forms.
+
 ---
 
 ## Permanent Scope & Design Boundaries

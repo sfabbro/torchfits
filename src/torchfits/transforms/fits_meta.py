@@ -10,6 +10,35 @@ from .helpers import (
 )
 
 
+def _linear_apply(x: torch.Tensor, scale: float, zero: float) -> torch.Tensor:
+    """Compute ``scale * x + zero`` at FITS-appropriate precision.
+
+    float64/int64 compute in float64, everything else in float32;
+    float16/bfloat16 compute in float32 and are cast back.  Integer inputs
+    are promoted to float and **stay** float: squeezing physical values back
+    into the storage dtype wraps around (BZERO=32768 on int16 overflows to
+    negative) and truncates fractional BSCALE.
+    """
+    dtype = x.dtype
+    if dtype.is_floating_point:
+        if dtype in (torch.float16, torch.bfloat16):
+            return (x.float() * scale + zero).to(dtype)
+        return x * scale + zero
+    up = x.double() if dtype == torch.int64 else x.float()
+    return up * scale + zero
+
+
+def _linear_remove(x: torch.Tensor, scale: float, zero: float) -> torch.Tensor:
+    """Compute ``(x - zero) / scale`` — inverse of :func:`_linear_apply`."""
+    dtype = x.dtype
+    if dtype.is_floating_point:
+        if dtype in (torch.float16, torch.bfloat16):
+            return ((x.float() - zero) / scale).to(dtype)
+        return (x - zero) / scale
+    up = x.double() if dtype == torch.int64 else x.float()
+    return (up - zero) / scale
+
+
 class FITSHeaderScale(FITSTransform):
     """Apply or remove BSCALE/BZERO scaling using FITS header keywords.
 
@@ -60,18 +89,15 @@ class FITSHeaderScale(FITSTransform):
     ) -> torch.Tensor:
         if self.bscale == 1.0 and self.bzero == 0.0:
             return x
-        # Functional ops: `.to(float32)` aliases float32 inputs, so in-place
-        # mul_/add_ here used to mutate the caller's tensor (M6).
-        result = x.to(torch.float32) * self.bscale + self.bzero
-        return result.to(x.dtype) if x.dtype != torch.float32 else result
+        # Functional ops: out-of-place arithmetic only.
+        return _linear_apply(x, self.bscale, self.bzero)
 
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         if self.bscale == 1.0 and self.bzero == 0.0:
             return x
-        result = (x.to(torch.float32) - self.bzero) / self.bscale
-        return result.to(x.dtype) if x.dtype != torch.float32 else result
+        return _linear_remove(x, self.bscale, self.bzero)
 
     def __repr__(self) -> str:
         return f"FITSHeaderScale(bscale={self.bscale}, bzero={self.bzero})"
@@ -137,12 +163,8 @@ class FITSScaleColumns(FITSTransform):
         for name, (tscal, tzero) in self.scales.items():
             if name not in out:
                 continue
-            val = out[name]
-            if tscal == 1.0 and tzero == 0.0:
-                continue
-            # Functional ops: never mutate the caller's tensor (M6).
-            result = val.to(torch.float32) * tscal + tzero
-            out[name] = result.to(val.dtype) if val.dtype != torch.float32 else result
+            # Functional ops: never mutate the caller's tensor.
+            out[name] = _linear_apply(out[name], tscal, tzero)
         return out
 
     def inverse(
@@ -154,11 +176,7 @@ class FITSScaleColumns(FITSTransform):
         for name, (tscal, tzero) in self.scales.items():
             if name not in out:
                 continue
-            val = out[name]
-            if tscal == 1.0 and tzero == 0.0:
-                continue
-            result = (val.to(torch.float32) - tzero) / tscal
-            out[name] = result.to(val.dtype) if val.dtype != torch.float32 else result
+            out[name] = _linear_remove(out[name], tscal, tzero)
         return out
 
     def __repr__(self) -> str:
@@ -318,7 +336,14 @@ class FITSHeaderNormalize(FITSTransform):
             vmin, vmax = self._in_range  # type: ignore[misc]
             if vmax == vmin:
                 return torch.zeros_like(x)
-            return (x - vmin) / (vmax - vmin)
+            # float32 mantissa is 24 bits: int32/int64 counts above 2**24
+            # round, so the [0, 1] map collapses neighboring integers.
+            xf = (
+                x.double()
+                if (not x.dtype.is_floating_point and x.element_size() >= 4)
+                else x
+            )
+            return (xf - vmin) / (vmax - vmin)
         if self.scale_floats:
             vmin = _amin(x, tuple(range(x.ndim)), mask=mask)
             vmax = _amax(x, tuple(range(x.ndim)), mask=mask)

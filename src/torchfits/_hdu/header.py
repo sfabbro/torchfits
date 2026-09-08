@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._repr import render_html_table
 from .card import Card
 
 
@@ -56,12 +57,12 @@ class Header(dict[str, Any]):
                         key, value, comment = card
                         card_obj = Card(
                             str(key),
-                            value,
+                            _normalize_header_value(value),
                             "" if comment is None else str(comment),
                         )
                         append(card_obj)
-                        if key not in {"HISTORY", "COMMENT"}:
-                            setitem(key, value)
+                        if card_obj.key not in {"HISTORY", "COMMENT"}:
+                            setitem(card_obj.key, card_obj.value)
                     else:
                         parsed = self._coerce_card(card)
                         self._append_card(parsed, update_mapping=True, bump=False)
@@ -257,37 +258,13 @@ class Header(dict[str, Any]):
             super().__delitem__(key)
 
     def _repr_html_(self) -> str:
-        import html as pyhtml
-
-        html_parts = [
-            '<div tabindex="0" aria-label="FITS Header" style=\'max-height: 400px; overflow: auto; border: 1px solid rgba(128, 128, 128, 0.3); margin-bottom: 1em;\'>',
-            "<table style='border-collapse: collapse; width: 100%; margin: 0;'>",
-            "<thead><tr>",
-        ]
-        headers = ["Keyword", "Value", "Comment"]
-        for h in headers:
-            html_parts.append(
-                f'<th scope="col" style=\'text-align: left; padding: 8px; position: sticky; top: 0; '
-                f"background-color: var(--theme-ui-colors-background, white); "
-                f"border-bottom: 2px solid rgba(128, 128, 128, 0.3); z-index: 1;'>{h}</th>"
-            )
-        html_parts.append("</tr></thead><tbody>")
-
-        for card in self._cards:
-            k = pyhtml.escape(str(card.key))
-            v = pyhtml.escape(str(card.value)) if card.value is not None else ""
-            c = pyhtml.escape(str(card.comment))
-            html_parts.append("<tr>")
-            html_parts.append(
-                f"<th scope=\"row\" style='text-align: left; padding: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); font-weight: bold;'>{k}</th>"
-            )
-            html_parts.append(
-                f"<td style='padding: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.2);'>{v}</td>"
-            )
-            html_parts.append(
-                f"<td style='padding: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); opacity: 0.7;'>{c}</td>"
-            )
-            html_parts.append("</tr>")
-
-        html_parts.append("</tbody></table></div>")
-        return "".join(html_parts)
+        return render_html_table(
+            "FITS Header",
+            ["Keyword", "Value", "Comment"],
+            (
+                (card.key, card.value if card.value is not None else "", card.comment)
+                for card in self._cards
+            ),
+            cell_extra=["", "", "opacity: 0.7;"],
+            first_col_bold=True,
+        )

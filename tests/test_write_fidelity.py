@@ -187,6 +187,22 @@ def test_cutout_fidelity_matrix(tmp_path, torch_dtype, writer):
         assert torch.equal(got2, want), f"SubsetReader window ({x1},{y1},{x2},{y2})"
 
 
+@pytest.mark.parametrize(
+    "dtype", [torch.float64, torch.float32, torch.int16, torch.uint8]
+)
+def test_read_subset_empty_box_preserves_dtype(tmp_path, dtype) -> None:
+    path = tmp_path / "img.fits"
+    torchfits.write_tensor(path, torch.zeros((4, 6), dtype=dtype))
+    empty = torchfits.read_subset(str(path), 0, 1, 0, 1, 2)
+    assert empty.shape == (2, 0)
+    assert empty.dtype == dtype
+    empty_y = torchfits.read_subset(str(path), 0, 0, 2, 3, 2)
+    assert empty_y.shape == (0, 3)
+    assert empty_y.dtype == dtype
+    with torchfits.open_subset_reader(str(path), hdu=0) as reader:
+        assert reader.read_subset(1, 0, 1, 2).dtype == dtype
+
+
 @pytest.mark.parametrize("torch_dtype", [torch.uint8, torch.int16, torch.int32])
 def test_cutout_compressed_lossless_matches_uncompressed(tmp_path, torch_dtype):
     """Cutouts from losslessly compressed HDUs equal the uncompressed ones."""

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import html
 import warnings
 from typing import Any, Callable, Dict, Iterator, List, Optional, cast
 
@@ -11,6 +10,7 @@ import torch
 from torch import Tensor
 
 
+from ._repr import render_html_table
 from .header import Header
 
 
@@ -89,6 +89,15 @@ class TableHDU:
         self._source_path = source_path
         self._source_hdu = source_hdu
         self.header = header or Header()
+
+    def _derived_header(self) -> Header:
+        """Independent copy of this table's header for derived TableHDUs.
+
+        select/filter/head/add_column/drop_columns/rename_column/append_rows
+        hand their result a *copy* so mutating the derived table's header
+        (e.g. setkey-style edits) never corrupts the source table's header.
+        """
+        return Header(self.header)
 
     def _get_string_columns(self, header: Optional[Header]) -> set[str]:
         if not header:
@@ -229,7 +238,7 @@ class TableHDU:
         if missing:
             raise KeyError(f"Columns not found: {missing}")
         selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in wanted}
-        return TableHDU(selected_dict, {}, self.header)
+        return TableHDU(selected_dict, {}, self._derived_header())
 
     def filter(self, condition: str) -> "TableHDU":
         import numpy as np
@@ -323,7 +332,7 @@ class TableHDU:
         return TableHDU(
             filtered,
             {},
-            self.header,
+            self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -346,7 +355,7 @@ class TableHDU:
                     new_dict[k] = v[:keep]
                 else:
                     new_dict[k] = v
-            return TableHDU(new_dict, {}, self.header)
+            return TableHDU(new_dict, {}, self._derived_header())
         return self
 
     @staticmethod
@@ -447,7 +456,7 @@ class TableHDU:
         return TableHDU(
             raw,
             {},
-            self.header,
+            self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -464,7 +473,7 @@ class TableHDU:
         return TableHDU(
             kept,
             {},
-            self.header,
+            self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -489,7 +498,7 @@ class TableHDU:
         return TableHDU(
             renamed,
             {},
-            self.header,
+            self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -503,7 +512,7 @@ class TableHDU:
             return TableHDU(
                 dict(rows),
                 {},
-                self.header,
+                self._derived_header(),
                 source_path=self._source_path,
                 source_hdu=self._source_hdu,
             )
@@ -532,7 +541,7 @@ class TableHDU:
         return TableHDU(
             appended,
             {},
-            self.header,
+            self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -653,36 +662,8 @@ class TableHDU:
         )
 
     def _repr_html_(self) -> str:
-        name = html.escape(str(self.header.get("EXTNAME", "TABLE")))
-        container_style = (
-            "max-height: 400px; overflow: auto; "
-            "border: 1px solid rgba(128, 128, 128, 0.3); margin-bottom: 1em;"
-        )
-        table_style = "border-collapse: collapse; width: 100%; margin: 0;"
-        th_col_style = (
-            "text-align: left; padding: 8px; position: sticky; top: 0; "
-            "background-color: var(--theme-ui-colors-background, white); "
-            "border-bottom: 2px solid rgba(128, 128, 128, 0.3); z-index: 1;"
-        )
-        th_row_style = (
-            "font-weight: normal; text-align: left; padding: 8px; "
-            "border-bottom: 1px solid rgba(128, 128, 128, 0.2);"
-        )
-        td_style = (
-            "text-align: left; padding: 8px; "
-            "border-bottom: 1px solid rgba(128, 128, 128, 0.2);"
-        )
-        return (
-            f'<div tabindex="0" aria-label="TableHDU" style=\'{container_style}\'>'
-            f"<table style='{table_style}'>"
-            f"<thead><tr>"
-            f"<th scope=\"col\" style='{th_col_style}'>Name</th>"
-            f"<th scope=\"col\" style='{th_col_style}'>Rows</th>"
-            f"<th scope=\"col\" style='{th_col_style}'>Columns</th>"
-            f"</tr></thead>"
-            f"<tbody><tr>"
-            f"<th scope=\"row\" style='{th_row_style}'>{name}</th>"
-            f"<td style='{td_style}'>{self.num_rows}</td>"
-            f"<td style='{td_style}'>{len(self.columns)}</td>"
-            f"</tr></tbody></table></div>"
+        return render_html_table(
+            "TableHDU",
+            ["Name", "Rows", "Columns"],
+            [[self.header.get("EXTNAME", "TABLE"), self.num_rows, len(self.columns)]],
         )

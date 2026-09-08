@@ -1,11 +1,4 @@
-"""Release-semantics regressions (H2, H3, H7, H8).
-
-- H2: float WHERE equality selects identical rows regardless of engine.
-- H3: header-only schema falls back for complex columns instead of lying
-  about float64.
-- H7: windowed reads keep VLA/string columns row-aligned with tensors.
-- H8: streaming a scaled table with mmap=True no longer raises mid-stream.
-"""
+"""WHERE precision, complex-column errors, windowed VLA reads, and quantize BLANK."""
 
 from __future__ import annotations
 
@@ -71,7 +64,7 @@ def test_windowed_read_keeps_vla_columns_aligned(tmp_path):
 
 
 def test_transforms_never_mutate_input(tmp_path):
-    """M6: forward/inverse of scaling transforms must be functional."""
+    """forward/inverse of scaling transforms must not mutate the input tensor."""
     from torchfits.transforms import FITSHeaderScale, ZScaleNormalize
 
     x = torch.tensor([1.0, 2.0, 3.0])
@@ -114,7 +107,7 @@ def test_median_matches_numpy_for_even_counts():
 
 
 def test_tensorhdu_chunks_match_full_read(tmp_path):
-    """B5: chunks() must work and equal the full read, band by band."""
+    """chunks() must work and equal the full read, band by band."""
     data = torch.arange(64, dtype=torch.float32).reshape(8, 8)
     path = tmp_path / "cube.fits"
     torchfits.write(str(path), data, overwrite=True)
@@ -156,7 +149,7 @@ def test_hdulist_rejects_write_modes(tmp_path):
 
 
 def test_shared_hdulist_reads_across_threads(tmp_path):
-    """H1: concurrent to_tensor() on one HDUList must be safe (private handles)."""
+    """Concurrent to_tensor() on one HDUList must be safe (private handles)."""
     import threading
 
     data = torch.randn(16, 16)
@@ -207,7 +200,7 @@ def test_stream_scaled_table_with_mmap_succeeds(tmp_path):
 
 
 def test_quantize_nan_becomes_blank_not_lo(tmp_path):
-    """B4: non-finite pixels encode as the reserved BLANK sentinel."""
+    """Non-finite pixels encode as the reserved BLANK sentinel."""
     x = torch.randn(16, 16) * 10 + 100
     x[0, 0] = float("nan")
     path = tmp_path / "nanq.fits"

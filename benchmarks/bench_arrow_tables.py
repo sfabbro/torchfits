@@ -145,7 +145,6 @@ def main() -> None:
                 apply_fits_nulls=False,
                 batch_size=args.batch_size,
                 backend="cpp",
-                use_cache=False,
             ),
         )
     )

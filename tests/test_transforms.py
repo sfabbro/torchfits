@@ -165,7 +165,7 @@ class TestMedianAminAmaxQuantile:
     def test_median_is_interpolated(self) -> None:
         x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
         m = _median(x, (-2, -1))
-        # M7: interpolated median matches numpy.median for even counts,
+        # Interpolated median matches numpy.median for even counts,
         # unlike torch.median's lower-middle element.
         assert m[0, 0, 0].item() == pytest.approx(2.5)  # median of [1,2,3,4]
         assert m[1, 0, 0].item() == pytest.approx(6.5)  # median of [5,6,7,8]
@@ -184,6 +184,13 @@ class TestMedianAminAmaxQuantile:
         x = torch.randn(4, 64, 64)
         q = _quantile(x, 0.5, (-2, -1))
         assert q.shape == (4, 1, 1)
+
+    def test_median_quantile_accept_float16(self) -> None:
+        x = torch.arange(8, dtype=torch.float16)
+        med = _median(x, (0,))
+        q = _quantile(x, 0.5, (0,))
+        assert torch.isfinite(med).all()
+        assert torch.isfinite(q).all()
 
     def test_amin_amax_non_contiguous(self) -> None:
         x = torch.randn(2, 3, 64, 64)
@@ -264,7 +271,7 @@ class TestEstimateBackground:
         # col4 from rows1-3 (10,15,20). Sorted: 1,2,3,4,5,6,10,11,15,16,20,21,22,23,24,25,26?
         # Wait, with 5x5 = 25 values, masking 3x3=9 leaves 16. Values 1-25.
         # Border: [1,2,3,4,5, 6,10, 11,15, 16,20, 21,22,23,24,25]
-        # Interpolated median (M7) of these 16 values = (11+15)/2 = 13,
+        # Interpolated median of these 16 values = (11+15)/2 = 13,
         # matching numpy.median instead of torch.median's lower-middle 11.
         assert abs(med.item() - 13.0) < 1e-6
 
@@ -450,6 +457,14 @@ class TestLogStretch:
             LogStretch(a=0.0)
         with pytest.raises(ValueError, match="must be > 0"):
             LogStretch(a=-1.0)
+
+    def test_float16_does_not_overflow(self) -> None:
+        x = torch.tensor([100.0], dtype=torch.float16)
+        t = LogStretch(a=1000.0)
+        out = t.forward(x)
+        ref = t.forward(x.float())
+        assert torch.isfinite(out).all()
+        assert torch.allclose(out.float(), ref, rtol=1e-3, atol=1e-3)
 
 
 class TestSqrtStretch:
@@ -1012,6 +1027,11 @@ class TestFITSHeaderNormalize:
         restored = t.inverse(out)
         assert torch.allclose(restored, x, atol=1e-5)
 
+    def test_int32_keeps_counts_above_2_24(self) -> None:
+        x = torch.tensor([2**24, 2**24 + 1], dtype=torch.int32)
+        out = FITSHeaderNormalize({"BITPIX": 32})(x)
+        assert out[0] != out[1]
+
     def test_uint8(self) -> None:
         header: dict[str, object] = {"BITPIX": 8, "BSCALE": 1.0, "BZERO": 0.0}
         x = torch.tensor([0.0, 128.0, 255.0])
@@ -1029,7 +1049,7 @@ class TestFITSHeaderNormalize:
 
 
 # ---------------------------------------------------------------------------
-# GlobalScalarNorm (P5 — linear, invertible)
+# GlobalScalarNorm (linear, invertible)
 # ---------------------------------------------------------------------------
 
 
@@ -1275,6 +1295,13 @@ class TestSigmaClipVectorized:
         assert torch.allclose(vec, ref, atol=1e-5, rtol=1e-5), (
             f"max diff: {(vec - ref).abs().max().item():.2e}"
         )
+
+    def test_global_median_fill_replaces_outlier(self) -> None:
+        x = torch.ones(8, 8)
+        x[0, 0] = 1000.0
+        out = SigmaClip(n_sigma=3.0, max_iter=5, dim=(), fill="median")(x)
+        assert out[0, 0].item() != 1000.0
+        assert abs(out[0, 0].item() - 1.0) < 1e-5
 
     def test_constant_image(self) -> None:
         """Constant image: std=0, no clipping."""
@@ -1640,3 +1667,9 @@ class TestFITSHeaderScaleRoundtrip:
         fwd = t.forward(x)
         inv = t.inverse(fwd)
         assert torch.allclose(inv, x, atol=1e-5)
+
+    def test_unsigned_int16_stays_float(self) -> None:
+        raw = torch.tensor([0, 1, -1], dtype=torch.int16)
+        out = FITSHeaderScale(bscale=1.0, bzero=32768.0)(raw)
+        assert out.dtype.is_floating_point
+        assert out.tolist() == [32768.0, 32769.0, 32767.0]

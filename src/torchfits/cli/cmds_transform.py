@@ -9,6 +9,8 @@ from typing import Any
 import torch
 
 import torchfits
+from torchfits._io_engine._hdu_rewrite import _strip_compression_cards
+from torchfits.hdu import Header
 
 from .common import (
     EXIT_OK,
@@ -127,7 +129,24 @@ def _transform_one(
         if not isinstance(result, torch.Tensor):
             raise IoError(f"{name} did not return a tensor")
         if result.is_floating_point():
-            header = None
+            # Keep descriptive/positional keys (EXTNAME, WCS, OBJECT, ...) but
+            # drop storage-convention keys that describe the ORIGINAL payload
+            # and would make readers misinterpret the transformed bytes
+            # (same rule as _hdu_rewrite.replace_hdu's preserve path).
+            preserved = Header(header)
+            for stale_key in (
+                "BSCALE",
+                "BZERO",
+                "BLANK",
+                "DATAMIN",
+                "DATAMAX",
+                "DATASUM",
+                "CHECKSUM",
+            ):
+                if stale_key in preserved:
+                    del preserved[stale_key]
+            preserved = _strip_compression_cards(preserved)
+            header = preserved
         torchfits.write_tensor(output_path, result, header=header, overwrite=True)
     except UsageError:
         raise

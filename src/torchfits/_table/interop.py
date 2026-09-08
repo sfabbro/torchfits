@@ -256,7 +256,7 @@ def to_pandas(
         return read(data, **io_kwargs).to_pandas(**pandas_kwargs)
 
     # Batch/table inputs must not receive I/O kwargs (hdu, columns, ...);
-    # forward only the pandas-valid remainder (M12).
+    # forward only the pandas-valid remainder.
     _, pandas_kwargs = _split_io_kwargs(kwargs)
 
     if hasattr(data, "to_pandas"):

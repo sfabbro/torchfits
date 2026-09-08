@@ -8,7 +8,6 @@ from .base import FITSTransform
 from .helpers import (
     _upcast_for_precision,
     safe_arcsinh,
-    safe_log,
 )
 
 
@@ -74,12 +73,12 @@ class LogStretch(FITSTransform):
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        x_clamped = torch.clamp_min(x, 0.0)
-        return (
-            safe_log(1.0 + self.a * x_clamped, eps=self.eps)
-            .div_(math.log(10))
-            .div_(self._norm)
-        )
+        # Upcast BEFORE 1 + a*x: in float16, a*x overflows to inf for x > ~65
+        # (a=1000) before safe_log's internal upcast could take effect.
+        orig_dtype = x.dtype
+        xu = torch.clamp_min(_upcast_for_precision(x), 0.0)
+        out = torch.log10(torch.clamp_min(1.0 + self.a * xu, self.eps))
+        return out.div_(self._norm).to(orig_dtype)
 
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None

@@ -357,6 +357,11 @@ def _schema_from_header(
         return pa.schema([], metadata=table_meta if include_fits_metadata else None)
     if any_vla:
         return None
+    if columns is not None:
+        # Match the data path: read(columns=[...]) returns fields in the
+        # requested order, so the header-only schema must agree.
+        by_name = {f.name: f for f in fields}
+        fields = [by_name[name] for name in dict.fromkeys(columns) if name in by_name]
     return pa.schema(fields, metadata=table_meta if include_fits_metadata else None)
 
 

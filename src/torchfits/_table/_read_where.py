@@ -35,7 +35,7 @@ from ._read_schema import (
 logger = logging.getLogger(__name__)
 
 # NOTE: ceiling — full-table torch WHERE materializes all selected columns before
-# masking; above this row count fall through to chunked Arrow-filter instead (P0-1).
+# masking; above this row count fall through to chunked Arrow-filter instead.
 _TORCH_WHERE_MAX_ROWS = 1_000_000
 
 

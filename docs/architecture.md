@@ -399,7 +399,7 @@ is the stability contract — new symbols are private until promoted to
 |---|---|
 | `FITSFile` | RAII wrapper around `fitsfile*`. Holds per-handle scale/compressed/image_info caches, raw fd, shared metadata. |
 | `SubsetReader` | Reusable RAII reader for repeated cutout access from a single file. |
-| `HDUInfo` | Struct: HDU index, type string, header dict. |
+| `HDUInfo` | Struct: HDU index, type string, header as a list of `(key, value, comment)` triples (repeatable HISTORY/COMMENT cards are not collapsed). |
 | `TableReader` | Column-oriented reader with mmap, buffered, and filtered paths. |
 
 ### Image functions

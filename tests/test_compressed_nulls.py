@@ -1,6 +1,6 @@
 """Regression tests for null handling in compressed-image (CompImage) HDUs.
 
-B1: the null-pixel probe used to dlsym a CFITSIO symbol that exists in no
+The null-pixel probe used to dlsym a CFITSIO symbol that exists in no
 upstream release, so undefined pixels in CompImage HDUs silently decoded as
 0 instead of NaN. These tests pin the fixed behavior against astropy as an
 independent oracle.

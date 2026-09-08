@@ -1,4 +1,4 @@
-"""Regression tests for deep-review P0 ship-blockers."""
+"""WHERE on large tables must not full-read; batch path errors must propagate."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from torchfits._table import _read_where as where_mod
 
 
 def test_torch_where_filter_skips_large_tables(tmp_path):
-    """P0-1: large NAXIS2 must not materialize all rows via torch WHERE."""
+    """Large NAXIS2 must not materialize all rows via torch WHERE."""
     path = str(tmp_path / "large.fits")
     header = {
         "NAXIS2": where_mod._TORCH_WHERE_MAX_ROWS + 1,
@@ -57,7 +57,7 @@ def test_torch_where_filter_skips_large_tables(tmp_path):
 
 
 def test_torch_where_filter_still_runs_for_small_tables(tmp_path):
-    """P0-1: small tables keep the torch mask path."""
+    """Small tables keep the torch mask path."""
     path = str(tmp_path / "small.fits")
     header = {
         "NAXIS2": 4,
@@ -105,7 +105,7 @@ def test_torch_where_filter_still_runs_for_small_tables(tmp_path):
 
 
 def test_read_batch_paths_uses_read_exc_types_and_strict():
-    """P0-2: batch C++ failures must not bare-except; strict re-raises."""
+    """Batch C++ failures must not bare-except; strict re-raises."""
     cpp = mock.Mock()
     cpp.read_images_batch.side_effect = RuntimeError("batch boom")
     logger = mock.Mock()
@@ -179,7 +179,7 @@ def test_read_batch_paths_uses_read_exc_types_and_strict():
 
 
 def test_read_batch_paths_does_not_swallow_keyboardinterrupt():
-    """P0-2: unexpected exceptions (not in read_exc_types) must propagate."""
+    """Unexpected exceptions (not in read_exc_types) must propagate."""
     cpp = mock.Mock()
     cpp.read_images_batch.side_effect = KeyboardInterrupt()
     logger = mock.Mock()

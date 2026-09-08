@@ -1126,3 +1126,45 @@ def test_cli_rejects_ftp_remote_paths():
     result = _run_cli("info", "ftp://example.com/x.fits")
     assert result.returncode == 3
     assert "remote paths are not supported" in result.stderr
+
+
+def test_cli_arith_hdu2_reuses_operand(tmp_path) -> None:
+    a = tmp_path / "a.fits"
+    torchfits.write_tensor(a, torch.full((2, 2), 10.0))
+    torchfits.insert_hdu(str(a), torch.full((2, 2), 20.0), index=1)
+    b = tmp_path / "b.fits"
+    torchfits.write_tensor(b, torch.full((2, 2), 5.0))
+    proc = _run_cli(
+        "arith",
+        str(a),
+        "--operand2",
+        str(b),
+        "--hdu2",
+        "0",
+        "--op",
+        "add",
+        "-o",
+        str(tmp_path / "sum.fits"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    hdu0 = torchfits.read_tensor(str(tmp_path / "sum.fits"), hdu=0)
+    hdu1 = torchfits.read_tensor(str(tmp_path / "sum.fits"), hdu=1)
+    assert hdu0.flatten().tolist() == [15.0] * 4
+    assert hdu1.flatten().tolist() == [25.0] * 4
+
+
+def test_cli_compress_out_dir_strips_cfitsio_section(tmp_path) -> None:
+    img = tmp_path / "img.fits"
+    torchfits.write_tensor(img, torch.arange(16.0).reshape(4, 4))
+    out_dir = tmp_path / "outs"
+    proc = _run_cli(
+        "compress",
+        f"{img}[1:4,1:4]",
+        "--out-dir",
+        str(out_dir),
+        "--algorithm",
+        "RICE_1",
+    )
+    assert proc.returncode == 0, proc.stderr
+    names = sorted(p.name for p in out_dir.iterdir())
+    assert names == ["img.fits"]

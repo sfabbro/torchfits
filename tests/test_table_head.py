@@ -1,3 +1,6 @@
+"""TableHDU / TableHDURef.head() composes with existing row slices."""
+
+import numpy as np
 import torch
 from torchfits.hdu import Header, TableHDU, TableHDURef
 
@@ -43,8 +46,6 @@ def test_tablehdu_head_negative():
 
 
 def test_tablehdu_head_numpy():
-    import numpy as np
-
     data = {"x": np.zeros(10)}
     hdu = TableHDU(data)
 

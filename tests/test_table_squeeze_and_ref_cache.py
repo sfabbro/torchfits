@@ -1,5 +1,7 @@
-import torch
+"""Scalar (N,1) columns squeeze to (N,); TableHDURef columns follow header edits."""
+
 import numpy as np
+import torch
 from torchfits.hdu import Header, TableHDU, TableHDURef
 
 

@@ -1,3 +1,5 @@
+"""TableHDU schema and string_columns refresh when the header mutates."""
+
 from torchfits.hdu import Header, TableHDU
 
 

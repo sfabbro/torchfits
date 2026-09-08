@@ -1,4 +1,4 @@
-"""Wave-4 deep-review P2 performance regressions."""
+"""stream_table header laziness, cache config isolation, and PNG export."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import pytest
 import torch
 
 
-# --- P2-1: header read is skipped when no consumer needs it -----------------
 def test_read_cpp_table_chunk_defers_header_when_read_fails():
     """A numeric row-slice read that fails before any header consumer runs must
     not touch read_header (header is lazy + unsigned dtypes deferred)."""
@@ -40,7 +39,6 @@ def test_read_cpp_table_chunk_defers_header_when_read_fails():
     fake_header.assert_not_called()
 
 
-# --- P2-2: PNG export uses the fast numpy path and stays valid --------------
 def test_write_rgb_image_produces_valid_png(tmp_path):
     from torchfits.transforms.rgb import write_rgb_image
 
@@ -55,7 +53,6 @@ def test_write_rgb_image_produces_valid_png(tmp_path):
     assert (width, height) == (4, 3)
 
 
-# --- P2-3: SigmaClip still clips correctly without the per-iter restore -----
 def test_sigmaclip_clips_outlier():
     from torchfits.transforms.clip import SigmaClip
 
@@ -69,7 +66,6 @@ def test_sigmaclip_clips_outlier():
     assert torch.equal(clipped, again)
 
 
-# --- P2-5: stream_table skips get_header when total_rows is supplied --------
 def test_stream_table_skips_header_when_total_rows_given(tmp_path):
     from torchfits._io_engine.table_streaming import stream_table
 
@@ -109,7 +105,6 @@ def test_default_table_column_rejects_bad_tnull():
         _default_table_column_values("QUAL", "I", 3, tnull="not-an-int")
 
 
-# --- P2-6: for_environment is memoised but stays correct under mocking ------
 def test_for_environment_memoised_and_mock_safe():
     from torchfits.cache import CacheConfig
 
@@ -145,14 +140,13 @@ def test_cache_manager_owns_private_config_copy():
     assert CacheConfig.for_environment().max_files != 123456
 
 
-# --- P2-7: the C++ capability probe is now stateless (no cache) ---------
 def test_clear_cpp_attr_cache():
     from torchfits._io_engine import _read_pipeline as rp
 
     dummy = mock.Mock(spec=["present"])
     assert rp._cpp_has(dummy, "present") is True
     assert rp._cpp_has(dummy, "absent") is False
-    # Legacy cache was removed (A-03); _clear_cpp_attr_cache is gone or no-op.
+    # Legacy cache was removed; _clear_cpp_attr_cache is gone or no-op.
     if hasattr(rp, "_CPP_ATTR_CACHE"):
         assert rp._CPP_ATTR_CACHE  # populated (legacy)
         rp._clear_cpp_attr_cache()
@@ -164,7 +158,6 @@ def test_clear_cpp_attr_cache():
             rp._clear_cpp_attr_cache()
 
 
-# --- P2-10: capability probes swallow only expected I/O errors --------------
 def test_probe_returns_empty_on_missing_file():
     from torchfits._table import read as read_mod
 

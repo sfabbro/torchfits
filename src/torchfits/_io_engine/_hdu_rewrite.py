@@ -420,7 +420,15 @@ def replace_hdu(
         old_header = getattr(hdus[target], "header", None)
         if old_header is not None:
             preserved = Header(old_header)
-            for stale_key in ("BSCALE", "BZERO", "BLANK", "DATASUM", "CHECKSUM"):
+            for stale_key in (
+                "BSCALE",
+                "BZERO",
+                "BLANK",
+                "DATAMIN",
+                "DATAMAX",
+                "DATASUM",
+                "CHECKSUM",
+            ):
                 if stale_key in preserved:
                     del preserved[stale_key]
             preserved = _strip_compression_cards(preserved)

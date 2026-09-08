@@ -1,7 +1,9 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
@@ -27,10 +29,21 @@ using torchfits::internal::ndarray_is_c_contiguous;
 using torchfits::internal::ensure_c_contiguous_ndarray;
 using torchfits::internal::pad_fits_strings;
 
+// CFITSIO entry points (fits_close_file included) may return immediately
+// when *status != 0, so unwinding with the poisoned status would leak the
+// handle. Error paths close with a fresh status; only the success-path
+// close reuses &status so flush failures still surface.
+inline void close_file_ignore_status(fitsfile* fptr) {
+    if (!fptr) return;
+    int close_status = 0;
+    fits_close_file(fptr, &close_status);
+}
+
 void rollback_inserted_rows(fitsfile* fptr, long start_row, long num_rows) {
     int st = 0;
     fits_delete_rows(fptr, start_row, num_rows, &st);
-    fits_close_file(fptr, &st);
+    int close_status = 0;
+    fits_close_file(fptr, &close_status);
 }
 
 }  // namespace
@@ -67,13 +80,16 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
         }
         torchfits::write_table_hdu(fptr, tensor_dict, header, schema_obj, is_ascii);
     } catch (...) {
-        fits_close_file(fptr, &status);
+        int close_status = 0;
+        fits_close_file(fptr, &close_status);
         throw;
     }
 
     fits_close_file(fptr, &status);
+    if (status != 0) {
+        throw std::runtime_error("Failed to close FITS file after writing table (data may be incomplete)");
+    }
 }
-
 long infer_num_rows_from_payload(nb::dict tensor_dict) {
     long num_rows = 0;
     if (tensor_dict.size() <= 0) {
@@ -124,7 +140,7 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
@@ -136,7 +152,7 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
 
     fits_insert_rows(fptr, start_row -1, num_rows, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to insert rows for append_rows");
     }
 
@@ -175,10 +191,18 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
             }
 
             for (long row = 0; row < num_rows; ++row) {
+                if (seq[row].is_none()) {
+                    fits_write_col(fptr, base_type, colnum, start_row + row, 1, 0, nullptr, &status);
+                    continue;
+                }
                 nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
                 if (arr.ndim() > 1) {
                     rollback_inserted_rows(fptr, start_row, num_rows);
                     throw std::runtime_error("append_rows VLA rows must be 1D for " + col_name);
+                }
+                if (arr.size() > static_cast<size_t>(std::numeric_limits<long>::max())) {
+                    rollback_inserted_rows(fptr, start_row, num_rows);
+                    throw std::runtime_error("append_rows VLA row too large for " + col_name);
                 }
                 long nelements = static_cast<long>(arr.size());
                 std::vector<uint8_t> contig_buf;
@@ -294,8 +318,13 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
                 );
             }
 
+            if (num_rows > 0 && repeat > 0 &&
+                static_cast<uint64_t>(num_rows) > SIZE_MAX / static_cast<uint64_t>(repeat)) {
+                rollback_inserted_rows(fptr, start_row, num_rows);
+                throw std::runtime_error("append_rows BIT buffer size overflows size_t for " + col_name);
+            }
             std::vector<unsigned char> bits(
-                static_cast<size_t>(num_rows * repeat), 0
+                static_cast<size_t>(num_rows) * static_cast<size_t>(repeat), 0
             );
 
             nb::dlpack::dtype dt_b = t.dtype();
@@ -369,6 +398,12 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
                 std::to_string(repeat) + " payload width=" + std::to_string(repeat_vals));
         }
 
+        if (num_rows > 0 && repeat_vals > 0 &&
+            static_cast<uint64_t>(num_rows) >
+                static_cast<uint64_t>(std::numeric_limits<long>::max()) / static_cast<uint64_t>(repeat_vals)) {
+            rollback_inserted_rows(fptr, start_row, num_rows);
+            throw std::runtime_error("append_rows element count overflows long for " + col_name);
+        }
         long nelements = num_rows * repeat_vals;
         std::vector<uint8_t> contig_buf;
         void* data_ptr = ensure_c_contiguous_ndarray(tensor, nelements, contig_buf);
@@ -417,6 +452,9 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
         throw std::runtime_error("Failed to append rows to FITS table");
     }
     fits_close_file(fptr, &status);
+    if (status != 0) {
+        throw std::runtime_error("Failed to close FITS file after appending rows (data may be incomplete)");
+    }
 }
 
 void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long start_row) {
@@ -441,14 +479,14 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
     long total_rows = 0;
     fits_get_num_rows(fptr, &total_rows, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to get table row count");
     }
 
@@ -459,7 +497,7 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
 
     fits_insert_rows(fptr, start_row - 1, num_rows, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to insert rows into FITS table");
     }
 
@@ -469,11 +507,13 @@ void insert_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
     try {
         populate_rows(fptr, tensor_dict, start_row, num_rows);
         fits_close_file(fptr, &status);
+        fptr = nullptr;
         if (status != 0) {
             throw std::runtime_error("Failed to insert rows into FITS table");
         }
     } catch (...) {
-        fits_close_file(fptr, &status);
+        // fptr is null after a successful close above: never double-close.
+        close_file_ignore_status(fptr);
         try {
             delete_rows(filename, hdu_num, start_row, num_rows);
         } catch (...) {
@@ -504,14 +544,14 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
     long total_rows = 0;
     fits_get_num_rows(fptr, &total_rows, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to get table row count");
     }
 
@@ -567,24 +607,36 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
             }
 
             for (long row = 0; row < num_rows; ++row) {
+                if (seq[row].is_none()) {
+                    fits_write_col(fptr, base_type, colnum, start_row + row, 1, 0, nullptr, &status);
+                    continue;
+                }
                 nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
                 if (arr.ndim() > 1) {
                     throw std::runtime_error("update_rows VLA rows must be 1D for " + col_name);
                 }
+                if (arr.size() > static_cast<size_t>(std::numeric_limits<long>::max())) {
+                    throw std::runtime_error("update_rows VLA row too large for " + col_name);
+                }
                 long nelements = static_cast<long>(arr.size());
-                void* data_ptr = arr.size() ? arr.data() : nullptr;
+                std::vector<uint8_t> contig_buf;
+                void* data_ptr = nullptr;
+                if (nelements > 0) {
+                    nb::ndarray<> row_view = arr;
+                    data_ptr = ensure_c_contiguous_ndarray(row_view, nelements, contig_buf);
+                }
                 std::vector<unsigned char> logical;
 
                 if (base_type == TLOGICAL && nelements > 0) {
                     nb::dlpack::dtype dt = arr.dtype();
                     logical.resize(static_cast<size_t>(nelements));
                     if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                        const bool* src = static_cast<const bool*>(arr.data());
+                        const bool* src = static_cast<const bool*>(data_ptr);
                         for (long idx = 0; idx < nelements; ++idx) {
                             logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                         }
                     } else {
-                        const uint8_t* src = static_cast<const uint8_t*>(arr.data());
+                        const uint8_t* src = static_cast<const uint8_t*>(data_ptr);
                         for (long idx = 0; idx < nelements; ++idx) {
                             logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                         }
@@ -836,6 +888,11 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                 std::to_string(repeat) + " payload width=" + std::to_string(repeat_vals));
         }
 
+        if (num_rows > 0 && repeat_vals > 0 &&
+            static_cast<uint64_t>(num_rows) >
+                static_cast<uint64_t>(std::numeric_limits<long>::max()) / static_cast<uint64_t>(repeat_vals)) {
+            throw std::runtime_error("update_rows element count overflows long for " + col_name);
+        }
         long nelements = num_rows * repeat_vals;
         std::vector<uint8_t> contig_buf;
         void* data_ptr = ensure_c_contiguous_ndarray(tensor, nelements, contig_buf);
@@ -909,7 +966,7 @@ void update_rows(const char* filename, int hdu_num, nb::dict tensor_dict, long s
         }
         populate_rows(fptr, tensor_dict, start_row, num_rows);
     } catch (...) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw;
     }
 
@@ -942,7 +999,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
@@ -956,7 +1013,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
         int colnum = 0;
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(old_name.c_str()), &colnum, &status);
         if (status != 0) {
-            fits_close_file(fptr, &status);
+            close_file_ignore_status(fptr);
             throw std::runtime_error("Column not found for rename_columns: " + old_name);
         }
 
@@ -964,7 +1021,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
         int existing = 0;
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(new_name.c_str()), &existing, &check_status);
         if (check_status == 0 && existing > 0) {
-            fits_close_file(fptr, &status);
+            close_file_ignore_status(fptr);
             throw std::runtime_error("Target column already exists: " + new_name);
         }
 
@@ -972,7 +1029,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
         fits_make_keyn("TTYPE", colnum, keyname, &status);
         fits_update_key(fptr, TSTRING, keyname, (void*)new_name.c_str(), nullptr, &status);
         if (status != 0) {
-            fits_close_file(fptr, &status);
+            close_file_ignore_status(fptr);
             throw std::runtime_error("Failed to update column name for " + old_name);
         }
     }
@@ -1001,7 +1058,7 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
 
     fits_movabs_hdu(fptr, hdu_num + 1, nullptr, &status);
     if (status != 0) {
-        fits_close_file(fptr, &status);
+        close_file_ignore_status(fptr);
         throw std::runtime_error("Failed to move to table HDU");
     }
 
@@ -1012,7 +1069,7 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
         int colnum = 0;
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(name.c_str()), &colnum, &status);
         if (status != 0) {
-            fits_close_file(fptr, &status);
+            close_file_ignore_status(fptr);
             throw std::runtime_error("Column not found for drop_columns: " + name);
         }
         colnums.push_back(colnum);
@@ -1024,7 +1081,7 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
     for (int colnum : colnums) {
         fits_delete_col(fptr, colnum, &status);
         if (status != 0) {
-            fits_close_file(fptr, &status);
+            close_file_ignore_status(fptr);
             throw std::runtime_error("Failed to delete column");
         }
     }

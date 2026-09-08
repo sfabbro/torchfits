@@ -150,9 +150,11 @@ class SigmaClip(FITSTransform):
             else:
                 # Median fill: use the existing _median helper; masked
                 # positions are excluded by the mask (no inf sentinel).
+                # dim=() clips globally, so the fill must reduce globally
+                # too — (-1,) would fill per-row while thresholds are global.
                 fill_val = _median(
                     x,
-                    dims if dims else (-1,),
+                    dims if dims else tuple(range(x.ndim)),
                     mask=internal_mask,
                 )
                 # Replace non-finite fills (all-masked groups yield NaN from
@@ -237,6 +239,8 @@ class AsymmetricSigmaClip(FITSTransform):
             lower = med - self.n_low * std
             upper = med + self.n_high * std
             clip_mask = (x >= lower) & (x <= upper)
+            # True = kept pixel (same convention as SigmaClip._last_mask).
+            self._last_mask = clip_mask
             if self.fill == "nan":
                 nan = x.new_full((), float("nan"))
                 return torch.where(clip_mask, x, nan)

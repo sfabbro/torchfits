@@ -111,3 +111,15 @@ def test_header_pop_removes_all_history_cards():
 def test_header_rejects_unparseable_cards() -> None:
     with pytest.raises((TypeError, ValueError)):
         Header(["not-a-card"])
+
+
+def test_header_tuple_cards_normalize_key_and_value() -> None:
+    import numpy as np
+
+    header = Header([(5, np.float64(1.5), "note"), ("DBL", np.int32(7), "c")])
+    assert header.card(5).key == "5"
+    assert header["5"] == 1.5
+    assert type(header["5"]) is float
+    assert header["DBL"] == 7
+    assert type(header["DBL"]) is int
+    assert header.card("5").value == header["5"]

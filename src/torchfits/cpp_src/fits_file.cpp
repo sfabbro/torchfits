@@ -388,7 +388,11 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
     return tensor;
 }
 
-bool FITSFile::write_image(nb::ndarray<> tensor, int hdu_num, double bscale, double bzero) {
+bool FITSFile::write_image(nb::ndarray<> tensor, int /*hdu_num*/, double /*bscale*/, double /*bzero*/) {
+    // Note: hdu_num is unused — fits_create_img always appends a new HDU.
+    // bscale/bzero are accepted for API compatibility but ignored: calling
+    // fits_set_bscale here would inverse-scale pixels without writing
+    // BSCALE/BZERO cards, so a later read would denormalize unlabeled data.
     int status = 0;
     int naxis = tensor.ndim();
     std::vector<long> naxes(naxis);
@@ -468,10 +472,16 @@ std::vector<std::tuple<std::string, std::string, std::string>> FITSFile::get_hea
 std::vector<long> FITSFile::get_shape(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
+    if (status != 0) throw std::runtime_error("Could not move to HDU");
     int naxis = 0;
     fits_get_img_dim(fptr_, &naxis, &status);
-    std::vector<long> naxes(naxis);
-    fits_get_img_size(fptr_, naxis, naxes.data(), &status);
+    if (status != 0) throw std::runtime_error("Could not read image dimensions");
+    if (naxis < 0 || naxis > 9) throw std::runtime_error("Invalid NAXIS for image shape");
+    std::vector<long> naxes(static_cast<size_t>(naxis));
+    if (naxis > 0) {
+        fits_get_img_size(fptr_, naxis, naxes.data(), &status);
+        if (status != 0) throw std::runtime_error("Could not read image size");
+    }
     std::reverse(naxes.begin(), naxes.end());
     return naxes;
 }
@@ -479,8 +489,10 @@ std::vector<long> FITSFile::get_shape(int hdu_num) {
 int FITSFile::get_dtype(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
+    if (status != 0) throw std::runtime_error("Could not move to HDU");
     int bitpix = 0;
     fits_get_img_type(fptr_, &bitpix, &status);
+    if (status != 0) throw std::runtime_error("Could not read image type");
     return bitpix;
 }
 
@@ -495,24 +507,18 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
         bitpix = std::get<0>(info);
         naxis = std::get<1>(info);
         const auto& naxes_ll = std::get<2>(info);
-        for (int i = 0; i < 9; ++i) naxes[i] = static_cast<long>(naxes_ll[i]);
+        for (int i = 0; i < 9; ++i) {
+            if (naxes_ll[i] < 0 || static_cast<unsigned long long>(naxes_ll[i]) >
+                static_cast<unsigned long long>(std::numeric_limits<long>::max())) {
+                throw std::runtime_error("FITS axis length out of range for subset read");
+            }
+            naxes[i] = static_cast<long>(naxes_ll[i]);
+        }
     }
     if (naxis < 2) throw std::runtime_error("Subset reading requires at least 2D image");
     long max_x = naxes[0], max_y = naxes[1];
     if (x1 < 0) x1 = 0; if (y1 < 0) y1 = 0;
     if (x2 > max_x) x2 = max_x; if (y2 > max_y) y2 = max_y;
-    if (x2 <= x1 || y2 <= y1) {
-        // Preserve whichever of width/height is non-degenerate instead of
-        // collapsing both to 0: e.g. a zero-width, full-height box should
-        // report shape (..., height, 0), not (..., 0, 0).
-        long empty_width = x2 > x1 ? x2 - x1 : 0;
-        long empty_height = y2 > y1 ? y2 - y1 : 0;
-        std::vector<int64_t> empty_shape;
-        for (int i = naxis - 1; i >= 2; --i) empty_shape.push_back(naxes[i]);
-        empty_shape.push_back(empty_height);
-        empty_shape.push_back(empty_width);
-        return torch::empty(empty_shape, torch::TensorOptions().dtype(torch::kFloat32));
-    }
     const auto& scale_info = get_scale_info(hdu_num, bitpix);
     bool scaled = scale_info.scaled;
     torch::ScalarType dtype;
@@ -533,12 +539,24 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
         switch (bitpix) {
             case BYTE_IMG:     dtype = torch::kUInt8;  datatype = TBYTE;      break;
             case SHORT_IMG:    dtype = torch::kInt16;  datatype = TSHORT;     break;
-            case LONG_IMG:     dtype = torch::kInt32;  datatype = TINT;       break;
+            case LONG_IMG:    dtype = torch::kInt32;  datatype = TINT;       break;
             case LONGLONG_IMG: dtype = torch::kInt64;  datatype = TLONGLONG;  break;
             case FLOAT_IMG:    dtype = torch::kFloat32; datatype = TFLOAT;     break;
             case DOUBLE_IMG:   dtype = torch::kFloat64; datatype = TDOUBLE;    break;
             default: throw std::runtime_error("Unsupported BITPIX");
         }
+    }
+    if (x2 <= x1 || y2 <= y1) {
+        // Preserve whichever of width/height is non-degenerate instead of
+        // collapsing both to 0: e.g. a zero-width, full-height box should
+        // report shape (..., height, 0), not (..., 0, 0).
+        long empty_width = x2 > x1 ? x2 - x1 : 0;
+        long empty_height = y2 > y1 ? y2 - y1 : 0;
+        std::vector<int64_t> empty_shape;
+        for (int i = naxis - 1; i >= 2; --i) empty_shape.push_back(naxes[i]);
+        empty_shape.push_back(empty_height);
+        empty_shape.push_back(empty_width);
+        return torch::empty(empty_shape, torch::TensorOptions().dtype(dtype));
     }
     long width = x2 - x1, height = y2 - y1;
     std::vector<int64_t> shape;
@@ -572,14 +590,17 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
 int FITSFile::get_num_hdus() {
     int status = 0, nhdus = 0;
     fits_get_num_hdus(fptr_, &nhdus, &status);
+    if (status != 0) throw std::runtime_error("Could not read number of HDUs");
     return nhdus;
 }
 
 std::string FITSFile::get_hdu_type(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
+    if (status != 0) throw std::runtime_error("Could not move to HDU");
     int hdutype = 0;
     fits_get_hdu_type(fptr_, &hdutype, &status);
+    if (status != 0) throw std::runtime_error("Could not read HDU type");
     if (hdutype == IMAGE_HDU) return "IMAGE";
     if (hdutype == ASCII_TBL) return "ASCII_TABLE";
     if (hdutype == BINARY_TBL) return "BINARY_TABLE";
@@ -870,11 +891,16 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
 std::string FITSFile::read_header_to_string(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
+    if (status != 0) throw std::runtime_error("Could not move to HDU");
     char* header_str = nullptr;
     int nkeys = 0;
-    if (fits_hdr2str(fptr_, 0, nullptr, 0, &header_str, &nkeys, &status)) return "";
+    const int hdr_status = fits_hdr2str(fptr_, 0, nullptr, 0, &header_str, &nkeys, &status);
+    if (hdr_status != 0 || status != 0 || header_str == nullptr) {
+        if (header_str != nullptr) fits_free_memory(header_str, &status);
+        return "";
+    }
     std::string result(header_str);
-    if (header_str) fits_free_memory(header_str, &status);
+    fits_free_memory(header_str, &status);
     return result;
 }
 
@@ -922,9 +948,15 @@ void SubsetReader::init_from_hdu() {
     naxis_ = naxis;
     bitpix_ = bitpix;
     naxes_.resize(naxis_);
-    for (int i = 0; i < naxis_; ++i) naxes_[i] = static_cast<long>(naxes[i]);
-    max_x_ = static_cast<long>(naxes[0]);
-    max_y_ = static_cast<long>(naxes[1]);
+    for (int i = 0; i < naxis_; ++i) {
+        if (naxes[i] < 0 || static_cast<unsigned long long>(naxes[i]) >
+            static_cast<unsigned long long>(std::numeric_limits<long>::max())) {
+            throw std::runtime_error("FITS axis length out of range for subset reader");
+        }
+        naxes_[i] = static_cast<long>(naxes[i]);
+    }
+    max_x_ = naxes_[0];
+    max_y_ = naxes_[1];
     const auto scale = file_.get_scale_info_for_hdu(hdu_num_);
     // Match full-image logical dtypes — do not float-promote signed-byte /
     // unsigned integer conventions (that lost to fitsio int8 cutouts).
@@ -978,12 +1010,16 @@ bool SubsetReader::ensure_data_mmap() {
     if (pixel_base_ != nullptr) return true;
     if (!raw_fast_ok_ || elem_bytes_ == 0 || data_offset_ <= 0) return false;
     auto meta = detail::get_shared_meta_for_path(filename_);
+    if (naxes_.size() < 2 || naxes_[0] <= 0 || naxes_[1] <= 0) return false;
+    const uint64_t w = static_cast<uint64_t>(naxes_[0]);
+    const uint64_t h = static_cast<uint64_t>(naxes_[1]);
+    const uint64_t eb = static_cast<uint64_t>(elem_bytes_);
+    if (eb == 0 || w > SIZE_MAX / eb) return false;
+    if (w * eb > SIZE_MAX / h) return false;
+    const size_t nbytes = static_cast<size_t>(w * h * eb);
+    if (nbytes == 0) return false;
     raw_fd_holder_ = detail::get_shared_raw_fd(meta, filename_);
     if (!raw_fd_holder_ || raw_fd_holder_->fd < 0) return false;
-
-    const size_t nbytes =
-        static_cast<size_t>(naxes_[0]) * static_cast<size_t>(naxes_[1]) * elem_bytes_;
-    if (nbytes == 0) return false;
 
     // Never map beyond the actual file: header-claimed sizes on truncated or
     // corrupt files would SIGBUS on first touch. Fall back to fits_read_subset.
@@ -1008,9 +1044,13 @@ bool SubsetReader::ensure_data_mmap() {
         raw_fd_holder_.reset();
         return false;
     }
-#if defined(MADV_RANDOM) && defined(MADV_WILLNEED)
-    // Random cutouts over a survey mosaic — WILLNEED is a light prefetch hint.
-    madvise(map_ptr_, map_len_, MADV_RANDOM | MADV_WILLNEED);
+#if defined(MADV_RANDOM)
+    madvise(map_ptr_, map_len_, MADV_RANDOM);
+#endif
+#if defined(MADV_WILLNEED)
+    // Light prefetch hint for mosaic cutouts; separate call because advice
+    // is a single enum (RANDOM|WILLNEED would collapse to WILLNEED).
+    madvise(map_ptr_, map_len_, MADV_WILLNEED);
 #endif
     pixel_base_ = static_cast<const uint8_t*>(map_ptr_) +
                   (static_cast<off_t>(data_offset_) - map_page_offset_);
@@ -1101,6 +1141,7 @@ bool SubsetReader::try_read_via_mmap(
 }
 
 torch::Tensor SubsetReader::read(long x1, long y1, long x2, long y2) {
+    std::lock_guard<std::mutex> lock(io_mutex_);
     if (closed_) throw std::runtime_error("SubsetReader is closed");
     if (x1 < 0) x1 = 0; if (y1 < 0) y1 = 0;
     if (x2 > max_x_) x2 = max_x_; if (y2 > max_y_) y2 = max_y_;
@@ -1152,6 +1193,7 @@ torch::Tensor SubsetReader::read(long x1, long y1, long x2, long y2) {
 }
 
 void SubsetReader::close() {
+    std::lock_guard<std::mutex> lock(io_mutex_);
     if (!closed_) {
         release_data_mmap();
         file_.close();

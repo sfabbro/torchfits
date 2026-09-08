@@ -569,7 +569,7 @@ def test_infer_fits_scalar_code_uint8_still_maps_to_b():
 
 
 def test_table_write_noncontiguous_numeric_roundtrip():
-    """A7: non-C-contiguous column views must still write correctly."""
+    """Non-C-contiguous column views must still write correctly."""
     path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
     path.close()
     try:

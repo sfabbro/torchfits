@@ -1,7 +1,4 @@
-"""Wave-5 deep-review regressions: LONGSTRN/CONTINUE (F1/G1), uint64 writes
-(F2), float TSCAL/TZERO scaling (F3), mmap-fallback for scaled tables (F4),
-mmap GIL release, per-batch reopen elimination, NIOBUF guards, and the
-removed scale-on-device dead helpers."""
+"""LONGSTRN/CONTINUE headers, uint64 rejection, and TSCAL/TZERO table reads."""
 
 from __future__ import annotations
 
@@ -16,7 +13,7 @@ import torch
 import torchfits
 
 
-# --- F1/G1: LONGSTRN '&' and bare CONTINUE header values -------------------
+# LONGSTRN / CONTINUE header values
 
 
 def test_long_string_roundtrip_writes_continue_and_reads_back(tmp_path):
@@ -27,7 +24,7 @@ def test_long_string_roundtrip_writes_continue_and_reads_back(tmp_path):
     torchfits.write(p, torch.zeros(2, 2), header={"MYLONG": long_val})
 
     raw = p.read_bytes()
-    assert b"CONTINUE" in raw, "G1: longstr write must emit CONTINUE cards"
+    assert b"CONTINUE" in raw, "long-string write must emit CONTINUE cards"
 
     hdr = torchfits.read_header(str(p), hdu=0)
     assert hdr["MYLONG"] == long_val
@@ -106,7 +103,7 @@ def test_hierarch_cards_parse_to_typed_long_keys(tmp_path):
     assert hdr["ESO DET CHIP1 ID"] == "RED"
 
 
-# --- F2: uint64 writes are rejected with guidance --------------------------
+# uint64 writes are rejected
 
 
 def test_uint64_image_write_rejected(tmp_path):
@@ -123,7 +120,7 @@ def test_uint64_table_column_write_rejected(tmp_path):
         )
 
 
-# --- F3/F4: float TSCAL/TZERO scaling + mmap fallback ----------------------
+# TSCAL/TZERO scaling + mmap fallback
 
 
 def _write_scaled_table(tmp_path, storage_dtype, storage_values):
@@ -147,8 +144,8 @@ def _write_scaled_table(tmp_path, storage_dtype, storage_values):
 def test_scaled_columns_return_physical_values_buffered_and_mmap(
     tmp_path, storage_dtype
 ):
-    """TSCAL/TZERO must apply to FLOAT/DOUBLE columns too (F3), and the mmap
-    row path must transparently fall back to buffered reads (F4)."""
+    """TSCAL/TZERO must apply to FLOAT/DOUBLE columns too, and the mmap
+    row path must transparently fall back to buffered reads."""
     from torchfits.table import read_torch
 
     p = _write_scaled_table(tmp_path, storage_dtype, [250, 251, 252, 253])
@@ -172,7 +169,7 @@ def test_scaled_where_selects_physical_values(tmp_path):
     assert got["val"].tolist() == [1006.0]
 
 
-# --- GIL: mmap batch reads release the GIL during the C++ read ---------------
+# mmap batch reads release the GIL during the C++ read
 
 
 def test_concurrent_mmap_full_reads_are_consistent(tmp_path):
@@ -202,7 +199,7 @@ def test_concurrent_mmap_full_reads_are_consistent(tmp_path):
     assert errors == []
 
 
-# --- Per-batch reopen elimination -------------------------------------------
+# scan reuses one mmap reader across batches
 
 
 def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
@@ -245,7 +242,7 @@ def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
     assert [b.num_rows for b in batches] == [16] * 8
 
 
-# --- NIOBUF/MINDIRECT tuning guards -----------------------------------------
+# NIOBUF/MINDIRECT tuning guards
 
 
 def test_vendored_cfitsio_has_niobuf_mindirect_guards():
@@ -259,7 +256,7 @@ def test_vendored_cfitsio_has_niobuf_mindirect_guards():
     assert "#ifndef MINDIRECT" in fitsio2_h.read_text()
 
 
-# --- Scale-on-device dead helpers removed -----------------------------------
+# scale-on-device dead helpers stay gone
 
 
 def test_scale_on_device_dead_helpers_removed():

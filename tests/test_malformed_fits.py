@@ -1,4 +1,4 @@
-"""Malformed / hostile FITS input corpus (M13) and checksum-on-corruption.
+"""Malformed / hostile FITS input corpus and checksum-on-corruption.
 
 Every public reader must fail loudly with a clear error on structurally
 broken files — never silently return wrong-shaped or zero-filled data, and

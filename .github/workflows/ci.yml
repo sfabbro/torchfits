@@ -149,7 +149,7 @@ jobs:
           tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py
           tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py
           tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py
-          tests/test_http_probe_fixture.py tests/test_mps.py tests/test_audit_register.py -q
+          tests/test_http_probe_fixture.py tests/test_mps.py tests/test_io_invariants.py -q
       - name: Docs contract
         run: |
           pip install "zensical>=0.0.52,<0.0.53"

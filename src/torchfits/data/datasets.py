@@ -63,6 +63,29 @@ def _shard_sequence(seq: list[Any], rank: int, world_size: int) -> list[Any]:
     return seq[rank::world_size]
 
 
+def _worker_shard(
+    seq: list[Any], rank: int, world_size: int, seed: int
+) -> tuple[list[Any], list[int], int]:
+    """Shard ``seq`` by rank, then by DataLoader worker.
+
+    Returns ``(sharded, indices, worker_seed)`` where ``indices`` is this
+    worker's contiguous slice of ``sharded`` (leftover rows go to the
+    first workers) and ``worker_seed`` is ``seed + worker_id``.
+    """
+    sharded = _shard_sequence(seq, rank, world_size)
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is None:
+        return sharded, list(range(len(sharded))), seed
+    total = len(sharded)
+    num_workers = worker_info.num_workers
+    worker_id = worker_info.id
+    per_worker = total // num_workers
+    remainder = total % num_workers
+    start = worker_id * per_worker + min(worker_id, remainder)
+    size = per_worker + (1 if worker_id < remainder else 0)
+    return sharded, list(range(start, start + size)), seed + worker_id
+
+
 def _buffered_shuffle(
     iterator: Iterator[Any], buffer_size: int = 1000, seed: int = 0
 ) -> Iterator[Any]:
@@ -386,22 +409,9 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
 
     def _generate(self) -> Iterator[Any]:
         rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files = _shard_sequence(self.files, rank, world_size)
-
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            indices = list(range(len(sharded_files)))
-            worker_seed = self.seed
-        else:
-            total = len(sharded_files)
-            num_workers = worker_info.num_workers
-            worker_id = worker_info.id
-            per_worker = total // num_workers
-            remainder = total % num_workers
-            start = worker_id * per_worker + min(worker_id, remainder)
-            size = per_worker + (1 if worker_id < remainder else 0)
-            indices = list(range(start, start + size))
-            worker_seed = self.seed + worker_id
+        sharded_files, indices, worker_seed = _worker_shard(
+            self.files, rank, world_size, self.seed
+        )
 
         if self.shuffle:
             g = torch.Generator()
@@ -709,22 +719,9 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
 
     def _generate(self) -> Iterator[Any]:
         rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files = _shard_sequence(self.files, rank, world_size)
-
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            indices = list(range(len(sharded_files)))
-            worker_seed = self.seed
-        else:
-            total = len(sharded_files)
-            num_workers = worker_info.num_workers
-            worker_id = worker_info.id
-            per_worker = total // num_workers
-            remainder = total % num_workers
-            start = worker_id * per_worker + min(worker_id, remainder)
-            size = per_worker + (1 if worker_id < remainder else 0)
-            indices = list(range(start, start + size))
-            worker_seed = self.seed + worker_id
+        sharded_files, indices, worker_seed = _worker_shard(
+            self.files, rank, world_size, self.seed
+        )
 
         if self.shuffle:
             g = torch.Generator()
@@ -841,22 +838,9 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
 
         stage_root = self.staging_dir or ephemeral_scratch_dir()
         rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files = _shard_sequence(self.files, rank, world_size)
-
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            indices = list(range(len(sharded_files)))
-            worker_seed = self.seed
-        else:
-            total = len(sharded_files)
-            num_workers = worker_info.num_workers
-            worker_id = worker_info.id
-            per_worker = total // num_workers
-            remainder = total % num_workers
-            start = worker_id * per_worker + min(worker_id, remainder)
-            size = per_worker + (1 if worker_id < remainder else 0)
-            indices = list(range(start, start + size))
-            worker_seed = self.seed + worker_id
+        sharded_files, indices, worker_seed = _worker_shard(
+            self.files, rank, world_size, self.seed
+        )
 
         if self.shuffle_files:
             g = torch.Generator()

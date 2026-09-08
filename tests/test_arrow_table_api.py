@@ -263,9 +263,9 @@ def test_arrow_schema_minimal():
     path = _make_table_file()
     try:
         sch = torchfits.table.schema(
-            path, hdu=1, columns=["RA", "ID"], include_fits_metadata=True
+            path, hdu=1, columns=["ID", "RA"], include_fits_metadata=True
         )
-        assert sch.names == ["RA", "ID"]
+        assert sch.names == ["ID", "RA"]
         assert sch.metadata is not None
         assert b"fits_hdu" in sch.metadata
     finally:

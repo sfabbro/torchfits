@@ -1,10 +1,4 @@
-"""Release-fix regressions for the torchfits CLI (B2, B3, H6, M10).
-
-Covers:
-- B2: ``arith`` on integer images must not wrap/truncate silently.
-- B3: ``stats`` must work on unsigned-convention images.
-- H6: ``diff`` must not report differences between identical NaN-bearing files.
-"""
+"""CLI arith must not wrap integers; stats works on unsigned; diff treats NaN as equal."""
 
 from __future__ import annotations
 

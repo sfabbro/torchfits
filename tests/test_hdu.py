@@ -116,3 +116,24 @@ def test_hdu_repr_html():
     ref_html = ref._repr_html_()
     assert "TableHDURef" in ref_html
     assert html.escape("CAT") in ref_html
+
+
+def test_derived_table_hdu_header_is_independent(tmp_path) -> None:
+    import torchfits
+
+    path = tmp_path / "t.fits"
+    torchfits.write(str(path), {"X": [1.0, 2.0, 3.0]}, header={"EXTNAME": "SRC"})
+    source = torchfits.open(str(path))[1].materialize()
+    for derived in (
+        source.select(["X"]),
+        source.head(2),
+        source.add_column("Y", [1, 2, 3]),
+        source.drop_columns(["X"]),
+        source.rename_column("X", "Z"),
+        source.append_rows({"X": [4.0]}),
+    ):
+        derived.header["EXTNAME"] = "DERIVED"
+        assert source.header["EXTNAME"] == "SRC"
+    filtered = source.filter("X > 1")
+    filtered.header["EXTNAME"] = "DERIVED"
+    assert source.header["EXTNAME"] == "SRC"

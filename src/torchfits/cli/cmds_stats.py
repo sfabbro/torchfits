@@ -66,11 +66,12 @@ def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
         if not isinstance(tensor, torch.Tensor):
             raise IoError(f"{path}:{index} read_tensor did not return a tensor")
         header = headers[index]
-        flat = tensor.float().reshape(-1)
         # min/max must run on an upcast copy: torch ships no reduction kernels
         # for uint16/uint32/uint64 (the reader's unsigned conventions), so the
-        # raw tensor would raise RuntimeError on exactly those inputs.
+        # raw tensor would raise RuntimeError on exactly those inputs. One
+        # upcast copy serves both the reductions and the flat mean/std.
         stats_t = tensor if tensor.dtype.is_floating_point else tensor.float()
+        flat = stats_t.reshape(-1)
         records.append(
             {
                 "file": path,
