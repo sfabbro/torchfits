@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.1.3] — 2026-09-09
+
 ### Fixed
 - `FITSHeaderScale` / `FITSScaleColumns` keep integer inputs as float after
   `BSCALE*x+BZERO` (the unsigned convention `BZERO=32768` on int16 no
@@ -37,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `arith`/`compress` `--out-dir` names strip CFITSIO `[section]`
   suffixes; `stats` upcasts integer images once.
 - `bench_arrow_tables.py` uses the current `table.read` signature.
-
-- Close repo-wide audit across transforms, tables, IO, HDU/header, HTTP, CLI
 ### Changed
 - Derived `TableHDU`s (`filter`, `select`, `head`, `add_column`, ...) own
   a copy of the source header, so later mutations of the derived header
@@ -52,7 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the unreachable `tzero is None` branch in `fits_schema`.
 
 ### Added
-- transforms,data: Add InterquantileScale and multi-HDU companion support to FitsStagedCutoutIterableDataset (#241)
+- `InterquantileScale` transform for robust scaling by interquantile range;
+  `FitsStagedCutoutIterableDataset` can load companion HDUs (e.g. label or
+  mask maps) alongside the image HDU (#241).
+
+### Docs
+- Documentation rewritten in plain user-facing language: internal tracking
+  codes and process jargon removed, benchmark and install pages glossed.
 
 ## [1.1.1] — 2026-08-29
 
@@ -1470,7 +1476,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/astroai/torchfits/compare/v1.1.1...v1.1.3
 [1.1.1]: https://github.com/astroai/torchfits/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/astroai/torchfits/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/astroai/torchfits/compare/v1.0.0rc5...v1.0.0
