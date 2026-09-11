@@ -48,3 +48,10 @@ cosmetics, markdown wording, “clean up” without a repro.
 If research finds nothing serious: **open no PR**.
 
 Weekly Jules prompt: [`.cursor/jules.md`](.cursor/jules.md).
+
+## Env hygiene
+
+- Prefer `pixi run` / `pixi run python` over bare `python3` when Pixi exists.
+- Never `pip install --user` or install into `~/.local` / `$HOME/.local` (esp. CANFAR `/arc/home`).
+- Headless/batch: `export PYTHONNOUSERSITE=1` and `unset PYTHONPATH`.
+- On CANFAR: read skill `canfar-lab-workflow` (mounts, quotas, resources, headless, ports).
