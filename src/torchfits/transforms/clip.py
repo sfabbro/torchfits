@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import math
-from typing import Tuple
+from typing import Any, Tuple
 
 import torch
 
 from .base import FITSTransform
 from .helpers import (
-    _normalize_dims,
-    _get_valid_mask,
     _flatten_dims,
-    _unflatten_result,
+    _get_valid_mask,
     _median,
+    _normalize_dims,
+    _unflatten_result,
     estimate_background,
 )
 
@@ -25,6 +25,8 @@ class SigmaClip(FITSTransform):
     are clipped or *max_iter* is reached.
 
     ``inverse`` is not available — clipped values are irrecoverable.
+    Replacement is nonlinear, so a companion ``ivar`` is passed through
+    unchanged (and flagged with a warning).
 
     Parameters
     ----------
@@ -39,6 +41,8 @@ class SigmaClip(FITSTransform):
         ``"median"``, or ``"nan"`` (keep the rejection visible as NaN
         instead of silently filling with a plausible background value).
     """
+
+    propagates_ivar = False
 
     def __init__(
         self,
@@ -55,9 +59,7 @@ class SigmaClip(FITSTransform):
         self.fill = fill
         self._last_mask: torch.Tensor | None = None
 
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         """Iteratively sigma-clip outliers and fill with mean or median.
 
         Optimised to minimise per-iteration allocations: uses a single
@@ -65,28 +67,38 @@ class SigmaClip(FITSTransform):
         of allocating fresh ``torch.zeros_like`` / ``torch.where`` tensors
         each iteration.
         """
-        ndim = x.ndim
+        view = self.view(x)
+        if view.ivar is not None:
+            self._warn_ivar_not_propagated()
+        data = view.flux
+        effective = view.effective_mask(mask)
+        ndim = data.ndim
         dims: tuple[int, ...] = ()
         if len(self.dim) > 0:
             dims = _normalize_dims(ndim, self.dim)
+        # Integer images promote to float (like astropy.sigma_clip);
+        # UInt16/32/64 additionally lack reduction kernels in torch.
+        # Done outside ``no_grad`` so the promoted tensor is still the one
+        # autograd sees (integers never require grad anyway).
+        if not data.dtype.is_floating_point:
+            data = data.float() if data.dtype != torch.int64 else data.double()
 
+        # Statistics and replacements are constants: compute them without
+        # tracking gradients. The final selection below stays OUTSIDE the
+        # ``no_grad`` block so the kept pixels remain differentiable.
         with torch.no_grad():
-            # Integer images promote to float (like astropy.sigma_clip);
-            # UInt16/32/64 additionally lack reduction kernels in torch.
-            if not x.dtype.is_floating_point:
-                x = x.float() if x.dtype != torch.int64 else x.double()
             # Seed with the valid-element mask: excludes user-masked
             # positions AND non-finite values even without an explicit mask,
             # so a single NaN cannot poison mean/std into wiping the frame.
-            internal_mask = _get_valid_mask(x, mask)
+            internal_mask = _get_valid_mask(data, effective)
             # Pre-allocate working buffers for masked values and zeros
             # to avoid per-iteration torch.zeros_like allocations.
-            masked_buf = x.clone()
-            zero = x.new_zeros(())
+            masked_buf = data.clone()
+            zero = data.new_zeros(())
             for _ in range(self.max_iter):
                 # Zero out masked-out positions, sum, and count.
-                torch.where(internal_mask, x, zero, out=masked_buf)
-                mask_f = internal_mask.to(x.dtype)
+                torch.where(internal_mask, data, zero, out=masked_buf)
+                mask_f = internal_mask.to(data.dtype)
 
                 if len(dims) > 0:
                     x_flat = _flatten_dims(masked_buf, dims)
@@ -94,7 +106,7 @@ class SigmaClip(FITSTransform):
                     total_sum = x_flat.sum(dim=-1, keepdim=True)
                     total_cnt = c_flat.sum(dim=-1, keepdim=True)
                     mean_v = total_sum / torch.clamp_min(total_cnt, 1.0)
-                    mean_v_full = _unflatten_result(mean_v, x.shape, dims)
+                    mean_v_full = _unflatten_result(mean_v, data.shape, dims)
                     # Compute variance using the same buffer
                     masked_buf.sub_(mean_v_full).pow_(2)
                     torch.where(internal_mask, masked_buf, zero, out=masked_buf)
@@ -103,20 +115,20 @@ class SigmaClip(FITSTransform):
                         total_cnt, 1.0
                     )
                     std_v_full = _unflatten_result(
-                        torch.sqrt(torch.clamp_min(var, 0.0)), x.shape, dims
+                        torch.sqrt(torch.clamp_min(var, 0.0)), data.shape, dims
                     )
                 else:
                     cnt = mask_f.sum()
                     mean_scalar = (masked_buf.sum() / max(cnt.item(), 1.0)).item()
-                    mean_v_full = x.new_full(x.shape, mean_scalar)
+                    mean_v_full = data.new_full(data.shape, mean_scalar)
                     masked_buf.sub_(mean_scalar).pow_(2)
                     torch.where(internal_mask, masked_buf, zero, out=masked_buf)
                     var = masked_buf.sum() / max(cnt.item(), 1.0)
                     std_scalar = math.sqrt(max(var.item(), 0.0))
-                    std_v_full = x.new_full(x.shape, std_scalar)
+                    std_v_full = data.new_full(data.shape, std_scalar)
 
-                new_mask = (x >= mean_v_full - self.n_sigma * std_v_full) & (
-                    x <= mean_v_full + self.n_sigma * std_v_full
+                new_mask = (data >= mean_v_full - self.n_sigma * std_v_full) & (
+                    data <= mean_v_full + self.n_sigma * std_v_full
                 )
                 new_mask = new_mask & internal_mask
                 if torch.equal(new_mask, internal_mask):
@@ -128,20 +140,18 @@ class SigmaClip(FITSTransform):
             # Keep the rejection visible: clipped/masked positions become NaN
             # instead of a plausible background value (fill="nan").
             if self.fill == "nan":
-                nan = x.new_full((), float("nan"))
-                return torch.where(internal_mask, x, nan)
-
-            # Fill clipped values with per-group mean or median
-            if self.fill == "mean":
-                torch.where(internal_mask, x, zero, out=masked_buf)
-                mask_f = internal_mask.to(x.dtype)
+                fill_val = data.new_full((), float("nan"))
+            elif self.fill == "mean":
+                # Fill clipped values with per-group mean
+                torch.where(internal_mask, data, zero, out=masked_buf)
+                mask_f = internal_mask.to(data.dtype)
                 if len(dims) > 0:
                     xf = _flatten_dims(masked_buf, dims)
                     cf = _flatten_dims(mask_f, dims)
                     fill_val = _unflatten_result(
                         xf.sum(dim=-1, keepdim=True)
                         / torch.clamp_min(cf.sum(dim=-1, keepdim=True), 1.0),
-                        x.shape,
+                        data.shape,
                         dims,
                     )
                 else:
@@ -153,8 +163,8 @@ class SigmaClip(FITSTransform):
                 # dim=() clips globally, so the fill must reduce globally
                 # too — (-1,) would fill per-row while thresholds are global.
                 fill_val = _median(
-                    x,
-                    dims if dims else tuple(range(x.ndim)),
+                    data,
+                    dims if dims else tuple(range(data.ndim)),
                     mask=internal_mask,
                 )
                 # Replace non-finite fills (all-masked groups yield NaN from
@@ -163,11 +173,9 @@ class SigmaClip(FITSTransform):
                     torch.isfinite(fill_val), fill_val, torch.zeros_like(fill_val)
                 )
 
-            return torch.where(internal_mask, x, fill_val)
+        return view.replace(torch.where(internal_mask, data, fill_val))
 
-    def inverse(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         raise RuntimeError(
             "SigmaClip.inverse() is not available — clipped values are irrecoverable."
         )
@@ -204,6 +212,9 @@ class AsymmetricSigmaClip(FITSTransform):
     fill : str
         Replacement for clipped pixels: ``"median"`` (default) or ``"nan"``
         to keep the rejection visible instead of filling with background.
+    weighted : bool
+        Use inverse-variance weighted background statistics when ``ivar``
+        is present.
 
     Examples
     --------
@@ -214,12 +225,16 @@ class AsymmetricSigmaClip(FITSTransform):
     >>> clip = AsymmetricSigmaClip(n_low=2.5, n_high=2.5, dim=(-1,))
     """
 
+    propagates_ivar = False
+
     def __init__(
         self,
         n_low: float = 3.0,
         n_high: float = 3.0,
         dim: Tuple[int, ...] = (-2, -1),
         fill: str = "median",
+        *,
+        weighted: bool = False,
     ) -> None:
         if n_low <= 0 or n_high <= 0:
             raise ValueError("n_low and n_high must be > 0")
@@ -229,26 +244,33 @@ class AsymmetricSigmaClip(FITSTransform):
         self.n_high = float(n_high)
         self.dim = tuple(dim)
         self.fill = fill
+        self.weighted = bool(weighted)
         self._last_mask: torch.Tensor | None = None
 
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
+        view = self.view(x)
+        if view.ivar is not None:
+            self._warn_ivar_not_propagated()
+        data = view.flux
+        # Thresholds are constants; the selection stays outside ``no_grad`` so
+        # kept pixels keep their gradient (consistent with the normalizers).
         with torch.no_grad():
-            med, std = estimate_background(x, dim=self.dim, mask=mask)
+            med, std = estimate_background(
+                data,
+                dim=self.dim,
+                mask=view.effective_mask(mask),
+                ivar=view.ivar,
+                weighted=self.weighted,
+            )
             lower = med - self.n_low * std
             upper = med + self.n_high * std
-            clip_mask = (x >= lower) & (x <= upper)
+            clip_mask = (data >= lower) & (data <= upper)
             # True = kept pixel (same convention as SigmaClip._last_mask).
             self._last_mask = clip_mask
-            if self.fill == "nan":
-                nan = x.new_full((), float("nan"))
-                return torch.where(clip_mask, x, nan)
-            return torch.where(clip_mask, x, med)
+            fill_val = data.new_full((), float("nan")) if self.fill == "nan" else med
+        return view.replace(torch.where(clip_mask, data, fill_val))
 
-    def inverse(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         raise RuntimeError(
             "AsymmetricSigmaClip.inverse() is not available — "
             "clipped values are irrecoverable."
@@ -257,10 +279,6 @@ class AsymmetricSigmaClip(FITSTransform):
     def __repr__(self) -> str:
         return (
             f"AsymmetricSigmaClip(n_low={self.n_low}, "
-            f"n_high={self.n_high}, dim={self.dim})"
+            f"n_high={self.n_high}, dim={self.dim}, fill={self.fill!r}, "
+            f"weighted={self.weighted})"
         )
-
-
-# ---------------------------------------------------------------------------
-# Header-aware normalization
-# ---------------------------------------------------------------------------

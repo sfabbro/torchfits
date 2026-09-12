@@ -87,6 +87,14 @@ def _reduce_keepdim(
     return result.reshape(shape_out)
 
 
+def _sum_keepdim(
+    x: torch.Tensor, dims: Tuple[int, ...], shape: tuple[int, ...]
+) -> torch.Tensor:
+    """Sum *x* over *dims* keeping the original rank (reduced dims -> 1)."""
+    flat = _flatten_dims(x, dims)
+    return _unflatten_result(flat.sum(dim=-1, keepdim=True), shape, dims)
+
+
 def _median(
     x: torch.Tensor,
     dim: Tuple[int, ...],
@@ -163,6 +171,100 @@ def _quantile(
 
 
 # ---------------------------------------------------------------------------
+# Weighted (inverse-variance) statistics — opt-in
+# ---------------------------------------------------------------------------
+
+
+def _weight_flat(
+    x_flat: torch.Tensor,
+    *,
+    dims: Tuple[int, ...],
+    mask: torch.Tensor | None,
+    ivar: torch.Tensor | None,
+    shape: tuple[int, ...],
+) -> torch.Tensor:
+    """Per-element weights on the flattened reduction plane."""
+    if ivar is None:
+        return torch.ones_like(x_flat)
+    w = _flatten_dims(_stats_upcast(ivar).to(x_flat.dtype), dims).to(x_flat.dtype)
+    w = torch.where(torch.isfinite(w), w, torch.zeros_like(w))
+    return w.clamp_min(0.0)
+
+
+def _weighted_quantile(
+    x: torch.Tensor,
+    q: float,
+    dim: Tuple[int, ...],
+    mask: torch.Tensor | None = None,
+    ivar: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Inverse-variance weighted quantile over tuple *dim*.
+
+    Uses the weighted inverted-CDF definition: the value at the first index
+    where the cumulative weight reaches ``q * total_weight``. With uniform
+    weights this returns the lower-middle element for even-sized groups —
+    deliberately *not* the interpolated median used by :func:`_median`, so
+    ``weighted=True`` is opt-in and documented as such.
+
+    Invalid (NaN), masked and non-positive-weight samples get zero weight;
+    a group with zero total weight yields NaN.
+    """
+    xf = _stats_upcast(x)
+    if xf.dtype in (torch.float16, torch.bfloat16):
+        xf = xf.float()
+    dims = _normalize_dims(xf.ndim, dim)
+    flat = _flatten_dims(xf, dims)
+    valid = torch.isfinite(flat)
+    if mask is not None:
+        valid = valid & _flatten_dims(mask.to(torch.bool), dims)
+    w = _weight_flat(flat, dims=dims, mask=mask, ivar=ivar, shape=xf.shape)
+    w = torch.where(valid, w, torch.zeros_like(w))
+    values = torch.where(valid, flat, torch.full_like(flat, float("nan")))
+
+    sorted_values, order = torch.sort(values, dim=-1)  # NaNs sort last
+    sorted_w = torch.gather(w, -1, order)
+    cumulative = torch.cumsum(sorted_w, dim=-1)
+    total = cumulative[..., -1:]
+    target = float(q) * total
+    reached = cumulative >= target
+    # argmax returns the first True; all-False (empty group) falls back to 0
+    # and is overwritten with NaN below.
+    index = torch.argmax(reached.to(torch.int8), dim=-1, keepdim=True)
+    picked = torch.gather(sorted_values, -1, index)
+    empty = total <= 0
+    picked = torch.where(empty, torch.full_like(picked, float("nan")), picked)
+    return _unflatten_result(picked, xf.shape, dims)
+
+
+def _weighted_dispersion(
+    x: torch.Tensor,
+    center: torch.Tensor,
+    dim: Tuple[int, ...],
+    mask: torch.Tensor | None = None,
+    ivar: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Weighted RMS about *center*: ``sqrt(sum w d^2 / sum w)``."""
+    xf = _stats_upcast(x)
+    dims = _normalize_dims(xf.ndim, dim)
+    flat = _flatten_dims(xf, dims)
+    valid = torch.isfinite(flat)
+    if mask is not None:
+        valid = valid & _flatten_dims(mask.to(torch.bool), dims)
+    w = _weight_flat(flat, dims=dims, mask=mask, ivar=ivar, shape=xf.shape)
+    w = torch.where(valid, w, torch.zeros_like(w))
+    c = _flatten_dims(center.to(xf.dtype), dims)
+    d2 = torch.where(valid, (flat - c) ** 2, torch.zeros_like(flat))
+    num = _unflatten_result((w * d2).sum(dim=-1, keepdim=True), xf.shape, dims)
+    den = _unflatten_result(w.sum(dim=-1, keepdim=True), xf.shape, dims)
+    var = torch.where(
+        den > 0,
+        num / den.clamp_min(torch.finfo(xf.dtype).tiny),
+        torch.full_like(num, float("nan")),
+    )
+    return torch.sqrt(torch.clamp_min(var, 0.0))
+
+
+# ---------------------------------------------------------------------------
 # Numerically stable primitives
 # ---------------------------------------------------------------------------
 
@@ -187,14 +289,24 @@ def _upcast_for_precision(x: torch.Tensor, *, precision: str = "auto") -> torch.
     return x.float()
 
 
+def _stretch_dtype(x: torch.Tensor) -> torch.dtype:
+    """Dtype a stretch should *return* for an input of dtype *x*.
+
+    Float inputs keep their dtype; integer inputs promote to float (returning
+    an integer would silently truncate the stretch to 0/1/2).
+    """
+    return x.dtype if x.dtype.is_floating_point else torch.float32
+
+
 def safe_arcsinh(x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
     """Compute ``arcsinh(scale * x)`` with precision-aware upcasting.
 
     float16/bfloat16 inputs are computed in float32; float32 stays float32
-    (``precision="float64"`` forces float64). Matches the LSST/SDSS asinh
-    convention across large dynamic ranges without hidden dtype changes.
+    (``precision="float64"`` forces float64). Integer inputs return float32.
+    Matches the LSST/SDSS asinh convention across large dynamic ranges
+    without hidden dtype changes.
     """
-    orig_dtype = x.dtype
+    orig_dtype = _stretch_dtype(x)
     out = torch.arcsinh(_upcast_for_precision(x) * scale)
     return out.to(orig_dtype)
 
@@ -203,8 +315,9 @@ def safe_log(x: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
     """Compute ``log(x)`` with a floor at *eps* to avoid -inf.
 
     Upcasts per :func:`_upcast_for_precision` (see ``precision=`` there).
+    Integer inputs return float32.
     """
-    orig_dtype = x.dtype
+    orig_dtype = _stretch_dtype(x)
     out = torch.log(torch.clamp_min(_upcast_for_precision(x), eps))
     return out.to(orig_dtype)
 
@@ -213,6 +326,9 @@ def estimate_background(
     x: torch.Tensor,
     dim: Tuple[int, ...] = (-2, -1),
     mask: torch.Tensor | None = None,
+    *,
+    ivar: torch.Tensor | None = None,
+    weighted: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Robust background estimator: median and MAD-based dispersion.
 
@@ -222,20 +338,164 @@ def estimate_background(
         Optional boolean mask where ``True`` indicates a valid pixel.
         Masked-out pixels (and any NaN values) are excluded from the
         median and MAD computation.
+    ivar :
+        Optional inverse-variance companion. Only used when ``weighted=True``.
+    weighted :
+        Use inverse-variance weighted statistics instead of the default
+        interpolated median / MAD. Off by default so outputs stay identical
+        to the unweighted path unless explicitly requested, and a **no-op when
+        no ``ivar`` is supplied** (there is nothing to weight by). Note that
+        the weighted median uses the inverted-CDF definition, so with uniform
+        weights it returns the lower-middle element rather than the
+        interpolated median — the two paths agree to within one order-statistic
+        spacing, not bit-for-bit.
 
     Returns
     -------
     med : Tensor
         Per-pixel-group median (keepdim=True).
     std_approx : Tensor
-        MAD × 1.4826 ≈ standard deviation of the background.
+        MAD × 1.4826 ≈ standard deviation of the background (unweighted), or
+        the inverse-variance weighted RMS about the median (weighted).
     """
     with torch.no_grad():
         x = _stats_upcast(x)
+        if weighted and ivar is not None:
+            med = _weighted_quantile(x, 0.5, dim, mask=mask, ivar=ivar)
+            std_approx = _weighted_dispersion(x, med, dim, mask=mask, ivar=ivar)
+            return med, std_approx
         med = _median(x, dim, mask=mask)
         mad = _median(torch.abs(x - med), dim, mask=mask)
         std_approx = mad.mul_(1.4826)
     return med, std_approx
+
+
+# ---------------------------------------------------------------------------
+# IRAF zscale (faithful port of astropy.visualization.ZScaleInterval)
+# ---------------------------------------------------------------------------
+
+
+def _dilate_or(mask: torch.Tensor, width: int) -> torch.Tensor:
+    """Boolean dilation matching ``np.convolve(mask, ones(width), "same")``.
+
+    numpy's ``same`` mode takes the central window, which is left-biased for
+    even widths; replicated here so the port matches astropy exactly.
+    """
+    if width <= 1:
+        return mask
+    n = mask.shape[-1]
+    out = torch.zeros_like(mask)
+    off0 = -width + 1 + (width - 1) // 2
+    for t in range(width):
+        shift = off0 + t
+        if shift == 0:
+            out |= mask
+        elif shift < 0:
+            # out[i] |= mask[i + shift] for every in-range i; shift < 0 means
+            # sampling from the right, so the *left* edge of the output is
+            # undefined and the tail of the input is unused.
+            out[..., -shift:] |= mask[..., : n + shift]
+        else:
+            out[..., : n - shift] |= mask[..., shift:]
+    return out
+
+
+def _iraf_zscale_groups(
+    samples: torch.Tensor,
+    counts: torch.Tensor,
+    *,
+    contrast: float,
+    max_reject: float,
+    min_npixels: int,
+    krej: float,
+    max_iterations: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """IRAF zscale limits for a batch of pre-sorted sample rows.
+
+    ``samples`` is ``(G, npix)`` ascending with invalid entries (NaN) last;
+    ``counts`` is the number of valid entries per row.
+
+    The fit runs in float64 (astropy's dtype) and the limits are cast back to
+    the input dtype, so results match ``ZScaleInterval`` to float32 rounding.
+    """
+    out_dtype = samples.dtype
+    samples = samples.to(torch.float64)
+    groups, npix = samples.shape
+    dtype = samples.dtype
+    x = torch.arange(npix, dtype=dtype, device=samples.device).expand(groups, npix)
+
+    valid = torch.isfinite(samples)
+    badpix = ~valid
+    ngood = valid.sum(dim=-1)
+    last_ngood = ngood + 1
+    minpix = torch.maximum(
+        torch.full_like(ngood, int(min_npixels)),
+        (counts.to(dtype) * float(max_reject)).floor().to(ngood.dtype),
+    )
+    ngrow = max(1, int(npix * 0.01))
+
+    slope_final = torch.zeros(groups, dtype=dtype, device=samples.device)
+    for _ in range(int(max_iterations)):
+        cont = (ngood < last_ngood) & (ngood >= minpix)
+        if not bool(cont.any()):
+            break
+        cf = cont.to(dtype).unsqueeze(-1)
+        w = (~badpix).to(dtype) * cf
+        sw = w.sum(dim=-1)
+        swx = (w * x).sum(dim=-1)
+        swy = (w * samples).sum(dim=-1)
+        swxx = (w * x * x).sum(dim=-1)
+        swxy = (w * x * samples).sum(dim=-1)
+        denom = sw * swxx - swx * swx
+        slope = torch.where(
+            denom != 0,
+            (sw * swxy - swx * swy)
+            / torch.where(denom == 0, torch.ones_like(denom), denom),
+            torch.zeros_like(denom),
+        )
+        intercept = torch.where(
+            sw > 0,
+            (swy - slope * swx) / torch.where(sw == 0, torch.ones_like(sw), sw),
+            torch.zeros_like(sw),
+        )
+        fitted = slope.unsqueeze(-1) * x + intercept.unsqueeze(-1)
+        flat = samples - fitted
+        # k-sigma threshold from the surviving residuals (population std).
+        good = (~badpix).to(dtype)
+        sg = good.sum(dim=-1)
+        mean_g = (flat * good).sum(dim=-1) / torch.where(
+            sg == 0, torch.ones_like(sg), sg
+        )
+        var_g = (((flat - mean_g.unsqueeze(-1)) ** 2) * good).sum(dim=-1) / torch.where(
+            sg == 0, torch.ones_like(sg), sg
+        )
+        threshold = float(krej) * torch.sqrt(torch.clamp_min(var_g, 0.0))
+        newly_bad = (flat < -threshold.unsqueeze(-1)) | (flat > threshold.unsqueeze(-1))
+        badpix = torch.where(cont.unsqueeze(-1), badpix | newly_bad, badpix)
+        badpix = torch.where(cont.unsqueeze(-1), _dilate_or(badpix, ngrow), badpix)
+        slope_final = torch.where(cont, slope, slope_final)
+        last_ngood = torch.where(cont, ngood, last_ngood)
+        ngood = torch.where(cont, (~badpix).sum(dim=-1), ngood)
+
+    # Anchor limits: min/max of valid samples, tightened by the fitted slope.
+    first = samples.gather(
+        1, torch.zeros(groups, 1, dtype=torch.long, device=samples.device)
+    ).squeeze(1)
+    last_idx = (counts - 1).clamp_min(0).unsqueeze(1)
+    last = samples.gather(1, last_idx).squeeze(1)
+    vmin = first
+    vmax = last
+
+    can_adjust = ngood >= minpix
+    adjusted = slope_final / contrast if contrast > 0 else slope_final
+    center_pixel = (npix - 1) // 2
+    masked = torch.where(valid, samples, torch.full_like(samples, float("nan")))
+    median = torch.nanmedian(masked, dim=-1).values
+    lo = median - (center_pixel - 1) * adjusted
+    hi = median + (npix - center_pixel) * adjusted
+    vmin = torch.where(can_adjust, torch.maximum(vmin, lo), vmin)
+    vmax = torch.where(can_adjust, torch.minimum(vmax, hi), vmax)
+    return vmin.to(out_dtype), vmax.to(out_dtype)
 
 
 def zscale_limits(
@@ -243,8 +503,13 @@ def zscale_limits(
     contrast: float = 0.25,
     dim: Tuple[int, ...] = (-2, -1),
     mask: torch.Tensor | None = None,
+    *,
+    ivar: torch.Tensor | None = None,
+    weighted: bool = False,
+    algorithm: str = "proxy",
+    n_samples: int = 1000,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """IRAF-style zscale auto-contrast limits (fast proxy).
+    """IRAF-style zscale auto-contrast limits.
 
     Parameters
     ----------
@@ -252,12 +517,33 @@ def zscale_limits(
         Optional boolean mask where ``True`` indicates a valid pixel.
         Masked-out pixels (and any NaN values) are excluded from the
         median, MAD, min, and max computations.
+    ivar, weighted :
+        Opt-in inverse-variance weighting. Non-positive / non-finite weights
+        are treated as invalid samples.
+    algorithm :
+        ``"proxy"`` (default) — median ± MAD/contrast, fast and differentiable.
+        ``"iraf"`` — the iterative line-fit IRAF zscale algorithm, matching
+        ``astropy.visualization.ZScaleInterval``.
 
     Returns (z1, z2) clipped to [vmin, vmax] with a fallback when the image
     is constant (z1 == z2).
     """
+    if algorithm not in ("proxy", "iraf"):
+        raise ValueError(f"algorithm must be 'proxy' or 'iraf', got {algorithm!r}")
+    if algorithm == "iraf":
+        return _zscale_iraf(
+            x,
+            contrast=contrast,
+            dim=dim,
+            mask=mask,
+            ivar=ivar,
+            weighted=weighted,
+            n_samples=n_samples,
+        )
     with torch.no_grad():
-        med, std = estimate_background(x, dim=dim, mask=mask)
+        med, std = estimate_background(
+            x, dim=dim, mask=mask, ivar=ivar, weighted=weighted
+        )
         z1 = med - (std / max(contrast, 1e-5))
         z2 = med + (std / max(contrast, 1e-5))
 
@@ -275,9 +561,63 @@ def zscale_limits(
     return z1, z2
 
 
-# ---------------------------------------------------------------------------
-# Base transform
-# ---------------------------------------------------------------------------
+def _zscale_iraf(
+    x: torch.Tensor,
+    *,
+    contrast: float,
+    dim: Tuple[int, ...],
+    mask: torch.Tensor | None,
+    ivar: torch.Tensor | None,
+    weighted: bool,
+    n_samples: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Vectorized IRAF zscale over tuple *dim* (one fit per group)."""
+    with torch.no_grad():
+        xf = _stats_upcast(x)
+        if xf.dtype in (torch.float16, torch.bfloat16):
+            xf = xf.float()
+        dims = _normalize_dims(xf.ndim, dim)
+        flat = _flatten_dims(xf, dims)
+        n = flat.shape[-1]
+        groups = flat.numel() // max(n, 1)
+        sample = flat.reshape(groups, n)
+        valid = torch.isfinite(sample)
+        if mask is not None:
+            valid = valid & _flatten_dims(mask.to(torch.bool), dims).reshape(groups, n)
+        if weighted and ivar is not None:
+            w = _weight_flat(
+                sample, dims=dims, mask=mask, ivar=ivar, shape=xf.shape
+            ).reshape(groups, n)
+            valid = valid & torch.isfinite(w) & (w > 0)
+        sample = torch.where(valid, sample, torch.full_like(sample, float("nan")))
+        # Stride the *original* order (as IRAF/astropy do) and only then sort;
+        # striding the sorted array would sample quantiles instead.
+        stride = int(max(1.0, n / float(n_samples)))
+        sample = sample[:, ::stride][:, : int(n_samples)]
+        sample, _ = torch.sort(sample, dim=-1)  # NaNs to the end
+        counts = torch.isfinite(sample).sum(dim=-1)
+
+        z1, z2 = _iraf_zscale_groups(
+            sample,
+            counts,
+            contrast=float(contrast),
+            max_reject=0.5,
+            min_npixels=5,
+            krej=2.5,
+            max_iterations=5,
+        )
+        vmin = torch.nan_to_num(z1, nan=0.0)
+        vmax = torch.nan_to_num(z2, nan=0.0)
+        eps = torch.maximum(
+            torch.tensor(1e-6, device=xf.device, dtype=xf.dtype),
+            vmin.abs() * 1e-6,
+        )
+        vmax = torch.where(vmax <= vmin, vmin + eps, vmax)
+        return (
+            _unflatten_result(vmin.unsqueeze(-1), xf.shape, dims),
+            _unflatten_result(vmax.unsqueeze(-1), xf.shape, dims),
+        )
+
 
 __all__ = [
     "_normalize_dims",
@@ -285,11 +625,15 @@ __all__ = [
     "_flatten_dims",
     "_unflatten_result",
     "_reduce_keepdim",
+    "_sum_keepdim",
     "_median",
     "_amin",
     "_amax",
     "_quantile",
+    "_weighted_quantile",
+    "_weighted_dispersion",
     "_upcast_for_precision",
+    "_stretch_dtype",
     "safe_arcsinh",
     "safe_log",
     "estimate_background",
