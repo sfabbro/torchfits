@@ -177,3 +177,117 @@ def sigma_clip_naive(
         )
 
     return torch.where(mask, x, fill_val)
+
+
+def weighted_quantile_naive(
+    x: torch.Tensor,
+    q: float,
+    dim: tuple[int, ...],
+    mask: torch.Tensor | None = None,
+    ivar: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Reference inverse-variance weighted quantile (inverted-CDF definition).
+
+    Deliberately numpy/pure-python: the value at the first sorted sample whose
+    cumulative weight reaches ``q * total_weight``. Non-finite, masked and
+    non-positive-weight samples get zero weight; zero-weight groups yield NaN.
+    """
+    arr = x.detach().double().numpy()
+    good = np.isfinite(arr)
+    if mask is not None:
+        good &= mask.detach().numpy().astype(bool)
+    if ivar is None:
+        weights = np.ones_like(arr)
+    else:
+        raw = ivar.detach().double().numpy()
+        weights = np.where(np.isfinite(raw), raw, 0.0)
+    weights = np.where(good, np.clip(weights, 0.0, None), 0.0)
+
+    dims = tuple(sorted({d if d >= 0 else arr.ndim + d for d in dim}))
+    moved_a = np.moveaxis(arr, dims, range(arr.ndim - len(dims), arr.ndim))
+    moved_w = np.moveaxis(weights, dims, range(arr.ndim - len(dims), arr.ndim))
+    moved_g = np.moveaxis(good, dims, range(arr.ndim - len(dims), arr.ndim))
+
+    lead = moved_a.shape[: arr.ndim - len(dims)]
+    flat_a = moved_a.reshape(*lead, -1)
+    flat_w = moved_w.reshape(*lead, -1)
+    flat_g = moved_g.reshape(*lead, -1)
+
+    out = np.full(lead, np.nan)
+    for index in np.ndindex(*lead):
+        values = flat_a[index]
+        ok = flat_g[index]
+        w = flat_w[index]
+        order = np.argsort(values, kind="stable")  # NaN sorts last
+        values = values[order]
+        w = w[order]
+        keep_mask = ok[order]
+        cumulative = np.cumsum(np.where(keep_mask, w, 0.0))
+        total = cumulative[-1] if cumulative.size else 0.0
+        if total <= 0.0:
+            continue
+        reached = np.flatnonzero(cumulative >= q * total)
+        if reached.size:
+            out[index] = values[reached[0]]
+
+    shape_out = list(x.shape)
+    for d in dims:
+        shape_out[d] = 1
+    return torch.from_numpy(np.ascontiguousarray(out.reshape(shape_out))).to(x.dtype)
+
+
+def iraf_zscale_naive(
+    image: "np.ndarray",
+    contrast: float = 0.25,
+    *,
+    n_samples: int = 1000,
+    max_reject: float = 0.5,
+    min_npixels: int = 5,
+    krej: float = 2.5,
+    max_iterations: int = 5,
+) -> tuple[float, float]:
+    """Reference IRAF zscale limits (numpy port of the line-fit algorithm).
+
+    Mirrors ``astropy.visualization.ZScaleInterval`` so the torch
+    implementation can be checked against an algorithmically independent copy.
+    """
+    values = np.asarray(image, dtype=np.float64).ravel()
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return 0.0, 1.0
+    stride = int(max(1.0, values.size / n_samples))
+    samples = values[::stride][:n_samples]
+    samples = np.sort(samples)
+    npix = samples.size
+    vmin, vmax = samples[0], samples[-1]
+    if npix < min_npixels:
+        return float(vmin), float(vmax)
+
+    minpix = max(min_npixels, int(npix * max_reject))
+    x = np.arange(npix, dtype=np.float64)
+    ngrow = max(1, int(npix * 0.01))
+    kernel = np.ones(ngrow, dtype=bool)
+    badpix = np.zeros(npix, dtype=bool)
+    ngood = npix
+    last_ngood = npix + 1
+    slope = 0.0
+    for _ in range(max_iterations):
+        if ngood >= last_ngood or ngood < minpix:
+            break
+        fit = np.polyfit(x, samples, deg=1, w=(~badpix).astype(np.int64))
+        slope = float(fit[0])
+        fitted = np.poly1d(fit)(x)
+        flat = samples - fitted
+        threshold = krej * float(flat[~badpix].std())
+        badpix[(flat < -threshold) | (flat > threshold)] = True
+        badpix = np.convolve(badpix, kernel, mode="same")
+        last_ngood = ngood
+        ngood = int(np.sum(~badpix))
+
+    if ngood >= minpix:
+        scaled = slope / contrast if contrast > 0 else slope
+        center = (npix - 1) // 2
+        median = float(np.median(samples))
+        vmin = max(vmin, median - (center - 1) * scaled)
+        vmax = min(vmax, median + (npix - center) * scaled)
+    return float(vmin), float(vmax)
