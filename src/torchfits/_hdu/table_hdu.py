@@ -588,6 +588,9 @@ class TableHDU:
 
     @classmethod
     def from_fits(cls, file_path: str, hdu_index: int = 1) -> "TableHDU":
+        from torchfits._io_engine.paths import coerce_fits_path
+
+        file_path = coerce_fits_path(file_path)
         if not file_path or not isinstance(file_path, str):
             raise ValueError("file_path must be a non-empty string")
 

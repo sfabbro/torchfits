@@ -17,8 +17,9 @@ def _validate_hdu(hdu: int) -> int:
 
 def write_checksums(path: str, hdu: int = 0) -> None:
     """Compute and write DATASUM/CHECKSUM keywords for an HDU (CFITSIO)."""
-    from .paths import guard_fits_path
+    from .paths import coerce_fits_path, guard_fits_path
 
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     cpp.write_hdu_checksums(str(path), _validate_hdu(hdu))
 
@@ -35,8 +36,9 @@ def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
     and ``status`` (``"ok"``, ``"no_checksums"``, or ``"fail"``).
     ``present`` is False when CFITSIO reports no checksum keywords.
     """
-    from .paths import guard_fits_path
+    from .paths import coerce_fits_path, guard_fits_path
 
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     datastatus, hdustatus = cpp.verify_hdu_checksums(str(path), _validate_hdu(hdu))
     data_i = int(datastatus)

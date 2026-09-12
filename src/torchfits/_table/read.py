@@ -6,7 +6,7 @@ import itertools
 from collections.abc import Iterator
 from typing import Any, Optional
 
-from .._io_engine.paths import guard_fits_path
+from .._io_engine.paths import coerce_fits_path, guard_fits_path
 from .._table.utils import _require_pyarrow
 from .._table.write import _resolve_table_hdu_index_and_columns
 from .._table_engine import should_skip_cpp_for_where, validate_table_backend
@@ -90,6 +90,7 @@ def scan(
     backend: str = "auto",
 ) -> Iterator[Any]:
     # Eager guard: a generator body would defer this until first next().
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
@@ -127,6 +128,7 @@ def read(
     apply_fits_nulls: bool = True,
     backend: str = "auto",
 ) -> Any:
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     backend = validate_table_backend(backend)
     pa = _require_pyarrow()
@@ -211,6 +213,7 @@ def read_torch(
     ``AND``). ``OR`` / ``IN`` / ``NOT`` / ``IS NULL`` raise ``ValueError``;
     use :func:`read` for the full dialect. TNULL sentinels never match.
     """
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     import torchfits
 
@@ -246,6 +249,7 @@ def scan_torch(
     pin_memory: bool = False,
 ) -> Iterator[dict[str, Any]]:
     # Eager guard: a generator body would defer this until first next().
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     return _scan_torch_iter(
         path,

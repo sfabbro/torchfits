@@ -34,8 +34,9 @@ def read_subset(
 ) -> Tensor:
     """Read a rectangular subset of an image HDU."""
     import torchfits._C as cpp
-    from .paths import guard_fits_path
+    from .paths import coerce_fits_path, guard_fits_path
 
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     is_http_url, is_vos_path, resolve_local_path = _remote_helpers()
     if is_http_url(path):
@@ -70,8 +71,9 @@ class SubsetReader:
 
     def __init__(self, path: str, hdu: int | str = 0, device: str = "cpu"):
         import torchfits._C as cpp
-        from .paths import guard_fits_path
+        from .paths import coerce_fits_path, guard_fits_path
 
+        path = coerce_fits_path(path)
         if not isinstance(path, str):
             raise ValueError("path must be a string")
         guard_fits_path(path)

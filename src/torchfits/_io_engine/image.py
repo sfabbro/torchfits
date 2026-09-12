@@ -15,7 +15,7 @@ from .device import (
     to_device as to_device,
     validate_device as validate_device,
 )
-from .paths import guard_fits_path, require_bz2_support
+from .paths import coerce_fits_path, guard_fits_path, require_bz2_support
 
 
 def validate_read_image_args(
@@ -66,6 +66,7 @@ def read_image(
     fallback_get_header: Callable[[str, int], Header] | None = None,
 ) -> Union[Tensor, Tuple[Tensor, Header]]:
     """Read image data through a direct low-level path."""
+    path = coerce_fits_path(path)
     validate_read_image_args(path, hdu, mmap, device)
     guard_fits_path(path)
 
@@ -104,6 +105,7 @@ def read_hdus(
     return_header: bool = False,
 ) -> Any:
     """Read multiple image HDUs from one file using a direct one-handle path."""
+    path = coerce_fits_path(path)
     if not isinstance(path, str):
         raise ValueError("path must be a string")
     require_bz2_support(path)

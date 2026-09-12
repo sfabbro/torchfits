@@ -10,6 +10,7 @@ from typing import Any, Callable, cast
 from torch import Tensor
 
 from .device import batch_to_device, validate_device
+from .paths import coerce_fits_path
 
 
 def read_batch(
@@ -23,6 +24,7 @@ def read_batch(
     strict: bool = False,
 ) -> list[Tensor]:
     """Read multiple FITS files in batch."""
+    file_paths = coerce_fits_path(file_paths)
     if not file_paths:
         return []
 
@@ -77,6 +79,7 @@ def get_batch_info(file_paths: list[str]) -> dict[str, Any]:
     """
     from .paths import guard_fits_path
 
+    file_paths = coerce_fits_path(file_paths)
     existing_files = 0
     for path in file_paths:
         guard_fits_path(path)

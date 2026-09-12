@@ -20,7 +20,12 @@ from .caches import (
     path_signature,
     set_cached_hdu_type,
 )
-from .paths import cfitsio_base_path, guard_fits_path, is_cfitsio_network_url
+from .paths import (
+    cfitsio_base_path,
+    coerce_fits_path,
+    guard_fits_path,
+    is_cfitsio_network_url,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -58,6 +63,7 @@ def find_first_hdu(
     """Find first payload HDU, preferring image/compressed-image over table."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     file_handle, cached = get_cached_handle(path, handle_cache_capacity)
     first_table_hdu: Optional[int] = None
     try:
@@ -110,6 +116,7 @@ def find_first_hdu(
 
 def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
     """Return the first HDU with payload, preferring image/compressed-image HDUs."""
+    path = coerce_fits_path(path)
     sig = path_signature(path)
     cache_key = (path, "payload")
     with cache_lock:
@@ -135,6 +142,7 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
 
 def open_hdulist(path: str, mode: str = "r") -> HDUList:
     """Open a FITS file for reading/writing."""
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     check_path = cfitsio_base_path(path)
     # Network URLs are opened by CFITSIO itself; only local paths need exists().
@@ -162,6 +170,7 @@ def _resolve_hdu_index(
     """Resolve ``hdu`` to a 0-based index (supports ``None`` / ``\"auto\"`` / EXTNAME)."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
         return int(autodetect_hdu(path, 16))
@@ -204,6 +213,7 @@ def read_nrows(path: str, hdu: Union[int, str, None] = 1) -> int:
     """
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     return int(cpp.read_nrows(path, hdu_index))
 
@@ -221,6 +231,7 @@ def read_keys(
 
     if not keys:
         raise ValueError("keys must be a non-empty sequence of keyword names")
+    path = coerce_fits_path(path)
     key_list = [str(k) for k in keys]
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     return dict(cpp.read_keys(path, hdu_index, key_list))
@@ -235,6 +246,7 @@ def read_shape(
     """
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     bitpix, shape = cpp.read_shape(path, hdu_index)
     return int(bitpix), tuple(int(d) for d in shape)
@@ -244,6 +256,7 @@ def read_hdu_type(path: str, hdu: Union[int, str, None] = 0) -> str:
     """Return HDU type string (``IMAGE`` / ``BINARY_TABLE`` / …) without full header."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     return str(cpp.read_hdu_type(path, hdu_index))
 
@@ -252,6 +265,7 @@ def read_num_hdus(path: str) -> int:
     """Return number of HDUs in the file (one open; no header dump)."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     guard_fits_path(path)
     return int(cpp.read_num_hdus(path))
 
@@ -260,6 +274,7 @@ def read_colnames(path: str, hdu: Union[int, str, None] = 1) -> list[str]:
     """Return table column names (TTYPEn) without materializing the full header."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     return [str(n) for n in cpp.read_colnames(path, hdu_index)]
 
@@ -276,6 +291,7 @@ def read_table_info(path: str, hdu: Union[int, str, None] = 1) -> dict[str, Any]
     """One-open table metadata: ``nrows``, ``colnames``, ``tforms``."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     info = dict(cpp.read_table_info(path, hdu_index))
     info["nrows"] = int(info["nrows"])
@@ -293,6 +309,7 @@ def get_header(
     """Get the header of a FITS file."""
     import torchfits._C as cpp
 
+    path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     sig = path_signature(path)
     cache_key = (path, hdu_index)

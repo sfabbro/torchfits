@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from torchfits.http_util import guard_cfitsio_remote_path, is_cfitsio_network_url
 
 __all__ = [
     "cfitsio_base_path",
+    "coerce_fits_path",
     "guard_fits_path",
     "has_bz2_support",
     "has_cfitsio_filter",
@@ -37,6 +41,25 @@ def require_bz2_support(path: str) -> None:
             "'.bz2' FITS files cannot be opened. Decompress the file first, "
             "or install a bzip2-enabled wheel/build."
         )
+
+
+def coerce_fits_path(path: Any) -> Any:
+    """Normalize an ``os.PathLike`` path to ``str`` at the read boundary.
+
+    Writes have always called ``os.fspath`` (see ``write_api``), but the read
+    side rejected ``pathlib.Path`` outright -- ``torchfits.read(Path(...))``
+    raised ``ValueError`` while ``torchfits.write(Path(...))`` worked. That is a
+    sharp edge for the common ``for p in root.glob("*.fits")`` loop.
+
+    Strings (including CFITSIO network URLs and ``file.fits[1]`` filters) pass
+    through untouched, and non-path values are returned as-is so the existing
+    argument validation still produces its own error.
+    """
+    if isinstance(path, os.PathLike):
+        return os.fspath(path)
+    if isinstance(path, (list, tuple)):
+        return type(path)(coerce_fits_path(item) for item in path)
+    return path
 
 
 def guard_fits_path(path: str) -> str:

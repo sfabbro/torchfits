@@ -14,7 +14,7 @@ from torch import Tensor
 from ..fits_schema import bit_column_names, unsigned_column_dtypes_from_header
 from ..hdu import Header
 from .device import to_device, validate_device
-from .paths import require_bz2_support
+from .paths import coerce_fits_path, require_bz2_support
 from .options import ReadOptions
 from .caches import (
     cache_stats,
@@ -178,6 +178,10 @@ def read_unified(
     mode = opts.mode
 
     # --- validate ---
+    # Accept os.PathLike here rather than rejecting it: the write side already
+    # normalizes with os.fspath, and a `for p in root.glob('*.fits')` loop is
+    # the common caller.
+    path = coerce_fits_path(path)
     if not path:
         raise ValueError("Path must be a non-empty string")
 
