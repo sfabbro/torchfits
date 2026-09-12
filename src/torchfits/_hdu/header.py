@@ -7,6 +7,11 @@ from typing import Any
 from ._repr import render_html_table
 from .card import Card
 
+# HISTORY / COMMENT carry no value: they legitimately repeat, and the mapping
+# view tracks the most recent line (see .cards / get_comment / get_history for
+# the lossless list).
+_COMMENTARY_KEYS = frozenset({"HISTORY", "COMMENT"})
+
 
 def _normalize_header_value(value: Any) -> Any:
     """Coerce numpy scalars / 0-d arrays to plain Python scalars.
@@ -50,22 +55,21 @@ class Header(dict[str, Any]):
                         comment = ""
                     self._set_card(str(k), value, str(comment), bump=False)
             elif isinstance(cards, (list, tuple)):
-                append = self._cards.append
-                setitem = super().__setitem__
+                # One path for tuples and Card-likes alike: the mapping update
+                # goes through _set_mapping_for_card, so a header built here and
+                # one built with add_comment/add_history agree on what the
+                # mapping exposes.
                 for card in cards:
                     if type(card) is tuple and len(card) == 3:
                         key, value, comment = card
-                        card_obj = Card(
+                        parsed = Card(
                             str(key),
                             _normalize_header_value(value),
                             "" if comment is None else str(comment),
                         )
-                        append(card_obj)
-                        if card_obj.key not in {"HISTORY", "COMMENT"}:
-                            setitem(card_obj.key, card_obj.value)
                     else:
                         parsed = self._coerce_card(card)
-                        self._append_card(parsed, update_mapping=True, bump=False)
+                    self._append_card(parsed, update_mapping=True, bump=False)
 
     def __setitem__(self, key: str, value: Any) -> None:
         if (
@@ -161,7 +165,9 @@ class Header(dict[str, Any]):
     ) -> None:
         parsed = self._coerce_card(card)
         self._cards.insert(int(index), parsed)
-        self._set_mapping_for_card(parsed)
+        # Rebuild rather than set: inserting ahead of existing cards changes
+        # which occurrence is first, and first is what the mapping reports.
+        self._rebuild_mapping_for_key(parsed.key)
         self._version += 1
 
     def remove(
@@ -231,7 +237,7 @@ class Header(dict[str, Any]):
     def _set_card(self, key: str, value: Any, comment: str, *, bump: bool) -> None:
         value = _normalize_header_value(value)
         card = Card(key, value, comment)
-        if key in {"HISTORY", "COMMENT"}:
+        if key in _COMMENTARY_KEYS:
             self._append_card(card, update_mapping=True, bump=bump)
             return
 
@@ -248,12 +254,22 @@ class Header(dict[str, Any]):
             self._version += 1
 
     def _set_mapping_for_card(self, card: Card) -> None:
-        super().__setitem__(card.key, card.value)
+        if card.key in _COMMENTARY_KEYS:
+            super().__setitem__(card.key, card.value)
+            return
+        # Value keywords resolve to the FIRST occurrence, matching CFITSIO
+        # (fits_read_keyword) and astropy. A name-keyed map that kept the last
+        # occurrence made read_header() and read_keys() disagree on the same
+        # file, which is how a duplicated keyword silently changed meaning
+        # depending on which API you asked.
+        if card.key not in self:
+            super().__setitem__(card.key, card.value)
 
     def _rebuild_mapping_for_key(self, key: str) -> None:
         remaining = [card for card in self._cards if card.key == key]
         if remaining:
-            super().__setitem__(key, remaining[-1].value)
+            pick = remaining[-1] if key in _COMMENTARY_KEYS else remaining[0]
+            super().__setitem__(key, pick.value)
         elif key in self:
             super().__delitem__(key)
 
