@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed through unchanged (previously only the clippers did); the stretches
   can opt into exact delta-method propagation instead.
 
+- data: Decode DQ companions into validity masks
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -114,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streaming and band discovery.
 - agents: Pixi-first, no ~/.local, Claude @AGENTS.md bridge
 - Document the data-state contract, IVAR/mask and ML data features
+- examples: Add an end-to-end ML training-loop example
 
 ## [1.1.3] — 2026-09-09
 
