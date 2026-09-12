@@ -88,6 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - io: Accept os.PathLike across the whole read surface
 - header: Resolve duplicate keywords first-wins, matching read_keys and astropy
 - table: Accept os.PathLike in the table mutation API
+- table: Support logical columns in where, without leaking pyarrow errors
+- io: Keep header value types on every return_header route
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -161,6 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - examples: Add an end-to-end ML training-loop example
 - agents: Work on the fork's main, no feature branches
 - changelog: Record the IO, header and C++ engine audit
+- table: Record two deliberate divergences found in the engine review
+- changelog: Record the PathLike fix for the table mutation API
 
 ## [1.1.3] — 2026-09-09
 
