@@ -65,6 +65,15 @@ class DataView:
         return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:
+        """Read a 2-D rectangular cutout.
+
+        Deliberately *not* a numpy-array emulation: the underlying primitive is
+        ``read_subset``, which returns a block, so an integer index becomes a
+        length-1 slice (``data[0]`` has shape ``(1, n)`` where numpy would give
+        ``(n,)``) and only ``step=1`` slices are accepted. Values are always
+        correct; the kept axis is what makes one code path serve both. Use
+        ``torchfits.read`` when numpy-style indexing semantics are wanted.
+        """
         shape = self.shape
         if len(shape) < 2:
             raise ValueError("Subset reading requires at least 2D data")

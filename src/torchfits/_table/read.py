@@ -212,6 +212,10 @@ def read_torch(
     ``where`` accepts only simple numeric predicates (compare / ``BETWEEN`` /
     ``AND``). ``OR`` / ``IN`` / ``NOT`` / ``IS NULL`` raise ``ValueError``;
     use :func:`read` for the full dialect. TNULL sentinels never match.
+
+    TNULL is *not* applied to the returned values: a torch integer tensor has no
+    null, so the sentinel comes back verbatim (astropy's ``getdata`` behaves the
+    same way). Use :func:`torchfits.table.read` when TNULL must read as null.
     """
     path = coerce_fits_path(path)
     guard_fits_path(path)
