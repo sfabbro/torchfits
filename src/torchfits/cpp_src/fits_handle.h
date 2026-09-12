@@ -1,27 +1,23 @@
 /**
- * Cache API retained for bindings after Option A (private per-call handles).
+ * RAII guard for a privately owned CFITSIO handle.
  *
- * Shared fitsfile* LRU is gone. invalidate/clear are no-ops here; callers also
- * invoke invalidate_shared_meta for live SharedReadMeta state.
+ * Every read opens its own ``fitsfile*`` (CFITSIO Option A): sharing one handle
+ * across threads would share a single CHDU cursor. This guard makes ownership
+ * explicit at the call sites. It is move-only, because a copied guard would
+ * close the same handle twice.
+ *
+ * This header previously also declared a shared-handle LRU cache
+ * (configure_cache/clear_file_cache/invalidate_cached/...). Those were no-ops
+ * once shared handles were removed; the live shared state is SharedReadMeta
+ * (fits_detail.h) plus the per-thread table-reader cache.
  */
 
 #pragma once
 
-#include <string>
 #include <fitsio.h>
 
 namespace torchfits {
 
-void configure_cache(size_t max_files, size_t max_memory_mb);
-void clear_file_cache();
-void invalidate_file_cache(const std::string& filepath);
-size_t get_cache_size();
-fitsfile* get_or_open_cached(const std::string& filepath);
-void release_cached(const std::string& filepath);
-void invalidate_cached(const std::string& filepath);
-
-// RAII close for a privately owned fitsfile*. Move-only: a copied guard would
-// close the same handle twice.
 struct FitsHandleGuard {
     fitsfile* fptr = nullptr;
 
@@ -51,4 +47,4 @@ struct FitsHandleGuard {
     }
 };
 
-} // namespace torchfits
+}  // namespace torchfits

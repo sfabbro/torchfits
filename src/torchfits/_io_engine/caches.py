@@ -576,9 +576,9 @@ def clear_file_cache(
 
             cpp_module = _cpp
 
-        cpp_module.clear_file_cache()
-        if hasattr(cpp_module, "clear_shared_read_meta_cache"):
-            cpp_module.clear_shared_read_meta_cache()
+        # clear_file_cache() was removed with the shared-handle pool it used to
+        # guard; SharedReadMeta is the native state that actually exists.
+        cpp_module.clear_shared_read_meta_cache()
     except (AttributeError, RuntimeError) as exc:
         warnings.warn(
             f"clear_file_cache: C++ cache clear skipped ({exc!s})",

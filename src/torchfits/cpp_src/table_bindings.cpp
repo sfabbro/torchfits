@@ -20,7 +20,7 @@
 #include "torch_compat.h"
 #include "fits_rw.h"
 #include "fits_detail.h"
-#include "cache.h"
+#include "fits_handle.h"
 #include "table_types.h"
 #include "table_reader.h"
 #include "table_ops.h"
@@ -208,9 +208,8 @@ void evict_cached_reader(const std::string& filename) {
 
 }  // namespace torchfits
 
-// Forward declare invalidation functions (defined in cache.cpp)
+// Forward declare invalidation (defined in fits_bindings.cpp).
 namespace torchfits {
-void invalidate_cached(const std::string& filepath);
 void invalidate_shared_meta(const std::string& filepath);
 }
 
@@ -250,7 +249,6 @@ void bind_table(nb::module_& m) {
 
     m.def("write_fits_table", [](const std::string& filename, nb::dict tensor_dict, nb::dict header, bool overwrite,
                                  nb::object schema, const std::string& table_type) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         write_fits_table(filename.c_str(), tensor_dict, header, overwrite, schema, table_type);
@@ -258,7 +256,6 @@ void bind_table(nb::module_& m) {
        nb::arg("schema") = nb::none(), nb::arg("table_type") = "binary");
 
     m.def("append_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         append_rows(filename.c_str(), hdu_num, tensor_dict);
@@ -266,7 +263,6 @@ void bind_table(nb::module_& m) {
 
     m.def("insert_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
                                        long start_row) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         insert_rows(filename.c_str(), hdu_num, tensor_dict, start_row);
@@ -274,7 +270,6 @@ void bind_table(nb::module_& m) {
 
     m.def("update_fits_table_rows", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
                                        long start_row, long num_rows) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         update_rows(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
@@ -282,21 +277,18 @@ void bind_table(nb::module_& m) {
 
     m.def("update_fits_table_rows_mmap", [](const std::string& filename, int hdu_num, nb::dict tensor_dict,
                                             long start_row, long num_rows) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         update_rows_mmap(filename.c_str(), hdu_num, tensor_dict, start_row, num_rows);
     });
 
     m.def("rename_fits_table_columns", [](const std::string& filename, int hdu_num, nb::dict mapping) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         rename_columns(filename.c_str(), hdu_num, mapping);
     });
 
     m.def("drop_fits_table_columns", [](const std::string& filename, int hdu_num, nb::list columns) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
         torchfits::evict_cached_reader(filename);
         drop_columns(filename.c_str(), hdu_num, columns);
@@ -304,8 +296,8 @@ void bind_table(nb::module_& m) {
 
     m.def("delete_fits_table_rows", [](const std::string& filename, int hdu_num, long start_row,
                                        long num_rows) {
-        torchfits::invalidate_cached(filename);
         torchfits::invalidate_shared_meta(filename);
+        torchfits::evict_cached_reader(filename);
         delete_rows(filename.c_str(), hdu_num, start_row, num_rows);
     });
 

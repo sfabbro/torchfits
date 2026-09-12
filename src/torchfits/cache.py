@@ -267,8 +267,9 @@ class CacheManager:
         try:
             import torchfits._C as cpp
 
-            if hasattr(cpp, "clear_file_cache"):
-                cpp.clear_file_cache()
+            # Native state is SharedReadMeta; the old shared-handle clear
+            # (clear_file_cache) no longer exists in the extension.
+            cpp.clear_shared_read_meta_cache()
         except (ImportError, AttributeError):
             pass
 

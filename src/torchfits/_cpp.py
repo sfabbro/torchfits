@@ -163,11 +163,7 @@ def _guard_ctor(cls: Any) -> Callable[..., Any]:
     return factory
 
 
-_REMOVED_STUBS = ("clear_file_cache", "configure_cache", "get_cache_size")
-
 for _name in __all__:
-    if _name in _REMOVED_STUBS:
-        continue
     _obj = getattr(_C, _name)
     if _name in _PATH_FIRST:
         globals()[_name] = _guard_path_first(_obj)

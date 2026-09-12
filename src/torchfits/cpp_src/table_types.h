@@ -12,7 +12,7 @@
 
 #include "torchfits_torch.h"
 #include "security.h"
-#include "cache.h"
+#include "fits_handle.h"
 
 namespace torchfits {
 

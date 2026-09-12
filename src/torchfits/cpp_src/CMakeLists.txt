@@ -527,7 +527,7 @@ set(SOURCES
     fits_file.cpp
     table_bindings.cpp
     table_ops.cpp
-    cache.cpp
+
     hardware.cpp
 )
 

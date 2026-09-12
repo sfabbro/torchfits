@@ -13,7 +13,7 @@
 #include <fitsio.h>
 
 #include "torchfits_torch.h"
-#include "cache.h"
+#include "fits_handle.h"
 #include "table_types.h"
 #include "table_reader.h"
 #include "security.h"

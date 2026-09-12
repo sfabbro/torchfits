@@ -31,11 +31,11 @@ def _invalidate_path_caches(path: str) -> None:
     _invalidate_io_path_caches(path)
     import torchfits._C as cpp
 
-    cpp.invalidate_file_cache(path)
+    # The native side used to expose a per-path invalidate_file_cache as well;
+    # it was a no-op with a misleading name (shared handles were removed), so
+    # the live native state is cleared globally here.
     clear_meta = getattr(cpp, "clear_shared_read_meta_cache", None)
     if clear_meta is not None:
-        # NOTE: native shared metadata only exposes a global clear today;
-        # use per-path invalidation when the extension grows that operation.
         clear_meta()
 
 
