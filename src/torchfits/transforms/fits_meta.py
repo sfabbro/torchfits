@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any, cast
 
 import torch
 
@@ -7,6 +8,15 @@ from .base import FITSTransform
 from .helpers import (
     _amin,
     _amax,
+)
+from .state import (
+    SCALABLE,
+    DataState,
+    as_state,
+    check_state,
+    is_payload,
+    set_state,
+    stamp_state,
 )
 
 
@@ -45,34 +55,62 @@ class FITSHeaderScale(FITSTransform):
     ``forward`` applies the scaling tensor → physical (BSCALE * tensor + BZERO).
     ``inverse`` removes it: (physical − BZERO) / BSCALE.
 
+    .. warning::
+       This transform expects **stored** (unscaled) values. ``read_tensor``
+       already applies BSCALE/BZERO by default, so applying this to its output
+       would scale twice. Read with ``raw_scale=True`` for stored codes, or use
+       :class:`FITSHeaderNormalize`, which is written for physical values.
+       A payload that explicitly declares ``state="physical"`` is rejected.
+
     Parameters
     ----------
     bscale : float
         FITS BSCALE keyword value.  Default 1.0.
     bzero : float
         FITS BZERO keyword value.  Default 0.0.
+    state : str or DataState or None
+        Declared state of the input, when it is not carried by a payload.
 
     Example
     -------
     >>> header = {"BSCALE": 0.5, "BZERO": 100.0}
     >>> scaler = FITSHeaderScale.from_header(header)
-    >>> physical = scaler(raw_counts)   # raw → physical
-    >>> raw = scaler.inverse(physical)  # physical → raw
+    >>> physical = scaler(raw_counts)   # raw stored codes → physical
+    >>> raw = scaler.inverse(physical)  # physical → stored codes
     """
 
-    def __init__(self, bscale: float = 1.0, bzero: float = 0.0) -> None:
+    expects = frozenset({DataState.STORED})
+    produces = DataState.PHYSICAL
+    propagates_ivar = True
+
+    def __init__(
+        self,
+        bscale: float = 1.0,
+        bzero: float = 0.0,
+        *,
+        state: DataState | str | None = None,
+    ) -> None:
         self.bscale = float(bscale)
         self.bzero = float(bzero)
+        self.state = as_state(state)
 
     @classmethod
-    def from_header(cls, header: dict[str, object]) -> FITSHeaderScale:
+    def from_header(
+        cls, header: dict[str, object], *, state: DataState | str | None = None
+    ) -> FITSHeaderScale:
         """Construct from a FITS header dict-like object."""
         bscale = float(header.get("BSCALE", 1.0))  # type: ignore[arg-type]
         bzero = float(header.get("BZERO", 0.0))  # type: ignore[arg-type]
-        return cls(bscale=bscale, bzero=bzero)
+        return cls(bscale=bscale, bzero=bzero, state=state)
 
     @classmethod
-    def from_path(cls, path: str, hdu: int | str = 0) -> FITSHeaderScale:
+    def from_path(
+        cls,
+        path: str,
+        hdu: int | str = 0,
+        *,
+        state: DataState | str | None = None,
+    ) -> FITSHeaderScale:
         """Construct from skinny ``read_keys`` (no full header dump)."""
         import torchfits
 
@@ -82,25 +120,42 @@ class FITSHeaderScale(FITSTransform):
                 vals[name] = float(torchfits.read_keys(path, [name], hdu=hdu)[name])
             except (RuntimeError, TypeError, ValueError):
                 pass
-        return cls(bscale=vals["BSCALE"], bzero=vals["BZERO"])
+        return cls(bscale=vals["BSCALE"], bzero=vals["BZERO"], state=state)
 
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
+        check_state(x, self.expects, type(self).__name__, state=self.state)
         if self.bscale == 1.0 and self.bzero == 0.0:
             return x
+        if is_payload(x):
+            view = self.view(x, state=self.state)
+            return view.replace(
+                _linear_apply(view.flux, self.bscale, self.bzero),
+                ivar=self.scale_ivar(view.ivar, self.bscale),
+            )
         # Functional ops: out-of-place arithmetic only.
         return _linear_apply(x, self.bscale, self.bzero)
 
-    def inverse(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
+        check_state(x, self.inverse_expects(), type(self).__name__, state=self.state)
         if self.bscale == 1.0 and self.bzero == 0.0:
-            return x
+            return stamp_state(x, DataState.STORED)
+        if is_payload(x):
+            view = self.view(x, state=self.state, expects=self.inverse_expects())
+            return stamp_state(
+                view.replace(
+                    _linear_remove(view.flux, self.bscale, self.bzero),
+                    ivar=self.scale_ivar(view.ivar, 1.0 / self.bscale),
+                ),
+                DataState.STORED,
+            )
         return _linear_remove(x, self.bscale, self.bzero)
 
     def __repr__(self) -> str:
-        return f"FITSHeaderScale(bscale={self.bscale}, bzero={self.bzero})"
+        state = self.state.value if self.state is not None else None
+        return (
+            f"FITSHeaderScale(bscale={self.bscale}, bzero={self.bzero}, "
+            f"state={state!r})"
+        )
 
 
 class FITSScaleColumns(FITSTransform):
@@ -113,37 +168,38 @@ class FITSScaleColumns(FITSTransform):
     ``forward`` applies scaling: stored → physical.
     ``inverse`` removes it: ``(physical - TZERO) / TSCAL``.
 
+    .. warning::
+       Expects **stored** column values. ``table.read_torch`` already returns
+       physical values (TSCAL/TZERO applied), so guard with ``state="stored"``
+       semantics: the transform only acts on data that has not been scaled yet.
+
     Parameters
     ----------
-    header : dict
-        FITS table header dict-like with TTYPE*/TFORM*/TSCAL*/TZERO* keywords.
-
-    Example
-    -------
-    >>> header = {"TFIELDS": 2, "TTYPE1": "FLUX", "TFORM1": "E",
-    ...            "TSCAL1": 0.001, "TZERO1": 0.0,
-    ...            "TTYPE2": "MAG", "TFORM2": "E",
-    ...            "TSCAL2": 1.0, "TZERO2": 25.0}
-    >>> scaler = FITSScaleColumns.from_header(header)
-    >>> physical = scaler({"FLUX": raw_flux, "MAG": raw_mag})
-    >>> raw = scaler.inverse(physical)
+    scales : dict[str, tuple[float, float]]
+        Mapping of column name → (TSCAL, TZERO).
     """
 
-    def __init__(self, scales: dict[str, tuple[float, float]]) -> None:
-        """
-        Parameters
-        ----------
-        scales : dict[str, tuple[float, float]]
-            Mapping of column name → (TSCAL, TZERO).
-        """
+    expects = frozenset({DataState.STORED})
+    produces = DataState.PHYSICAL
+    propagates_ivar = True
+
+    def __init__(
+        self,
+        scales: dict[str, tuple[float, float]],
+        *,
+        state: DataState | str | None = None,
+    ) -> None:
         self.scales: dict[str, tuple[float, float]] = {
             name: (float(ts), float(tz))
             for name, (ts, tz) in scales.items()
             if ts != 1.0 or tz != 0.0
         }
+        self.state = as_state(state)
 
     @classmethod
-    def from_header(cls, header: dict[str, object]) -> FITSScaleColumns:
+    def from_header(
+        cls, header: dict[str, object], *, state: DataState | str | None = None
+    ) -> FITSScaleColumns:
         """Construct from a FITS table header dict-like object."""
         from ..fits_schema import iter_table_columns  # noqa: PLC0415
 
@@ -152,11 +208,12 @@ class FITSScaleColumns(FITSTransform):
             tscal = float(col.tscal) if col.tscal is not None else 1.0
             tzero = float(col.tzero) if col.tzero is not None else 0.0
             scales[col.name] = (tscal, tzero)
-        return cls(scales)
+        return cls(scales, state=state)
 
     def forward(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        check_state(x, self.expects, type(self).__name__, state=self.state)
         if not self.scales:
             return x
         out = dict(x)
@@ -170,14 +227,15 @@ class FITSScaleColumns(FITSTransform):
     def inverse(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        check_state(x, self.inverse_expects(), type(self).__name__, state=self.state)
         if not self.scales:
-            return x
+            return cast("dict[str, torch.Tensor]", stamp_state(x, DataState.STORED))
         out = dict(x)
         for name, (tscal, tzero) in self.scales.items():
             if name not in out:
                 continue
             out[name] = _linear_remove(out[name], tscal, tzero)
-        return out
+        return cast("dict[str, torch.Tensor]", stamp_state(out, DataState.STORED))
 
     def __repr__(self) -> str:
         items = ", ".join(
@@ -193,41 +251,41 @@ class TNullToNan(FITSTransform):
     corresponding sentinel values in each tensor column with NaN.
     Integer columns are promoted to float32 so NaN can be represented.
 
-    ``inverse`` is not available — null replacement is lossy.
+    .. note::
+       The table reader already turns TNULL into missing values, so this is a
+       **stored**-state utility for hand-built column dicts or foreign readers.
 
     Parameters
     ----------
-    header : dict
-        FITS table header dict-like with TTYPE*/TNULL* keywords.
-
-    Example
-    -------
-    >>> header = {"TFIELDS": 1, "TTYPE1": "FLUX", "TFORM1": "J", "TNULL1": -999}
-    >>> nuller = TNullToNan.from_header(header)
-    >>> clean = nuller({"FLUX": torch.tensor([1, -999, 3], dtype=torch.int32)})
-    >>> # FLUX is now float32 with NaN at position 1
+    nulls : dict[str, float]
+        Mapping of column name → TNULL value.
     """
 
-    def __init__(self, nulls: dict[str, float]) -> None:
-        """
-        Parameters
-        ----------
-        nulls : dict[str, float]
-            Mapping of column name → TNULL value.
-        """
+    expects = frozenset({DataState.STORED})
+
+    def __init__(
+        self,
+        nulls: dict[str, float],
+        *,
+        state: DataState | str | None = None,
+    ) -> None:
         self.nulls: dict[str, float] = {name: float(v) for name, v in nulls.items()}
+        self.state = as_state(state)
 
     @classmethod
-    def from_header(cls, header: dict[str, object]) -> TNullToNan:
+    def from_header(
+        cls, header: dict[str, object], *, state: DataState | str | None = None
+    ) -> TNullToNan:
         """Construct from a FITS table header dict-like object."""
         from ..fits_schema import column_tnull_map  # noqa: PLC0415
 
         nulls = column_tnull_map(header)
-        return cls(nulls)
+        return cls(nulls, state=state)
 
     def forward(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        check_state(x, self.expects, type(self).__name__, state=self.state)
         if not self.nulls:
             return x
         out = dict(x)
@@ -272,6 +330,11 @@ class FITSHeaderNormalize(FITSTransform):
 
     ``inverse`` reverses the normalization using the cached parameters.
 
+    This transform is written for **physical** values — the shape of
+    ``read_tensor``'s output, including the unsigned-convention case where it
+    returns ``uint16``/``uint32`` directly. It rescales flux, so it accepts
+    every state except ``CONTINUUM_NORMALIZED`` (see ``SCALABLE``).
+
     Parameters
     ----------
     header : dict
@@ -279,6 +342,9 @@ class FITSHeaderNormalize(FITSTransform):
     scale_floats : bool
         If True, min-max normalize floating-point data.  Default False.
     """
+
+    expects = SCALABLE
+    produces: DataState | None = DataState.NORMALIZED
 
     # BITPIX → (dtype, signed, bits)
     _BITPIX_MAP: dict[int, tuple[torch.dtype, bool, int]] = {
@@ -301,6 +367,13 @@ class FITSHeaderNormalize(FITSTransform):
         self._is_unsigned = info is not None and not info[1] and self.bitpix > 0
         self._bits = info[2] if info else 32
         self._in_range: tuple[float, float] | None = None
+        # A float header without scale_floats is an identity pass: it does not
+        # normalize anything, so it must not relabel the payload.
+        self.produces = (
+            DataState.NORMALIZED
+            if (self._is_integer or self._is_unsigned or self.scale_floats)
+            else None
+        )
 
         # Pre-compute the physical value range for integer types
         if self._is_integer:
@@ -329,43 +402,55 @@ class FITSHeaderNormalize(FITSTransform):
                 keys[name] = default
         return cls(keys, scale_floats=scale_floats)
 
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
+        view = self.view(x)
+        flux = view.flux
         if self._is_integer or self._is_unsigned:
             vmin, vmax = self._in_range  # type: ignore[misc]
             if vmax == vmin:
-                return torch.zeros_like(x)
+                return view.replace(torch.zeros_like(flux))
             # float32 mantissa is 24 bits: int32/int64 counts above 2**24
             # round, so the [0, 1] map collapses neighboring integers.
             xf = (
-                x.double()
-                if (not x.dtype.is_floating_point and x.element_size() >= 4)
-                else x
+                flux.double()
+                if (not flux.dtype.is_floating_point and flux.element_size() >= 4)
+                else flux
             )
-            return (xf - vmin) / (vmax - vmin)
+            span = vmax - vmin
+            out = (xf - vmin) / span
+            return view.replace(out, ivar=self.divide_ivar(view.ivar, span))
         if self.scale_floats:
-            vmin = _amin(x, tuple(range(x.ndim)), mask=mask)
-            vmax = _amax(x, tuple(range(x.ndim)), mask=mask)
+            vmin = _amin(flux, tuple(range(flux.ndim)), mask=view.effective_mask(mask))
+            vmax = _amax(flux, tuple(range(flux.ndim)), mask=view.effective_mask(mask))
+            finite = bool(torch.isfinite(vmin) and torch.isfinite(vmax))
+            if not finite:
+                return view.replace(torch.full_like(flux, float("nan")))
             self._in_range = (float(vmin.item()), float(vmax.item()))
             if vmax == vmin:
-                return torch.zeros_like(x)
-            return (x - vmin) / (vmax - vmin)
+                return view.replace(torch.zeros_like(flux))
+            span = vmax - vmin
+            out = (flux - vmin) / span
+            return view.replace(out, ivar=self.divide_ivar(view.ivar, span))
         # Float types, no scaling requested — identity
         return x
 
-    def inverse(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        if self._is_integer or self._is_unsigned or self.scale_floats:
-            if self._in_range is None:
-                raise RuntimeError(
-                    "FITSHeaderNormalize.inverse() requires a prior forward() pass "
-                    "when scale_floats=True."
-                )
-            vmin, vmax = self._in_range
-            return x * (vmax - vmin) + vmin
-        return x
+    def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
+        if not (self._is_integer or self._is_unsigned or self.scale_floats):
+            return x
+        if self._in_range is None:
+            raise RuntimeError(
+                "FITSHeaderNormalize.inverse() requires a prior forward() pass "
+                "when scale_floats=True."
+            )
+        view = self.view(x)
+        vmin, vmax = self._in_range
+        span = vmax - vmin
+        out = view.flux * span + vmin
+        # Undoing a normalization cannot claim any particular state; drop the
+        # declared one rather than leaving a stale "normalized" label behind.
+        return set_state(
+            view.replace(out, ivar=self.divide_ivar(view.ivar, 1.0 / span)), None
+        )
 
     def __repr__(self) -> str:
         return (

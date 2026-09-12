@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 from .._io_engine.device import to_device
 from .datasets import (
+    BandInfo,
     FitsCubeDataset,
     FitsCubeIterableDataset,
     FitsImageDataset,
@@ -37,6 +38,7 @@ from .datasets import (
     FitsTensorIterableDataset,
     _buffered_shuffle,
     _resolve_rank_and_world_size,
+    discover_bands,
 )
 from .remote import is_remote_url, prefetch_urls, resolve_local_path
 
@@ -261,12 +263,40 @@ def _row_from_torch_chunk(chunk: dict[str, Any], row_idx: int) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-class FitsTableIterableDataset(IterableDataset[Any]):
-    """Iterable dataset streaming FITS table rows via ``table.scan``.
+def _shard_row_range(
+    total_rows: int, slot_id: int, total_slots: int
+) -> tuple[int, int]:
+    """Contiguous, near-equal ``[start, stop)`` row range for one worker slot.
 
-    Yields one ``dict[str, Tensor]`` per row. NOTE: workers shard by scan
-    batch index (``batch_idx % num_workers``), not by row index — fine for
-    large single-file catalogs; uneven if ``batch_size`` ≫ row count.
+    Unlike ``batch_idx % num_workers`` this is even even when ``batch_size``
+    dwarfs the row count, and it lets each worker skip unrelated byte ranges
+    instead of decoding them.
+    """
+    if total_rows <= 0 or total_slots <= 1:
+        return 0, max(0, total_rows)
+    per_slot = total_rows // total_slots
+    remainder = total_rows % total_slots
+    start = slot_id * per_slot + min(slot_id, remainder)
+    size = per_slot + (1 if slot_id < remainder else 0)
+    return start, start + size
+
+
+class FitsTableIterableDataset(IterableDataset[Any]):
+    """Iterable dataset streaming FITS table rows in constant memory.
+
+    Each DataLoader worker (and each distributed rank) receives a
+    **contiguous, near-equal row range** via ``row_slice``, so every row is
+    seen exactly once per epoch and no worker decodes rows it will discard.
+
+    Yields one ``dict[str, Tensor]`` per row by default. With
+    ``as_batches=True`` it yields the raw ``dict[str, Tensor]`` chunks of
+    ``row_slice``/``batch_size`` rows instead — the tensor-space path skips
+    Arrow→Python per-row conversion and is markedly faster for wide numeric
+    catalogs.
+
+    With ``where=`` the window is applied *before* filtering, so a shard can
+    hold a different number of surviving rows; ordering within a shard is
+    preserved and no row is duplicated or dropped.
     """
 
     def __init__(
@@ -283,6 +313,8 @@ class FitsTableIterableDataset(IterableDataset[Any]):
         seed: int = 0,
         rank: int | None = None,
         world_size: int | None = None,
+        *,
+        as_batches: bool = False,
     ) -> None:
         self.path = resolve_local_path(path)
         self.hdu = hdu
@@ -296,8 +328,33 @@ class FitsTableIterableDataset(IterableDataset[Any]):
         self.seed = seed
         self.rank = rank
         self.world_size = world_size
+        self.as_batches = bool(as_batches)
 
-    def _generate(self) -> Iterator[dict[str, Any]]:
+    def _non_numeric_columns(self) -> set[str]:
+        """Character / bit columns that tensor-space batches cannot carry.
+
+        ``scan_torch`` hands character columns back as raw ``uint8`` byte
+        matrices, which are indistinguishable by dtype from a genuine ``uint8``
+        image column. The schema's ``TFORM`` codes are not ambiguous, so use
+        them to make ``as_batches=True`` behave the same on both scanner paths.
+        """
+        try:
+            import torchfits
+
+            info = torchfits.read_table_info(self.path, self.hdu)
+        except Exception:
+            return set()
+        names = list(info.get("colnames") or [])
+        tforms = list(info.get("tforms") or [])
+        dropped: set[str] = set()
+        for name, tform in zip(names, tforms):
+            code = "".join(ch for ch in str(tform) if ch.isalpha())
+            if code and code[0].upper() in {"A", "X"}:
+                dropped.add(str(name))
+        return dropped
+
+    def _row_window(self) -> tuple[int, int] | None:
+        """This slot's ``(start, stop)`` row window, or None for the whole table."""
         rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
         worker_info = torch.utils.data.get_worker_info()
         worker_id = 0 if worker_info is None else worker_info.id
@@ -305,23 +362,42 @@ class FitsTableIterableDataset(IterableDataset[Any]):
 
         total_slots = world_size * num_workers
         slot_id = rank * num_workers + worker_id
+        if total_slots <= 1:
+            return None
+
+        import torchfits
+
+        total_rows = int(torchfits.read_nrows(self.path, self.hdu))
+        start, stop = _shard_row_range(total_rows, slot_id, total_slots)
+        return (start, stop)
+
+    def _generate(self) -> Iterator[dict[str, Any]]:
+        window = self._row_window()
+        if window is not None and window[1] <= window[0]:
+            return
+
+        skipped = self._non_numeric_columns() if self.as_batches else set()
 
         if self.where is None:
             import torchfits.table
 
-            for batch_idx, chunk in enumerate(
-                torchfits.table.scan_torch(
-                    self.path,
-                    hdu=self.hdu,
-                    columns=self.columns,
-                    batch_size=self.batch_size,
-                    mmap=_resolve_table_mmap(self.mmap),
-                    device=self.device,
-                )
+            for chunk in torchfits.table.scan_torch(
+                self.path,
+                hdu=self.hdu,
+                columns=self.columns,
+                row_slice=window,
+                batch_size=self.batch_size,
+                mmap=_resolve_table_mmap(self.mmap),
+                device=self.device,
             ):
-                if batch_idx % total_slots != slot_id:
-                    continue
                 if not chunk:
+                    continue
+                if self.as_batches:
+                    if skipped:
+                        chunk = {k: v for k, v in chunk.items() if k not in skipped}
+                    if self.transform is not None:
+                        chunk = self.transform(chunk)
+                    yield chunk
                     continue
                 n_rows = next(
                     (v.shape[0] for v in chunk.values() if isinstance(v, torch.Tensor)),
@@ -336,19 +412,30 @@ class FitsTableIterableDataset(IterableDataset[Any]):
 
         import torchfits.table
 
-        for batch_idx, batch in enumerate(
-            torchfits.table.scan(
-                self.path,
-                hdu=self.hdu,
-                columns=self.columns,
-                where=self.where,
-                batch_size=self.batch_size,
-                mmap=bool(self.mmap),
-            )
+        for batch in torchfits.table.scan(
+            self.path,
+            hdu=self.hdu,
+            columns=self.columns,
+            row_slice=window,
+            where=self.where,
+            batch_size=self.batch_size,
+            mmap=bool(self.mmap),
         ):
-            if batch_idx % total_slots != slot_id:
-                continue
             tensor_cols = _tensor_columns_from_record_batch(batch)
+            if self.as_batches:
+                numeric = {
+                    k: v
+                    for k, v in tensor_cols.items()
+                    if v is not None and k not in skipped
+                }
+                if not numeric:
+                    continue
+                if str(self.device) != "cpu":
+                    numeric = _move_table_chunk(numeric, self.device)
+                if self.transform is not None:
+                    numeric = self.transform(numeric)
+                yield numeric
+                continue
             for row_idx in range(batch.num_rows):
                 row = _row_from_record_batch(batch, row_idx, tensor_cols, self.device)
                 if self.transform is not None:
@@ -358,6 +445,10 @@ class FitsTableIterableDataset(IterableDataset[Any]):
     def __iter__(self) -> Iterator[dict[str, Any]]:
         stream = self._generate()
         if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
+            if self.as_batches:
+                raise ValueError(
+                    "shuffle_buffer_size requires per-row mode (as_batches=False)"
+                )
             stream = _buffered_shuffle(
                 stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
             )
@@ -366,7 +457,7 @@ class FitsTableIterableDataset(IterableDataset[Any]):
     def __repr__(self) -> str:
         return (
             f"FitsTableIterableDataset(path={self.path!r}, hdu={self.hdu}, "
-            f"batch_size={self.batch_size})"
+            f"batch_size={self.batch_size}, as_batches={self.as_batches})"
         )
 
 
@@ -596,7 +687,9 @@ def make_loader(
 
 
 __all__ = [
+    "BandInfo",
     "CutoutSpec",
+    "discover_bands",
     "FitsTensorDataset",
     "FitsTensorIterableDataset",
     "FitsImageDataset",

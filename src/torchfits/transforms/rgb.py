@@ -36,12 +36,18 @@ def lupton_rgb(
     Q: float = 8.0,
     stretch: float = 0.5,
     minimum: float = 0.0,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Return float RGB tensor with shape ``(H, W, 3)`` in ``[0, 1]``.
 
     Parameters follow Astropy's Lupton asinh convention. ``stretch`` is the
     linear intensity scale (smaller → brighter preview); Astropy's default is
     ``5``, while ``0.5`` suits typical survey cutout previews.
+
+    ``dtype`` casts only the returned image; the stretch is always evaluated
+    in the working dtype (float64 on CPU) for accuracy. Pass
+    ``torch.float32`` when feeding a network so the preview does not cost 2×
+    the memory of the data it came from.
     """
     if Q < 0:
         raise ValueError(f"Q must be non-negative, got {Q}")
@@ -77,7 +83,8 @@ def lupton_rgb(
     if channels.numel() > 0:
         peak = channels.amax(dim=-1, keepdim=True)
         channels = torch.where(peak > 1.0, channels / peak, channels)
-    return torch.clamp(channels, 0.0, 1.0)
+    out = torch.clamp(channels, 0.0, 1.0)
+    return out if dtype is None else out.to(dtype)
 
 
 # Scarlet ``channels_to_rgb`` matrices, bands short → long; row 0 = R.
@@ -263,6 +270,7 @@ def rgb(
     weights: Any | None = None,
     calibrated: bool = False,
     zeropoints: Sequence[float] | None = None,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Auto RGB from 1–7 aligned bands (shortest wavelength first).
 
@@ -288,6 +296,9 @@ def rgb(
     zeropoints :
         AB magnitude of 1 count per band. Converted to nanomaggies with
         ``counts * 10**(-0.4*(zp - 22.5))``.
+    dtype :
+        Cast the returned image to this dtype (math stays in the working
+        dtype). Use ``torch.float32`` when the preview feeds a network.
 
     Returns
     -------
@@ -373,7 +384,8 @@ def rgb(
     )
     mapped = _apply_saturation(mapped, float(saturation))
     mapped = torch.clamp(mapped, 0.0, 1.0)
-    return _srgb_oetf(mapped)
+    out = _srgb_oetf(mapped)
+    return out if dtype is None else out.to(dtype)
 
 
 def _png_chunk(tag: bytes, data: bytes) -> bytes:

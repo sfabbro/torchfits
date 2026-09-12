@@ -199,6 +199,118 @@ The `torchfits.data` module provides specialized PyTorch `Dataset` implementatio
 
 ---
 
+## Case Study 2: One Pipeline, Every Product {#ml-full-pipeline}
+
+[`example_ml_training_loop.py`](published-examples/example_ml_training_loop.py) builds a small survey on disk — multi-band cutouts, 1D spectra, an IFU cube, a catalog — and trains a CNN on it. It is the shortest complete path from FITS files to a training step, and it exercises the mask, IVAR and data-state machinery end to end.
+
+```bash
+python examples/example_ml_training_loop.py
+```
+
+### 1. Build a multi-band dataset from extension names
+
+```python
+from torchfits.data import FitsImageDataset, discover_bands
+
+for info in discover_bands("cutout_000.fits"):
+    print(info.name, info.role, info.shape, info.zeropoint)
+# G flux (32, 32) 26.0 / G_IVAR ivar (32, 32) None / G_DQ mask (32, 32) None
+
+dataset = FitsImageDataset.from_bands("cutout_*.fits", labels=labels)
+dataset.band_zeropoints()  # {'G': 26.0, 'R': 26.0, 'Z': 26.0}
+```
+
+A `*_DQ` companion is a FITS **bitfield**, not a validity mask, so `from_bands`
+decodes it through `mask_from_dq` (name the fatal bits with `bad_bits=`). Every
+payload then carries `mask` as a boolean tensor where `True` means valid.
+
+### 2. Preprocess with masks and IVAR intact
+
+```python
+from torchfits.transforms import Compose, MeshBackgroundSubtract, SigmaNormalize
+
+pipeline = Compose(
+    [
+        MeshBackgroundSubtract(mesh=(4, 4), weighted=True),  # tiled sky (SExtractor)
+        SigmaNormalize(stat="mad"),  # unit sky noise, zero-preserving
+    ]
+)
+
+payload, label = dataset[0]  # {'flux', 'ivar', 'mask'}
+processed = pipeline(payload)
+```
+
+`SigmaNormalize` divides by the robust per-channel dispersion *without*
+subtracting an offset, so band ratios survive; the companion `mask` and `ivar`
+travel with the flux through every transform, and `ArcsinhStretch(...,
+propagate_ivar=True)` keeps `ivar` consistent by the delta method.
+
+### 3. Already-normalized data is not normalized twice
+
+Survey spectra frequently arrive continuum-normalized. Declare that and the
+normalizers refuse to redo the reduction instead of discarding the common flux
+scale:
+
+```python
+from torchfits.transforms import DataState, DataStateError, Payload, SigmaNormalize
+
+try:
+    SigmaNormalize()(Payload(flux=flux, state=DataState.CONTINUUM_NORMALIZED))
+except DataStateError as exc:
+    print(exc)
+    # SigmaNormalize expects state [normalized, physical, stored], but the
+    # payload declares 'continuum_normalized'. ...
+```
+
+The same contract stops `FITSHeaderScale` from applying BSCALE/BZERO a second
+time to data the reader already calibrated, and the state follows the payload
+through a `Compose` pipeline.
+
+### 4. Spectra, IFU cubes and catalogs share the loader contract
+
+```python
+from torchfits.data import (
+    FitsCubeDataset,
+    FitsSpectrumDataset,
+    FitsTableIterableDataset,
+    make_loader,
+)
+
+spectra = FitsSpectrumDataset(
+    "spec_*.fits",
+    hdu=1,
+    column="FLUX",
+    ivar_column="IVAR",
+    mask_column="DQ",
+    mask_is_dq=True,
+    wavelength_column="WAVE",
+    labels=labels,
+)
+# {'flux', 'ivar', 'mask', 'wavelength'} — parallel arrays, no resampling needed
+
+cube = FitsCubeDataset("ifu_cube.fits", spectral_slice=(8, 16))  # spectral window
+
+# Contiguous row ranges: every row is seen exactly once per epoch.
+for chunk in FitsTableIterableDataset(
+    "catalog.fits", hdu=1, batch_size=16, rank=rank, world_size=world, as_batches=True
+):
+    ...
+
+loader = make_loader(spectra, batch_size=4)
+```
+
+### 5. The mask reaches the loss
+
+```python
+from torchfits.transforms import apply_mask
+
+# Flagged pixels are filled, not fed to the model as real zero-flux data; the
+# heavy-tailed range is clamped so a bright source cannot dominate layer one.
+x = apply_mask(payload["flux"], payload["mask"], fill=0.0).clamp(-5.0, 25.0)
+```
+
+---
+
 ## DataLoader Best Practices: `make_loader` vs `DataLoader`
 
 `torchfits.data.make_loader` is a tuned factory that wraps PyTorch's native `DataLoader` with astronomical defaults:
@@ -234,6 +346,7 @@ loader = make_loader(
 | Script | Topic |
 |---|---|
 | [`example_ml_galaxyzoo_legacy.py`](published-examples/example_ml_galaxyzoo_legacy.py) | End-to-end Galaxy Zoo 1 CNN morphology classification |
+| [`example_ml_training_loop.py`](published-examples/example_ml_training_loop.py) | Raw FITS to a training step: band discovery, DQ masks, the data-state contract, and spectra/IFU/catalog loaders |
 | [`example_megacam_cr_denoise.py`](published-examples/example_megacam_cr_denoise.py) | FITS-native Noise2Noise calibration, held-out dark test, and conservative science CR repair |
 | [`example_megapipe_cutout_collage.py`](published-examples/example_megapipe_cutout_collage.py) | High-throughput survey mosaic cutouts and Lupton RGB collage |
 | [`example_image_dataset.py`](published-examples/example_image_dataset.py) | Minimal `FitsImageDataset` + `make_loader` pipeline |
