@@ -13,6 +13,27 @@ Pixi-first: use `pixi run …`, never bare `python` for project work.
 Durable notes live under `.cursor/harness/` (playbook, trajectories) — not long
 chat scrollback. Deferred product work: [`.cursor/post-1.0-backlog.md`](.cursor/post-1.0-backlog.md).
 
+## Git workflow
+
+`origin` is the **fork** `sfabbro/torchfits`; `upstream` is `astroai/torchfits`.
+
+- Work is committed **directly on the fork's `main`** — do not open feature
+  branches (`wip/*`). A branch is only ever a temporary landing vehicle, and a
+  merged one is deleted.
+- Keep the fork in lockstep with `astroai/torchfits`:
+
+  ```bash
+  git fetch upstream && git merge --ff-only upstream/main
+  git push origin main
+  ```
+
+- The fork carries exactly one branch (`main`) and between rounds is
+  `identical` to `upstream/main`:
+
+  ```bash
+  gh api repos/astroai/torchfits/compare/main...sfabbro:main --jq '.status'
+  ```
+
 ## Humans / coding agents
 
 - Docs must match the public façade (`docs/api*.md`); env vars must exist in `src/`.

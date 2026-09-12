@@ -11,6 +11,12 @@
 - id: file-memory
   desc: Put durable notes in .cursor/harness/ — not long chat scrollback.
 
+- id: git-fork-main
+  desc: Work lands on sfabbro/torchfits main — no wip/* feature branches, no fork PRs. origin=fork, upstream=astroai/torchfits; re-sync with `git fetch upstream && git merge --ff-only upstream/main && git push origin main`. The fork must carry only `main` and stay identical to upstream/main between rounds.
+
+- id: squash-merged-branch-check
+  desc: Before deleting a fork branch, prove its content is upstream — squash merges make `git cherry` mark every commit '+' while the work is already in main. Compare patch-ids instead: `git diff $(git merge-base BR upstream/main) BR | git patch-id --stable` must equal the squash commit's `git diff SHA^ SHA | git patch-id --stable`.
+
 - id: minimal-diff
   desc: Smallest correct change; match existing repo style and tools.
 
