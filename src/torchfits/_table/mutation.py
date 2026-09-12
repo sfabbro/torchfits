@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, Optional
 
+from .._io_engine.paths import coerce_fits_path
 from .._table.utils import (
     _column_tnull_map,
     _normalize_row_slice,
@@ -56,6 +57,7 @@ def insert_column(
     tscal: Optional[float] = None,
     tzero: Optional[float] = None,
 ) -> None:
+    path = coerce_fits_path(path)
     if not isinstance(name, str) or not name:
         raise ValueError("name must be a non-empty string")
 
@@ -138,6 +140,7 @@ def replace_column(
     tscal: Optional[float] = None,
     tzero: Optional[float] = None,
 ) -> None:
+    path = coerce_fits_path(path)
     if not isinstance(name, str) or not name:
         raise ValueError("name must be a non-empty string")
 
@@ -209,6 +212,7 @@ def append_rows(
     rows: dict[str, Any],
     hdu: int | str = 1,
 ) -> None:
+    path = coerce_fits_path(path)
     rows = _coerce_rows_from_arrow(rows)
     if not isinstance(rows, dict) or not rows:
         raise ValueError("rows must be a non-empty dictionary")
@@ -240,6 +244,7 @@ def insert_rows(
     row: int,
     hdu: int | str = 1,
 ) -> None:
+    path = coerce_fits_path(path)
     rows = _coerce_rows_from_arrow(rows)
     if not isinstance(rows, dict) or not rows:
         raise ValueError("rows must be a non-empty dictionary")
@@ -293,6 +298,7 @@ def delete_rows(
     *,
     hdu: int | str = 1,
 ) -> None:
+    path = coerce_fits_path(path)
     if isinstance(row_slice, int):
         if row_slice < 0:
             raise ValueError("row index must be >= 0")
@@ -399,6 +405,7 @@ def update_rows(
     *,
     mmap: bool | str = "auto",
 ) -> None:
+    path = coerce_fits_path(path)
     rows = _coerce_rows_from_arrow(rows)
     if not isinstance(rows, dict) or not rows:
         raise ValueError("rows must be a non-empty dictionary")
@@ -551,6 +558,7 @@ def rename_columns(
     mapping: dict[str, str],
     hdu: int | str = 1,
 ) -> None:
+    path = coerce_fits_path(path)
     if not isinstance(mapping, dict) or not mapping:
         raise ValueError("mapping must be a non-empty dictionary")
 
@@ -591,6 +599,7 @@ def drop_columns(
     columns: list[str] | tuple[str, ...],
     hdu: int | str = 1,
 ) -> None:
+    path = coerce_fits_path(path)
     if not isinstance(columns, (list, tuple)) or not columns:
         raise ValueError("columns must be a non-empty list of column names")
 

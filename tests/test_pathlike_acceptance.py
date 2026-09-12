@@ -115,6 +115,68 @@ def test_table_hdu_from_fits_accepts_path(image_and_table):
     assert hdu.num_rows == 3
 
 
+_MUTATIONS = [
+    (
+        "update_rows",
+        lambda p: torchfits.table.update_rows(
+            p, {"A": np.array([7, 8], dtype=np.int32)}, (0, 2)
+        ),
+    ),
+    (
+        "append_rows",
+        lambda p: torchfits.table.append_rows(p, {"A": np.array([7], dtype=np.int32)}),
+    ),
+    (
+        "insert_rows",
+        lambda p: torchfits.table.insert_rows(
+            p, {"A": np.array([7], dtype=np.int32)}, row=1
+        ),
+    ),
+    ("delete_rows", lambda p: torchfits.table.delete_rows(p, (0, 1))),
+    (
+        "insert_column",
+        lambda p: torchfits.table.insert_column(p, "B", np.arange(3, dtype=np.int32)),
+    ),
+    (
+        "replace_column",
+        lambda p: torchfits.table.replace_column(
+            p, "A", np.arange(3, dtype=np.int32) * 2
+        ),
+    ),
+    ("rename_columns", lambda p: torchfits.table.rename_columns(p, {"A": "R"})),
+    ("drop_columns", lambda p: torchfits.table.drop_columns(p, ["S"])),
+]
+
+
+@pytest.mark.parametrize(
+    "mutate", [m[1] for m in _MUTATIONS], ids=[m[0] for m in _MUTATIONS]
+)
+def test_table_mutations_accept_path(tmp_path, mutate):
+    """The table mutation API resolved its HDU by calling the native opener
+    directly, so every mutator raised ``TypeError`` for ``pathlib.Path`` while
+    accepting ``str`` -- the same asymmetry as the read surface, one layer down.
+    """
+    via_str = tmp_path / "as_str.fits"
+    via_path = tmp_path / "as_path.fits"
+    for target in (via_str, via_path):
+        torchfits.table.write(
+            str(target),
+            {
+                "A": np.arange(3, dtype=np.int32),
+                "S": np.array(["x", "y", "z"], dtype="U1"),
+            },
+            overwrite=True,
+        )
+    mutate(str(via_str))
+    mutate(via_path)  # the only difference: pathlib.Path argument
+
+    a = torchfits.table.read(via_str)
+    b = torchfits.table.read(via_path)
+    assert a.column_names == b.column_names
+    for column in a.column_names:
+        assert a[column].to_pylist() == b[column].to_pylist()
+
+
 def test_non_path_arguments_still_rejected():
     """Widening to PathLike must not make the APIs accept arbitrary objects."""
     for bad in (None, 123, object()):
