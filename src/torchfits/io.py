@@ -223,7 +223,14 @@ def read_hdus(
 ) -> Any:
     """Read multiple HDUs from a single FITS file. Returns a list of tensors."""
     return _read_hdus_impl(
-        path, hdus, device=device, mmap=mmap, return_header=return_header
+        path,
+        hdus,
+        device=device,
+        mmap=mmap,
+        return_header=return_header,
+        # Keep the returned headers' value types identical to read_header()'s;
+        # the native dict is raw CFITSIO strings.
+        fallback_get_header=read_header,
     )
 
 

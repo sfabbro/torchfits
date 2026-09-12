@@ -87,12 +87,13 @@ def read_image(
         data = to_device(data, device)
 
     if return_header:
-        try:
-            return data, Header(_cpp.read_header_dict(path, hdu))
-        except Exception:
-            if fallback_get_header is None:
-                raise
+        # Prefer the typed getter. read_header_dict() hands back raw CFITSIO
+        # strings, so using it first made read_tensor(..., return_header=True)
+        # report '17'/'T'/'2.5' for a file whose read_header() reports
+        # 17/True/2.5 -- same file, same process, different types.
+        if fallback_get_header is not None:
             return data, fallback_get_header(path, hdu)
+        return data, Header(_cpp.read_header_dict(path, hdu))
     return data
 
 
@@ -103,6 +104,7 @@ def read_hdus(
     device: str = "cpu",
     mmap: bool = True,
     return_header: bool = False,
+    fallback_get_header: Callable[[str, int], Header] | None = None,
 ) -> Any:
     """Read multiple image HDUs from one file using a direct one-handle path."""
     path = coerce_fits_path(path)
@@ -137,7 +139,12 @@ def read_hdus(
     if not return_header:
         return data
 
-    headers = [
-        Header(_cpp.read_header_dict(path, hdu_num)) for hdu_num in resolved_hdus
-    ]
+    if fallback_get_header is not None:
+        headers = [fallback_get_header(path, hdu_num) for hdu_num in resolved_hdus]
+    else:
+        # Raw-dict last resort: only reached when the caller supplied no typed
+        # getter. Values here are CFITSIO strings, not real header types.
+        headers = [
+            Header(_cpp.read_header_dict(path, hdu_num)) for hdu_num in resolved_hdus
+        ]
     return data, headers

@@ -130,3 +130,7 @@ def test_reading_non_ascii_on_disk_stays_lenient(tmp_path):
 
     header = torchfits.read_header(path)  # must not raise
     assert all(ord(ch) < 128 for ch in str(header.get("PLAIN", "")))
+    # The stray byte must not push the read onto the raw-string fallback, which
+    # would type every value as str: BITPIX would read '-32' instead of -32.
+    assert header["BITPIX"] == -32 and type(header["BITPIX"]) is int
+    assert header["NAXIS"] == 2 and type(header["NAXIS"]) is int

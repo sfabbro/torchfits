@@ -715,6 +715,28 @@ inline std::string require_fits_ascii(const std::string& input, const char* what
     return input;
 }
 
+// Drop only the bytes that cannot appear in UTF-8 (>= 0x80), leaving every
+// card's structure intact. nanobind converts a std::string to Python `str` by
+// UTF-8 decoding, so one stray high-bit byte in a header made
+// read_header_string() raise; the caller then quietly fell back to the raw
+// string dict, where every value loses its type (17 -> '17', T -> 'T'). Card
+// text is written in printable ASCII, so a byte >= 0x80 is always corruption,
+// and the read side already drops exactly such bytes from header values via
+// sanitize_fits_string().
+inline std::string drop_non_ascii_bytes(const std::string& input) {
+    if (std::none_of(input.begin(), input.end(), [](unsigned char c) {
+            return c >= 0x80;
+        })) {
+        return input;
+    }
+    std::string output;
+    output.reserve(input.size());
+    for (unsigned char c : input) {
+        if (c < 0x80) output.push_back(static_cast<char>(c));
+    }
+    return output;
+}
+
 inline std::string sanitize_fits_key(const std::string& input) {
     // The normalization loop below drops every character it does not
     // recognize, so a keyword containing non-ASCII bytes would silently
