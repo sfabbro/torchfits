@@ -6,6 +6,7 @@ import contextlib
 import glob as _glob
 import os
 import random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
@@ -204,6 +205,238 @@ def _pack_payload(
     return out
 
 
+def _resolve_file_labels(
+    files: list[str],
+    *,
+    label_key: str | None,
+    labels: list[int] | None,
+    hdu: int = 0,
+) -> list[int] | None:
+    """Per-file integer labels from an explicit list or a primary-header key.
+
+    Returns ``None`` when neither is supplied, which keeps the legacy
+    label-free payload return for spectra.
+    """
+    if labels is not None:
+        if len(labels) != len(files):
+            raise ValueError(
+                f"labels length {len(labels)} != files length {len(files)}"
+            )
+        return [int(v) for v in labels]
+    if label_key is None:
+        return None
+    from torchfits import read_keys
+
+    return [int(read_keys(path, [label_key], hdu=hdu)[label_key]) for path in files]
+
+
+# Zeropoint header keys, most specific first. FITS files name the same
+# quantity differently across surveys / instruments.
+_ZEROPOINT_KEYS = (
+    "PHOTZEROPOINT",
+    "PHOTZP",
+    "ZP",
+    "MAGZERO",
+    "MAGZP",
+    "ABMAGZERO",
+    "ZEROPOINT",
+)
+_IVAR_SUFFIXES = ("_IVAR", "IVAR")
+_MASK_SUFFIXES = ("_MASK", "_DQ", "MASK", "DQ")
+_WAVELENGTH_SUFFIXES = ("_WAVELENGTH", "_WAVE", "WAVELENGTH", "WAVE")
+_BITPIX_DTYPES = {
+    8: "uint8",
+    16: "int16",
+    32: "int32",
+    64: "int64",
+    -32: "float32",
+    -64: "float64",
+}
+
+
+@dataclass(frozen=True)
+class BandInfo:
+    """One image extension found by :func:`discover_bands`.
+
+    ``zeropoint`` follows the ``mag = -2.5 log10(counts) + ZP`` convention so
+    that ``flux_scale()`` converts stored counts to physical flux.
+    """
+
+    index: int
+    name: str
+    shape: tuple[int, ...]
+    dtype: str
+    role: str = "flux"  # "flux" | "ivar" | "mask" | "wavelength"
+    bitpix: int | None = None
+    zeropoint: float | None = None
+    photflam: float | None = None
+    photplam: float | None = None
+    exptime: float | None = None
+
+    def flux_scale(self, *, exptime_normalized: bool = True) -> float | None:
+        """Factor turning counts into flux: ``10**(-0.4 * ZP)``.
+
+        Returns ``None`` when the header declares no zeropoint. With
+        ``exptime_normalized=False`` the factor is divided by ``EXPTIME`` so
+        the result is per-second.
+        """
+        if self.zeropoint is None:
+            return None
+        scale = float(10.0 ** (-0.4 * float(self.zeropoint)))
+        if not exptime_normalized and self.exptime:
+            scale /= float(self.exptime)
+        return scale
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "name": self.name,
+            "shape": self.shape,
+            "dtype": self.dtype,
+            "role": self.role,
+            "bitpix": self.bitpix,
+            "zeropoint": self.zeropoint,
+            "photflam": self.photflam,
+            "photplam": self.photplam,
+            "exptime": self.exptime,
+        }
+
+
+def _band_role(name: str) -> str:
+    """Classify an image extension by its companion-style name suffix."""
+    upper = name.upper()
+    for suffixes, role in (
+        (_IVAR_SUFFIXES, "ivar"),
+        (_MASK_SUFFIXES, "mask"),
+        (_WAVELENGTH_SUFFIXES, "wavelength"),
+    ):
+        if any(upper.endswith(suffix) for suffix in suffixes):
+            return role
+    return "flux"
+
+
+def discover_bands(
+    path: str | Path,
+    *,
+    extra_keys: Sequence[str] = (),
+) -> list[BandInfo]:
+    """List the 2D+ image extensions of *path* with photometric metadata.
+
+    Lets a multi-band dataset be built from names (``"G"``, ``"R"``, ``"Z"``)
+    instead of hand-written HDU indices, and exposes the zeropoints so counts
+    can be turned into physical flux with :meth:`BandInfo.flux_scale`.
+
+    Parameters
+    ----------
+    path :
+        Local path or remote URL for a FITS file.
+    extra_keys :
+        Additional header keywords to surface. Currently used only to pick a
+        per-band ``FILTER``/``BAND`` label when ``EXTNAME`` is missing.
+
+    Returns
+    -------
+    list[BandInfo]
+        Image extensions in file order; table HDUs and 1D extensions are
+        skipped.
+    """
+    import torchfits
+
+    resolved = resolve_local_path(str(path))
+    n_hdus = int(torchfits.read_num_hdus(resolved))
+    label_keys = ("FILTER", "BAND", *extra_keys)
+    bands: list[BandInfo] = []
+    for index in range(n_hdus):
+        try:
+            bitpix, shape = torchfits.read_shape(resolved, index)
+        except Exception:
+            continue
+        if len(shape) < 2:
+            continue
+        try:
+            header = torchfits.read_header(resolved, index)
+        except Exception:
+            continue
+        extname = header.get("EXTNAME")
+        name = str(extname).strip() if extname else f"HDU{index}"
+        if not extname:
+            for key in label_keys:
+                value = header.get(key)
+                if value:
+                    name = str(value).strip()
+                    break
+        zeropoint = None
+        for key in _ZEROPOINT_KEYS:
+            value = header.get(key)
+            if value is not None:
+                try:
+                    zeropoint = float(value)
+                except (TypeError, ValueError):
+                    continue
+                break
+
+        def _float(key: str) -> float | None:
+            value = header.get(key)
+            try:
+                return None if value is None else float(value)
+            except (TypeError, ValueError):
+                return None
+
+        bands.append(
+            BandInfo(
+                index=index,
+                name=name,
+                shape=tuple(int(s) for s in shape),
+                dtype=_BITPIX_DTYPES.get(int(bitpix), f"BITPIX{int(bitpix)}"),
+                role=_band_role(name),
+                bitpix=int(bitpix),
+                zeropoint=zeropoint,
+                photflam=_float("PHOTFLAM"),
+                photplam=_float("PHOTPLAM"),
+                exptime=_float("EXPTIME"),
+            )
+        )
+    return bands
+
+
+def _slice_leading(
+    payload: Any, *, index: int | None, window: tuple[int, int] | None
+) -> Any:
+    """Index and/or window the leading (spectral) axis of a cube payload."""
+    if index is None and window is None:
+        return payload
+
+    def _apply(tensor: torch.Tensor) -> torch.Tensor:
+        if index is not None:
+            tensor = tensor[index]
+        if window is not None:
+            tensor = tensor[window[0] : window[1]]
+        return tensor
+
+    if isinstance(payload, dict):
+        return {
+            key: _apply(value) if torch.is_tensor(value) else value
+            for key, value in payload.items()
+        }
+    return _apply(payload)
+
+
+def _pick_hdu(hdus: list[HduRef], index: int) -> HduRef:
+    """Companion HDUs may be a single shared extension or one per arm."""
+    return hdus[index] if len(hdus) > 1 else hdus[0]
+
+
+def _as_validity_mask(
+    tensor: torch.Tensor, *, is_dq: bool, bad_bits: Any
+) -> torch.Tensor:
+    """Boolean ``True`` = valid. Integer DQ bitfields go through ``mask_from_dq``."""
+    if not is_dq:
+        return tensor.to(torch.bool)
+    from torchfits.transforms import mask_from_dq
+
+    return mask_from_dq(tensor, bad_bits=bad_bits)
+
+
 def _load_image_payload(
     path: str,
     *,
@@ -328,6 +561,80 @@ class FitsImageDataset(FitsTensorDataset):
     ) -> None:
         super().__init__(paths, hdu=hdu, add_channel_dim=add_channel_dim, **kwargs)
 
+    @classmethod
+    def from_bands(
+        cls,
+        paths: str | list[str],
+        bands: Sequence[str] | None = None,
+        *,
+        ivar_suffixes: Sequence[str] = _IVAR_SUFFIXES,
+        mask_suffixes: Sequence[str] = _MASK_SUFFIXES,
+        **kwargs: Any,
+    ) -> "FitsImageDataset":
+        """Build a multi-band dataset by discovering image extensions by name.
+
+        ``bands=None`` selects every extension whose name does not look like a
+        companion (``G``, ``R``, ``Z`` — not ``G_IVAR`` / ``G_DQ``). Companion
+        IVAR / mask extensions are attached only when *every* selected band has
+        one, matched by suffix (``"G"`` → ``"G_IVAR"``, ``"G_MASK"/"G_DQ"``).
+        Band names come from ``EXTNAME``, falling back to
+        ``FILTER``/``BAND``/``HDU<n>``.
+
+        Use :func:`discover_bands` to inspect zeropoints before choosing
+        bands; see :meth:`BandInfo.flux_scale` for counts→flux conversion.
+        """
+        files = _resolve_paths(paths)
+        if not files:
+            raise ValueError("no FITS paths matched")
+        infos = discover_bands(files[0])
+        available = [info.name for info in infos]
+        if bands is None:
+            selected = [info.name for info in infos if info.role == "flux"]
+            if not selected:
+                selected = available
+        else:
+            selected = list(bands)
+            missing = [b for b in selected if b not in set(available)]
+            if missing:
+                raise ValueError(
+                    f"bands not found in {files[0]!r}: {missing}; "
+                    f"available: {available}"
+                )
+        if not selected:
+            raise ValueError(f"no image bands found in {files[0]!r}")
+
+        known = set(available)
+
+        def _companion(band: str, suffixes: Sequence[str]) -> str | None:
+            for suffix in suffixes:
+                if f"{band}{suffix}" in known:
+                    return f"{band}{suffix}"
+            return None
+
+        ivars = [_companion(b, ivar_suffixes) for b in selected]
+        masks = [_companion(b, mask_suffixes) for b in selected]
+        return cls(
+            files,
+            hdu=selected,
+            ivar_hdu=ivars if all(v is not None for v in ivars) else None,
+            mask_hdu=masks if all(v is not None for v in masks) else None,
+            **kwargs,
+        )
+
+    def band_zeropoints(self) -> dict[str, float | None]:
+        """``{band_name: zeropoint}`` for this dataset's flux HDUs.
+
+        Requires the flux HDUs to be named extensions (the ``from_bands``
+        path); unnamed integer HDUs are reported under ``"HDU<n>"``.
+        """
+        if not self.files:
+            return {}
+        return {
+            info.name: info.zeropoint
+            for info in discover_bands(self.files[0])
+            if info.role == "flux"
+        }
+
     def __repr__(self) -> str:
         return (
             f"FitsImageDataset(n={len(self.files)}, hdu={self.hdu!r}, "
@@ -336,38 +643,51 @@ class FitsImageDataset(FitsTensorDataset):
 
 
 class FitsCubeDataset(FitsTensorDataset):
-    """3D+ cube peer (optional leading-axis ``slice_index``)."""
+    """3D+ datacube peer (IFU / velocity / radio cubes).
+
+    The leading axis is the spectral (or velocity/channel) axis. Pick a single
+    channel with ``slice_index=`` or a contiguous band/IFU window with
+    ``spectral_slice=(start, stop)`` — the latter is what most IFU pipelines
+    want (e.g. a rest-wavelength range instead of the full cube). The two are
+    mutually exclusive.
+    """
 
     def __init__(
         self,
         paths: str | list[str],
         hdu: HduSpec = 0,
         slice_index: int | None = None,
+        spectral_slice: tuple[int, int] | None = None,
         *,
         add_channel_dim: bool = False,
         **kwargs: Any,
     ) -> None:
+        if slice_index is not None and spectral_slice is not None:
+            raise ValueError("pass slice_index= or spectral_slice=, not both")
+        if spectral_slice is not None:
+            start, stop = int(spectral_slice[0]), int(spectral_slice[1])
+            if start < 0 or stop <= start:
+                raise ValueError(
+                    "spectral_slice must be (start, stop) with 0 <= start < stop"
+                )
+            self.spectral_slice: tuple[int, int] | None = (start, stop)
+        else:
+            self.spectral_slice = None
         self.slice_index = slice_index
         super().__init__(paths, hdu=hdu, add_channel_dim=add_channel_dim, **kwargs)
 
     def __getitem__(self, idx: int) -> tuple[Any, torch.Tensor]:
         payload, label = super().__getitem__(idx)
-        if self.slice_index is None:
-            return payload, label
-        if isinstance(payload, dict):
-            sliced = {
-                key: value[self.slice_index]
-                if isinstance(value, torch.Tensor)
-                else value
-                for key, value in payload.items()
-            }
-            return sliced, label
-        return payload[self.slice_index], label
+        return (
+            _slice_leading(payload, index=self.slice_index, window=self.spectral_slice),
+            label,
+        )
 
     def __repr__(self) -> str:
         return (
             f"FitsCubeDataset(n={len(self.files)}, hdu={self.hdu!r}, "
-            f"slice_index={self.slice_index!r})"
+            f"slice_index={self.slice_index!r}, "
+            f"spectral_slice={self.spectral_slice!r})"
         )
 
 
@@ -474,38 +794,48 @@ class FitsImageIterableDataset(FitsTensorIterableDataset):
 
 
 class FitsCubeIterableDataset(FitsTensorIterableDataset):
-    """3D+ datacube streaming peer with optional leading-axis ``slice_index``."""
+    """3D+ datacube streaming peer for IFU / velocity / radio cubes.
+
+    Same leading-axis selection as :class:`FitsCubeDataset`:
+    ``slice_index=`` for one channel, ``spectral_slice=(start, stop)`` for a
+    contiguous spectral window (mutually exclusive).
+    """
 
     def __init__(
         self,
         paths: str | list[str],
         hdu: HduSpec = 0,
         slice_index: int | None = None,
+        spectral_slice: tuple[int, int] | None = None,
         *,
         add_channel_dim: bool = False,
         **kwargs: Any,
     ) -> None:
+        if slice_index is not None and spectral_slice is not None:
+            raise ValueError("pass slice_index= or spectral_slice=, not both")
+        if spectral_slice is not None:
+            start, stop = int(spectral_slice[0]), int(spectral_slice[1])
+            if start < 0 or stop <= start:
+                raise ValueError(
+                    "spectral_slice must be (start, stop) with 0 <= start < stop"
+                )
+            self.spectral_slice: tuple[int, int] | None = (start, stop)
+        else:
+            self.spectral_slice = None
         self.slice_index = slice_index
         super().__init__(paths, hdu=hdu, add_channel_dim=add_channel_dim, **kwargs)
 
     def __iter__(self) -> Iterator[Any]:
         for payload in super().__iter__():
-            if self.slice_index is None:
-                yield payload
-            elif isinstance(payload, dict):
-                yield {
-                    key: value[self.slice_index]
-                    if isinstance(value, torch.Tensor)
-                    else value
-                    for key, value in payload.items()
-                }
-            else:
-                yield payload[self.slice_index]
+            yield _slice_leading(
+                payload, index=self.slice_index, window=self.spectral_slice
+            )
 
     def __repr__(self) -> str:
         return (
             f"FitsCubeIterableDataset(n={len(self.files)}, hdu={self.hdu!r}, "
-            f"slice_index={self.slice_index!r})"
+            f"slice_index={self.slice_index!r}, "
+            f"spectral_slice={self.spectral_slice!r})"
         )
 
 
@@ -513,9 +843,20 @@ class FitsSpectrumDataset(Dataset[Any]):
     """1D spectra (IMAGE or table column), optional multi-arm layouts.
 
     ``layout``:
-    - ``dict`` (default): per-arm ``{name: {flux, ivar?, mask?}}`` (or flat for one arm)
+    - ``dict`` (default): per-arm ``{name: {flux, ivar?, mask?, wavelength?}}``
+      (flat keys for a single arm)
     - ``stack``: flux ``[C, nwave]`` when arms share length
-    - ``concat``: one 1D flux with parallel ivar/mask
+    - ``concat``: one 1D flux with parallel ivar/mask/wavelength
+
+    Optional ``wavelength_hdu`` / ``wavelength_column`` attach a parallel
+    ``wavelength`` tensor so spectra can be resampled, rest-framed or
+    interpolated downstream. ``mask_hdu`` / ``mask_column`` attach a validity
+    mask; with ``mask_is_dq=True`` the integer extension is interpreted as a
+    FITS ``DQ`` bitfield through :func:`torchfits.transforms.mask_from_dq`
+    (see ``bad_bits``) instead of being used verbatim.
+
+    Returns the payload alone, or ``(payload, label)`` when ``labels=`` or
+    ``label_key=`` is supplied.
     """
 
     def __init__(
@@ -526,25 +867,53 @@ class FitsSpectrumDataset(Dataset[Any]):
         mask_hdu: HduSpec | None = None,
         column: str | None = None,
         ivar_column: str | None = None,
+        mask_column: str | None = None,
+        wavelength_column: str | None = None,
+        wavelength_hdu: HduSpec | None = None,
         row: int | None = None,
         layout: str = "dict",
+        label_key: str | None = None,
+        labels: list[int] | None = None,
         transform: Callable[..., Any] | None = None,
         device: str = "cpu",
         mmap: bool | str = True,
         cache_dir: str | Path | None = None,
+        *,
+        mask_is_dq: bool = False,
+        bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         if layout not in {"dict", "stack", "concat"}:
             raise ValueError("layout must be 'dict', 'stack', or 'concat'")
+        if mask_is_dq and mask_hdu is None and mask_column is None:
+            raise ValueError("mask_is_dq=True requires mask_hdu= or mask_column=")
+        if column is not None and (wavelength_hdu is not None or mask_hdu is not None):
+            raise ValueError(
+                "table spectra read companions from columns; "
+                "use wavelength_column=/mask_column= instead of *_hdu="
+            )
         self.files = _resolve_paths(paths)
         self.hdus = _as_hdu_list(hdu)
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
         if self.ivar_hdus is not None and len(self.ivar_hdus) != len(self.hdus):
             raise ValueError("ivar_hdu must match hdu arity")
-        if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
-            raise ValueError("mask_hdu must match hdu arity")
+        self.wavelength_hdus = (
+            None if wavelength_hdu is None else _as_hdu_list(wavelength_hdu)
+        )
+        if self.wavelength_hdus is not None and len(self.wavelength_hdus) not in (
+            1,
+            len(self.hdus),
+        ):
+            raise ValueError("wavelength_hdu must be a single HDU or match hdu arity")
+        if self.mask_hdus is not None and len(self.mask_hdus) not in (
+            1,
+            len(self.hdus),
+        ):
+            raise ValueError("mask_hdu must be a single HDU or match hdu arity")
         self.column = column
         self.ivar_column = ivar_column
+        self.mask_column = mask_column
+        self.wavelength_column = wavelength_column
         self.row = row
         self.layout = layout
         self.transform = transform
@@ -552,12 +921,22 @@ class FitsSpectrumDataset(Dataset[Any]):
         self.mmap = mmap
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
+        self.mask_is_dq = bool(mask_is_dq)
+        self.bad_bits = bad_bits
+        resolved = _resolve_file_labels(self.files, label_key=label_key, labels=labels)
+        self.labels = resolved
 
     def __len__(self) -> int:
         return len(self.files)
 
     def _to_1d(self, tensor: torch.Tensor) -> torch.Tensor:
         if self.row is not None:
+            if tensor.ndim < 2:
+                raise ValueError(
+                    f"row={self.row} needs a multi-row HDU/column of rank >= 2, "
+                    f"but this one has shape {tuple(tensor.shape)}. Drop row= "
+                    "to read it as a single spectrum."
+                )
             tensor = tensor[self.row]
         if tensor.ndim > 1:
             # Keep 2D [nspec, nwave] when row is unset; flatten true 1D leftovers.
@@ -575,13 +954,25 @@ class FitsSpectrumDataset(Dataset[Any]):
         if not isinstance(hdu, int):
             raise ValueError("table spectrum path requires integer hdu index")
         names = [self.column]
-        if self.ivar_column is not None:
-            names.append(self.ivar_column)
+        for extra in (
+            self.ivar_column,
+            self.mask_column,
+            self.wavelength_column,
+        ):
+            if extra is not None:
+                names.append(extra)
         cols = tf_table.read_torch(path, hdu=hdu, columns=names, device=self.device)
-        flux = self._to_1d(cols[self.column])
-        out: dict[str, torch.Tensor] = {"flux": flux}
+        out: dict[str, torch.Tensor] = {"flux": self._to_1d(cols[self.column])}
         if self.ivar_column is not None:
             out["ivar"] = self._to_1d(cols[self.ivar_column])
+        if self.mask_column is not None:
+            out["mask"] = _as_validity_mask(
+                self._to_1d(cols[self.mask_column]),
+                is_dq=self.mask_is_dq,
+                bad_bits=self.bad_bits,
+            )
+        if self.wavelength_column is not None:
+            out["wavelength"] = self._to_1d(cols[self.wavelength_column])
         return out
 
     def _read_image_arms(self, path: str) -> list[dict[str, torch.Tensor]]:
@@ -594,13 +985,32 @@ class FitsSpectrumDataset(Dataset[Any]):
             if self.ivar_hdus is not None:
                 arm["ivar"] = self._to_1d(
                     _read_image(
-                        path, self.ivar_hdus[i], device=self.device, mmap=self.mmap
+                        path,
+                        _pick_hdu(self.ivar_hdus, i),
+                        device=self.device,
+                        mmap=self.mmap,
                     )
                 )
             if self.mask_hdus is not None:
-                arm["mask"] = self._to_1d(
+                arm["mask"] = _as_validity_mask(
+                    self._to_1d(
+                        _read_image(
+                            path,
+                            _pick_hdu(self.mask_hdus, i),
+                            device=self.device,
+                            mmap=self.mmap,
+                        )
+                    ),
+                    is_dq=self.mask_is_dq,
+                    bad_bits=self.bad_bits,
+                )
+            if self.wavelength_hdus is not None:
+                arm["wavelength"] = self._to_1d(
                     _read_image(
-                        path, self.mask_hdus[i], device=self.device, mmap=self.mmap
+                        path,
+                        _pick_hdu(self.wavelength_hdus, i),
+                        device=self.device,
+                        mmap=self.mmap,
                     )
                 )
             arms.append(arm)
@@ -612,6 +1022,7 @@ class FitsSpectrumDataset(Dataset[Any]):
                 return arms[0]
             return {_arm_name(self.hdus[i]): arm for i, arm in enumerate(arms)}
         fluxes = [arm["flux"] for arm in arms]
+        extra_fields = ("ivar", "mask", "wavelength")
         if self.layout == "stack":
             lengths = {int(f.shape[-1]) for f in fluxes}
             if len(lengths) != 1:
@@ -621,18 +1032,16 @@ class FitsSpectrumDataset(Dataset[Any]):
                 )
             flux = torch.stack(fluxes, dim=0)
             out: dict[str, torch.Tensor] = {"flux": flux}
-            if all("ivar" in arm for arm in arms):
-                out["ivar"] = torch.stack([arm["ivar"] for arm in arms], dim=0)
-            if all("mask" in arm for arm in arms):
-                out["mask"] = torch.stack([arm["mask"] for arm in arms], dim=0)
+            for field in extra_fields:
+                if all(field in arm for arm in arms):
+                    out[field] = torch.stack([arm[field] for arm in arms], dim=0)
             return out
         # concat
         flux = torch.cat(fluxes, dim=-1)
         out = {"flux": flux}
-        if all("ivar" in arm for arm in arms):
-            out["ivar"] = torch.cat([arm["ivar"] for arm in arms], dim=-1)
-        if all("mask" in arm for arm in arms):
-            out["mask"] = torch.cat([arm["mask"] for arm in arms], dim=-1)
+        for field in extra_fields:
+            if all(field in arm for arm in arms):
+                out[field] = torch.cat([arm[field] for arm in arms], dim=-1)
         return out
 
     def __getitem__(self, idx: int) -> Any:
@@ -648,7 +1057,9 @@ class FitsSpectrumDataset(Dataset[Any]):
             payload = self._layout_arms(self._read_image_arms(path))
         if self.transform is not None:
             payload = self.transform(payload)
-        return payload
+        if self.labels is None:
+            return payload
+        return payload, torch.tensor(self.labels[idx], dtype=torch.long)
 
     def __repr__(self) -> str:
         return (
@@ -668,8 +1079,13 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         mask_hdu: HduSpec | None = None,
         column: str | None = None,
         ivar_column: str | None = None,
+        mask_column: str | None = None,
+        wavelength_column: str | None = None,
+        wavelength_hdu: HduSpec | None = None,
         row: int | None = None,
         layout: str = "dict",
+        label_key: str | None = None,
+        labels: list[int] | None = None,
         transform: Callable[..., Any] | None = None,
         device: str = "cpu",
         mmap: bool | str = True,
@@ -679,6 +1095,9 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         rank: int | None = None,
         world_size: int | None = None,
         cache_dir: str | Path | None = None,
+        *,
+        mask_is_dq: bool = False,
+        bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         if layout not in {"dict", "stack", "concat"}:
             raise ValueError("layout must be 'dict', 'stack', or 'concat'")
@@ -688,8 +1107,6 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
         if self.ivar_hdus is not None and len(self.ivar_hdus) != len(self.hdus):
             raise ValueError("ivar_hdu must match hdu arity")
-        if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
-            raise ValueError("mask_hdu must match hdu arity")
         self.column = column
         self.ivar_column = ivar_column
         self.row = row
@@ -704,6 +1121,11 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         self.world_size = world_size
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
+        resolved = _resolve_file_labels(self.files, label_key=label_key, labels=labels)
+        self.labels = resolved
+        self._label_by_path = (
+            None if resolved is None else dict(zip(self.files, resolved))
+        )
         self._spec_reader = FitsSpectrumDataset(
             self.files[:1],
             hdu=self.hdu,
@@ -711,10 +1133,15 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
             mask_hdu=self.mask_hdus,
             column=self.column,
             ivar_column=self.ivar_column,
+            mask_column=mask_column,
+            wavelength_column=wavelength_column,
+            wavelength_hdu=wavelength_hdu,
             row=self.row,
             layout=self.layout,
             device=self.device,
             mmap=self.mmap,
+            mask_is_dq=mask_is_dq,
+            bad_bits=bad_bits,
         )
 
     def _generate(self) -> Iterator[Any]:
@@ -747,7 +1174,11 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
                 )
             if self.transform is not None:
                 payload = self.transform(payload)
-            yield payload
+            if self._label_by_path is None:
+                yield payload
+            else:
+                label = self._label_by_path[sharded_files[idx]]
+                yield payload, torch.tensor(label, dtype=torch.long)
 
     def __iter__(self) -> Iterator[Any]:
         stream = self._generate()
