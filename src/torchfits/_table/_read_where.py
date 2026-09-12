@@ -285,10 +285,44 @@ def _try_torch_tensor_where_filter(
                     pa, path, hdu, output_cols, decode_bytes
                 )
         return pa.Table.from_arrays(empty, names=list(output_cols))
-    return pa.Table.from_arrays(arrays, names=names_out)
+    return pa.Table.from_arrays(
+        arrays, names=names_out
+    )  # FITS writes logical values as T/F, and users reasonably also type TRUE/1.
 
 
-def _aligned_scalar(pa: Any, column: Any, value: Any) -> Any:
+# Arrow has no bool-vs-string kernel, so an uncoerced literal used to escape as a
+# raw `pyarrow.lib.ArrowNotImplementedError: Function 'equal' has no kernel
+# matching input types (bool, string)` and made boolean filtering impossible.
+# The C++ pushdown engine already accepts these spellings.
+_BOOLEAN_LITERALS = {
+    "true": True,
+    "t": True,
+    "yes": True,
+    "false": False,
+    "f": False,
+    "no": False,
+}
+
+
+def _boolean_literal(value: Any, column_name: str) -> bool:
+    """Coerce a where literal for a logical (TFORM 'L') column."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, bytes):
+        value = value.decode("ascii", "replace")
+    if isinstance(value, str):
+        found = _BOOLEAN_LITERALS.get(value.strip().lower())
+        if found is not None:
+            return found
+    raise ValueError(
+        f"where compares logical column '{column_name}' with {value!r}, which "
+        "is not a logical value; use TRUE/FALSE, T/F or 0/1"
+    )
+
+
+def _aligned_scalar(pa: Any, column: Any, value: Any, column_name: str = "") -> Any:
     """Build an Arrow scalar that matches the C++ pushdown comparison rule.
 
     Both engines must select identical rows for a given predicate. The C++
@@ -296,10 +330,14 @@ def _aligned_scalar(pa: Any, column: Any, value: Any) -> Any:
     before comparing, so the Arrow engine must do the same for float32
     columns instead of comparing against a float64 scalar (which would drop
     rows whose stored float32 equals the literal). Wider/integer columns keep
-    Arrow's exact widening.
+    Arrow's exact widening. Logical columns take a coerced bool so Arrow has a
+    matching kernel.
     """
+    if pa.types.is_boolean(column.type):
+        return pa.scalar(_boolean_literal(value, column_name), type=column.type)
     if pa.types.is_float32(column.type):
         return pa.scalar(float(value), type=column.type)
+
     return pa.scalar(value)
 
 
@@ -336,19 +374,27 @@ def _where_mask_for_table(
                 return pc.invert(pc.is_null(column))
             raise ValueError("where comparisons with null only support == and !=")
 
-        scalar = _aligned_scalar(pa, column, literal)
-        if op == "==":
-            return pc.equal(column, scalar)
-        if op == "!=":
-            return pc.not_equal(column, scalar)
-        if op == ">":
-            return pc.greater(column, scalar)
-        if op == ">=":
-            return pc.greater_equal(column, scalar)
-        if op == "<":
-            return pc.less(column, scalar)
-        if op == "<=":
-            return pc.less_equal(column, scalar)
+        scalar = _aligned_scalar(pa, column, literal, column_name)
+        try:
+            if op == "==":
+                return pc.equal(column, scalar)
+            if op == "!=":
+                return pc.not_equal(column, scalar)
+            if op == ">":
+                return pc.greater(column, scalar)
+            if op == ">=":
+                return pc.greater_equal(column, scalar)
+            if op == "<":
+                return pc.less(column, scalar)
+            if op == "<=":
+                return pc.less_equal(column, scalar)
+        except pa.ArrowNotImplementedError as exc:
+            # Never let a third-party error type escape: name the column and
+            # operator so the caller can see what could not be compared.
+            raise ValueError(
+                f"where cannot compare column '{column_name}' ({column.type}) "
+                f"with {literal!r} using '{op}': {exc}"
+            ) from exc
         raise ValueError(f"Unsupported where operator '{op}'")
 
     def _in_mask(column_name: str, literals: list[Any], negate: bool) -> Any:
@@ -357,7 +403,12 @@ def _where_mask_for_table(
         has_null = any(v is None for v in literals)
 
         if non_null:
-            if pa.types.is_float32(column.type):
+            if pa.types.is_boolean(column.type):
+                value_set = pa.array(
+                    [_boolean_literal(v, column_name) for v in non_null],
+                    type=column.type,
+                )
+            elif pa.types.is_float32(column.type):
                 value_set = pa.array([float(v) for v in non_null], type=column.type)
             else:
                 value_set = _pa_array(pa, non_null)
@@ -377,8 +428,8 @@ def _where_mask_for_table(
         column = _get_predicate_column(column_name)
         if low is None or high is None:
             raise ValueError("where BETWEEN does not support NULL bounds")
-        low_s = _aligned_scalar(pa, column, low)
-        high_s = _aligned_scalar(pa, column, high)
+        low_s = _aligned_scalar(pa, column, low, column_name)
+        high_s = _aligned_scalar(pa, column, high, column_name)
         ge = pc.greater_equal(column, low_s)
         le = pc.less_equal(column, high_s)
         mask = pc.and_(ge, le)
