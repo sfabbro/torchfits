@@ -530,7 +530,11 @@ public:
         }
 
         int status = 0;
-        std::unordered_map<std::string, ColumnData> result;
+        // Keyed by column INDEX, not name: FITS permits duplicate TTYPE cards,
+        // and a name-keyed map silently overwrote the earlier column. The
+        // assembly loop below then moved the same entry out twice, so the
+        // surviving column came back as a null tensor (None in Python).
+        std::unordered_map<int, ColumnData> result;
 
         auto cfitsio_read_datatype = [](const ColumnInfo& col) -> int {
             switch (col.type) {
@@ -587,7 +591,7 @@ public:
 
             // Store in result map as ColumnData
 
-            result[col.name] = ColumnData(tensor);
+            result[col_idx] = ColumnData(tensor);
         }
 
         // Row-buffered reads via fits_read_tblbytes when selecting fixed-width
@@ -629,13 +633,13 @@ public:
                     // Read VLA column
                     if (vla_flat) {
                         auto flat = read_vla_column_flat(col_idx, start_row, num_rows, col);
-                        result[col.name] = ColumnData(std::move(flat.first), std::move(flat.second), true);
+                        result[col_idx] = ColumnData(std::move(flat.first), std::move(flat.second), true);
                     } else {
-                        result[col.name] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
+                        result[col_idx] = ColumnData(read_vla_column(col_idx, start_row, num_rows, col));
                     }
                 } else {
                     // Read fixed width column
-                    torch::Tensor tensor = result[col.name].fixed_data;
+                    torch::Tensor tensor = result[col_idx].fixed_data;
 
                     int status = 0;
                     // Use fits_read_col to read directly into tensor memory
@@ -737,7 +741,7 @@ public:
         // full int64 upcast copy of the column just for the comparison.
         for (int col_idx : col_indices) {
             const auto& col = columns_[col_idx];
-            auto it = result.find(col.name);
+            auto it = result.find(col_idx);
             if (it == result.end() || !it->second.fixed_data.defined()) {
                 continue;
             }
@@ -821,9 +825,9 @@ public:
         std::vector<std::pair<std::string, ColumnData>> ordered;
         ordered.reserve(col_indices.size());
         for (int col_idx : col_indices) {
-            auto it = result.find(columns_[col_idx].name);
+            auto it = result.find(col_idx);
             if (it != result.end()) {
-                ordered.emplace_back(it->first, std::move(it->second));
+                ordered.emplace_back(columns_[col_idx].name, std::move(it->second));
             }
         }
         return ordered;
@@ -1027,7 +1031,7 @@ public:
         // size must match the original mmap() length (full file) passed to munmap().
         MMapHandle mmap_guard(map_ptr, sb.st_size, fd);
 
-        std::unordered_map<std::string, torch::Tensor> result;
+        std::unordered_map<int, torch::Tensor> result;
         const uint8_t* base_ptr = static_cast<const uint8_t*>(map_ptr) + data_offset;
 
         // Calculate start offset based on start_row (0-based offset).
@@ -1209,7 +1213,7 @@ public:
                     tensor.add_(col.unsigned_offset);
                     tensor = tensor.to(col.unsigned_target_type);
                 }
-                result[col.name] = std::move(tensor);
+                result[col_idx] = std::move(tensor);
 
             } catch (const std::exception& e) {
                 // Never swallow: a failed column must surface as an error, not
@@ -1222,9 +1226,9 @@ public:
         std::vector<std::pair<std::string, torch::Tensor>> ordered;
         ordered.reserve(col_indices.size());
         for (int col_idx : col_indices) {
-            auto it = result.find(columns_[col_idx].name);
+            auto it = result.find(col_idx);
             if (it != result.end()) {
-                ordered.emplace_back(it->first, std::move(it->second));
+                ordered.emplace_back(columns_[col_idx].name, std::move(it->second));
             }
         }
         return ordered;
@@ -1678,7 +1682,7 @@ public:
         }
 
         // Gather results (num_valid==0 → empty tensors, keyed schema preserved)
-        std::unordered_map<std::string, torch::Tensor> result;
+        std::unordered_map<int, torch::Tensor> result;
         long num_valid = valid_indices.size();
 
         std::vector<int> out_col_indices;
@@ -1725,7 +1729,7 @@ public:
             torch::Tensor out_tensor = torch::empty(shape, options);
 
             if (num_valid == 0) {
-                result[col.name] = out_tensor;
+                result[col_idx] = out_tensor;
                 continue;
             }
 
@@ -1759,7 +1763,7 @@ public:
                         out_bool[k] = (src[0] == 'T' || src[0] == '1' || src[0] == 1);
                     }
                 });
-                result[col.name] = out_tensor;
+                result[col_idx] = out_tensor;
                 continue;
             }
 
@@ -1778,7 +1782,7 @@ public:
                         }
                     }
                 });
-                result[col.name] = out_tensor;
+                result[col_idx] = out_tensor;
                 continue;
             }
 
@@ -1843,16 +1847,16 @@ public:
                 out_tensor.add_(col.unsigned_offset);
                 out_tensor = out_tensor.to(col.unsigned_target_type);
             }
-            result[col.name] = out_tensor;
+            result[col_idx] = out_tensor;
         }
 
         // Order by file/request column index (see read_columns signature comment).
         std::vector<std::pair<std::string, torch::Tensor>> ordered;
         ordered.reserve(out_col_indices.size());
         for (int col_idx : out_col_indices) {
-            auto it = result.find(columns_[col_idx].name);
+            auto it = result.find(col_idx);
             if (it != result.end()) {
-                ordered.emplace_back(it->first, std::move(it->second));
+                ordered.emplace_back(columns_[col_idx].name, std::move(it->second));
             }
         }
         return ordered;
@@ -2496,7 +2500,7 @@ public:
     void read_columns_buffered(
         const std::vector<int>& col_indices,
         long start_row, long num_rows,
-        std::unordered_map<std::string, ColumnData>& result) {
+        std::unordered_map<int, ColumnData>& result) {
 
         // 16MB chunk target, then align with CFITSIO's suggested table row buffer.
         // Clamp to the requested row window so small tables do not allocate a full
@@ -2649,7 +2653,7 @@ public:
             try {
                 for (int col_idx : col_indices) {
                     const auto& col = columns_[col_idx];
-                    torch::Tensor tensor = result[col.name].fixed_data;
+                    torch::Tensor tensor = result[col_idx].fixed_data;
                     uint8_t* dest_ptr =
                         (uint8_t*)get_tensor_data_ptr(tensor, rows_done * col.repeat);
                     extract_column_data(chunk_buf, rows, col, dest_ptr);
