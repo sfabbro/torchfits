@@ -57,8 +57,21 @@ class IoError(CliError):
 
 
 def is_remote_path(path: str) -> bool:
+    """True when *path* names a remote resource (http/https/ftp/vos/vault).
+
+    Deliberately broader than ``data.remote.is_http_url``, which is strictly
+    http(s). The two look like duplicates -- identical bodies -- but carry
+    different prefix sets, so they must not be merged.
+    """
     lowered = path.lower()
     return lowered.startswith(_REMOTE_PREFIXES)
+
+
+def _hdu_width(indices: list[int]) -> int:
+    """Zero-pad width for ``_hduNN`` (at least 2 so names sort as ``_hdu00``...)."""
+    if not indices:
+        return 2
+    return max(2, len(str(max(indices))))
 
 
 def resolve_paths(paths: list[str] | None, *, use_stdin: bool) -> list[str]:

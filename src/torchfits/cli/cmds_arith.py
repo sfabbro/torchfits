@@ -22,6 +22,7 @@ from .common import (
     add_split_arg,
     configure_torch_jobs,
     ensure_unique_basenames,
+    _hdu_width,
     ensure_unique_split_stems,
     hdu_type_name,
     resolve_file_jobs,
@@ -244,12 +245,6 @@ def _b_tensor(
             raise IoError(f"{operand2}: {exc}") from exc
     tensor, _ = _read_image(operand2, b_index)
     return tensor
-
-
-def _hdu_width(indices: list[int]) -> int:
-    if not indices:
-        return 2
-    return max(2, len(str(max(indices))))
 
 
 def _resolve_out_dtype(spec: str, left: torch.Tensor) -> torch.dtype:

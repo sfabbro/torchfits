@@ -19,6 +19,7 @@ from .common import (
     add_split_arg,
     configure_torch_jobs,
     ensure_unique_basenames,
+    _hdu_width,
     ensure_unique_split_stems,
     hdu_type_name,
     resolve_batch_io_pairs,
@@ -114,13 +115,6 @@ def _rewrite_file(
         raise
     except Exception as exc:
         raise IoError(f"{input_path}: {exc}") from exc
-
-
-def _hdu_width(indices: list[int]) -> int:
-    """Zero-pad width for ``_hduNN`` (at least 2 so names sort as ``_hdu00``…)."""
-    if not indices:
-        return 2
-    return max(2, len(str(max(indices))))
 
 
 def _hdu_output_path(
