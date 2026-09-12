@@ -446,6 +446,14 @@ torchfits.write(
     the written file — passing `{"HISTORY": ...}` in `header=` sets a
     single card.
 
+!!! note "Header text must be printable ASCII"
+    FITS restricts header values, comments and keywords to codes 32–126.
+    Non-ASCII text is rejected with a `ValueError` naming the offending byte
+    rather than silently stripped: `header={"UNI": "λ-cold"}` used to store
+    `'-cold'`, a different string with no error. The same applies to table
+    column names and string column values. Reading stays forgiving — stray
+    bytes already on disk are dropped so the file still opens.
+
 !!! note "uint64 payloads are rejected"
     FITS has no native uint64 storage (`BITPIX=-64` is not standard, and a
     `BZERO=2**64` pseudo-unsigned convention is not interoperable).

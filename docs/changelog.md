@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - data: Decode DQ companions into validity masks
 - table: Key column assembly by index, not name
+- io: Reject non-ASCII FITS text instead of silently rewriting it
+- io: Accept os.PathLike across the whole read surface
+- header: Resolve duplicate keywords first-wins, matching read_keys and astropy
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -107,6 +110,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FitsTableIterableDataset(as_batches=True)` now drops character/bit columns on
   **both** scanner paths (the `scan_torch` path used to hand back raw `uint8`
   byte matrices while the `where=` path dropped them).
+
+### Fixed — IO, header and C++ engine audit
+- Non-ASCII text is rejected on every write path instead of being silently
+  rewritten. `sanitize_fits_string` stripped bytes outside 32..126, so
+  `header={"UNI": "λ-cold"}` stored `'-cold'` — a different string, with no
+  error. Header values, comments, `HISTORY`/`COMMENT` text, keywords, table
+  column names and string column values now raise the way astropy does. The
+  *read* path keeps the lenient stripping so files already carrying stray
+  bytes stay openable.
+- `os.PathLike` is accepted across the whole read surface, as
+  `docs/api-core-io.md` already promised. `torchfits.write(Path(...))` worked
+  while `torchfits.read(Path(...))` raised `ValueError: Path must be a string
+  or list of strings`, and so did `read_header`, the skinny metadata probes,
+  `table.read`, `read_batch`/`read_batch_info`, `open_subset_reader`,
+  `open_table_reader`, `read_hdus`, `read_tensor`, the checksum helpers and
+  `TableHDU.from_fits` — breaking any `for p in root.glob("*.fits")` loop.
+- `hdu_name_cache` is now dropped when the underlying file changes. It was
+  keyed by EXTNAME alone and, unlike its sibling caches, omitted from the
+  stat-change invalidation, so after an out-of-band rewrite moved
+  `EXTNAME="SCI"` from HDU 1 to HDU 2, `read(path, hdu="SCI")` returned the
+  neighbouring array with no error or warning.
+- `read_header()` resolves a repeated value keyword to its first occurrence,
+  matching `read_keys()` (CFITSIO) and astropy. It previously let the last card
+  win, so torchfits disagreed with itself on the same file; `HISTORY`/`COMMENT`
+  keep last-wins, since those repeat by design.
+- `read_header()` now exposes `COMMENT`/`HISTORY` consistently whether the
+  header was built by the C++ reader or assembled in Python (the cards were in
+  `.cards` but absent from the mapping for one of the two paths).
+- The five skinny metadata APIs (`read_nrows`, `read_colnames`,
+  `read_hdu_type`, `read_num_hdus`, `read_keys`) open and close a fresh CFITSIO
+  handle per call and bypassed the shared metadata cache, so each cost 61-64 µs
+  regardless of file size — more than `read_header` on a small header. Four of
+  them now read from the cached open, dropping warm calls to ~2.4 µs and making
+  them O(1) in header size instead of O(size).
+- Removed the dead C++ shared-cache surface: 34 lines of empty `{}` bodies,
+  their declarations, bindings and Python call sites (which had been calling
+  no-ops after every mutation), plus an unreachable `_REMOVED_STUBS` branch.
+  The live native state is `SharedReadMeta`.
 
 ### Docs
 - Transform docs cover the data-state contract, companion `ivar`/`mask`
