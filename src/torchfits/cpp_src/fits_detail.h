@@ -262,6 +262,15 @@ struct SharedReadMeta {
     std::unordered_map<int, bool> compressed_cache;
     std::unordered_map<int, std::tuple<bool, bool, double, double>> scale_cache;
     std::unordered_map<std::string, int> hdu_name_cache;
+    // Structural table metadata, keyed by HDU. These exist so the "skinny"
+    // probes (read_nrows / read_colnames / read_hdu_type / read_num_hdus) can
+    // answer without re-opening the file: finding a table HDU means scanning
+    // the headers that precede it, so the cost grows with header size while the
+    // Python-side result stays O(1). Cleared with the other caches below.
+    std::unordered_map<int, long long> nrows_cache;
+    std::unordered_map<int, std::vector<std::string>> colnames_cache;
+    std::unordered_map<int, std::string> hdu_type_cache;
+    int num_hdus = -1;
     bool has_stat = false;
     off_t size = 0;
     int64_t mtime_ns = 0;
@@ -323,6 +332,15 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
             meta->image_info_cache.clear();
             meta->compressed_cache.clear();
             meta->scale_cache.clear();
+            // hdu_name_cache is keyed by EXTNAME alone, so it must be dropped
+            // with the rest: a rewrite can move a name to a different index
+            // (or reuse it for another HDU), and a surviving entry would make
+            // resolution silently read the wrong extension.
+            meta->hdu_name_cache.clear();
+            meta->nrows_cache.clear();
+            meta->colnames_cache.clear();
+            meta->hdu_type_cache.clear();
+            meta->num_hdus = -1;
             meta->current_fits_hdu = -1;
             // Rotate identity so per-thread caches keyed by {uid, hdu} cannot
             // pair stale shape/dtype/scale metadata with the replaced file
@@ -677,7 +695,31 @@ inline std::string sanitize_fits_string(const std::string& input) {
     return output;
 }
 
+// FITS text is restricted to printable ASCII (codes 32..126). The lenient
+// sanitizer above is for *reading* raw CFITSIO output, where dropping stray
+// bytes keeps sloppy files readable. For text the caller supplies we must not
+// silently rewrite it: writing the value "l-cold" with a leading Greek lambda
+// used to store "-cold", a different string with no error. Reject it loudly
+// instead, the way astropy does.
+inline std::string require_fits_ascii(const std::string& input, const char* what) {
+    for (size_t i = 0; i < input.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(input[i]);
+        if (c < 32 || c > 126) {
+            throw std::invalid_argument(
+                std::string(what) +
+                " must contain only printable ASCII characters (32..126); "
+                "unexpected byte " + std::to_string(static_cast<unsigned>(c)) +
+                " at index " + std::to_string(i));
+        }
+    }
+    return input;
+}
+
 inline std::string sanitize_fits_key(const std::string& input) {
+    // The normalization loop below drops every character it does not
+    // recognize, so a keyword containing non-ASCII bytes would silently
+    // collapse into a different keyword. Reject it instead.
+    require_fits_ascii(input, "FITS keyword");
     // Preserve long / hierarchical keywords (spaces allowed). Short FITS
     // keywords stay [A-Z0-9_-] only, uppercased.
     std::string raw = input;

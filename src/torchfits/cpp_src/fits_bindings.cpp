@@ -35,7 +35,7 @@
 #include "security.h"
 #include "internal_utils.h"
 #include "hardware.h"
-#include "cache.h"
+#include "fits_handle.h"
 #undef READONLY
 #include <fitsio.h>
 #include <fitsio2.h>
@@ -997,7 +997,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             throw std::runtime_error("Schema column missing data: " + col_key);
         }
         ColumnWriteInfo col;
-        col.name = d::sanitize_fits_string(col_key);
+        col.name = d::require_fits_ascii(col_key, "table column name");
         nb::handle obj = tensor_dict[col_key.c_str()];
 
         std::string schema_tform;
@@ -1147,11 +1147,13 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                     if (elem.is_none()) {
                         values.emplace_back("");
                     } else {
-                        values.emplace_back(d::sanitize_fits_string(nb::cast<std::string>(elem)));
+                        values.emplace_back(d::require_fits_ascii(
+                            nb::cast<std::string>(elem), "table string value"));
                     }
                 }
             } else {
-                values.emplace_back(d::sanitize_fits_string(nb::cast<std::string>(obj)));
+                values.emplace_back(d::require_fits_ascii(
+                    nb::cast<std::string>(obj), "table string value"));
             }
             col.string_values = std::move(values);
             long rows = static_cast<long>(col.string_values.size());
@@ -1362,7 +1364,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             fits_update_key(fptr, TLOGICAL, key.c_str(), &val, nullptr, &status);
         } else if (nb::isinstance<nb::str>(item.second)) {
             std::string val = nb::cast<std::string>(item.second);
-            val = d::sanitize_fits_string(val);
+            val = d::require_fits_ascii(val, "header value");
             if (val.size() > 68) {
                 fits_update_key_longstr(fptr, key.c_str(), val.c_str(), nullptr, &status);
             } else {
@@ -1872,7 +1874,6 @@ void bind_fits(nb::module_& m) {
         if (overwrite) {
             final_path = "!" + path;
         }
-        invalidate_cached(path);
         invalidate_shared_meta(path);
         FITSFile file(final_path.c_str(), 1);
         file.write_hdus(hdus, overwrite);
@@ -1909,7 +1910,6 @@ void bind_fits(nb::module_& m) {
                   }
               }
 
-              invalidate_cached(path);
               invalidate_shared_meta(path);
               FITSFile file(final_path.c_str(), 1);
               file.write_hdus_compressed_images(hdus, comptype);
@@ -2046,19 +2046,21 @@ void bind_fits(nb::module_& m) {
             }
 
             int key_status = 0;
-            std::string sanitized_comment = d::sanitize_fits_string(comment);
+            std::string sanitized_comment =
+                d::require_fits_ascii(comment, "header comment");
             char* comment_ptr = sanitized_comment.empty() ? nullptr : sanitized_comment.data();
 
             if (key_upper == "HISTORY") {
                 std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
-                text = d::sanitize_fits_string(text);
+                text = d::require_fits_ascii(text, "HISTORY text");
                 fits_write_history(fptr, text.c_str(), &key_status);
             } else if (key_upper == "COMMENT") {
                 std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
-                text = d::sanitize_fits_string(text);
+                text = d::require_fits_ascii(text, "COMMENT text");
                 fits_write_comment(fptr, text.c_str(), &key_status);
             } else if (nb::isinstance<nb::str>(value)) {
-                std::string val = d::sanitize_fits_string(nb::cast<std::string>(value));
+                std::string val = d::require_fits_ascii(
+                    nb::cast<std::string>(value), "header value");
                 if (val.size() > 68) {
                     // Long strings: fits_update_key truncates at 68 chars
                     // silently. fits_update_key_longstr splits the value into
@@ -2256,6 +2258,17 @@ void bind_fits(nb::module_& m) {
         "read_nrows",
         [](const std::string& filename, int hdu_num) -> long long {
             nb::gil_scoped_release release;
+            // Guard before get_shared_meta_for_path: it stats the path and
+            // inserts a global-map entry (same order as read_shape).
+            check_fits_filename_security(filename);
+            auto meta = d::get_shared_meta_for_path(filename);
+            if (meta) {
+                std::shared_lock<std::shared_mutex> lock(meta->mutex);
+                auto it = meta->nrows_cache.find(hdu_num);
+                if (it != meta->nrows_cache.end()) {
+                    return it->second;
+                }
+            }
             FITSFile file(filename.c_str(), 0);
             int status = 0;
             file.ensure_hdu(hdu_num, &status);
@@ -2270,6 +2283,10 @@ void bind_fits(nb::module_& m) {
                 throw std::runtime_error(
                     std::string("read_nrows: ") + err_text +
                     " (HDU must be a table)");
+            }
+            if (meta) {
+                std::unique_lock<std::shared_mutex> lock(meta->mutex);
+                meta->nrows_cache[hdu_num] = static_cast<long long>(nrows);
             }
             return static_cast<long long>(nrows);
         },
@@ -2435,8 +2452,22 @@ void bind_fits(nb::module_& m) {
         "read_hdu_type",
         [](const std::string& filename, int hdu_num) -> std::string {
             nb::gil_scoped_release release;
+            check_fits_filename_security(filename);
+            auto meta = d::get_shared_meta_for_path(filename);
+            if (meta) {
+                std::shared_lock<std::shared_mutex> lock(meta->mutex);
+                auto it = meta->hdu_type_cache.find(hdu_num);
+                if (it != meta->hdu_type_cache.end()) {
+                    return it->second;
+                }
+            }
             FITSFile file(filename.c_str(), 0);
-            return file.get_hdu_type(hdu_num);
+            std::string hdu_type = file.get_hdu_type(hdu_num);
+            if (meta) {
+                std::unique_lock<std::shared_mutex> lock(meta->mutex);
+                meta->hdu_type_cache[hdu_num] = hdu_type;
+            }
+            return hdu_type;
         },
         nb::arg("filename"),
         nb::arg("hdu_num"));
@@ -2445,8 +2476,21 @@ void bind_fits(nb::module_& m) {
         "read_num_hdus",
         [](const std::string& filename) -> int {
             nb::gil_scoped_release release;
+            check_fits_filename_security(filename);
+            auto meta = d::get_shared_meta_for_path(filename);
+            if (meta) {
+                std::shared_lock<std::shared_mutex> lock(meta->mutex);
+                if (meta->num_hdus >= 0) {
+                    return meta->num_hdus;
+                }
+            }
             FITSFile file(filename.c_str(), 0);
-            return file.get_num_hdus();
+            const int num_hdus = file.get_num_hdus();
+            if (meta) {
+                std::unique_lock<std::shared_mutex> lock(meta->mutex);
+                meta->num_hdus = num_hdus;
+            }
+            return num_hdus;
         },
         nb::arg("filename"));
 
@@ -2454,6 +2498,15 @@ void bind_fits(nb::module_& m) {
         "read_colnames",
         [](const std::string& filename, int hdu_num) -> std::vector<std::string> {
             nb::gil_scoped_release release;
+            check_fits_filename_security(filename);
+            auto meta = d::get_shared_meta_for_path(filename);
+            if (meta) {
+                std::shared_lock<std::shared_mutex> lock(meta->mutex);
+                auto it = meta->colnames_cache.find(hdu_num);
+                if (it != meta->colnames_cache.end()) {
+                    return it->second;
+                }
+            }
             FITSFile file(filename.c_str(), 0);
             int status = 0;
             file.ensure_hdu(hdu_num, &status);
@@ -2488,6 +2541,10 @@ void bind_fits(nb::module_& m) {
                     ttype[len] = '\0';
                 }
                 names.emplace_back(ttype);
+            }
+            if (meta) {
+                std::unique_lock<std::shared_mutex> lock(meta->mutex);
+                meta->colnames_cache[hdu_num] = names;
             }
             return names;
         },
@@ -2558,11 +2615,7 @@ void bind_fits(nb::module_& m) {
         nb::arg("filename"),
         nb::arg("hdu_num"));
 
-    m.def("configure_cache", &configure_cache, nb::arg("max_files"), nb::arg("max_memory_mb"));
-    m.def("clear_file_cache", &clear_file_cache);
-    m.def("invalidate_file_cache", &invalidate_file_cache, nb::arg("path"));
     m.def("clear_shared_read_meta_cache", &clear_shared_read_meta_cache);
-    m.def("get_cache_size", &get_cache_size);
 
     m.def("echo_tensor", [](nb::object obj) {
         return obj;

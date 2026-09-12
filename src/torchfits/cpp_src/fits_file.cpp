@@ -672,7 +672,8 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
                     fits_update_key(fptr_, TLOGICAL, key.c_str(), &val, nullptr, &key_status);
                     matched = true;
                 } else if (nb::isinstance<nb::str>(item.second)) {
-                    std::string val = detail::sanitize_fits_string(nb::cast<std::string>(item.second));
+                    std::string val = detail::require_fits_ascii(
+                        nb::cast<std::string>(item.second), "header value");
                     if (val.size() > 68) {
                         fits_update_key_longstr(fptr_, key.c_str(), val.c_str(), nullptr, &key_status);
                     } else {
@@ -751,7 +752,8 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
                 int val = nb::cast<bool>(item.second) ? 1 : 0;
                 fits_update_key(fptr_, TLOGICAL, key.c_str(), &val, nullptr, &key_status);
             } else if (nb::isinstance<nb::str>(item.second)) {
-                    std::string val = detail::sanitize_fits_string(nb::cast<std::string>(item.second));
+                    std::string val = detail::require_fits_ascii(
+                        nb::cast<std::string>(item.second), "header value");
                     if (val.size() > 68) {
                         fits_update_key_longstr(fptr_, key.c_str(), val.c_str(), nullptr, &key_status);
                     } else {
