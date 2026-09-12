@@ -120,9 +120,23 @@ loader = make_loader(ds, batch_size=32, num_workers=4)
 | `mmap` | `bool` or `str` | `True` | Memory-mapped reads |
 | `add_channel_dim` | `bool` | `False` | Prepend channel dim for 2D |
 | `cache_dir` | `str` or `Path` or `None` | `None` | Override remote prefetch directory |
+| `mask_is_dq` | `bool` | `False` | Decode `mask_hdu` as a FITS `DQ` bitfield via `mask_from_dq` |
+| `bad_bits` | `int` or `sequence` or `None` | `None` | Fatal DQ bit positions; default treats any non-zero value as invalid |
 
 **Returns per item:** `(payload, label)` where payload is a `Tensor` or
 `{"flux", "ivar"?, "mask"?}`.
+
+!!! warning "Masks are validity masks"
+    A `mask_hdu` companion always comes back as a **boolean** tensor where
+    `True` means *valid* — the one convention every transform and statistic in
+    torchfits shares. FITS `DQ` extensions are *bitfields*, so pass
+    `mask_is_dq=True` (with `bad_bits=` naming the fatal bits) to decode them.
+    Read verbatim, a perfectly clean all-zero DQ frame would mark **every**
+    pixel invalid and turn each mask-aware reduction into `NaN`.
+
+    Companions follow the flux rank: with `add_channel_dim=True` a one-band
+    image yields `flux`/`ivar`/`mask` all of shape `[1, H, W]`, so `mask[0]`
+    is channel 0 rather than row 0.
 
 !!! info "When to use"
     Use `FitsTensorDataset` when rank/layout is unknown or non-2D. Prefer
@@ -198,7 +212,11 @@ ds = FitsImageDataset.from_bands("mosaic.fits", bands=["G", "R", "Z"])
 `BandInfo.role` is `"flux"`, `"ivar"`, `"mask"` or `"wavelength"`, inferred from
 the name suffix, so `from_bands(bands=None)` selects the flux extensions and
 automatically attaches matching `G_IVAR` / `G_DQ` companions when *every*
-selected band has one. Zeropoints come from `PHOTZEROPOINT`, `ZP`,
+selected band has one. A `*_DQ` companion is a bitfield, so `from_bands`
+decodes it into a boolean validity mask by default (`mask_is_dq=False` to
+override, `bad_bits=` to name the fatal bits); mixing `*_DQ` and `*_MASK`
+companions across bands is rejected as ambiguous. Zeropoints come from
+`PHOTZEROPOINT`, `ZP`,
 `MAGZERO`, `PHOTZP`, `MAGZP`, `ABMAGZERO` or `ZEROPOINT` (first present wins;
 `ZP` and friends are read as HIERARCH where needed):
 
@@ -582,6 +600,7 @@ ds = FitsStagedCutoutIterableDataset(
 | `hdu` | `int` or `str` or `sequence` | `0` | Primary/flux HDU(s); sequence stacks channels |
 | `ivar_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion inverse variance HDU(s) |
 | `mask_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion mask HDU(s) |
+| `mask_is_dq` / `bad_bits` | `bool` / sequence or `None` | `False` / `None` | Interpret the mask source as a `DQ` bitfield |
 | `staging_dir` | `str` or `Path` or `None` | `None` | Ephemeral scratch directory (defaults to `$SLURM_TMPDIR` / `$TMPDIR`) |
 | `cleanup` | `bool` | `True` | Automatically delete downloaded mosaic after sampling |
 | `cutout_generator` | `callable` or `None` | `None` | Custom spatial coordinate sampler `(height, width, ch, cw) -> (x1, y1, x2, y2)` |

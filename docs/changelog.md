@@ -45,7 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rgb(..., dtype=)` selects the output precision (display paths can stay in
   float32 instead of always computing in float64), and
   `AsymmetricSigmaClip(..., weighted=)`.
+- `mask_is_dq=`/`bad_bits=` on `FitsTensorDataset`, `FitsImageDataset`,
+  `FitsCubeDataset`, their iterable peers and `FitsStagedCutoutIterableDataset`,
+  plus suffix-derived DQ decoding in `FitsImageDataset.from_bands()`.
+- `examples/example_ml_training_loop.py` — raw FITS through the new datasets and
+  transforms to a training step, covering band discovery, DQ masks, the
+  data-state contract and spectra/IFU/catalog loaders (run by the examples
+  smoke test in CI).
 
+- data: Spectra companions, IFU windows, table sharding and bands
+- transforms: Add data-state contract, IVAR/mask awareness and ML transforms
 ### Fixed
 - `LogStretch` and `SqrtStretch` no longer silently truncate integer input:
   every stretch promotes integers to float32 instead of casting the stretched
@@ -57,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AttributeError: 'dict' object has no attribute 'dtype'`, so the documented
   Dataset→transform path crashed for every statistics-based transform except
   `InterquantileScale`.
+- Image `mask_hdu` companions are returned as boolean *validity* masks, and a
+  FITS `DQ` bitfield must be decoded (`mask_is_dq=True`). Read verbatim, a
+  perfectly clean all-zero DQ frame marked **every** pixel invalid, so every
+  mask-aware statistic and `SigmaNormalize` collapsed to `NaN` — and
+  `FitsImageDataset.from_bands()` attached `*_DQ` extensions as `mask`
+  automatically, so the auto-discovery path hit this silently.
+- A single-HDU companion now gets the same channel axis as its flux under
+  `add_channel_dim=True` (`mask[0]` was row 0, not channel 0), matching what the
+  staged-cutout reader already did.
 - Degenerate groups (all-masked / all-NaN) no longer produce `-inf`/`1e30`
   artefacts: `MinMaxNormalize` returns NaN, `GlobalScalarNorm` falls back to an
   identity divisor, and the constant-image normalizers stay finite.
@@ -95,6 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spectra companions, IFU spectral windows, table sharding / tensor-space
   streaming and band discovery.
 - agents: Pixi-first, no ~/.local, Claude @AGENTS.md bridge
+- Document the data-state contract, IVAR/mask and ML data features
 
 ## [1.1.3] — 2026-09-09
 

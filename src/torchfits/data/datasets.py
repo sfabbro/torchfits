@@ -243,6 +243,7 @@ _ZEROPOINT_KEYS = (
 )
 _IVAR_SUFFIXES = ("_IVAR", "IVAR")
 _MASK_SUFFIXES = ("_MASK", "_DQ", "MASK", "DQ")
+_DQ_SUFFIXES = ("_DQ", "DQ")
 _WAVELENGTH_SUFFIXES = ("_WAVELENGTH", "_WAVE", "WAVELENGTH", "WAVE")
 _BITPIX_DTYPES = {
     8: "uint8",
@@ -447,12 +448,30 @@ def _load_image_payload(
     mmap: bool | str,
     add_channel_dim: bool,
     transform: Callable[..., Any] | None,
+    mask_is_dq: bool = False,
+    bad_bits: Any = None,
 ) -> torch.Tensor | dict[str, torch.Tensor]:
     flux = _read_flux_stack(path, hdus, device=device, mmap=mmap)
     if add_channel_dim and flux.ndim == 2:
         flux = flux.unsqueeze(0)
     ivar = _optional_companion(path, ivar_hdus, device=device, mmap=mmap)
     mask = _optional_companion(path, mask_hdus, device=device, mmap=mmap)
+    if add_channel_dim:
+        # A single companion HDU has no channel axis, so give it the same one
+        # the flux got.  Without this ``payload["mask"][0]`` on a one-band
+        # image silently means "row 0" instead of "channel 0".
+        if ivar is not None and ivar.ndim == 2:
+            ivar = ivar.unsqueeze(0)
+        if mask is not None and mask.ndim == 2:
+            mask = mask.unsqueeze(0)
+    if mask is not None:
+        # A companion ``*_MASK``/``*_DQ`` extension is delivered as a boolean
+        # *validity* mask (``True`` = valid) — the one convention every
+        # transform and statistic in torchfits shares.  Raw DQ bitfields must
+        # be decoded (``mask_is_dq=True``); a perfectly clean, all-zero DQ
+        # frame handed to the stats as an integer "mask" would mark *every*
+        # pixel invalid and turn each reduction into NaN.
+        mask = _as_validity_mask(mask, is_dq=mask_is_dq, bad_bits=bad_bits)
     payload = _pack_payload(flux, ivar, mask)
     if transform is not None:
         payload = transform(payload)
@@ -464,6 +483,13 @@ class FitsTensorDataset(Dataset[Any]):
 
     Multi-HDU ``hdu=[…]`` stacks **flux** channels on dim 0. Optional
     ``ivar_hdu`` / ``mask_hdu`` are companion tensors (never flux channels).
+
+    A ``mask_hdu`` companion is returned under the ``mask`` key as a
+    **boolean validity** mask (``True`` = valid), the convention every
+    transform and statistic in torchfits uses. Set ``mask_is_dq=True`` for an
+    integer FITS ``DQ`` bitfield so it is decoded through
+    :func:`~torchfits.transforms.mask_from_dq` (name the fatal bits with
+    ``bad_bits=``) rather than being reinterpreted as a validity array.
     """
 
     def __init__(
@@ -479,6 +505,9 @@ class FitsTensorDataset(Dataset[Any]):
         mmap: bool | str = True,
         add_channel_dim: bool = False,
         cache_dir: str | Path | None = None,
+        *,
+        mask_is_dq: bool = False,
+        bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         self.files = _resolve_paths(paths)
         self.hdus = _as_hdu_list(hdu)
@@ -488,6 +517,8 @@ class FitsTensorDataset(Dataset[Any]):
             raise ValueError("ivar_hdu must match hdu arity")
         if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
             raise ValueError("mask_hdu must match hdu arity")
+        self.mask_is_dq = bool(mask_is_dq)
+        self.bad_bits = bad_bits
         self.transform = transform
         self.device = device
         self.mmap = mmap
@@ -530,6 +561,8 @@ class FitsTensorDataset(Dataset[Any]):
             mmap=self.mmap,
             add_channel_dim=self.add_channel_dim,
             transform=self.transform,
+            mask_is_dq=self.mask_is_dq,
+            bad_bits=self.bad_bits,
         )
 
     def __getitem__(self, idx: int) -> tuple[Any, torch.Tensor]:
@@ -569,6 +602,8 @@ class FitsImageDataset(FitsTensorDataset):
         *,
         ivar_suffixes: Sequence[str] = _IVAR_SUFFIXES,
         mask_suffixes: Sequence[str] = _MASK_SUFFIXES,
+        mask_is_dq: bool | None = None,
+        bad_bits: int | Sequence[int] | None = None,
         **kwargs: Any,
     ) -> "FitsImageDataset":
         """Build a multi-band dataset by discovering image extensions by name.
@@ -579,6 +614,12 @@ class FitsImageDataset(FitsTensorDataset):
         one, matched by suffix (``"G"`` → ``"G_IVAR"``, ``"G_MASK"/"G_DQ"``).
         Band names come from ``EXTNAME``, falling back to
         ``FILTER``/``BAND``/``HDU<n>``.
+
+        A ``*_DQ`` companion is decoded as a FITS bitfield through
+        :func:`~torchfits.transforms.mask_from_dq` (suffix-derived, so it needs
+        no extra arguments); pass ``mask_is_dq=False`` to override, or
+        ``bad_bits=`` to name the fatal bits. Either way the payload's
+        ``mask`` is a boolean validity mask where ``True`` means valid.
 
         Use :func:`discover_bands` to inspect zeropoints before choosing
         bands; see :meth:`BandInfo.flux_scale` for counts→flux conversion.
@@ -605,19 +646,42 @@ class FitsImageDataset(FitsTensorDataset):
 
         known = set(available)
 
-        def _companion(band: str, suffixes: Sequence[str]) -> str | None:
+        def _companion(band: str, suffixes: Sequence[str]) -> tuple[str, str] | None:
             for suffix in suffixes:
                 if f"{band}{suffix}" in known:
-                    return f"{band}{suffix}"
+                    return f"{band}{suffix}", suffix
             return None
 
-        ivars = [_companion(b, ivar_suffixes) for b in selected]
-        masks = [_companion(b, mask_suffixes) for b in selected]
+        ivar_hits = [
+            hit for hit in (_companion(b, ivar_suffixes) for b in selected) if hit
+        ]
+        mask_hits = [
+            hit for hit in (_companion(b, mask_suffixes) for b in selected) if hit
+        ]
+        attach_ivar = len(ivar_hits) == len(selected)
+        attach_mask = len(mask_hits) == len(selected)
+
+        # A ``*_DQ`` extension is a bitfield, not a validity mask. Decide from
+        # the suffixes so the caller does not have to: mixing the two kinds
+        # across bands is ambiguous, so say so instead of guessing.
+        detected_is_dq: bool | None = None
+        if attach_mask:
+            kinds = {suffix in _DQ_SUFFIXES for _, suffix in mask_hits}
+            if len(kinds) > 1:
+                raise ValueError(
+                    "mask companions mix DQ bitfields and plain masks across "
+                    "bands; build the dataset with explicit mask_hdu=/"
+                    "mask_is_dq= instead"
+                )
+            detected_is_dq = kinds.pop()
+
         return cls(
             files,
             hdu=selected,
-            ivar_hdu=ivars if all(v is not None for v in ivars) else None,
-            mask_hdu=masks if all(v is not None for v in masks) else None,
+            ivar_hdu=[name for name, _ in ivar_hits] if attach_ivar else None,
+            mask_hdu=[name for name, _ in mask_hits] if attach_mask else None,
+            mask_is_dq=detected_is_dq if mask_is_dq is None else mask_is_dq,
+            bad_bits=bad_bits,
             **kwargs,
         )
 
@@ -710,11 +774,16 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
         world_size: int | None = None,
         add_channel_dim: bool = False,
         cache_dir: str | Path | None = None,
+        *,
+        mask_is_dq: bool = False,
+        bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         self.files = _resolve_paths(paths)
         self.hdus = _as_hdu_list(hdu)
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
+        self.mask_is_dq = bool(mask_is_dq)
+        self.bad_bits = bad_bits
         self.transform = transform
         self.device = device
         self.mmap = mmap
@@ -756,6 +825,8 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
                 mmap=self.mmap,
                 add_channel_dim=self.add_channel_dim,
                 transform=self.transform,
+                mask_is_dq=self.mask_is_dq,
+                bad_bits=self.bad_bits,
             )
 
     def __iter__(self) -> Iterator[Any]:
@@ -1220,6 +1291,8 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         seed: int = 0,
         rank: int | None = None,
         world_size: int | None = None,
+        mask_is_dq: bool = False,
+        bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         self.files = _resolve_paths(paths)
         self.cutouts_per_file = max(1, int(cutouts_per_file))
@@ -1234,6 +1307,8 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
             raise ValueError("ivar_hdu must match hdu arity")
         if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
             raise ValueError("mask_hdu must match hdu arity")
+        self.mask_is_dq = bool(mask_is_dq)
+        self.bad_bits = bad_bits
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
         self.staging_dir = Path(staging_dir) if staging_dir is not None else None
         self.cleanup = cleanup
@@ -1380,6 +1455,11 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
                             )
                         else:
                             mask = None
+                        if mask is not None:
+                            # Same validity convention as the map-style readers.
+                            mask = _as_validity_mask(
+                                mask, is_dq=self.mask_is_dq, bad_bits=self.bad_bits
+                            )
 
                         if ivar is not None or mask is not None:
                             payload: Any = {"flux": flux}

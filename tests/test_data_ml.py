@@ -514,3 +514,154 @@ class TestTableBatchModeConsistency:
         from torchfits.data import FitsTableIterableDataset
 
         assert not getattr(FitsTableIterableDataset(str(mixed_table)), "files", None)
+
+
+# ---------------------------------------------------------------------------
+# Image mask companions: DQ decoding and rank alignment
+# ---------------------------------------------------------------------------
+
+
+def _band_mef(path, dq):
+    """Write a single-band MEF with an IVAR and a DQ companion."""
+    shape = (4, 4)
+    hdus = [
+        fits.PrimaryHDU(),
+        fits.ImageHDU(np.full(shape, 5.0, dtype=np.float32), name="G"),
+        fits.ImageHDU(np.full(shape, 0.25, dtype=np.float32), name="G_IVAR"),
+        fits.ImageHDU(np.asarray(dq, dtype=np.int16), name="G_DQ"),
+    ]
+    fits.HDUList(hdus).writeto(str(path), overwrite=True)
+    return path
+
+
+class TestImageMaskCompanions:
+    def test_clean_dq_marks_every_pixel_valid(self, bands_fits) -> None:
+        """An all-zero DQ frame is *all good*, not all bad.
+
+        Read verbatim, a clean DQ extension marks every pixel invalid and each
+        mask-aware statistic collapses to NaN.
+        """
+        from torchfits.data import FitsImageDataset
+        from torchfits.transforms import SigmaNormalize, estimate_background
+
+        ds = FitsImageDataset.from_bands(str(bands_fits))
+        payload, _ = ds[0]
+        assert payload["mask"].dtype == torch.bool
+        assert bool(payload["mask"].all())
+
+        med, mad = estimate_background(payload["flux"], mask=payload["mask"])
+        assert torch.isfinite(med).all()
+        assert torch.isfinite(mad).all()
+        out = SigmaNormalize()(payload)
+        assert torch.isfinite(out["flux"]).all()
+
+    def test_dq_bitmask_is_decoded_not_trusted(self, tmp_path) -> None:
+        from torchfits.data import FitsImageDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[0, 0] = 4  # bit 2
+        dq[3, 3] = 1024  # bit 10
+        path = _band_mef(tmp_path / "dq.fits", dq)
+
+        ds = FitsImageDataset.from_bands(str(path))
+        assert ds.mask_is_dq is True
+        mask = ds[0][0]["mask"]
+        assert mask.dtype == torch.bool
+        assert not mask[0, 0, 0] and not mask[0, 3, 3]
+        assert int(mask.sum()) == 14
+
+    def test_bad_bits_names_the_fatal_bits(self, tmp_path) -> None:
+        from torchfits.data import FitsImageDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[0, 0] = 4  # bit 2 — fatal
+        dq[3, 3] = 1024  # bit 10 — harmless here
+        path = _band_mef(tmp_path / "bits.fits", dq)
+
+        ds = FitsImageDataset.from_bands(str(path), bad_bits=[2])
+        mask = ds[0][0]["mask"]
+        assert not mask[0, 0, 0]
+        assert mask[0, 3, 3]
+        assert int(mask.sum()) == 15
+
+    def test_mask_is_dq_override_keeps_nonzero_is_valid(self, tmp_path) -> None:
+        from torchfits.data import FitsImageDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[0, 0] = 4
+        path = _band_mef(tmp_path / "raw.fits", dq)
+
+        # Without decoding, the companion is read as a plain validity array:
+        # nonzero means valid, so the *inverted* meaning of a DQ bitfield —
+        # which is exactly why the flag exists.
+        ds = FitsImageDataset.from_bands(str(path), mask_is_dq=False)
+        mask = ds[0][0]["mask"]
+        assert mask.dtype == torch.bool
+        assert bool(mask[0, 0, 0]) and int(mask.sum()) == 1
+
+    def test_explicit_mask_hdu_is_a_validity_mask(self, tmp_path) -> None:
+        from torchfits.data import FitsImageDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[0, 0] = 2
+        path = _band_mef(tmp_path / "explicit.fits", dq)
+
+        ds = FitsImageDataset(str(path), hdu="G", mask_hdu="G_DQ", mask_is_dq=True)
+        mask = ds[0][0]["mask"]
+        assert mask.dtype == torch.bool
+        assert int(mask.sum()) == 15
+
+    def test_companions_match_flux_rank(self, tmp_path) -> None:
+        """One band still gets a channel axis, so ``mask[0]`` is channel 0."""
+        from torchfits.data import FitsImageDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[0, 0] = 2
+        path = _band_mef(tmp_path / "rank.fits", dq)
+
+        payload, _ = FitsImageDataset(
+            str(path),
+            hdu="G",
+            ivar_hdu="G_IVAR",
+            mask_hdu="G_DQ",
+            mask_is_dq=True,
+        )[0]
+        assert payload["flux"].shape == (1, 4, 4)
+        assert payload["ivar"].shape == (1, 4, 4)
+        assert payload["mask"].shape == (1, 4, 4)
+
+        no_channel, _ = FitsImageDataset(
+            str(path), hdu="G", mask_hdu="G_DQ", mask_is_dq=True, add_channel_dim=False
+        )[0]
+        assert no_channel["flux"].shape == (4, 4)
+        assert no_channel["mask"].shape == (4, 4)
+
+    def test_iterable_dataset_decodes_dq(self, tmp_path) -> None:
+        from torchfits.data import FitsImageIterableDataset
+
+        dq = np.zeros((4, 4), dtype=np.int16)
+        dq[1, 1] = 8
+        path = _band_mef(tmp_path / "iter.fits", dq)
+
+        ds = FitsImageIterableDataset(
+            [str(path)], hdu="G", mask_hdu="G_DQ", mask_is_dq=True
+        )
+        payload = next(iter(ds))
+        assert payload["mask"].dtype == torch.bool
+        assert int(payload["mask"].sum()) == 15
+
+    def test_mixed_mask_and_dq_companions_are_rejected(self, tmp_path) -> None:
+        """Two bands, one with ``_DQ`` and one with ``_MASK``: ambiguous."""
+        from torchfits.data import FitsImageDataset
+
+        path = tmp_path / "mixed.fits"
+        shape = (4, 4)
+        hdus = [fits.PrimaryHDU()]
+        for name in ("G", "R"):
+            hdus.append(fits.ImageHDU(np.ones(shape, dtype=np.float32), name=name))
+        hdus.append(fits.ImageHDU(np.zeros(shape, dtype=np.int16), name="G_DQ"))
+        hdus.append(fits.ImageHDU(np.ones(shape, dtype=np.int16), name="R_MASK"))
+        fits.HDUList(hdus).writeto(str(path), overwrite=True)
+
+        with pytest.raises(ValueError, match="mix DQ bitfields and plain masks"):
+            FitsImageDataset.from_bands(str(path))
