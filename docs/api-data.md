@@ -151,13 +151,68 @@ cubes = FitsCubeDataset("cubes/*.fits", hdu=0, slice_index=None)
 | `paths` | `str` or `list[str]` | *(required)* | File paths, glob, or HTTP(S) URLs |
 | `hdu` | `int` or `str` or `sequence` | `0` | Flux HDU(s); multi → channel stack |
 | `add_channel_dim` | `bool` | `True` (Image) / `False` (Cube) | Prepend channel dim for rank-2 payloads |
-| `slice_index` | `int` or `None` | `None` (`FitsCubeDataset` only) | Index the leading axis after read |
+| `slice_index` | `int` or `None` | `None` (`Cube` only) | Index the leading (spectral) axis after read |
+| `spectral_slice` | `(int, int)` or `None` | `None` (`Cube` only) | Half-open spectral/channel window on the leading axis; mutually exclusive with `slice_index` |
 | `ivar_hdu` / `mask_hdu` / `label_key` / `labels` / `transform` / `device` / `mmap` / `cache_dir` | — | see `FitsTensorDataset` | Passed through unchanged |
 
 **Returns per item:** same as `FitsTensorDataset` — `(payload, label)`.
 
 `FitsImageIterableDataset` stays first-class for loaders (same knobs as the
 tensor iterable, channel dim default on).
+
+### Cubes and IFU cubes
+
+The leading axis of a cube is the spectral (or velocity / channel) axis. Most
+IFU pipelines want a **range**, not a single channel:
+
+```python
+from torchfits.data import FitsCubeDataset
+
+# A rest-wavelength window instead of the whole cube.
+ifs = FitsCubeDataset("cubes/*.fits", spectral_slice=(1200, 2600), label_key="OBJID")
+```
+
+The same window is applied to companion `ivar` / `mask` extensions, so they stay
+aligned with flux. `FitsCubeIterableDataset(..., spectral_slice=(a, b))` does the
+same while streaming.
+
+### Discovering bands
+
+`discover_bands(path)` lists every 2D+ image extension with its name, role and
+photometric metadata, so datasets can be built from band names instead of
+hand-counted HDU indices:
+
+```python
+from torchfits.data import FitsImageDataset, discover_bands
+
+for band in discover_bands("mosaic.fits"):
+    print(band.name, band.role, band.shape, band.zeropoint)
+# G flux (4096, 4096) 25.3
+# R flux (4096, 4096) 25.1
+# Z flux (4096, 4096) 24.8
+# G_IVAR ivar (4096, 4096) None
+
+ds = FitsImageDataset.from_bands("mosaic.fits", bands=["G", "R", "Z"])
+```
+
+`BandInfo.role` is `"flux"`, `"ivar"`, `"mask"` or `"wavelength"`, inferred from
+the name suffix, so `from_bands(bands=None)` selects the flux extensions and
+automatically attaches matching `G_IVAR` / `G_DQ` companions when *every*
+selected band has one. Zeropoints come from `PHOTZEROPOINT`, `ZP`,
+`MAGZERO`, `PHOTZP`, `MAGZP`, `ABMAGZERO` or `ZEROPOINT` (first present wins;
+`ZP` and friends are read as HIERARCH where needed):
+
+```python
+zp = discover_bands("mosaic.fits")[0].zeropoint
+counts_to_flux = 10 ** (-0.4 * zp)
+
+# or, straight from the dataset:
+ds.band_zeropoints()  # {'G': 25.3, 'R': 25.1, 'Z': 24.8}
+```
+
+`BandInfo.flux_scale(exptime_normalized=False)` returns that factor divided by
+`EXPTIME` for flux per second. Feed it to
+[`AffineTransform`](api-transforms.md) to apply it inside a pipeline.
 
 ---
 
@@ -186,17 +241,24 @@ ds = FitsSpectrumDataset(
 |---|---|---|---|
 | `paths` | `str` or `list[str]` | *(required)* | File paths, glob, or HTTP(S) URLs |
 | `hdu` | `int` or `str` or `sequence` | `0` | IMAGE flux HDU(s), one per arm |
-| `ivar_hdu` / `mask_hdu` | same arity as `hdu` | `None` | Companion IMAGE HDUs per arm |
+| `ivar_hdu` / `mask_hdu` | same arity as `hdu`, or one shared HDU | `None` | Companion IMAGE HDUs per arm |
 | `column` | `str` or `None` | `None` | Table flux column (mutually exclusive with `hdu` image path) |
 | `ivar_column` | `str` or `None` | `None` | Table ivar column |
-| `row` | `int` or `None` | `None` | Row index into a DESI-style `[nspec, nwave]` HDU/column |
+| `mask_column` | `str` or `None` | `None` | Table mask / DQ column |
+| `wavelength_hdu` / `wavelength_column` | same arity as `hdu`, or one shared HDU | `None` | Parallel wavelength array, attached as `payload["wavelength"]` |
+| `mask_is_dq` | `bool` | `False` | Read the mask extension/column as a FITS `DQ` bitfield and return a boolean validity mask |
+| `bad_bits` | `int` or `sequence` or `None` | `None` | Bit positions passed to `mask_from_dq` when `mask_is_dq=True` (default: any non-zero DQ value is invalid) |
+| `label_key` / `labels` | `str` / `list[int]` or `None` | `None` | Per-file classification labels |
+| `row` | `int` or `None` | `None` | Row index into a DESI-style `[nspec, nwave]` HDU/column; the HDU must have rank ≥ 2, otherwise this raises `ValueError` |
 | `layout` | `str` | `"dict"` | `"dict"`, `"stack"`, or `"concat"` |
 | `transform` | `callable` or `None` | `None` | Applied to the laid-out payload |
 | `device` | `str` | `"cpu"` | Torch device |
 | `mmap` | `bool` or `str` | `True` | Memory-mapped reads |
 | `cache_dir` | `str` or `Path` or `None` | `None` | Override remote prefetch directory |
 
-**Returns per item:** payload per `layout` (see table above) — no label.
+**Returns per item:** payload per `layout` (see table above). When `labels=`
+or `label_key=` is given the item becomes `(payload, label)`; otherwise the
+payload is returned alone, so existing call sites are unchanged.
 
 Synthetic DESI-shaped demo: `examples/desi_shaped_spectrum.py`.
 
@@ -303,11 +365,13 @@ ds = FitsTableIterableDataset(
 | `columns` | `list[str]` or `None` | `None` | Column projection |
 | `where` | `str` or `None` | `None` | SQL-like predicate |
 | `batch_size` | `int` | `65536` | Rows per internal scan batch |
-| `transform` | `callable` or `None` | `None` | Applied to each row dict |
+| `as_batches` | `bool` | `False` | Yield `dict[str, Tensor]` chunks of rows instead of one dict per row; character and bit columns are omitted |
+| `transform` | `callable` or `None` | `None` | Applied to each row dict (or each chunk when `as_batches=True`) |
 | `device` | `str` | `"cpu"` | Torch device |
 | `mmap` | `bool` or `str` | `"auto"` | Memory-mapped reads |
 
-**Returns per item:** `dict[str, Tensor | Any]` — one row.
+**Returns per item:** `dict[str, Tensor | Any]` — one row, or one chunk of
+`batch_size` rows when `as_batches=True`.
 
 !!! warning "where= performance"
     The ``where=`` path uses ``table.scan()`` which yields Arrow
@@ -319,9 +383,20 @@ ds = FitsTableIterableDataset(
     PyTorch.
 
 !!! info "When to use"
-    Use for large catalogs that don't fit in memory. Workers shard by scan
-    batch index (`batch_idx % num_workers == worker_id`), so each row is
-    seen exactly once. Row order within a batch is preserved.
+    Use for large catalogs that don't fit in memory. Each worker (and each
+    distributed rank) gets a **contiguous, near-equal row range** through the
+    engine's `row_slice`, so every row is seen exactly once, no worker decodes
+    rows it will discard, and the split stays even even when `batch_size`
+    dwarfs the row count.
+
+!!! tip "Per-row vs tensor-space"
+    Per-row mode (`as_batches=False`, the default) is what you want for
+    `collate_fn`-style row sampling and for `where=` predicates. When every
+    column is numeric, `as_batches=True` keeps the data as tensors end to end
+    and skips the Arrow→Python conversion per row — markedly faster for wide
+    catalogs. Character (`TFORM` `A`) and bit (`X`) columns are omitted so both
+    scanner paths agree; read them in per-row mode. The two modes are not
+    mixable with `shuffle_buffer_size=`, which needs individual rows.
 
 ---
 
@@ -439,7 +514,8 @@ ds = FitsCubeIterableDataset(
 |---|---|---|---|
 | `paths` | `str` or `list[str]` | *(required)* | FITS file paths, glob, or URLs |
 | `hdu` | `int` or `str` or `sequence` | `0` | Primary datacube HDU(s) |
-| `slice_index` | `int` or `None` | `None` | Optional index along leading channel/spectral axis |
+| `slice_index` | `int` or `None` | `None` | Optional index along the leading channel/spectral axis |
+| `spectral_slice` | `(int, int)` or `None` | `None` | Half-open spectral window on the leading axis (mutually exclusive with `slice_index`) |
 | `transform` | `callable` or `None` | `None` | Applied to each payload |
 | `shuffle` | `bool` | `False` | Shuffle file order per epoch |
 | `shuffle_buffer_size` | `int` or `None` | `None` | Rolling reservoir buffer for in-flight random mixing |
@@ -473,6 +549,9 @@ ds = FitsSpectrumIterableDataset(
 | `ivar_column` | `str` or `None` | `None` | Table column for companion IVAR |
 | `row` | `int` or `None` | `None` | Optional row index within multi-spectrum HDUs |
 | `layout` | `str` | `"dict"` | Layout format: `"dict"`, `"stack"`, or `"concat"` |
+| `mask_column` / `wavelength_column` / `wavelength_hdu` | `str` / `str` / HDU spec or `None` | `None` | Same companions as `FitsSpectrumDataset` |
+| `mask_is_dq` / `bad_bits` | `bool` / sequence or `None` | `False` / `None` | Interpret the mask source as a `DQ` bitfield |
+| `label_key` / `labels` | `str` / `list[int]` or `None` | `None` | Per-file labels; items become `(payload, label)` |
 | `shuffle_buffer_size` | `int` or `None` | `None` | Reservoir shuffle buffer size |
 
 ---

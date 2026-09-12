@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- Processing-state contract for transforms: `DataState`
+  (`STORED`/`PHYSICAL`/`CONTINUUM_NORMALIZED`/`NORMALIZED`), `DataStateError`
+  and the typed `Payload` container (interchangeable with the existing
+  `{"flux", "ivar"?, "mask"?}` dicts). `FITSHeaderScale`,
+  `FITSScaleColumns`, `FITSHeaderNormalize` and `TNullToNan` now declare the
+  state they expect and raise an actionable error instead of scaling
+  already-calibrated data a second time. `calibration_state(header)` reports
+  what the reader produced.
+- Inverse-variance propagation through every affine transform
+  (`ivar / scale**2`), inverse-variance weighted statistics behind the opt-in
+  `weighted=True` flag on the normalizers, clippers and `estimate_background`,
+  and companion `mask` awareness (an explicit `mask=` still wins).
+- `propagate_ivar=True` on `ArcsinhStretch`, `LogStretch` and `SqrtStretch`
+  propagates a companion `ivar` through the nonlinear stretch by the delta
+  method (`ivar / (df/dx)**2`). `SqrtStretch` on Poisson counts then recovers
+  the variance-stabilised constant `ivar = 4`; clamped regions report `ivar = 0`
+  (the output no longer constrains the input) instead of a spurious value.
+- `Mask helpers`:`mask_from_dq`, `mask_from_ivar`, `mask_from_nan`,
+  `combine_masks`, `apply_mask` — one `True` = valid convention for FITS `DQ`,
+  `IVAR` and NaN data.
+- Transforms: `MeshBackgroundSubtract` (SExtractor-style tile-mesh sky),
+  `SigmaNormalize` (unit-variance scaling for model input), `AffineTransform`
+  (explicit scale/offset with exact companion propagation), a faithful
+  iterative IRAF zscale (`algorithm="iraf"`, matching
+  `astropy.visualization.ZScaleInterval`) and `weighted=`/`algorithm=` options
+  on the existing normalizers.
+- Data module: spectra gain `wavelength_hdu`/`wavelength_column`, DQ-aware
+  `mask_hdu`/`mask_column` via `mask_is_dq=`/`bad_bits=`, and
+  `label_key=`/`labels=`; `FitsCubeDataset`/`FitsCubeIterableDataset` gain
+  `spectral_slice=(start, stop)` for IFU spectral windows;
+  `FitsTableIterableDataset` shards by contiguous row ranges and can stream
+  raw tensor batches (`as_batches=True`); `discover_bands()` +
+  `FitsImageDataset.from_bands()` build multi-band datasets from extension
+  names with zeropoints (`BandInfo.flux_scale`, `band_zeropoints()`).
+- `rgb(..., dtype=)` selects the output precision (display paths can stay in
+  float32 instead of always computing in float64), and
+  `AsymmetricSigmaClip(..., weighted=)`.
+
+### Fixed
+- `LogStretch` and `SqrtStretch` no longer silently truncate integer input:
+  every stretch promotes integers to float32 instead of casting the stretched
+  result back to the storage dtype (`LogStretch(uint16([0, 100, 1000]))` used to
+  return `[0, 1, 1]`), and `ArcsinhStretch` no longer raises a cryptic dtype
+  error. `float64` input stays `float64`.
+- Every transform now accepts dict and `Payload` inputs, not just tensors.
+  `Compose([BackgroundSubtract()])({"flux", "ivar", "mask"})` used to raise
+  `AttributeError: 'dict' object has no attribute 'dtype'`, so the documented
+  Dataset→transform path crashed for every statistics-based transform except
+  `InterquantileScale`.
+- Degenerate groups (all-masked / all-NaN) no longer produce `-inf`/`1e30`
+  artefacts: `MinMaxNormalize` returns NaN, `GlobalScalarNorm` falls back to an
+  identity divisor, and the constant-image normalizers stay finite.
+- Nonlinear transforms warn once per instance that a companion `ivar` is
+  passed through unchanged (previously only the clippers did); the stretches
+  can opt into exact delta-method propagation instead.
+
+### Fixed — found by adversarial probing
+- `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
+  both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
+  a clip silently lost `requires_grad` while every normalizer kept it. The
+  statistics stay constants; the kept pixels now carry gradient again.
+- The declared `produces` state is now actually applied. Declaring it without
+  using it left a payload labelled `stored` after it had been calibrated, so
+  `FITSHeaderScale` could still be applied twice inside one pipeline. The
+  header scalers now declare `produces = PHYSICAL`, `inverse()` accepts what
+  `forward()` produced and restores the state it consumed, and
+  `FITSHeaderNormalize` does not relabel data its float path left unchanged.
+- `weighted=True` without an `ivar` is now an exact no-op. `estimate_background`
+  (and the transform call sites) took the weighted inverted-CDF path with
+  uniform weights, differing from the documented interpolated-median fallback
+  by up to one order-statistic spacing.
+- Flux-scaling transforms refuse `CONTINUUM_NORMALIZED` input with an
+  actionable `DataStateError` instead of re-normalizing spectra whose common
+  flux scale the normalization exists to preserve.
+- `FitsSpectrumDataset(row=...)` on a rank-1 HDU raised nothing and returned a
+  0-d tensor; it now raises a `ValueError` naming the offending shape.
+- `FitsTableIterableDataset(as_batches=True)` now drops character/bit columns on
+  **both** scanner paths (the `scan_torch` path used to hand back raw `uint8`
+  byte matrices while the `where=` path dropped them).
+
+### Docs
+- Transform docs cover the data-state contract, companion `ivar`/`mask`
+  propagation, the mask helpers, weighted statistics and the new transforms;
+  the integer-input note now matches the promotions above. Data docs cover the
+  spectra companions, IFU spectral windows, table sharding / tensor-space
+  streaming and band discovery.
+- agents: Pixi-first, no ~/.local, Claude @AGENTS.md bridge
+
 ## [1.1.3] — 2026-09-09
 
 ### Fixed
