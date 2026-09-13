@@ -60,9 +60,10 @@ def fits_inputs(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, str]:
 def test_stub_matches_live_extension() -> None:
     """The committed stub is exactly what the generator produces today."""
     got = gen.TARGET.read_text(encoding="utf-8") if gen.TARGET.is_file() else ""
-    assert gen.build() == got, (
+    fresh = gen.build()
+    assert fresh == got, (
         f"{gen.TARGET.relative_to(ROOT)} is stale — run "
-        "'pixi run python scripts/gen_native_stub.py'"
+        "'pixi run python scripts/gen_native_stub.py'\n" + gen.diff_summary(fresh, got)
     )
 
 

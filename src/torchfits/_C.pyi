@@ -7,16 +7,27 @@ bindings; a mismatch between this file and the extension fails the build.
 Return types stubgen cannot infer (``torch.Tensor``, ``dict[str,
 torch.Tensor]``, dicts of numpy arrays) are substituted from a table measured
 against real FITS inputs.
+
+Renderings that depend on the *environment* rather than the bindings are
+canonicalized, so this file is byte-identical on every supported interpreter and
+platform: module-level constants are typed without their value, and
+``CapsuleType`` is declared for every version (the real name only exists on
+3.13+).
 """
 
 from collections.abc import Sequence
-import types
+import sys
 from typing import Any, overload
 
 import torch
 from numpy.typing import NDArray
 
-HAS_BZIP2: bool = True
+if sys.version_info >= (3, 13):
+    from types import CapsuleType
+else:
+    class CapsuleType: ...  # opaque native handle; the name only exists on 3.13+
+
+HAS_BZIP2: bool
 
 class FITSFile:
     def __init__(self, filename: str, mode: int = 0) -> None: ...
@@ -202,8 +213,8 @@ def read_fits_table_rows_numpy_from_handle(file: object, hdu_num: int = 1, colum
 
 def read_fits_table_rows_numpy(filename: str, hdu_num: int = 1, column_names: Sequence[str] = [], start_row: int = 1, num_rows: int = -1, mmap: bool = False) -> dict[str, NDArray[Any]]: ...
 
-def open_fits_mmap_reader(path: str, hdu_num: int = 1) -> types.CapsuleType: ...
+def open_fits_mmap_reader(path: str, hdu_num: int = 1) -> CapsuleType: ...
 
-def read_fits_table_rows_mmap_from_reader(reader: types.CapsuleType, column_names: Sequence[str] = [], start_row: int = 1, num_rows: int = -1) -> object: ...
+def read_fits_table_rows_mmap_from_reader(reader: CapsuleType, column_names: Sequence[str] = [], start_row: int = 1, num_rows: int = -1) -> object: ...
 
 def read_fits_table_filtered(filename: str, hdu_num: int, column_names: Sequence[str], filters: list[Any]) -> dict[str, torch.Tensor]: ...

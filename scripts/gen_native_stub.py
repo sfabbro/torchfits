@@ -18,6 +18,13 @@ surface automatically. Two things it cannot know are corrected here:
    most-required form (never a lie: an over-strict stub is safe, an
    over-permissive one is not).
 
+Three renderings also depend on the *environment* rather than the bindings, and
+are canonicalized so one committed stub is correct across the whole CI matrix:
+module-level constants keep their annotation but lose their value (``HAS_BZIP2``
+is a CMake fact and differs by platform), ``types.CapsuleType`` — a name that
+only exists from Python 3.13 — is declared once for every version, and the two
+capsule-carrying signatures are pinned explicitly.
+
 The result is committed, and ``--check`` fails if the committed stub no longer
 matches the extension (same drift-gate pattern as the torch lane and changelog
 checks). Regenerate with::
@@ -30,6 +37,7 @@ Requires the extension to be built and importable (``pixi run dev``).
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import re
 import subprocess
@@ -98,16 +106,37 @@ SIGNATURE_FIXES: dict[str, str] = {
         "column_names: Sequence[str], filters: list) -> "
         "dict[str, torch.Tensor]: ..."
     ),
+    # The mmap handle is an opaque ``nb::capsule``. nanobind spells its type
+    # from the running interpreter, so pinning these two signatures keeps the
+    # committed stub identical on every supported version. Parameter names and
+    # defaults are exactly what the binding declares.
+    "open_fits_mmap_reader": (
+        "def open_fits_mmap_reader(path: str, hdu_num: int = 1) -> CapsuleType: ..."
+    ),
+    "read_fits_table_rows_mmap_from_reader": (
+        "def read_fits_table_rows_mmap_from_reader(reader: CapsuleType, "
+        "column_names: Sequence[str] = [], start_row: int = 1, "
+        "num_rows: int = -1) -> object: ..."
+    ),
 }
+
+# Text substitutions applied to every line, for spellings that differ by
+# interpreter version.
+_TEXT_FIXES: tuple[tuple[str, str], ...] = (("types.CapsuleType", "CapsuleType"),)
 
 # Canonical import block. stubgen's own imports are dropped and replaced, so
 # the block is fixed regardless of which stubs stubgen happens to emit.
 IMPORTS = """from collections.abc import Sequence
-import types
+import sys
 from typing import Any, overload
 
 import torch
 from numpy.typing import NDArray
+
+if sys.version_info >= (3, 13):
+    from types import CapsuleType
+else:
+    class CapsuleType: ...  # opaque native handle; the name only exists on 3.13+
 
 """
 
@@ -120,6 +149,12 @@ bindings; a mismatch between this file and the extension fails the build.
 Return types stubgen cannot infer (``torch.Tensor``, ``dict[str,
 torch.Tensor]``, dicts of numpy arrays) are substituted from a table measured
 against real FITS inputs.
+
+Renderings that depend on the *environment* rather than the bindings are
+canonicalized, so this file is byte-identical on every supported interpreter and
+platform: module-level constants are typed without their value, and
+``CapsuleType`` is declared for every version (the real name only exists on
+3.13+).
 """
 
 '''
@@ -201,6 +236,20 @@ _BARE_GENERICS = (
 )
 
 
+_CONSTANT_RE = re.compile(r"^([A-Za-z_]\w*): ([^=]+?) = .+$")
+
+
+def _strip_constant_value(line: str) -> str:
+    """Keep a module-level constant's annotation, drop its value.
+
+    A stub describes types, not values, and these values are build facts:
+    ``HAS_BZIP2`` reflects whether the vendored CFITSIO found libbz2. Encoding
+    it would make the committed stub wrong on whichever platform disagrees.
+    """
+    match = _CONSTANT_RE.match(line)
+    return f"{match.group(1)}: {match.group(2).strip()}" if match else line
+
+
 def _parametrize_generics(line: str) -> str:
     if not line.lstrip().startswith("def "):
         return line
@@ -228,6 +277,10 @@ def _rewrite(body: str) -> str:
     out: list[str] = []
 
     for line in lines:
+        for old, new in _TEXT_FIXES:
+            line = line.replace(old, new)
+        if line == line.lstrip():
+            line = _strip_constant_value(line)
         line = _parametrize_generics(line)
         stripped = line.strip()
         if not stripped.startswith("def "):
@@ -268,6 +321,28 @@ def _rewrite(body: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def diff_summary(want: str, got: str, limit: int = 40) -> str:
+    """A short unified diff of the first differing lines, for failure messages.
+
+    ``got`` is the committed stub, ``want`` the freshly generated one.
+    """
+    lines = list(
+        difflib.unified_diff(
+            got.splitlines(),
+            want.splitlines(),
+            fromfile="committed",
+            tofile="generated",
+            lineterm="",
+            n=1,
+        )
+    )
+    if not lines:
+        return "(no line differences — the files differ only in trailing newlines)"
+    if len(lines) > limit:
+        lines = [*lines[:limit], f"... ({len(lines) - limit} more diff lines)"]
+    return "\n".join(lines)
+
+
 def build() -> str:
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "_C.pyi"
@@ -293,6 +368,7 @@ def main() -> int:
                 "'pixi run python scripts/gen_native_stub.py'",
                 flush=True,
             )
+            print(diff_summary(want, got), flush=True)
             return 1
         print(f"[ OK ] {TARGET.relative_to(ROOT)} matches the extension", flush=True)
         return 0
