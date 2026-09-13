@@ -41,6 +41,11 @@ jobs:
     name: Deploy GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    # Publishing is best-effort, not a check.  Forks (and any clone without a
+    # Pages site configured) fail at configure-pages with a 404 that says
+    # nothing about the docs, so the run would report a failure for an
+    # infrastructure gap.  The build job above still gates the docs.
+    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
