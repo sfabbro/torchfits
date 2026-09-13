@@ -59,4 +59,3 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 ### 3. Variable-Length Arrays (VLAs)
 - **fitsio:** Reads VLA columns as NumPy arrays with Python object pointers (`dtype=object`), incurring Python object overhead.
 - **torchfits:** Decodes VLAs directly into standard Apache Arrow `ListArray` structures, maintaining memory-contiguous CPU representations.
-

@@ -77,4 +77,3 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 ### 3. Thread Safety & Multi-Worker Loaders
 - **Astropy:** `HDUList` instances are not thread-safe and can cause file descriptor corruption when shared across threads or PyTorch `DataLoader` worker processes.
 - **torchfits:** Every read opens an independent private C++ handle and releases the Python GIL during decoding, ensuring safe execution across multi-threaded pipelines and multi-worker `DataLoader` instances.
-
