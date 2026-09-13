@@ -3,6 +3,11 @@
 FITS tables are columnar catalogs. Read them as Arrow (`table.read`), as a
 column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 
+Arrow is the **contract**, not the native representation. The C++ engine
+produces per-column `torch.Tensor` buffers and the Arrow table is a zero-copy
+view over that memory; see [Architecture](architecture.md#the-torch-boundary)
+for the boundary and what is still to move.
+
 | Destination | Call | Returns |
 |---|---|---|
 | Arrow table | `table.read` / `table.read_arrow` | `pyarrow.Table` |

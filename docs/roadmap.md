@@ -29,6 +29,43 @@ On the same PyTorch ABI lane; the [changelog](changelog.md) carries the full lis
 
 ---
 
+### 1.2 — The torch boundary (in progress)
+
+Metadata has never needed PyTorch, but every metadata call paid about a second
+for it, because the single native extension links `TORCH_LIBRARIES` and imports
+`torch` in its module body. The rule this work establishes — **PyTorch loads
+only for a call whose documented return type is a `torch.Tensor` or that takes
+`device=`** — is enforced by `tests/test_torch_boundary.py` and measured by
+`benchmarks/bench_import_boundary.py`.
+
+Landed so far:
+
+- `import torchfits.hdu` 883 ms → 2.6 ms and `import torchfits.io` 882 ms →
+  34.6 ms, both with torch absent; `Header`/`Card` work in a torch-free process.
+- An interpreter-exit defect fixed: the cache hook imported the extension
+  unconditionally, so a process that never loaded it printed a traceback (or a
+  warning) on every exit.
+
+Remaining, in order:
+
+1. **Torch-free core library.** Extract the inspection half of `FITSFile`, the
+   `SharedReadMeta` caches and a `parallel_for` of our own into a single
+   `libtorchfits_core` shared library; bind it as `torchfits._core` with a
+   build-id guard against `_C`. Target: `read_header` 1136 ms → ~5 ms, and the
+   metadata CLI commands (`info`, `header`, `probe`, `verify`, `copy`, `setkey`,
+   `table`) off torch entirely.
+2. **Buffer transport for tables.** Return owned byte arenas instead of
+   `torch::Tensor` buffers, build Arrow from them zero-copy, and make
+   `table.read_torch` one `torch.from_blob` destination. Target: `table.read`
+   1555 ms → ~140 ms with no torch installed, and one copy fewer on the tensor
+   path.
+3. **Image payloads in the core**, which also makes `compress`/`decompress`
+   torch-free — they re-encode bytes and never do pixel math.
+4. **Mechanical proof and packaging.** A test asserting the core's dynamic
+   dependencies contain no libtorch, docs, and a decision on publishing the core
+   as its own distribution (it helps the metadata and table audience, not the
+   pixel-math commands, which will always need torch).
+
 ## Current focus
 
 - **Single-pass arena decode for buffered table reads.** Removes the one
