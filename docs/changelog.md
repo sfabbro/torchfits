@@ -166,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - table: Record two deliberate divergences found in the engine review
 - changelog: Record the PathLike fix for the table mutation API
 
+- boundary: State the torch boundary, and correct the Arrow claim
 ### Performance
 - boundary: Import torchfits.hdu and torchfits.io without torch
 
