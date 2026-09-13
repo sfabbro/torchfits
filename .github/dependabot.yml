@@ -1,0 +1,38 @@
+# Keeps the pins honest. The repo drifted 1-4 majors behind on several GitHub
+# Actions with nothing to surface it, because pushes to a fork do not run
+# workflows and no automated dependency PRs existed.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the whole family, so an Actions bump is reviewed and
+      # reverted as a unit (the runtime deprecations move together).
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+      include: scope
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      # Not a version preference: the torch pin is the wheel ABI lane.
+      # libtorch_python has no stable C++ ABI across torch minors, so a wheel
+      # built on one minor crashed against another. Lane moves are release
+      # decisions (scripts/torch_lanes.json, docs/release.md) and are made by
+      # scripts/release_lane.py --apply, never by a dependency PR.
+      - dependency-name: "torch"
+      - dependency-name: "pytorch"
+    groups:
+      python-deps:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build(deps)"
+      include: scope

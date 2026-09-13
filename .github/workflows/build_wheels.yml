@@ -22,8 +22,8 @@ jobs:
       matrix:
         python-version: ["3.13"]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       # The wheel ABI lane is whatever the committed tree tracks (a release
@@ -72,8 +72,8 @@ jobs:
       CIBW_ARCHS: ${{ matrix.arch }}
 
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
@@ -81,8 +81,8 @@ jobs:
           python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.1.1
-      - uses: actions/upload-artifact@v4
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
@@ -92,10 +92,10 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build sdist
         run: pipx run build --sdist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cibw-sdist
           path: dist/*.tar.gz
@@ -109,7 +109,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           # Wheels only. An sdist on PyPI makes pip compile on unmatched
           # CPython / arch (Ubuntu 26.04 = 3.14 had no wheel on rc5).
@@ -130,18 +130,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Extract curated release notes from changelog
         run: |
           python scripts/release_notes.py \
             --version "${GITHUB_REF_NAME#v}" \
             --out "${RUNNER_TEMP}/release_notes.md"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: cibw-*
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body_path: ${{ runner.temp }}/release_notes.md
