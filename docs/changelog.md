@@ -55,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - data: Spectra companions, IFU windows, table sharding and bands
 - transforms: Add data-state contract, IVAR/mask awareness and ML transforms
+- types: Check the native extension boundary instead of assuming it
+### Changed
+- Dependency requirements now carry honest ranges. Every non-load-bearing
+  upper cap is gone (`ruff`, `zensical`, `pyarrow`, `polars`, `duckdb`, and the
+  exact `mypy` pin), and the two floors that could not be installed on a
+  supported Python are fixed (`numpy>=1.26`, `pyarrow>=17.0`). The two caps
+  that remain are deliberate: the `torch` range is the wheel ABI lane, and the
+  `pixi` `pyarrow` cap is a conda-forge libabseil constraint tied to that lane.
+- The native extension is built against nanobind 3 (`nanobind>=3.0.1`). No
+  user-facing API change; the ABI lane and the Python/platform matrix are
+  unchanged.
+- `torchfits[docs]` now declares the documentation toolchain (`zensical`),
+  which was previously pinned in CI and `pixi` only.
 ### Fixed
 - `LogStretch` and `SqrtStretch` no longer silently truncate integer input:
   every stretch promotes integers to float32 instead of casting the stretched
