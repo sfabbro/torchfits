@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any, Iterator, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Tuple
 
 from .._io_engine.device import to_device
 from ._repr import render_html_table
@@ -78,7 +78,7 @@ class TensorHDU:
 
             handle = self._file_handle
             hdu_index = self._hdu_index
-            return to_device(cast("Tensor", cpp.read_full(handle, hdu_index)), device)
+            return to_device(cpp.read_full(handle, hdu_index), device)
 
     def chunks(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
         """Yield row-band slabs of the image lazily (bounded memory).
@@ -119,10 +119,7 @@ class TensorHDU:
                     closed = self._closed
                 if closed:
                     raise RuntimeError("TensorHDU was closed during chunk iteration")
-                yield cast(
-                    "Tensor",
-                    reader.read(0, y0, int(reader.width), min(y0 + step, height)),
-                )
+                yield reader.read(0, y0, int(reader.width), min(y0 + step, height))
         finally:
             reader.close()
 

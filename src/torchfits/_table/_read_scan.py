@@ -459,7 +459,9 @@ def _read_cpp_table_chunk(
 
     from .engine import _read_ranges_as_chunk
 
-    chunk = None
+    # One chunk holds whole columns straight from the C++ engine, so the value
+    # type is the union of what the native and numpy paths return.
+    chunk: dict[str, Any] | None = None
     prefer_torch_full_path = (
         start_row == 1
         and num_rows == -1

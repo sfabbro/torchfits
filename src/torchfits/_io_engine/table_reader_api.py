@@ -40,7 +40,7 @@ class TableReaderHandle:
             raise ValueError("hdu must be a non-negative integer")
         self._path = path
         self._hdu = int(hdu)
-        self._reader = cpp.TableReader(path, self._hdu)
+        self._reader: cpp.TableReader | None = cpp.TableReader(path, self._hdu)
         self._closed = False
 
     def __enter__(self) -> TableReaderHandle:

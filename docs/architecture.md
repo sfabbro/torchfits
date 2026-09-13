@@ -461,6 +461,28 @@ The native module exports the following classes and functions. This surface
 is the stability contract — new symbols are private until promoted to
 `torchfits.cpp.__all__`.
 
+### Type stub (`torchfits/_C.pyi`)
+
+The wheel ships a type stub for the extension, so `mypy --strict` type-checks
+the C++/Python boundary instead of typing it as `Any`. It is generated —
+`nanobind.stubgen` derives the signatures from the live module, and
+`scripts/gen_native_stub.py` supplies what introspection cannot know:
+
+- return types of the tensor/array/dict-returning functions (the C++ side
+  returns `nb::object` wrapping a `torch::Tensor`, which stubgen can only
+  render as `object`), and
+- the occasional signature nanobind emits that is not legal Python.
+
+```bash
+pixi run gen-stub      # regenerate after changing the C++ bindings
+pixi run check-stub    # fail if the committed stub is stale
+```
+
+`tests/test_native_stub.py` runs both halves of the contract in CI: the stub
+must equal a fresh generation, and every *declared* return type is verified
+against a real call, so a read that starts returning numpy where the stub
+promises `torch.Tensor` fails the build.
+
 ### Classes
 
 | Class | Purpose |

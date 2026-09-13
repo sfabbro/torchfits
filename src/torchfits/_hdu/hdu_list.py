@@ -60,7 +60,7 @@ class HDUList:
         self, hdus: Optional[List[Union[TensorHDU, TableHDU, TableHDURef]]] = None
     ):
         self._hdus: List[Union[TensorHDU, TableHDU, TableHDURef]] = hdus or []
-        self._file_handle = None
+        self._file_handle: Any = None
         self._extname_idx: Optional[dict[str, int]] = None
         self._registry_key: Optional[str] = None
 
