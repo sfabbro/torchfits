@@ -93,13 +93,17 @@ PYPROJECT_DEPS_BLOCK = """# Core runtime dependencies for the library.
 # These are automatically managed by pixi for conda packages
 # but needed here for PyPI compatibility
 dependencies = [
-    # Published wheels are ABI-matched to the {lane} lane (PyTorch has no
-    # stable C++ ABI across minors). The lane pin keeps pip on the matching
-    # minor; other torch minors ship as separate torchfits releases, one per
-    # lane (scripts/torch_lanes.json, docs/install.md).
+    # Do not loosen this upper bound. Published wheels are ABI-matched to the
+    # {lane} lane: libtorch_python has no stable C++ ABI across torch minors, so
+    # a wheel built on {lane} that pip resolves against a newer minor can crash
+    # at import. Other torch minors ship as separate torchfits releases, one per
+    # lane (scripts/torch_lanes.json, docs/install.md). Every other runtime
+    # dependency is deliberately uncapped.
     "torch>={lane},<{next_lane}",
-    "numpy>=1.20.0",  # Core numerical operations
-    "pyarrow>=5.0",   # Table I/O (Arrow interchange)
+    # Floors name the oldest release with wheels for the minimum supported
+    # Python (3.10); they are not a statement about what is tested.
+    "numpy>=1.26",  # Core numerical operations
+    "pyarrow>=17.0",  # Table I/O (Arrow interchange)
 ]"""
 
 _PYPROJECT_DEPS_RE = re.compile(

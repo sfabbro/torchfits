@@ -2,4 +2,9 @@
 # scripts/torch_lanes.json). cibuildwheel must not resolve a torch outside
 # this lane at build time or the extension ABI check fails against the
 # runtime pin.
+#
+# Do not drop the upper bound. libtorch_python has no stable C++ ABI across
+# torch minors, so a wheel built on 2.13 that pip resolves against 2.14 can
+# crash at import; other minors ship as separate torchfits releases, one per
+# lane (see pyproject.toml, docs/install.md).
 torch>=2.13,<2.14

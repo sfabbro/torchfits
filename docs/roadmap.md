@@ -77,10 +77,39 @@ Remaining, in order:
   stop paying for whole-row pread when only a few columns are needed.
 - **Table semantics polish:** complex-column dtypes in `schema()`,
   consistent error types across the mutation API.
+- **Native binding signatures:** `read_fits_table_filtered` declares a default
+  on `column_names` ahead of a required `filters`, which is legal in C++ but
+  has no Python signature (and the default is dead — nothing can omit it).
+  `nb::sig()` on the bindings would make the generated stub exact instead of
+  hand-corrected, and would also give `help()`/`inspect.signature` real names
+  where stubgen currently emits `arg0`/`arg1`.
 - **Object-store recipes:** row-band caching and range-fetch patterns for
   S3-style archives on top of the hardened HTTP downloader.
 - **CLI wave 3:** thin `fitsverify` helper and fpack-style tile controls
   (no CFITSIO HTTPS drivers — torchfits keeps its own HTTP stack).
+
+---
+
+## Tooling decisions
+
+Re-evaluated 2026-09; recorded so they are not silently revisited.
+
+- **`ty` (Astral) is deferred to 1.0.** Latest is 0.0.80 — pre-1.0 beta, and
+  not a drop-in for mypy (different defaults, different diagnostics). mypy
+  `--strict` is the gate. Trigger to revisit: the measured cost it would
+  remove — mypy runs cold in ~20 s over 95 source files, which is already
+  tolerable in CI, so the case is ergonomic rather than blocking. Any trial
+  should start as a non-blocking CI job alongside mypy, not a replacement.
+- **nanobind split mode is not applicable.** It collapses the wheel matrix to
+  one wheel per platform by targeting the Python 3.10 stable ABI, but the real
+  constraint here is `libtorch_python`, which is CPython-version-specific, so
+  torchfits would still ship one wheel per Python version. Adopted nanobind 3
+  for the API/perf improvements only.
+- **Dependency floors are aspirational, not tested.** Floors name the oldest
+  release with wheels for the minimum supported Python (3.10); nothing
+  installs them. Follow-up that would make them real: a lowest-direct
+  resolution job (`pip install --resolution lowest-direct`, or a pixi minimum
+  env) so the metadata cannot drift from reality again.
 
 ---
 

@@ -28,8 +28,11 @@ extra-args = [
 
 # Build dependencies - tools needed to build the package
 # Note: cmake, ninja, and cxx-compiler are automatically provided by pixi-build-cmake
+# The ``pytorch`` pins throughout this file are the wheel ABI lane (see the
+# note in pyproject.toml): libtorch_python has no stable C++ ABI across torch
+# minors, so they must not be widened.
 [package.build-dependencies]
-nanobind = ">=2.13.0"
+nanobind = ">=3.0.1"
 scikit-build-core = ">=1.0.3"
 cmake = ">=3.21"
 ninja = ">=1.10"
@@ -42,14 +45,14 @@ cfitsio = ">=4.6.3,<4.6.5"
 python = ">=3.10"
 pytorch = ">=2.13,<2.14"
 cfitsio = ">=4.6.3,<4.6.5"
-nanobind = ">=2.13.0"
+nanobind = ">=3.0.1"
 zlib = ">=1.2.13"
 
 # Run dependencies - packages needed at runtime
 [package.run-dependencies]
 pytorch = ">=2.13,<2.14"
-numpy = ">=1.20"
-pyarrow = ">=5.0"
+numpy = ">=1.26"
+pyarrow = ">=17.0"
 cfitsio = ">=4.6.3,<4.6.5"
 zlib = ">=1.2.13"
 
@@ -58,16 +61,20 @@ zlib = ">=1.2.13"
 # torchfits = { path = "." }  # Don't add self-dependency - causes circular dependency
 pytest = ">=9.0"
 pytest-cov = ">=7.0"
-ruff = ">=0.16.1,<0.17"
-mypy = ">=2.3.0"
+ruff = ">=0.16.7"
+mypy = ">=2.3.1"
 pip = ">=24.0"
 scikit-build-core = ">=1.0.3"
 cmake = ">=3.21"
 ninja = ">=1.10"
-nanobind = ">=2.13.0"
+nanobind = ">=3.0.1"
 pytorch = ">=2.13,<2.14"
-numpy = ">=1.20"
-pre-commit = ">=3.5.0"
+numpy = ">=1.26"
+pre-commit = ">=4.6"
+# Lane-coupled, and rendered by scripts/release_lane.py (_LANE_PIXI_PYARROW):
+# conda-forge pins strict libabseil minors, and older torch lanes need a
+# pyarrow built against the older abseil. This cap is a solver constraint, not
+# a version preference — do not hand-loosen it.
 pyarrow = ">=25.0.0,<26"
 # Comparison libs with open floors (the solver picks python-compatible builds:
 # astropy 8 / matplotlib 3.11+ need 3.11+, numpy 2.5 needs 3.12+). The 3.10
@@ -76,8 +83,8 @@ astropy = ">=6.1"
 fitsio = ">=1.4"
 matplotlib = ">=3.8"
 pandas = ">=2.2"
-polars = ">=1.43.2,<2"
-duckdb = ">=1.5.5,<2"
+polars = ">=1.43.2"
+duckdb = ">=1.5.5"
 
 [tasks]
 # Development tasks
@@ -87,6 +94,12 @@ test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
 release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py tests/test_io_invariants.py -q && pixi run docs-contract && pixi run docs-links"
 lint = "ruff check . && ruff format ."
 preflight-push = "ruff check . && ruff format --check . && mypy src/torchfits && python -m compileall -q src/torchfits tests && pixi run check-lane && pixi run changelog-check"
+# Regenerate the native type stub from the built extension; --check is the
+# drift gate (also run as tests/test_native_stub.py).
+gen-stub = "python scripts/gen_native_stub.py"
+check-stub = "python scripts/gen_native_stub.py --check"
+# Build a wheel and assert its contents contract (what the CI wheel-smoke job does).
+wheel-smoke = "python -m pip wheel . --no-build-isolation --no-deps -w dist && python scripts/check_wheel_contents.py dist/*.whl"
 # Verify the committed release-lane pins match scripts/torch_lanes.json.
 check-lane = "python scripts/release_lane.py --check"
 # Resolve the [cpu] / [cuda] torch extra pins against download.pytorch.org
@@ -156,7 +169,7 @@ psutil = ">=7.2.2,<8"
 # Build deps needed so pip install -e . can compile the C++ extension
 cmake = ">=3.21"
 ninja = ">=1.10"
-nanobind = ">=2.13.0"
+nanobind = ">=3.0.1"
 scikit-build-core = ">=1.0.3"
 pip = ">=24.0"
 cxx-compiler = ">=1.11.0,<2"
@@ -238,4 +251,4 @@ bench-gpu-py313 = { features = ["bench", "gpu", "py313"] }
 bench-gpu-py314 = { features = ["bench", "gpu", "py314"] }
 
 [pypi-dependencies]
-zensical = ">=0.0.52, <0.0.53"
+zensical = ">=0.0.61"

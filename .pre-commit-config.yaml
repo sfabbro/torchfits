@@ -1,10 +1,22 @@
 repos:
+  # v6 removed check-byte-order-marker and fix-encoding-pragma; none of the
+  # hooks below were affected, so the bump is purely a pin change.
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
+      # Byte-exact files must be left alone: a patch's context lines have to
+      # match the target source verbatim (stripping their trailing whitespace
+      # silently breaks the vendored-CFITSIO build), and docs/assets/ is
+      # vendored third-party bundles that should stay identical to upstream.
       - id: trailing-whitespace
+        exclude: ^(extern/patches/|docs/assets/)
       - id: end-of-file-fixer
+        exclude: ^(extern/patches/|docs/assets/)
       - id: check-yaml
+        # .dsh/ is repo-local agent tooling and uses a JavaScript type tag
+        # (``!!js ...``) that only its own parser accepts; the rest of the
+        # tree — including the rattler-build recipe — is plain YAML.
+        exclude: ^\.dsh/
       - id: check-added-large-files
       - id: check-merge-conflict
 

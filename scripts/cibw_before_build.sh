@@ -11,7 +11,7 @@ test -n "${PIN}"
 python -m pip install -U pip
 python -m pip install \
   "scikit-build-core>=1.0.3" \
-  "nanobind>=2.13.0" \
+  "nanobind>=3.0.1" \
   "numpy>=1.20.0" \
   "cmake>=3.21" \
   "ninja>=1.10" \
