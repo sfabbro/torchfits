@@ -105,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - io: Keep header value types on every return_header route
 - boundary: Generate the fixtures instead of relying on an ignored file
 - native-stub: Let the stubgen child find torch's shared libraries
+- native-stub: Make the committed stub invariant across the CI matrix
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
