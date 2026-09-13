@@ -104,6 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - table: Support logical columns in where, without leaking pyarrow errors
 - io: Keep header value types on every return_header route
 - boundary: Generate the fixtures instead of relying on an ignored file
+- native-stub: Let the stubgen child find torch's shared libraries
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
