@@ -28,15 +28,13 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-TABLE_FIXTURE = REPO_ROOT / "tests" / "table_example.fits"
 
 
 @dataclass(frozen=True)
@@ -61,6 +59,10 @@ def _logical_card(keyword: str, value: bool) -> bytes:
     return f"{keyword:<8}= {('T' if value else 'F'):>20}".encode("ascii").ljust(80)
 
 
+def _string_card(keyword: str, value: str) -> bytes:
+    return f"{keyword:<8}= '{value:<8}'".encode("ascii").ljust(80)
+
+
 def write_minimal_image(path: Path) -> None:
     """Write a hand-rolled 4x4 uint8 primary HDU — no torch, no astropy."""
     header = b"".join(
@@ -77,6 +79,49 @@ def write_minimal_image(path: Path) -> None:
     with path.open("wb") as handle:
         handle.write(header.ljust(2880))
         handle.write(bytes(range(16)).ljust(2880))
+
+
+def write_minimal_table(path: Path) -> None:
+    """Write a primary HDU plus a 3-row BINTABLE, by hand.
+
+    The harness has to build its own fixtures: ``*.fits`` is gitignored in this
+    repository, so a checked-in sample would exist only for whoever last ran a
+    test that wrote one.  Columns are int32 (``J``) and float64 (``D``), which
+    covers a scalar integer, a wide float and a table HDU at index 1.
+    """
+    primary = b"".join(
+        [
+            _logical_card("SIMPLE", True),
+            _integer_card("BITPIX", 8),
+            _integer_card("NAXIS", 0),
+            _logical_card("EXTEND", True),
+            b"END".ljust(80),
+        ]
+    )
+    table_header = b"".join(
+        [
+            _string_card("XTENSION", "BINTABLE"),
+            _integer_card("BITPIX", 8),
+            _integer_card("NAXIS", 2),
+            _integer_card("NAXIS1", 12),  # row width: int32 + float64
+            _integer_card("NAXIS2", 3),
+            _integer_card("PCOUNT", 0),
+            _integer_card("GCOUNT", 1),
+            _integer_card("TFIELDS", 2),
+            _string_card("TTYPE1", "N"),
+            _string_card("TFORM1", "J"),
+            _string_card("TTYPE2", "FLUX"),
+            _string_card("TFORM2", "D"),
+            _string_card("EXTNAME", "MY_TABLE"),
+            b"END".ljust(80),
+        ]
+    )
+    # FITS is big-endian.
+    table_data = b"".join(struct.pack(">id", n, n + 0.5) for n in (1, 2, 3))
+    with path.open("wb") as handle:
+        handle.write(primary.ljust(2880))
+        handle.write(table_header.ljust(2880))
+        handle.write(table_data.ljust(2880))
 
 
 def build_entries(image: Path, table: Path) -> list[Entry]:
@@ -243,13 +288,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not TABLE_FIXTURE.is_file():
-        raise SystemExit(f"missing table fixture: {TABLE_FIXTURE}")
-
     with tempfile.TemporaryDirectory() as tmp:
         image = Path(tmp) / "minimal.fits"
+        table = Path(tmp) / "minimal_table.fits"
         write_minimal_image(image)
-        entries = build_entries(image, TABLE_FIXTURE)
+        write_minimal_table(table)
+        entries = build_entries(image, table)
         results = [measure(entry, args.repeat, args.timeout) for entry in entries]
 
     render(results)

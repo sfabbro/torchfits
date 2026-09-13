@@ -37,8 +37,6 @@ import torch
 
 import torchfits
 
-TABLE_FITS = Path(__file__).resolve().parent / "table_example.fits"
-
 # Statements are module-level so the phase markers read as a checklist.
 PHASE_IMPORT_HYGIENE = (
     "import torchfits.hdu",
@@ -164,7 +162,12 @@ def _run_probe(statement: str, *, block_torch: bool) -> Probe:
 
 @pytest.fixture(scope="module")
 def fits_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    """A checksummed image plus a binary table, for the probes to read."""
+    """A checksummed image plus a binary table, for the probes to read.
+
+    Both are generated here rather than checked in: ``*.fits`` is gitignored in
+    this repository, so a fixture file would exist only for whoever ran a test
+    that happened to write it.
+    """
     root = tmp_path_factory.mktemp("torch-boundary")
     image = root / "image.fits"
     torchfits.write(
@@ -174,8 +177,18 @@ def fits_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         overwrite=True,
         checksum=True,
     )
-    assert TABLE_FITS.is_file(), f"missing fixture table: {TABLE_FITS}"
-    return {"root": root, "image": image, "table": TABLE_FITS}
+    table = root / "table.fits"
+    torchfits.table.write(
+        str(table),
+        {
+            "RA": torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64),
+            "MAG": torch.tensor([19.5, 20.5, 21.5], dtype=torch.float32),
+            "N": torch.tensor([1, 2, 3], dtype=torch.int32),
+        },
+        overwrite=True,
+        extname="MY_TABLE",
+    )
+    return {"root": root, "image": image, "table": table}
 
 
 def _substitute(statement: str, files: dict[str, Path]) -> str:
