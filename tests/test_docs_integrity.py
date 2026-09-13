@@ -59,6 +59,7 @@ def test_docs_reference_existing_local_files() -> None:
         "benchmarks/bench_cpp_backend.py",
         "benchmarks/bench_fits_io.py",
         "benchmarks/bench_fitstable_io.py",
+        "benchmarks/bench_import_boundary.py",
         "benchmarks/bench_gpu_transports.py",
         "benchmarks/bench_table.py",
         "benchmarks/bench_contract.py",

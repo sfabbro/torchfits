@@ -94,6 +94,11 @@ jobs:
           pip install -e . --no-build-isolation
       - name: bench_cpp_backend
         run: python benchmarks/bench_cpp_backend.py
+      # Reporting only for now: the metadata entry points still load torch, so
+      # --strict (the boundary + budget gate) is wired up with the torch-free
+      # core. Until then this keeps the cold-start numbers visible in CI.
+      - name: bench_import_boundary
+        run: python benchmarks/bench_import_boundary.py --repeat 2
 
   docs-contract:
     name: Docs contract
