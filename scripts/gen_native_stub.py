@@ -30,6 +30,7 @@ Requires the extension to be built and importable (``pixi run dev``).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -124,13 +125,67 @@ against real FITS inputs.
 '''
 
 
+# The child has to import torch before it imports the extension. A pip-installed
+# torch keeps libc10/libtorch under ``torch/lib`` and does not put that directory
+# on the dynamic loader's search path; importing torch publishes those libraries
+# process-wide, which is exactly why the package's own runtime init imports torch
+# before ``torchfits._C``. A conda build carries an rpath and is unaffected, so
+# this only bites on a pip install. stubgen runs in a child process, which
+# inherits none of the parent's loaded objects.
+_DRIVER = (
+    "import sys\n"
+    "try:\n"
+    "    import torch\n"
+    "except Exception:\n"
+    "    pass\n"
+    "from nanobind.stubgen import main\n"
+    "sys.exit(main(sys.argv[1:]))\n"
+)
+
+
+def _loader_var() -> str:
+    """The dynamic loader's library-search-path variable for this platform."""
+    if sys.platform == "darwin":
+        return "DYLD_FALLBACK_LIBRARY_PATH"
+    return "LD_LIBRARY_PATH"
+
+
+def _torch_lib_dir() -> Path | None:
+    """``torch/lib`` if torch is importable here, else ``None``."""
+    try:
+        import torch  # noqa: PLC0415 - deliberate: only needed to locate the libs
+    except Exception:
+        return None
+    lib_dir = Path(torch.__file__).resolve().parent / "lib"
+    return lib_dir if lib_dir.is_dir() else None
+
+
+def _child_env() -> dict[str, str]:
+    """Environment for the child, with torch's library dir on the loader path.
+
+    Belt and braces alongside the child's own ``import torch``: this is what
+    ``scripts/cibw_test.sh`` does for the released wheels, so the same failure
+    mode is handled the same way in both places.
+    """
+    env = os.environ.copy()
+    lib_dir = _torch_lib_dir()
+    if lib_dir is not None:
+        var = _loader_var()
+        env[var] = os.pathsep.join(filter(None, (str(lib_dir), env.get(var))))
+    return env
+
+
 def _run_stubgen(out: Path) -> None:
-    cmd = [sys.executable, "-m", "nanobind.stubgen", "-m", MODULE, "-o", str(out)]
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    cmd = [sys.executable, "-c", _DRIVER, "-m", MODULE, "-o", str(out)]
+    env = _child_env()
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
+        var = _loader_var()
         raise SystemExit(
             "nanobind.stubgen failed (is the extension built? try 'pixi run dev'):\n"
             f"{proc.stdout}{proc.stderr}"
+            f"\n  interpreter: {sys.executable}"
+            f"\n  {var}={env.get(var, '<unset>')}"
         )
 
 

@@ -17,6 +17,7 @@ native call is unchecked. These tests keep it honest in two directions:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -63,6 +64,35 @@ def test_stub_matches_live_extension() -> None:
         f"{gen.TARGET.relative_to(ROOT)} is stale — run "
         "'pixi run python scripts/gen_native_stub.py'"
     )
+
+
+def test_stubgen_child_can_find_torchs_shared_libraries() -> None:
+    """The stubgen child inherits torch's shared libraries.
+
+    Regression guard for a real CI-only failure. stubgen runs in a child
+    process, which inherits none of the parent's loaded objects, and a
+    pip-installed torch keeps ``libc10``/``libtorch`` under ``torch/lib`` and
+    publishes them only once ``import torch`` runs. Without this the child dies
+    with ``libc10.so: cannot open shared object file`` on every test cell while a
+    conda install passes regardless, because its interpreter carries an rpath.
+    """
+    lib_dir = gen._torch_lib_dir()
+    assert lib_dir is not None, "torch must be importable to exercise this"
+
+    var = gen._loader_var()
+    parts = gen._child_env()[var].split(os.pathsep)
+    assert parts[0] == str(lib_dir), "torch's libs must be searched first"
+
+
+def test_stubgen_child_env_keeps_an_existing_search_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An existing loader path is appended to, not replaced."""
+    var = gen._loader_var()
+    monkeypatch.setenv(var, "/somewhere/else")
+
+    parts = gen._child_env()[var].split(os.pathsep)
+    assert parts[-1] == "/somewhere/else"
 
 
 def test_declared_return_types_are_accurate(fits_inputs: tuple[str, str]) -> None:
