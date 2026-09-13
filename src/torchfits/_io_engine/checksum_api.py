@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-import torchfits._C as cpp
+
+def _cpp() -> Any:
+    """Resolve the native extension lazily.
+
+    Importing it maps libtorch and imports ``torch``, so checksums -- pure byte
+    arithmetic that never touches a tensor -- must not do it at module scope.
+    """
+    import torchfits._C as cpp
+
+    return cpp
 
 
 def _validate_hdu(hdu: int) -> int:
@@ -21,7 +30,7 @@ def write_checksums(path: str, hdu: int = 0) -> None:
 
     path = coerce_fits_path(path)
     guard_fits_path(path)
-    cpp.write_hdu_checksums(str(path), _validate_hdu(hdu))
+    _cpp().write_hdu_checksums(str(path), _validate_hdu(hdu))
 
 
 def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
@@ -40,7 +49,7 @@ def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
 
     path = coerce_fits_path(path)
     guard_fits_path(path)
-    datastatus, hdustatus = cpp.verify_hdu_checksums(str(path), _validate_hdu(hdu))
+    datastatus, hdustatus = _cpp().verify_hdu_checksums(str(path), _validate_hdu(hdu))
     data_i = int(datastatus)
     hdu_i = int(hdustatus)
 

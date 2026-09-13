@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import torch
-
-from .device import to_device, validate_device
+from .device import validate_device
 
 
 class TableReaderHandle:
@@ -75,6 +73,10 @@ class TableReaderHandle:
         device: str = "cpu",
     ) -> dict[str, Any]:
         """Read rows for ``columns`` (all columns if ``None``) as tensors."""
+        import torch
+
+        from .device import to_device
+
         dev_str = validate_device(device)
         reader = self._ensure_open()
         col_names = list(columns) if columns is not None else []

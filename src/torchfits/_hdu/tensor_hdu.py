@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Iterator, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Tuple, cast
 
-from torch import Tensor
 from .._io_engine.device import to_device
 from ._repr import render_html_table
-from .dataview import DataView, _BITPIX_TO_DTYPE
+from .dataview import DataView, _BITPIX_TO_KIND
 from .header import Header
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
 class TensorHDU:
@@ -76,7 +78,7 @@ class TensorHDU:
 
             handle = self._file_handle
             hdu_index = self._hdu_index
-            return to_device(cast(Tensor, cpp.read_full(handle, hdu_index)), device)
+            return to_device(cast("Tensor", cpp.read_full(handle, hdu_index)), device)
 
     def chunks(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
         """Yield row-band slabs of the image lazily (bounded memory).
@@ -118,7 +120,7 @@ class TensorHDU:
                 if closed:
                     raise RuntimeError("TensorHDU was closed during chunk iteration")
                 yield cast(
-                    Tensor,
+                    "Tensor",
                     reader.read(0, y0, int(reader.width), min(y0 + step, height)),
                 )
         finally:
@@ -146,9 +148,9 @@ class TensorHDU:
                 bitpix = int(self.header.get("BITPIX", 0))
             except (TypeError, ValueError):
                 return "unknown"
-            dtype = _BITPIX_TO_DTYPE.get(bitpix)
-            if dtype is not None:
-                return str(dtype).replace("torch.", "")
+            kind = _BITPIX_TO_KIND.get(bitpix)
+            if kind is not None:
+                return kind
             return str(bitpix)
         return "unknown"
 

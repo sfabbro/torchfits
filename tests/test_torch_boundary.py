@@ -207,9 +207,7 @@ def _label(statement: str) -> str:
     return tail or "import"
 
 
-@pytest.mark.parametrize(
-    "statement", _pending(PHASE_IMPORT_HYGIENE, "Phase 1"), ids=_label
-)
+@pytest.mark.parametrize("statement", PHASE_IMPORT_HYGIENE, ids=_label)
 def test_import_hygiene_is_torch_free(statement: str) -> None:
     """Phase 1: the HDU/IO import graphs carry no torch."""
     _assert_torch_free(statement)

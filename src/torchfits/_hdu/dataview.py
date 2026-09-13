@@ -2,20 +2,47 @@
 
 from __future__ import annotations
 
-from typing import Any, Tuple, cast
+from typing import TYPE_CHECKING, Any, Tuple, cast
 
-import torch
-from torch import Tensor
+if TYPE_CHECKING:
+    import torch
+    from torch import Tensor
 
 
-_BITPIX_TO_DTYPE: dict[int, torch.dtype] = {
-    8: torch.uint8,
-    16: torch.int16,
-    32: torch.int32,
-    64: torch.int64,
-    -32: torch.float32,
-    -64: torch.float64,
+def _torch() -> Any:
+    """Resolve PyTorch lazily.
+
+    Importing it costs about a second, and ``DataView`` is reachable from
+    metadata-only paths (``torchfits.open`` on an image), so it must not be
+    imported at module scope.
+    """
+    import torch
+
+    return torch
+
+
+# Storage BITPIX -> dtype *name*.  Names instead of ``torch.dtype`` objects so
+# building this table does not force the import; ``bitpix_to_dtype`` resolves
+# them on access.
+_BITPIX_TO_KIND: dict[int, str] = {
+    8: "uint8",
+    16: "int16",
+    32: "int32",
+    64: "int64",
+    -32: "float32",
+    -64: "float64",
 }
+
+
+def _dtype(name: str) -> torch.dtype:
+    """Resolve a torch dtype by name, importing torch on first use."""
+    return cast("torch.dtype", getattr(_torch(), name))
+
+
+def bitpix_to_dtype(bitpix: int) -> torch.dtype | None:
+    """Return the torch dtype tag for a storage BITPIX, or ``None`` if unknown."""
+    kind = _BITPIX_TO_KIND.get(bitpix)
+    return None if kind is None else _dtype(kind)
 
 
 class DataView:
@@ -36,9 +63,9 @@ class DataView:
     @property
     def dtype(self) -> torch.dtype:
         bitpix = self._handle.get_dtype(self._index)
-        base = _BITPIX_TO_DTYPE.get(bitpix)
+        base = bitpix_to_dtype(bitpix)
         if base is None:
-            return torch.float32
+            return _dtype("float32")
         # Respect the FITS integer conventions so metadata matches the
         # tensors the readers actually produce (uint16/uint32/int8), not the
         # raw storage BITPIX (L1).
@@ -50,18 +77,18 @@ class DataView:
                 return base
             tol = 1e-5
             if bitpix == 8 and abs(bscale - 1.0) < tol and abs(bzero + 128.0) < tol:
-                return torch.int8
+                return _dtype("int8")
             if bitpix == 16 and abs(bscale - 1.0) < tol and abs(bzero - 32768.0) < tol:
-                return torch.uint16
+                return _dtype("uint16")
             if (
                 bitpix == 32
                 and abs(bscale - 1.0) < tol
                 and abs(bzero - 2147483648.0) < tol
             ):
-                return torch.uint32
+                return _dtype("uint32")
             # Identity integer storage with BLANK is read as scaled float+NaN.
             if "BLANK" in self._header:
-                return torch.float32
+                return _dtype("float32")
         return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:
@@ -112,4 +139,4 @@ class DataView:
         y1, y2 = _normalize_index(slice_spec[0], shape[0])
         x1, x2 = _normalize_index(slice_spec[1], shape[1])
 
-        return cast(Tensor, self._handle.read_subset(self._index, x1, y1, x2, y2))
+        return cast("Tensor", self._handle.read_subset(self._index, x1, y1, x2, y2))
