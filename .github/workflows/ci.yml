@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
   release:
     types: [published]
+  # Forks do not fire push-triggered workflows, so the full gate must be
+  # startable by hand to verify a commit that only exists on a fork's main.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,12 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install lint tools
-        run: python -m pip install "ruff>=0.16.1,<0.17" packaging
+        run: python -m pip install "ruff>=0.16.7" packaging
       - name: Duplicate C++ check
         run: python3 scripts/check_duplicate_cpp.py
       - name: Torch flavor extras resolve on PyTorch indexes
@@ -52,8 +55,8 @@ jobs:
         os: [ubuntu-latest, macos-15]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Resolve torch ABI lane
@@ -70,13 +73,53 @@ jobs:
       - name: Pytest
         run: pytest tests/ -q
 
+  # Wheels are otherwise built only on a `v*` tag, so a packaging regression
+  # (dropped py.typed, missing native stub, absent vendored-CFITSIO licence,
+  # stale metadata version) would first appear during a release. Build one
+  # wheel per PR and assert its contract instead.
+  wheel-smoke:
+    name: Wheel smoke (py3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
+      - name: Vendor CFITSIO
+        run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy nanobind scikit-build-core cmake ninja
+      - name: Build wheel
+        run: pip wheel . --no-build-isolation --no-deps -w dist
+      - name: Wheel contents contract
+        run: python scripts/check_wheel_contents.py dist/*.whl
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip
+          /tmp/smoke/bin/python -m pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
+          /tmp/smoke/bin/python -m pip install pytest numpy pyarrow dist/*.whl
+      - name: Release smoke against the installed wheel
+        # Same command cibuildwheel runs at release time, so a tag-time
+        # surprise is caught here first.
+        run: >-
+          /tmp/smoke/bin/python -m pytest -c /dev/null --noconftest
+          "$GITHUB_WORKSPACE/tests/test_release_smoke.py"
+          "$GITHUB_WORKSPACE/tests/test_bz2.py" -q
+
   bench-smoke:
     name: Benchmark smoke (py3.13)
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Resolve torch ABI lane
@@ -91,13 +134,18 @@ jobs:
           pip install -e . --no-build-isolation
       - name: bench_cpp_backend
         run: python benchmarks/bench_cpp_backend.py
+      # Reporting only for now: the metadata entry points still load torch, so
+      # --strict (the boundary + budget gate) is wired up with the torch-free
+      # core. Until then this keeps the cold-start numbers visible in CI.
+      - name: bench_import_boundary
+        run: python benchmarks/bench_import_boundary.py --repeat 2
 
   docs-contract:
     name: Docs contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Resolve torch ABI lane
@@ -114,7 +162,7 @@ jobs:
         run: pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q
       - name: Zensical build
         run: |
-          pip install "zensical>=0.0.52,<0.0.53"
+          pip install "zensical>=0.0.61"
           bash scripts/sync_docs_examples.sh
           zensical build --clean
 
@@ -122,8 +170,8 @@ jobs:
     name: Release gate (py3.13)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Resolve torch ABI lane
@@ -135,7 +183,7 @@ jobs:
           python -m pip install --upgrade pip wheel setuptools
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
-          pip install "pyarrow>=25,<26" "polars>=1.43.2,<2" "duckdb>=1.5.5,<2" "mypy==2.3.0"
+          pip install "pyarrow>=25" "polars>=1.43.2" "duckdb>=1.5.5" "mypy>=2.3.1"
           pip install -e . --no-build-isolation
       - name: Mypy type check
         run: mypy src/torchfits
@@ -152,7 +200,7 @@ jobs:
           tests/test_http_probe_fixture.py tests/test_mps.py tests/test_io_invariants.py -q
       - name: Docs contract
         run: |
-          pip install "zensical>=0.0.52,<0.0.53"
+          pip install "zensical>=0.0.61"
           bash scripts/sync_docs_examples.sh
           zensical build --clean
           pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q

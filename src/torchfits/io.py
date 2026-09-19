@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .hdu import HDUList, Header
 
-import torchfits._C as cpp
-
-from ._io_engine.batch import (
-    get_batch_info as _get_batch_info_impl,
-    read_batch as _read_batch_impl,
-)
+# Nothing below imports ``torch`` or the native extension at module scope.  Both
+# cost about a second, and metadata entry points must not pay for either: the
+# extension is resolved by :func:`_cpp_module`, and the data modules (image
+# payloads, the read pipeline, subset/table readers, writes) are imported inside
+# the functions that need them.  ``import torchfits.io`` is therefore cheap even
+# though most of its calls are not.
 from ._io_engine.caches import (
     cache_subsystem_policy as _cache_subsystem_policy_impl,
     clear_cache_subsystem as _clear_cache_subsystem_impl,
@@ -45,29 +45,10 @@ from ._io_engine.hdu_api import read_nrows as _read_nrows_impl
 from ._io_engine.hdu_api import read_num_hdus as _read_num_hdus_impl
 from ._io_engine.hdu_api import read_shape as _read_shape_impl
 from ._io_engine.hdu_api import read_table_info as _read_table_info_impl
-from ._io_engine.image import batch_to_device as _batch_to_device_impl
-from ._io_engine.image import read_hdus as _read_hdus_impl
-from ._io_engine.image import read_image as _read_image_impl
 from ._io_engine.image_meta import (
     get_image_meta as _get_image_meta_impl,
     resolve_image_mmap as _resolve_image_mmap_impl,
     should_use_cold_nommap as _should_use_cold_nommap_impl,
-)
-from ._io_engine._read_pipeline import read_unified as _read_unified_impl
-from ._io_engine.subset import open_subset_reader as _open_subset_reader_impl
-from ._io_engine.table_reader_api import open_table_reader as _open_table_reader_impl
-from ._io_engine.write_api import delete_hdu as _delete_hdu_impl
-from ._io_engine.write_api import insert_hdu as _insert_hdu_impl
-from ._io_engine.write_api import replace_hdu as _replace_hdu_impl
-from ._io_engine.write_api import write as _write_impl
-from ._io_engine.write_api import (  # type: ignore[attr-defined]
-    _normalize_cpp_table_data as _normalize_cpp_table_data_impl,
-)
-from ._io_engine.write_api import (  # type: ignore[attr-defined]
-    _delete_header_key_if_supported as _delete_header_key_if_supported_impl,
-)
-from ._io_engine.write_api import (  # type: ignore[attr-defined]
-    _write_header_cards_if_supported as _write_header_cards_if_supported_impl,
 )
 
 _log = _stdlib_logging.getLogger(__name__)
@@ -84,11 +65,38 @@ _READ_EXC_TYPES = (
 )
 
 
+class _LazyNativeModule:
+    """Stand-in for ``torchfits._C`` that imports it on first attribute use.
+
+    Importing the extension maps libtorch and imports the ``torch`` package
+    (its module body checks the ABI against ``torch.__version__``), so it must
+    not happen at module scope.  Keeping the ``cpp`` *name* means callers — and
+    ``mock.patch("torchfits.io.cpp")`` — keep working unchanged.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_import_native_module(), name)
+
+
+def _import_native_module() -> Any:
+    import torchfits._C as module
+
+    return module
+
+
+cpp = _LazyNativeModule()
+
+
 def _invalidate_path_caches(path: str) -> None:
     _invalidate_path_caches_impl(path)
 
 
 def _cpp_module() -> Any:
+    """Return the handle to the native extension used by the read pipelines.
+
+    Resolving it is deferred to attribute access, so metadata calls that never
+    touch a tensor never load it.
+    """
     return cpp
 
 
@@ -166,6 +174,9 @@ def read(
         raise TypeError("read() got multiple values for argument 'mode'")
     kwargs = dict(kwargs)
     kwargs["mode"] = mode
+    from ._io_engine._read_pipeline import read_unified as _read_unified_impl
+    from ._io_engine.image import batch_to_device as _batch_to_device_impl
+
     return _read_unified_impl(
         cpp_module=_cpp_module(),
         path=path,
@@ -199,6 +210,8 @@ def read_tensor(
     fallback_get_header: Any = None,
 ) -> Any:
     """Read an N-dimensional array directly to a PyTorch Tensor."""
+    from ._io_engine.image import read_image as _read_image_impl
+
     fallback = fallback_get_header if fallback_get_header is not None else read_header
     return _read_image_impl(
         path=path,
@@ -222,8 +235,17 @@ def read_hdus(
     return_header: bool = False,
 ) -> Any:
     """Read multiple HDUs from a single FITS file. Returns a list of tensors."""
+    from ._io_engine.image import read_hdus as _read_hdus_impl
+
     return _read_hdus_impl(
-        path, hdus, device=device, mmap=mmap, return_header=return_header
+        path,
+        hdus,
+        device=device,
+        mmap=mmap,
+        return_header=return_header,
+        # Keep the returned headers' value types identical to read_header()'s;
+        # the native dict is raw CFITSIO strings.
+        fallback_get_header=read_header,
     )
 
 
@@ -242,6 +264,8 @@ def read_subset(
 
 def open_subset_reader(path: str, hdu: int | str = 0, device: str = "cpu") -> Any:
     """Open a reusable subset reader for repeated cutout access on an image HDU."""
+    from ._io_engine.subset import open_subset_reader as _open_subset_reader_impl
+
     return _open_subset_reader_impl(path, hdu=hdu, device=device)
 
 
@@ -251,6 +275,10 @@ def open_table_reader(path: str, hdu: int | str = 1) -> Any:
     Filtered reads (``where=``) are not supported on the persistent reader;
     use :func:`torchfits.table.read_torch` with ``where=`` instead.
     """
+    from ._io_engine.table_reader_api import (
+        open_table_reader as _open_table_reader_impl,
+    )
+
     return _open_table_reader_impl(path, hdu=hdu)
 
 
@@ -283,6 +311,8 @@ def write(
     ``checksum=True`` writes CFITSIO DATASUM/CHECKSUM keywords for every HDU
     after the payload lands; verify later with :func:`verify_checksums`.
     """
+    from ._io_engine.write_api import write as _write_impl
+
     return _write_impl(
         path,
         data,
@@ -327,6 +357,8 @@ def insert_hdu(
     compress: bool | str = False,
 ) -> None:
     """Insert a new image HDU into an existing FITS file at the given index."""
+    from ._io_engine.write_api import insert_hdu as _insert_hdu_impl
+
     return _insert_hdu_impl(path, data, index=index, header=header, compress=compress)
 
 
@@ -338,6 +370,8 @@ def replace_hdu(
     compress: bool | str = False,
 ) -> None:
     """Replace an existing HDU in a FITS file with new data."""
+    from ._io_engine.write_api import replace_hdu as _replace_hdu_impl
+
     return _replace_hdu_impl(path, hdu, data, header=header, compress=compress)
 
 
@@ -347,6 +381,8 @@ def delete_hdu(
     compress: bool | str = False,
 ) -> None:
     """Delete an HDU from a FITS file by index or name."""
+    from ._io_engine.write_api import delete_hdu as _delete_hdu_impl
+
     return _delete_hdu_impl(path, hdu, compress=compress)
 
 
@@ -410,11 +446,19 @@ def read_table_info(path: str, hdu: Any = 1) -> dict[str, Any]:
 
 
 def _write_header_cards_if_supported(*args: Any, **kwargs: Any) -> None:
-    return _write_header_cards_if_supported_impl(*args, **kwargs)
+    from ._io_engine.write_api import (  # type: ignore[attr-defined]
+        _write_header_cards_if_supported as _impl,
+    )
+
+    return _impl(*args, **kwargs)
 
 
 def _delete_header_key_if_supported(*args: Any, **kwargs: Any) -> None:
-    return _delete_header_key_if_supported_impl(*args, **kwargs)
+    from ._io_engine.write_api import (  # type: ignore[attr-defined]
+        _delete_header_key_if_supported as _impl,
+    )
+
+    return _impl(*args, **kwargs)
 
 
 def read_batch(
@@ -432,6 +476,8 @@ def read_batch(
     not map 1:1 onto ``file_paths`` when any read fails). Pass
     ``strict=True`` to raise on the first failure instead.
     """
+    from ._io_engine.batch import read_batch as _read_batch_impl
+
     return _read_batch_impl(
         read_func=read,
         read_exc_types=_READ_EXC_TYPES,
@@ -445,6 +491,8 @@ def read_batch(
 
 def read_batch_info(file_paths: list[str]) -> Any:
     """Inspect shape and dtype consistency across files for batched reading."""
+    from ._io_engine.batch import get_batch_info as _get_batch_info_impl
+
     return _get_batch_info_impl(file_paths)
 
 
@@ -489,8 +537,18 @@ def clear_cache_subsystem(name: str) -> None:
 
 
 def _shutdown_fits_io_caches() -> None:
+    """Best-effort cache cleanup at interpreter exit.
+
+    The native cache is cleared only when the extension was actually imported.
+    Importing it *here* would run its torch ABI check at shutdown, which warns
+    at best and fails at worst in a process that never loaded the extension —
+    and there is nothing native to clear in that case anyway.
+    """
     cpp_module = sys.modules.get("torchfits._C")
-    _clear_cache_subsystem_impl("all", cpp_module=cpp_module)
+    if cpp_module is None:
+        _clear_file_cache_impl(cpp=False)
+    else:
+        _clear_cache_subsystem_impl("all", cpp_module=cpp_module)
 
 
 atexit.register(_shutdown_fits_io_caches)
@@ -507,7 +565,11 @@ def verify_checksums(path: str, hdu: int = 0) -> dict[str, Any]:
 
 
 def _normalize_cpp_table_data(table_dict: dict[str, Any]) -> dict[str, Any]:
-    return _normalize_cpp_table_data_impl(table_dict)
+    from ._io_engine.write_api import (  # type: ignore[attr-defined]
+        _normalize_cpp_table_data as _impl,
+    )
+
+    return _impl(table_dict)
 
 
 __all__ = [

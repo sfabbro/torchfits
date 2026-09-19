@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, List, Optional, Type, Union
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, List, Optional, Type, Union
 
 from torchfits._io_engine.paths import (
     cfitsio_base_path,
@@ -14,9 +15,37 @@ from torchfits._io_engine.paths import (
 
 from ._repr import render_html_table
 from .header import Header
-from .table_hdu import TableHDU
-from .table_hdu_ref import TableHDURef
-from .tensor_hdu import TensorHDU
+
+if TYPE_CHECKING:
+    from .table_hdu import TableHDU
+    from .table_hdu_ref import TableHDURef
+    from .tensor_hdu import TensorHDU
+
+# The tensor-backed HDU classes are resolved on first use: ``TableHDU`` imports
+# torch, and ``torchfits.open`` on a header must not.  ``TensorHDU``/``TableHDURef``
+# are lazy by design and cheap to import, but they live behind the same door so
+# the dispatch here stays uniform.
+_HDU_MODULES: dict[str, tuple[str, str]] = {
+    "TableHDU": (".table_hdu", "TableHDU"),
+    "TableHDURef": (".table_hdu_ref", "TableHDURef"),
+    "TensorHDU": (".tensor_hdu", "TensorHDU"),
+}
+_HDU_CLASSES: dict[str, Any] = {}
+
+
+def _hdu_class(name: str) -> Any:
+    """Return an HDU class, importing its module only when first needed."""
+    cached = _HDU_CLASSES.get(name)
+    if cached is None:
+        module_name, attr = _HDU_MODULES[name]
+        cached = getattr(import_module(module_name, __package__), attr)
+        _HDU_CLASSES[name] = cached
+    return cached
+
+
+def _table_hdu_types() -> tuple[Any, Any]:
+    """``(TableHDU, TableHDURef)`` for isinstance dispatch."""
+    return _hdu_class("TableHDU"), _hdu_class("TableHDURef")
 
 
 @dataclass(frozen=True)
@@ -31,7 +60,7 @@ class HDUList:
         self, hdus: Optional[List[Union[TensorHDU, TableHDU, TableHDURef]]] = None
     ):
         self._hdus: List[Union[TensorHDU, TableHDU, TableHDURef]] = hdus or []
-        self._file_handle = None
+        self._file_handle: Any = None
         self._extname_idx: Optional[dict[str, int]] = None
         self._registry_key: Optional[str] = None
 
@@ -96,13 +125,15 @@ class HDUList:
                 i = info.index
 
                 if hdu_type == "IMAGE":
-                    hdu: Any = TensorHDU(
+                    hdu: Any = _hdu_class("TensorHDU")(
                         header=header, file_handle=handle, hdu_index=i, source_path=path
                     )
                 elif hdu_type in ["ASCII_TABLE", "BINARY_TABLE"]:
-                    hdu = TableHDURef(header=header, source_path=path, source_hdu=i)
+                    hdu = _hdu_class("TableHDURef")(
+                        header=header, source_path=path, source_hdu=i
+                    )
                 else:
-                    hdu = TensorHDU(header=header)
+                    hdu = _hdu_class("TensorHDU")(header=header)
 
                 hdul._hdus.append(hdu)
 
@@ -191,7 +222,7 @@ class HDUList:
             self._file_handle.close()
             self._file_handle = None
         for hdu in self._hdus:
-            if isinstance(hdu, TensorHDU):
+            if isinstance(hdu, _hdu_class("TensorHDU")):
                 hdu.mark_closed()
 
     def write(self, path: str, overwrite: bool = False) -> None:
@@ -209,11 +240,11 @@ class HDUList:
                 if not hdu.header:
                     return False
 
-                if isinstance(hdu, TensorHDU):
+                if isinstance(hdu, _hdu_class("TensorHDU")):
                     if hdu._file_handle:
                         _ = hdu.data.shape
                         _ = hdu.data.dtype
-                elif isinstance(hdu, TableHDU):
+                elif isinstance(hdu, _hdu_class("TableHDU")):
                     _ = hdu.columns
                     _ = hdu.num_rows
 
@@ -240,7 +271,7 @@ class HDUList:
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
 
-            if isinstance(hdu, (TableHDU, TableHDURef)):
+            if isinstance(hdu, _table_hdu_types()):
                 hdu_type = "TableHDU"
             else:
                 if idx == 0 and name == "PRIMARY":
@@ -254,10 +285,10 @@ class HDUList:
                 else len(hdu.header)
             )
 
-            if isinstance(hdu, (TableHDU, TableHDURef)):
+            if isinstance(hdu, _table_hdu_types()):
                 dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
                 fmt = "Table"
-            elif isinstance(hdu, TensorHDU):
+            elif isinstance(hdu, _hdu_class("TensorHDU")):
                 dims = hdu._get_shape_str()
                 fmt = hdu._get_dtype_str()
             else:
@@ -274,11 +305,11 @@ class HDUList:
         rows = []
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
-            if isinstance(hdu, (TableHDU, TableHDURef)):
+            if isinstance(hdu, _table_hdu_types()):
                 hdu_type = "TableHDU"
                 dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
                 fmt = "Table"
-            elif isinstance(hdu, TensorHDU):
+            elif isinstance(hdu, _hdu_class("TensorHDU")):
                 hdu_type = (
                     "PrimaryHDU" if idx == 0 and name == "PRIMARY" else "ImageHDU"
                 )

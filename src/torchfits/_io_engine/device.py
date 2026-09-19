@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-import torch
-from torch import Tensor
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
+    from torch import Tensor
 
 
 def validate_device(device: str | torch.device) -> str:
@@ -30,6 +33,8 @@ def to_device(
     """Move a tensor to a device, adapting MPS-unsupported dtypes (float64/complex128)."""
     # Fast path: the overwhelmingly common str-device cases without building
     # torch.device objects or touching dtype tables.
+    import torch
+
     dev_str = device if type(device) is str else str(device)
     if dev_str == "cpu":
         return (
@@ -47,6 +52,8 @@ def to_device(
 
 def batch_to_device(tensors: list[Tensor], device: str | torch.device) -> list[Tensor]:
     """Move a list of tensors to a device, stacking when shapes match."""
+    import torch
+
     if not tensors:
         return []
     dev_str = str(device)

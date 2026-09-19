@@ -55,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - data: Spectra companions, IFU windows, table sharding and bands
 - transforms: Add data-state contract, IVAR/mask awareness and ML transforms
+- types: Check the native extension boundary instead of assuming it
+### Changed
+- Dependency requirements now carry honest ranges. Every non-load-bearing
+  upper cap is gone (`ruff`, `zensical`, `pyarrow`, `polars`, `duckdb`, and the
+  exact `mypy` pin), and the two floors that could not be installed on a
+  supported Python are fixed (`numpy>=1.26`, `pyarrow>=17.0`). The two caps
+  that remain are deliberate: the `torch` range is the wheel ABI lane, and the
+  `pixi` `pyarrow` cap is a conda-forge libabseil constraint tied to that lane.
+- The native extension is built against nanobind 3 (`nanobind>=3.0.1`). No
+  user-facing API change; the ABI lane and the Python/platform matrix are
+  unchanged.
+- `torchfits[docs]` now declares the documentation toolchain (`zensical`),
+  which was previously pinned in CI and `pixi` only.
 ### Fixed
 - `LogStretch` and `SqrtStretch` no longer silently truncate integer input:
   every stretch promotes integers to float32 instead of casting the stretched
@@ -87,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - io: Reject non-ASCII FITS text instead of silently rewriting it
 - io: Accept os.PathLike across the whole read surface
 - header: Resolve duplicate keywords first-wins, matching read_keys and astropy
+- table: Accept os.PathLike in the table mutation API
+- table: Support logical columns in where, without leaking pyarrow errors
+- io: Keep header value types on every return_header route
+- boundary: Generate the fixtures instead of relying on an ignored file
+- native-stub: Let the stubgen child find torch's shared libraries
+- native-stub: Make the committed stub invariant across the CI matrix
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -159,6 +178,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document the data-state contract, IVAR/mask and ML data features
 - examples: Add an end-to-end ML training-loop example
 - agents: Work on the fork's main, no feature branches
+- changelog: Record the IO, header and C++ engine audit
+- table: Record two deliberate divergences found in the engine review
+- changelog: Record the PathLike fix for the table mutation API
+
+- boundary: State the torch boundary, and correct the Arrow claim
+### Performance
+- boundary: Import torchfits.hdu and torchfits.io without torch
 
 ## [1.1.3] — 2026-09-09
 

@@ -1,8 +1,8 @@
 # torchfits major-release readiness audit
 
-Date: 2026-08-26  
-Tree: `main` @ `1a70cd1` (`1.1.0`, PyTorch 2.13 ABI lane)  
-Working tree also has **uncommitted** macOS `KMP_DUPLICATE_LIB_OK` WIP (not in the tag).  
+Date: 2026-08-26
+Tree: `main` @ `1a70cd1` (`1.1.0`, PyTorch 2.13 ABI lane)
+Working tree also has **uncommitted** macOS `KMP_DUPLICATE_LIB_OK` WIP (not in the tag).
 Scope: exhaustive review of tracked product/code/docs/CI; no product fixes in this pass.
 
 **Verdict: Block a freeze / next tag until the BLOCKER register is closed.** `1.1.0` is already cut. Area audits plus live repros found silent catalog-row disagreements, quantized NaNs that round-trip as finite pixels, a CLI `copy` that is not a binary copy, and a bench headline citing CSVs that are not in git.
@@ -118,7 +118,7 @@ KaTeX fonts/JS/CSS; logo PNG/SVG; `pixi.lock` pin-by-pin (lane scripts + pyproje
 
 ### 4.3 CLI exit codes collide with real failures
 
-Documented: `1` = diff, `2` = usage, `3` = I/O, `4` = checksum fail.  
+Documented: `1` = diff, `2` = usage, `3` = I/O, `4` = checksum fail.
 `main()` maps `KeyboardInterrupt` → `2` (usage). Uncaught `Exception` (not `CliError`/`OSError`) becomes Python exit `1`, same as `diff`. `stats --json` uses `json.dumps` default `allow_nan=True` (invalid JSON). `diff` still calls `tensor.min()` on possibly unsigned images; `stats` was already patched to upcast.
 
 ### 4.4 Native layer is concentrated and mostly hardened
@@ -306,40 +306,40 @@ Order avoids rewriting `table_reader.h` twice.
 
 ### Phase 1 — Silent science + copy + macOS
 
-**Issues:** B1, B2, B6, B3, B5, H8, H3, H23, H24  
-**Deps:** none  
-**Files:** `table_api.py`, `_read_where.py`, `quantize`/`fits_detail` nulval, `cli/cmds_copy.py`, `_hdu_rewrite.py`, `caches.py`, `__init__.py`  
-**Outcome:** `read` and `read_torch` agree on TNULL and out-of-range ints; quantized BLANK pixels are NaN on `torchfits.read`; `copy` is binary or honestly named; same-path write cannot clobber an open handle; header cache clones; macOS import order safe; `head` windows compose.  
+**Issues:** B1, B2, B6, B3, B5, H8, H3, H23, H24
+**Deps:** none
+**Files:** `table_api.py`, `_read_where.py`, `quantize`/`fits_detail` nulval, `cli/cmds_copy.py`, `_hdu_rewrite.py`, `caches.py`, `__init__.py`
+**Outcome:** `read` and `read_torch` agree on TNULL and out-of-range ints; quantized BLANK pixels are NaN on `torchfits.read`; `copy` is binary or honestly named; same-path write cannot clobber an open handle; header cache clones; macOS import order safe; `head` windows compose.
 **Validate:** live TNULL/int16/quantize-NaN fixtures; CompImage `copy` vs `cmp`; `copy a.fits a.fits` fails cleanly; two `return_header=True` reads.
 
 ### Phase 2 — Façade seal + CI truth
 
-**Issues:** H1, H7, H9, H11, H19, H20, H21, H22, M6, M10, M14  
-**Deps:** H1 after any in-tree `_cpp.undocumented` uses (grep first)  
-**Files:** `_cpp.py`, `tests/test_public_boundary.py`, `.github/workflows/ci.yml`, `pyproject.toml`, `interop.py` or docs, conda recipe, cibw before-all, `docs/release.md`, `clean_install_smoke.sh`  
-**Outcome:** public inventory == `__all__`; GHA Lint green and gate == pixi; extras runnable; Linux wheels link libbz2 or docs say they don’t; release runbook matches OIDC.  
+**Issues:** H1, H7, H9, H11, H19, H20, H21, H22, M6, M10, M14
+**Deps:** H1 after any in-tree `_cpp.undocumented` uses (grep first)
+**Files:** `_cpp.py`, `tests/test_public_boundary.py`, `.github/workflows/ci.yml`, `pyproject.toml`, `interop.py` or docs, conda recipe, cibw before-all, `docs/release.md`, `clean_install_smoke.sh`
+**Outcome:** public inventory == `__all__`; GHA Lint green and gate == pixi; extras runnable; Linux wheels link libbz2 or docs say they don’t; release runbook matches OIDC.
 **Validate:** public-boundary tests; compare GHA YAML to `pixi.toml` `release-gate` string; `test_bz2` in cibw.
 
 ### Phase 3 — Table semantics + native holes
 
-**Issues:** H10, H13, H14, H15, H25, H26, H27, H32, H33, H34, M4, M5, M8 (table sites)  
-**Deps:** Phase 1 B1/B2  
-**Files:** `_read_where.py`, `table_api.py`, `docs/api-tables.md`, `table_reader.h`, `table_bindings.cpp`  
-**Outcome:** remaining WHERE dialect documented; empty reader keeps schema; `.fits.gz` tables use CFITSIO; GIL held around `nb::cast`.  
+**Issues:** H10, H13, H14, H15, H25, H26, H27, H32, H33, H34, M4, M5, M8 (table sites)
+**Deps:** Phase 1 B1/B2
+**Files:** `_read_where.py`, `table_api.py`, `docs/api-tables.md`, `table_reader.h`, `table_bindings.cpp`
+**Outcome:** remaining WHERE dialect documented; empty reader keeps schema; `.fits.gz` tables use CFITSIO; GIL held around `nb::cast`.
 **Validate:** where matrix; `reader(slice(0,0))`; gzip table; rebuild test env after C++.
 
 ### Phase 4 — Native / boundary (1.2, not a patch)
 
-**Issues:** M1, residual narrow-table bench, optional M12  
-**Deps:** design note for arena/strided tensors (API-visible)  
-**Files:** `table_reader.h`, `fits_bindings.cpp`, benches  
-**Outcome:** split files **or** arena decode with explicit non-contiguous column tensors.  
+**Issues:** M1, residual narrow-table bench, optional M12
+**Deps:** design note for arena/strided tensors (API-visible)
+**Files:** `table_reader.h`, `fits_bindings.cpp`, benches
+**Outcome:** split files **or** arena decode with explicit non-contiguous column tensors.
 **Validate:** existing table fidelity tests + same-host `bench_fitstable_io` case_id vs fitsio.
 
 ### Phase 5 — Tests
 
-**Issues:** H3–H6 tests, H1, H8, M13, malformed/concurrency already strong (`test_malformed_fits`, `test_truncated_table_errors`, `test_concurrent_same_file_read`)  
-**Add:** uint16 `diff`; invalid JSON regression; `_cpp` seal; `head` composition; `pip install .[test]` recipe.  
+**Issues:** H3–H6 tests, H1, H8, M13, malformed/concurrency already strong (`test_malformed_fits`, `test_truncated_table_errors`, `test_concurrent_same_file_read`)
+**Add:** uint16 `diff`; invalid JSON regression; `_cpp` seal; `head` composition; `pip install .[test]` recipe.
 **Validate:** `pixi run test` (uses KMP).
 
 ### Phase 6 — Performance
@@ -348,27 +348,27 @@ Only after Phase 4 design. No speculative micro-opts. Keep `bench-table-from-csv
 
 ### Phase 7 — Benchmarks
 
-**Issues:** B4, H16, H17, M7  
-**Outcome:** headline run IDs exist under `docs/assets/bench/` **or** the 1.1.0 table is retargeted to 20260807; MegaPipe timings sourced or removed; GPU copy matches benches (host decode + `.to`).  
+**Issues:** B4, H16, H17, M7
+**Outcome:** headline run IDs exist under `docs/assets/bench/` **or** the 1.1.0 table is retargeted to 20260807; MegaPipe timings sourced or removed; GPU copy matches benches (host decode + `.to`).
 **Validate:** playbook `bench-table-from-csv`.
 
 ### Phase 8 — Docs / examples
 
-**Issues:** H2 parity, M3 cache docs, M7, examples already gated by `test_examples_runner`  
+**Issues:** H2 parity, M3 cache docs, M7, examples already gated by `test_examples_runner`
 **Validate:** `pixi run docs-contract && pixi run docs-links`
 
 ### Phase 9 — Packaging / CI
 
-**Issues:** H7, H8, H9, M6, M15  
+**Issues:** H7, H8, H9, M6, M15
 **Validate:** `pixi run ci-local`; confirm GHA yaml; do not claim Windows.
 
 ### Phase 10 — Release validation
 
-1. `pixi run changelog-update` + curate  
-2. `pixi run release-gate`  
-3. API freeze skill: `.cursor/skills/release-api-freeze-review/`  
-4. Tag only after **B1–B6** plus H1–H34 closed or explicitly deferred in changelog  
-5. Wheels: existing tag workflow  
+1. `pixi run changelog-update` + curate
+2. `pixi run release-gate`
+3. API freeze skill: `.cursor/skills/release-api-freeze-review/`
+4. Tag only after **B1–B6** plus H1–H34 closed or explicitly deferred in changelog
+5. Wheels: existing tag workflow
 
 ---
 

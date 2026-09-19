@@ -132,6 +132,7 @@ pixi run bench-all      # benchmarks
 | `torchfits[dev]` | pytest, ruff, mypy, astropy, fitsio, pandas, matplotlib | Full development suite |
 | `torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking suite |
 | `torchfits[test]` | pytest, pytest-cov, astropy, fitsio, psutil, pyarrow | Unit testing extras (`pip install torchfits[test]`) |
+| `torchfits[docs]` | zensical | Building the documentation site |
 | `torchfits[examples]` | matplotlib | Running tutorial scripts |
 
 PyArrow is installed automatically for tabular operations (`torchfits.table`). Interoperability with [Pandas](https://pandas.pydata.org/), [Polars](https://pola.rs/), and [DuckDB](https://duckdb.org/) is supported seamlessly:

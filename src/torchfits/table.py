@@ -1,8 +1,17 @@
-"""Arrow-native table I/O helpers.
+"""Table I/O with Arrow as the contract and tensors as one destination.
 
 FITS tables are dataframes on disk. The namespace is ``table`` (FITS name);
 destinations are Arrow (``read`` / ``read_arrow``), tensor columns
 (``read_torch``), or Polars (``read_polars``).
+
+On the format question: Arrow is the *contract*, not the native representation.
+The C++ engine knows nothing about Arrow (``grep -rn arrow cpp_src`` finds two
+comments and no code); it returns per-column ``torch.Tensor`` buffers, and the
+Arrow table is a zero-copy view over that memory via ``pa.Array.from_buffers``.
+The intended long-term shape is the reverse: raw buffers are the native
+transport, Arrow is built from them in Python, and torch becomes one
+``torch.from_blob`` destination among several. Until that lands, importing this
+module still loads PyTorch.
 """
 
 from __future__ import annotations

@@ -212,6 +212,19 @@ Publishing triggers `.github/workflows/build_wheels.yml`, which:
    OIDC trusted publishing (`id-token: write` on the `pypi` Environment).
    There is no `password:` / `PYPI_API_TOKEN` in the workflow.
 
+`Comprehensive CI` builds one wheel per PR (job `Wheel smoke`) and asserts the
+packaging contract before any tag exists: the native extension and
+`torchfits/py.typed` are present, the generated `torchfits/_C.pyi` stub is
+shipped and not truncated, both licence files (project + vendored CFITSIO)
+are under `dist-info/licenses/`, the metadata version matches
+`pyproject.toml`, and no C++ source or test tree leaked in. It then installs
+that wheel into a clean venv and runs the same release smoke tests
+cibuildwheel runs at tag time.
+
+```bash
+pixi run wheel-smoke   # same build + contents check, locally
+```
+
 Local / out-of-band builds (same `[tool.cibuildwheel]` config):
 
 ```bash

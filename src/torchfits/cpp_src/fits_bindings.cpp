@@ -2163,7 +2163,11 @@ void bind_fits(nb::module_& m) {
             nb::gil_scoped_release release;
             text = file.read_header_to_string(hdu_num);
         }
-        return text;
+        // The Python fast parser consumes this text. A stray high-bit byte would
+        // make nanobind's str conversion raise, silently rerouting the caller to
+        // the raw-string fallback where every value loses its type. Drop only the
+        // bytes that cannot be UTF-8 so the typed fast path stays available.
+        return d::drop_non_ascii_bytes(text);
     });
 
     m.def("get_num_hdus", [](FITSFile& file) {

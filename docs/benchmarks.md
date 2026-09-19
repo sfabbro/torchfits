@@ -232,6 +232,52 @@ endian swap into torch tensors — see
 [ML with FITS](examples-ml.md#survey-mosaic-cutouts-cfht-megapipe). Rice `.fz`
 MegaCam cutouts remain a separate comparison (tile decompress inside CFITSIO).
 
+## Cold-start and the torch boundary
+
+Operation-level benchmarks measure a call; they cannot show what a *process*
+costs to start. That is where PyTorch lives: a header peek reads a 2880-byte
+block in microseconds, yet every metadata entry point used to pay for an
+image-size tensor runtime it never touched, because the single native extension
+links `TORCH_LIBRARIES` and imports `torch` in its module body.
+
+The rule this project holds to: **PyTorch is loaded at exactly one boundary —
+the first call whose documented return type is a `torch.Tensor`, or that takes
+`device=`.** Nothing before it may import torch. `tests/test_torch_boundary.py`
+enforces that in fresh interpreters with `import torch` blocked outright, and
+`benchmarks/bench_import_boundary.py` records what it costs.
+
+Baseline (cold process, spawn to exit, minimum of 3, macOS arm64, 2026-09).
+"torch" marks entry points that must not load it:
+
+| Entry point | Cold ms | Loads torch | Budget |
+|---|---:|---|---:|
+| `import torchfits` | 49 | no | 250 ms |
+| `import torchfits.hdu` | 1113 | **yes** | 250 ms |
+| `import torchfits.io` | 1128 | **yes** | 250 ms |
+| `import torchfits.table` | 1132 | **yes** | 500 ms |
+| `read_header` | 1136 | **yes** | 250 ms |
+| `read_keys` | 1131 | **yes** | 250 ms |
+| `read_colnames` | 1118 | **yes** | 250 ms |
+| `read_num_hdus` | 1135 | **yes** | 250 ms |
+| `read_shape` | 1125 | **yes** | 250 ms |
+| `read_table_info` | 1132 | **yes** | 250 ms |
+| `open` + `hdul[1].header` | 1132 | **yes** | 250 ms |
+| `table.read` (Arrow) | 1555 | **yes** | 600 ms |
+| `table.schema` | 1422 | **yes** | 600 ms |
+| `read_tensor` (tensor destination) | 1134 | yes | — |
+| `table.read_torch` (tensor destination) | 1150 | yes | — |
+| `import torch` (reference) | 1114 | yes | — |
+
+The ~49 ms floor is interpreter start; the remaining ~1070 ms is PyTorch. Every
+row above the tensor-destination pair is paying it for a header read. The
+harness writes its own minimal FITS file with the standard library, so it runs
+in a torch-free environment either way:
+
+```bash
+pixi run python benchmarks/bench_import_boundary.py           # report
+pixi run python benchmarks/bench_import_boundary.py --strict  # gate
+```
+
 ## Correctness checks
 
 | Check | Command | Validates |
@@ -286,6 +332,7 @@ mmap-on and mmap-off peers are never cross-compared.
 | `bench_ml_loader.py` | fits (diagnostic) | PyTorch `DataLoader` throughput (not merged into `bench-all` CSV) |
 | `bench_gpu_memory.py` | fits (diagnostic) | GPU memory/leak checks (non-gating) |
 | `bench_denoise.py` | ml (scientific) | Noise2Noise CR-cleaning on real CFHT MegaCam frames (dark→blank framing, `torchfits` loaders vs Astropy; see [denoise-pipeline.md](denoise-pipeline.md)) |
+| `bench_import_boundary.py` | cold start | Fresh-process spawn-to-exit cost per entry point, split by whether torch was loaded; `--strict` gates on the boundary and per-entry-point budgets |
 
 ## Coverage matrix
 

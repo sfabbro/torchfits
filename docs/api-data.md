@@ -634,4 +634,3 @@ Every file is seen exactly once across the entire cluster without duplication.
 
 ### Reservoir Shuffle Buffer
 Because streaming datasets do not load all samples into memory at once, setting `shuffle_buffer_size=N` enables an $O(N)$ streaming reservoir shuffle. Incoming items from the dataset stream are mixed with past items in a rolling buffer, yielding pseudo-random batches across files and mosaics.
-

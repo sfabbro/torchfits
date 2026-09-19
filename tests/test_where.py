@@ -345,3 +345,51 @@ def test__evaluate_where():
         ValueError, match="where comparisons with null only support == and !="
     ):
         _where_mask(data, "E > NULL")
+
+
+def test__evaluate_where_logical_column():
+    """TFORM 'L' columns: FITS spells booleans T/F, users also type TRUE/1.
+
+    An uncoerced literal made pyarrow raise ``ArrowNotImplementedError:
+    Function 'equal' has no kernel matching input types (bool, string)``, so
+    boolean filtering was impossible and a third-party exception leaked out of
+    the public read API.
+    """
+    data = {
+        "J": np.array([1, 2, 3], dtype=np.int32),
+        "L": np.array([True, False, True]),
+    }
+    for condition in ("L == TRUE", "L == T", "L == 1", "L == true", "L == t"):
+        np.testing.assert_array_equal(
+            _where_mask(data, condition), [True, False, True], err_msg=condition
+        )
+    for condition in ("L == FALSE", "L == F", "L == 0", "L != TRUE"):
+        np.testing.assert_array_equal(
+            _where_mask(data, condition), [False, True, False], err_msg=condition
+        )
+
+    np.testing.assert_array_equal(
+        _where_mask(data, "J >= 2 AND L == TRUE"), [False, False, True]
+    )
+    np.testing.assert_array_equal(_where_mask(data, "L IN (TRUE)"), [True, False, True])
+    np.testing.assert_array_equal(
+        _where_mask(data, "L IN (FALSE, TRUE)"), [True, True, True]
+    )
+
+
+def test__evaluate_where_logical_column_rejects_non_logical_literal():
+    data = {"L": np.array([True, False])}
+    with pytest.raises(ValueError, match="logical"):
+        _where_mask(data, "L == 'zzz'")
+
+
+def test__evaluate_where_never_leaks_pyarrow_exceptions():
+    """A comparison Arrow cannot apply must raise ValueError, not a leak."""
+    data = {"L": np.array([True, False])}
+    for condition in ("L > TRUE", "L >= 0", "L <= 1", "L >= 'x'"):
+        try:
+            _where_mask(data, condition)
+        except ValueError:
+            continue
+        except pa.ArrowNotImplementedError as exc:  # pragma: no cover
+            pytest.fail(f"pyarrow error escaped for {condition!r}: {exc}")

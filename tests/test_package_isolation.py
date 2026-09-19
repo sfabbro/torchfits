@@ -74,7 +74,12 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert "cp314-*" in str(cibw.get("build", ""))
     assert "cp31?t-*" in str(cibw.get("skip", ""))
     assert "ubuntu-24.04-arm" in wheel_workflow
-    assert "pypa/cibuildwheel@v4.1.1" in wheel_workflow
+    # Require the v4 cibuildwheel line rather than one exact patch, so a
+    # dependency bump does not have to touch this test (the workflow pin is
+    # maintained by dependabot, and the wheel-smoke job validates behaviour).
+    cibw_pin = re.search(r"pypa/cibuildwheel@v(\d+)\.", wheel_workflow)
+    assert cibw_pin is not None, "cibuildwheel action pin not found"
+    assert int(cibw_pin.group(1)) >= 4
     # PyPI must not get an sdist — unmatched CPython/arch would compile.
     assert "pattern: cibw-wheels-*" in wheel_workflow
     cmake_args = " ".join(pyproject["tool"]["scikit-build"]["cmake"]["args"])

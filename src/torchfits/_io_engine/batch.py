@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import warnings
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from torch import Tensor
 
@@ -43,7 +43,7 @@ def read_batch(
             tensors = cpp.read_images_batch(list(file_paths), hdu)
             if str(device) != "cpu":
                 tensors = batch_to_device(tensors, device)
-            return cast(list[Tensor], tensors)
+            return tensors
     except read_exc_types as exc:
         if strict:
             raise

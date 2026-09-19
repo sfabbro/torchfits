@@ -572,6 +572,11 @@ def clear_file_cache(
 
     try:
         if cpp_module is None:
+            # ImportError is not hypothetical: importing the native extension
+            # runs a torch ABI check, so a torch-free or mismatched environment
+            # fails here.  There is then no native cache to clear, which is
+            # exactly what this hook is allowed to skip — including from the
+            # interpreter-exit handler that calls it.
             import torchfits._C as _cpp
 
             cpp_module = _cpp
@@ -579,7 +584,7 @@ def clear_file_cache(
         # clear_file_cache() was removed with the shared-handle pool it used to
         # guard; SharedReadMeta is the native state that actually exists.
         cpp_module.clear_shared_read_meta_cache()
-    except (AttributeError, RuntimeError) as exc:
+    except (AttributeError, RuntimeError, ImportError) as exc:
         warnings.warn(
             f"clear_file_cache: C++ cache clear skipped ({exc!s})",
             RuntimeWarning,

@@ -29,6 +29,43 @@ On the same PyTorch ABI lane; the [changelog](changelog.md) carries the full lis
 
 ---
 
+### 1.2 — The torch boundary (in progress)
+
+Metadata has never needed PyTorch, but every metadata call paid about a second
+for it, because the single native extension links `TORCH_LIBRARIES` and imports
+`torch` in its module body. The rule this work establishes — **PyTorch loads
+only for a call whose documented return type is a `torch.Tensor` or that takes
+`device=`** — is enforced by `tests/test_torch_boundary.py` and measured by
+`benchmarks/bench_import_boundary.py`.
+
+Landed so far:
+
+- `import torchfits.hdu` 883 ms → 2.6 ms and `import torchfits.io` 882 ms →
+  34.6 ms, both with torch absent; `Header`/`Card` work in a torch-free process.
+- An interpreter-exit defect fixed: the cache hook imported the extension
+  unconditionally, so a process that never loaded it printed a traceback (or a
+  warning) on every exit.
+
+Remaining, in order:
+
+1. **Torch-free core library.** Extract the inspection half of `FITSFile`, the
+   `SharedReadMeta` caches and a `parallel_for` of our own into a single
+   `libtorchfits_core` shared library; bind it as `torchfits._core` with a
+   build-id guard against `_C`. Target: `read_header` 1136 ms → ~5 ms, and the
+   metadata CLI commands (`info`, `header`, `probe`, `verify`, `copy`, `setkey`,
+   `table`) off torch entirely.
+2. **Buffer transport for tables.** Return owned byte arenas instead of
+   `torch::Tensor` buffers, build Arrow from them zero-copy, and make
+   `table.read_torch` one `torch.from_blob` destination. Target: `table.read`
+   1555 ms → ~140 ms with no torch installed, and one copy fewer on the tensor
+   path.
+3. **Image payloads in the core**, which also makes `compress`/`decompress`
+   torch-free — they re-encode bytes and never do pixel math.
+4. **Mechanical proof and packaging.** A test asserting the core's dynamic
+   dependencies contain no libtorch, docs, and a decision on publishing the core
+   as its own distribution (it helps the metadata and table audience, not the
+   pixel-math commands, which will always need torch).
+
 ## Current focus
 
 - **Single-pass arena decode for buffered table reads.** Removes the one
@@ -40,10 +77,39 @@ On the same PyTorch ABI lane; the [changelog](changelog.md) carries the full lis
   stop paying for whole-row pread when only a few columns are needed.
 - **Table semantics polish:** complex-column dtypes in `schema()`,
   consistent error types across the mutation API.
+- **Native binding signatures:** `read_fits_table_filtered` declares a default
+  on `column_names` ahead of a required `filters`, which is legal in C++ but
+  has no Python signature (and the default is dead — nothing can omit it).
+  `nb::sig()` on the bindings would make the generated stub exact instead of
+  hand-corrected, and would also give `help()`/`inspect.signature` real names
+  where stubgen currently emits `arg0`/`arg1`.
 - **Object-store recipes:** row-band caching and range-fetch patterns for
   S3-style archives on top of the hardened HTTP downloader.
 - **CLI wave 3:** thin `fitsverify` helper and fpack-style tile controls
   (no CFITSIO HTTPS drivers — torchfits keeps its own HTTP stack).
+
+---
+
+## Tooling decisions
+
+Re-evaluated 2026-09; recorded so they are not silently revisited.
+
+- **`ty` (Astral) is deferred to 1.0.** Latest is 0.0.80 — pre-1.0 beta, and
+  not a drop-in for mypy (different defaults, different diagnostics). mypy
+  `--strict` is the gate. Trigger to revisit: the measured cost it would
+  remove — mypy runs cold in ~20 s over 95 source files, which is already
+  tolerable in CI, so the case is ergonomic rather than blocking. Any trial
+  should start as a non-blocking CI job alongside mypy, not a replacement.
+- **nanobind split mode is not applicable.** It collapses the wheel matrix to
+  one wheel per platform by targeting the Python 3.10 stable ABI, but the real
+  constraint here is `libtorch_python`, which is CPython-version-specific, so
+  torchfits would still ship one wheel per Python version. Adopted nanobind 3
+  for the API/perf improvements only.
+- **Dependency floors are aspirational, not tested.** Floors name the oldest
+  release with wheels for the minimum supported Python (3.10); nothing
+  installs them. Follow-up that would make them real: a lowest-direct
+  resolution job (`pip install --resolution lowest-direct`, or a pixi minimum
+  env) so the metadata cannot drift from reality again.
 
 ---
 

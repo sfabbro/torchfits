@@ -25,6 +25,68 @@ nanobind; it vendors CFITSIO statically.
 
 ---
 
+## The torch boundary
+
+**PyTorch is loaded at exactly one boundary: the first call whose documented
+return type is a `torch.Tensor`, or that takes `device=`.** Nothing before it.
+
+The rule exists because the cost of violating it is invisible to an
+operation-level benchmark: a header peek reads a 2880-byte block in
+microseconds, but `torchfits._C` links `TORCH_LIBRARIES` *and* imports `torch`
+in its module body for the ABI check, so the first native call in a process paid
+about a second for an image-size tensor runtime it never touched.
+
+| Entry point | Loads torch | Why |
+|---|---|---|
+| `read` / `read_tensor` / `read_hdus` / `read_subset` / `read_batch` | yes | returns tensors; also `device=` |
+| `write_tensor`, image `write` | yes | takes tensors / applies BSCALE |
+| `table.read_torch`, `table.scan_torch`, `open_table_reader` | yes | returns tensors |
+| `transforms.*`, `data.*` | yes | tensors in, tensors out |
+| `read_header`, `read_keys`, `read_colnames`, `read_extname`, `read_nrows`, `read_num_hdus`, `read_shape`, `read_hdu_type`, `read_table_info` | no | structural metadata |
+| `Header`, `Card`, `HDUList` metadata (`open`, `hdul[i].header`) | no | header cards are plain Python |
+| `verify_checksums`, `write_checksums` | no | byte arithmetic |
+| `insert_hdu` / `replace_hdu` / `delete_hdu`, header writes | no | file structure |
+| `table.read` → Arrow, `table.schema`, `table.scan` | no *(target)* | Arrow destination, no tensor needed |
+
+Completing the boundary means extracting a torch-free core library:
+
+```mermaid
+flowchart TB
+  py["torchfits.io / torchfits.hdu / torchfits.table"]
+  meta["torchfits._core<br/>metadata bindings"]
+  tensor["torchfits._C<br/>tensor bindings"]
+  core["libtorchfits_core<br/>CFITSIO + SharedReadMeta + arena"]
+  cfitsio["Vendored CFITSIO"]
+  py -->|metadata path| meta
+  py -->|tensor path| tensor
+  meta --> core
+  tensor --> core
+  core --> cfitsio
+```
+
+`libtorchfits_core` must be a single shared library rather than sources linked
+into both modules: CFITSIO carries process-wide state, and `SharedReadMeta` plus
+the handle registry have to be one instance, or the staleness and thread-safety
+properties below silently fork. The extension keeps its torch ABI guard; the
+core carries a build-id constant so a mismatched pair is rejected at import
+instead of misreading data.
+
+### Current status
+
+| Piece | State |
+|---|---|
+| `import torchfits` stays runtime-light | done (pinned by `tests/test_package_isolation.py`) |
+| `import torchfits.hdu` / `import torchfits.io` without torch | done (883 ms → 2.6 ms / 34.6 ms) |
+| `Header` / `Card` usable without torch | done |
+| Metadata *calls* without torch | needs the core library (see above) |
+| Arrow table destinations without torch | needs the table transport change |
+
+`tests/test_torch_boundary.py` enforces the table above, one fresh interpreter
+per assertion with `import torch` blocked outright, and
+`benchmarks/bench_import_boundary.py` records the cost.
+
+---
+
 ## Image read paths
 
 Three distinct paths, selected automatically:
@@ -128,6 +190,12 @@ Caches sit in three places:
 | Disk / policy | `torchfits.cache` | Environment policy, on-disk remote and sample roots, `optimize_for_dataset` |
 | Python I/O metadata | engine caches (via `clear_file_cache`) | Path-keyed header / meta / data LRU |
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
+
+The Python metadata layer was made torch-free first (Phases 0–1 below):
+`io.py` resolves the extension lazily, the HDU classes are module attributes
+resolved on first access, and dtype tags in `_hdu/dataview.py` are names rather
+than `torch.dtype` objects. The remaining work moves the native inspection code
+behind a second module.
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
 `clear_file_cache(...)` clears the I/O metadata layers only.
@@ -392,6 +460,28 @@ PyTorch build version) — see
 The native module exports the following classes and functions. This surface
 is the stability contract — new symbols are private until promoted to
 `torchfits.cpp.__all__`.
+
+### Type stub (`torchfits/_C.pyi`)
+
+The wheel ships a type stub for the extension, so `mypy --strict` type-checks
+the C++/Python boundary instead of typing it as `Any`. It is generated —
+`nanobind.stubgen` derives the signatures from the live module, and
+`scripts/gen_native_stub.py` supplies what introspection cannot know:
+
+- return types of the tensor/array/dict-returning functions (the C++ side
+  returns `nb::object` wrapping a `torch::Tensor`, which stubgen can only
+  render as `object`), and
+- the occasional signature nanobind emits that is not legal Python.
+
+```bash
+pixi run gen-stub      # regenerate after changing the C++ bindings
+pixi run check-stub    # fail if the committed stub is stale
+```
+
+`tests/test_native_stub.py` runs both halves of the contract in CI: the stub
+must equal a fresh generation, and every *declared* return type is verified
+against a real call, so a read that starts returning numpy where the stub
+promises `torch.Tensor` fails the build.
 
 ### Classes
 

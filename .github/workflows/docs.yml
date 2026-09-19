@@ -24,16 +24,16 @@ jobs:
     name: Build docs (stable + edge)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - run: pip install "zensical>=0.0.52,<0.0.53"
+      - run: pip install "zensical>=0.0.61"
       - name: Build Pages tree (stable=/ edge=/edge/)
         run: bash scripts/build_docs_pages.sh
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site_pages
 
@@ -41,10 +41,15 @@ jobs:
     name: Deploy GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    # Publishing is best-effort, not a check.  Forks (and any clone without a
+    # Pages site configured) fail at configure-pages with a 404 that says
+    # nothing about the docs, so the run would report a failure for an
+    # infrastructure gap.  The build job above still gates the docs.
+    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/configure-pages@v6
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
         id: deployment

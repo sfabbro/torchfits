@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 import re
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-import torch
+if TYPE_CHECKING:
+    import torch
 
 _TFORM_RE = re.compile(r"^\s*(\d+)?\s*([A-Za-z])")
 _TFORM_VLA_RE = re.compile(r"^\s*(\d+)?\s*([PQ])\s*([A-Za-z])")
@@ -254,7 +255,14 @@ def bit_column_names(header: Mapping[str, Any]) -> set[str]:
 def unsigned_column_dtypes_from_header(
     header: Mapping[str, Any],
 ) -> dict[str, torch.dtype]:
-    """Map standard unsigned FITS table conventions (TZERO offset) to torch dtypes."""
+    """Map standard unsigned FITS table conventions (TZERO offset) to torch dtypes.
+
+    Header parsing is torch-free; the import happens here because this is the
+    one function in the module that has to name a ``torch.dtype`` at runtime
+    (the module-scope import cost every metadata caller a tensor runtime).
+    """
+    import torch
+
     out: dict[str, torch.dtype] = {}
     for col in iter_table_columns(header):
         code = col.tform_info.code

@@ -26,7 +26,12 @@ class FastHeaderParser:
         r"^\(\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*,\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\)$"
     )
 
-    # Reserved FITS keywords that should always be strings
+    # Keywords whose *typing* is forced to string even when a file writes the
+    # value unquoted. Deliberate, not incidental: astropy and read_keys() would
+    # type an unquoted `EXTNAME = 12` as the int 12, and torchfits callers use
+    # header.get("EXTNAME") as an HDU *name* (see _hdu/hdu_list.py,
+    # cli/common.py), so an int there is worse than a string. Also tracks the
+    # keyword a bare CONTINUE card extends.
     _STRING_KEYWORDS = {
         "EXTNAME",
         "EXTTYPE",
