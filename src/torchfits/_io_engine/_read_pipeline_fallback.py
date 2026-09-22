@@ -86,7 +86,7 @@ def read_fallback(
                 if hasattr(cpp_module, "resolve_hdu_name_cached"):
                     try:
                         hdu_num = int(cpp_module.resolve_hdu_name_cached(path, hdu))
-                    except Exception as exc:
+                    except (RuntimeError, TypeError, ValueError) as exc:
                         _log.debug(
                             "resolve_hdu_name_cached(%r, %r) failed: %s",
                             path,
@@ -103,7 +103,7 @@ def read_fallback(
                             if hdr.get("EXTNAME") == hdu:
                                 hdu_num = i
                                 break
-                        except Exception:
+                        except (RuntimeError, TypeError, ValueError):
                             continue
 
                 if hdu_num is None:
@@ -118,7 +118,7 @@ def read_fallback(
                 try:
                     hdu_type = cpp_module.get_hdu_type(file_handle, hdu_num)
                     set_cached_hdu_type(path, hdu_num, hdu_type)
-                except Exception:
+                except (RuntimeError, TypeError, ValueError):
                     hdu_type = None
 
             is_table_hdu = force_table or (hdu_type in {"ASCII_TABLE", "BINARY_TABLE"})
@@ -152,7 +152,7 @@ def read_fallback(
                         try:
                             hdu_type = cpp_module.get_hdu_type(file_handle, hdu_num)
                             set_cached_hdu_type(path, hdu_num, hdu_type)
-                        except Exception:
+                        except (RuntimeError, TypeError, ValueError):
                             hdu_type = None
                     is_table_hdu = force_table or (
                         hdu_type in {"ASCII_TABLE", "BINARY_TABLE"}
@@ -180,16 +180,21 @@ def read_fallback(
                     header=header,
                     read_header=read_header,
                 )
-            except Exception as exc:
-                raise RuntimeError(f"Failed to read table extension: {exc}")
+            except (RuntimeError, TypeError, ValueError) as exc:
+                raise RuntimeError(f"Failed to read table extension: {exc}") from exc
 
         finally:
             if not cached_handle:
                 try:
                     file_handle.close()
-                except Exception:
+                except (OSError, ValueError, RuntimeError):
+                    # Cleanup only: never mask the in-flight error.
                     pass
 
+    except OSError:
+        # IO errors surface typed; wrapping them in RuntimeError would hide
+        # FileNotFoundError/PermissionError from callers (r4a-05).
+        raise
     except Exception as exc:
         raise RuntimeError(f"Failed to read FITS file '{path}': {exc}") from exc
 
@@ -217,11 +222,14 @@ def read_fallback_image(
     effective_mmap = resolve_image_mmap(path, hdu_num, mmap, cache_capacity)
     header = None
     header_data = None
-    if isinstance(hdu_num, int) and not (fp16 or bf16):
+    # The header is consumed only when the caller asked for it (cache keys
+    # include return_header, so discarding it here loses nothing): skip the
+    # read+parse otherwise (r4a-06).
+    if return_header and isinstance(hdu_num, int) and not (fp16 or bf16):
         try:
             header_data = read_header(file_handle, hdu_num, fast_header)
             header = Header(header_data)
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             header = None
     if raw_scale:
         if not effective_mmap and hasattr(cpp_module, "read_full_unmapped_raw"):
@@ -289,6 +297,7 @@ def read_fallback_table(
 
     col_list = columns if columns else []
     table_result = None
+    decode_errors: list[BaseException] = []
     table_mmap = mmap if isinstance(mmap, bool) else True
     if table_mmap:
         try:
@@ -303,11 +312,14 @@ def read_fallback_table(
                     )
             else:
                 table_result = cpp_module.read_fits_table(path, hdu_num, col_list, True)
-        except Exception as exc:
-            # Corruption must not fall through to a slower reader that will
-            # fail again with a more confusing error.
-            if "truncated" in str(exc).lower():
-                raise
+        except (RuntimeError, TypeError, ValueError) as exc:
+            # Reader-compatibility decode failure: try the next reader.
+            # Dispatch is by exception type only, never by message. IO errors
+            # (OSError) and anything else propagate untouched. The first
+            # decode error is kept so an all-readers failure (e.g. truncated
+            # data) surfaces the primary reader's diagnosis, not a slower
+            # reader's replacement message.
+            decode_errors.append(exc)
             table_result = None
 
     if table_result is None:
@@ -321,28 +333,37 @@ def read_fallback_table(
                 table_result = cpp_module.read_fits_table_rows(
                     path, hdu_num, col_list, start_row, num_rows, False
                 )
-            except Exception as exc:
-                if "truncated" in str(exc).lower():
-                    raise
+            except (RuntimeError, TypeError, ValueError) as exc:
+                decode_errors.append(exc)
                 table_result = None
     if table_result is None:
-        if columns is None and start_row == 1 and num_rows == -1:
-            table_result = cpp_module.read_fits_table_from_handle(file_handle, hdu_num)
-        elif hasattr(cpp_module, "read_fits_table_rows_from_handle"):
-            table_result = cpp_module.read_fits_table_rows_from_handle(
-                file_handle, hdu_num, col_list, start_row, num_rows
-            )
-        elif start_row > 1 or num_rows != -1:
-            if hasattr(cpp_module, "read_fits_table_rows"):
-                table_result = cpp_module.read_fits_table_rows(
-                    path, hdu_num, col_list, start_row, num_rows, False
+        try:
+            if columns is None and start_row == 1 and num_rows == -1:
+                table_result = cpp_module.read_fits_table_from_handle(
+                    file_handle, hdu_num
                 )
+            elif hasattr(cpp_module, "read_fits_table_rows_from_handle"):
+                table_result = cpp_module.read_fits_table_rows_from_handle(
+                    file_handle, hdu_num, col_list, start_row, num_rows
+                )
+            elif start_row > 1 or num_rows != -1:
+                if hasattr(cpp_module, "read_fits_table_rows"):
+                    table_result = cpp_module.read_fits_table_rows(
+                        path, hdu_num, col_list, start_row, num_rows, False
+                    )
+                else:
+                    table_result = cpp_module.read_fits_table(
+                        path, hdu_num, col_list, False
+                    )
             else:
-                table_result = cpp_module.read_fits_table(
-                    path, hdu_num, col_list, False
-                )
-        else:
-            table_result = cpp_module.read_fits_table(path, hdu_num, col_list, False)
+                table_result = cpp_module.read_fits_table(path, hdu_num, col_list, False)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            decode_errors.append(exc)
+            table_result = None
+    if table_result is None and decode_errors:
+        # Every reader failed with a decode error: surface the first one so
+        # truncation and other primary-reader diagnoses keep their identity.
+        raise decode_errors[0]
 
     table_data = table_result
     # C++ already applies BIT→bool and unsigned TZERO offsets. Skip the extra
@@ -351,7 +372,7 @@ def read_fallback_table(
         if header is None:
             try:
                 header = Header(read_header(file_handle, hdu_num, fast_header))
-            except Exception:
+            except (RuntimeError, TypeError, ValueError):
                 header = None
         table_data = _coerce_bit_table_columns(table_data, header)
         table_data = _coerce_unsigned_table_columns(table_data, header)

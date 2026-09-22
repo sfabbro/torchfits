@@ -133,6 +133,12 @@ def read_hdus(
         raise ValueError("each item in hdus must be an int or str")
 
     data = _cpp.read_hdus_batch(path, resolved_hdus, mmap)
+    if len(data) != len(resolved_hdus):
+        # Never pair tensors with the wrong headers (r4a-01).
+        raise RuntimeError(
+            f"read_hdus_batch returned {len(data)} of {len(resolved_hdus)} "
+            f"results for {path!r} hdus={resolved_hdus}"
+        )
     if str(device) != "cpu":
         data = batch_to_device(data, device)
 

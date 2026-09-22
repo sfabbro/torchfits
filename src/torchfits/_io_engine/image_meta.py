@@ -52,11 +52,11 @@ def _parse_image_meta(header_data: Mapping[str, Any]) -> ImageMeta:
     naxis = int(naxis_raw) if naxis_raw is not None else 0
     try:
         bscale = float(header_data.get("BSCALE", 1.0))
-    except Exception:
+    except (TypeError, ValueError):
         bscale = 1.0
     try:
         bzero = float(header_data.get("BZERO", 0.0))
-    except Exception:
+    except (TypeError, ValueError):
         bzero = 0.0
     dims = []
     for i in range(1, naxis + 1):
@@ -64,7 +64,7 @@ def _parse_image_meta(header_data: Mapping[str, Any]) -> ImageMeta:
         if key in header_data:
             try:
                 dims.append(int(header_data.get(key, 0)))
-            except Exception:
+            except (TypeError, ValueError):
                 break
     zimage = header_data.get("ZIMAGE", False)
     if isinstance(zimage, str):
@@ -81,7 +81,7 @@ def _skinny_image_meta(path: str, hdu: int, cpp_module: Any) -> ImageMeta | None
     """Build ImageMeta via skinny CFITSIO queries (no full header dump)."""
     try:
         bitpix, torch_shape = cpp_module.read_shape(path, hdu)
-    except Exception:
+    except (RuntimeError, TypeError, ValueError):
         return None
     bitpix = int(bitpix)
     # read_shape returns torch order; ImageMeta dims are FITS NAXIS1..n order.
@@ -91,16 +91,16 @@ def _skinny_image_meta(path: str, hdu: int, cpp_module: Any) -> ImageMeta | None
     def _key(name: str, default: Any) -> Any:
         try:
             return cpp_module.read_keys(path, hdu, [name])[name]
-        except Exception:
+        except (KeyError, RuntimeError, TypeError, ValueError):
             return default
 
     try:
         bscale = float(_key("BSCALE", 1.0))
-    except Exception:
+    except (TypeError, ValueError):
         bscale = 1.0
     try:
         bzero = float(_key("BZERO", 0.0))
-    except Exception:
+    except (TypeError, ValueError):
         bzero = 0.0
 
     zimage = _key("ZIMAGE", False)
@@ -132,7 +132,7 @@ def get_image_meta(
     if meta is None:
         try:
             meta = _parse_image_meta(Header(cpp_module.read_header_dict(path, hdu)))
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             meta = None
 
     _sig_set(image_meta_cache, sig, meta, 256)
@@ -154,7 +154,7 @@ def get_image_meta_from_handle(
 
     try:
         meta = _parse_image_meta(read_header(file_handle, hdu, True))
-    except Exception:
+    except (RuntimeError, TypeError, ValueError):
         meta = None
 
     _sig_set(image_meta_cache, sig, meta, 256)
@@ -186,7 +186,7 @@ def should_use_cold_nommap(
         if file_size < (1 << 20):
             _sig_set(cold_nommap_cache, (path, hdu), False, 512)
             return False
-    except Exception:
+    except OSError:
         _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
@@ -199,7 +199,7 @@ def should_use_cold_nommap(
 
     try:
         bitpix = int(meta[0])
-    except Exception:
+    except (TypeError, ValueError):
         _sig_set(cold_nommap_cache, (path, hdu), False, 512)
         return False
 
@@ -207,7 +207,7 @@ def should_use_cold_nommap(
     if len(meta) >= 6:
         try:
             is_compressed = bool(meta[5])
-        except Exception:
+        except (TypeError, ValueError):
             is_compressed = False
     if is_compressed:
         _sig_set(cold_nommap_cache, (path, hdu), False, 512)
@@ -253,7 +253,7 @@ def resolve_image_mmap(
                 if bool(meta[5]):
                     _sig_set(auto_mmap_cache, sig, False, 512)
                     return False
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
         if should_use_cold_nommap_func is None:

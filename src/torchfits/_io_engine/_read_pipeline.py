@@ -92,9 +92,8 @@ def _parse_read_options(
         )
     if "handle_cache_capacity" in kwargs:
         warnings.warn(
-            "handle_cache_capacity is deprecated and ignored: per-path handle "
-            "caching was removed. Stop passing it; it will be dropped in a future "
-            "release.",
+            "ReadOptions.handle_cache_capacity is ignored since the handle cache "
+            "was removed; it will be removed in 2.0",
             DeprecationWarning,
             stacklevel=3,
         )
@@ -431,6 +430,14 @@ def _read_batch_paths(
             require_bz2_support(item_path)
         try:
             data_list = cpp_module.read_images_batch(list(path), hdu, True)
+            if len(data_list) != len(path):
+                # Contract enforcement: never surface a silently shrunken or
+                # misaligned batch (r4a-01); per-file reads below attribute
+                # any failure to its path.
+                raise RuntimeError(
+                    f"read_images_batch returned {len(data_list)} of "
+                    f"{len(path)} results for {list(path)!r}"
+                )
             if device != "cpu":
                 data_list = batch_to_device(data_list, device)
             return cast(list[Any], data_list)
@@ -520,9 +527,19 @@ def _read_batch_hdus(
             use_mmap = None
         if use_mmap is not None:
             data = cpp_module.read_hdus_batch(path, list(hdu), use_mmap)
-            if device != "cpu":
-                data = batch_to_device(data, device)
-            return data
+            if len(data) != len(hdu):
+                # Never pair tensors with the wrong HDUs (r4a-01): fall
+                # through to the per-HDU loop, which attributes failures.
+                logger.debug(
+                    "read_hdus_batch returned %d of %d results; "
+                    "falling back per HDU",
+                    len(data),
+                    len(hdu),
+                )
+            else:
+                if device != "cpu":
+                    data = batch_to_device(data, device)
+                return data
     return [
         read_unified(
             cpp_module=cpp_module,
@@ -563,23 +580,6 @@ def _read_batch_hdus(
 # ---------------------------------------------------------------------------
 
 
-def read_scaled_cpu_fast(
-    cpp_module: Any, path: str, hdu: int = 0, mmap: bool = True
-) -> Tensor:
-    """Internal helper for the CPU scaled fast path."""
-    if not _cpp_has(cpp_module, "read_full_raw_with_scale"):
-        raise RuntimeError("Scaled fast path unavailable in this build")
-
-    data, scaled, bscale, bzero = cpp_module.read_full_raw_with_scale(path, hdu, mmap)
-    if scaled:
-        data = data.to(dtype=torch.float32)
-        if bscale != 1.0:
-            data.mul_(bscale)
-        if bzero != 0.0:
-            data.add_(bzero)
-    return cast(Tensor, data)
-
-
 def _read_cpu_fast_path(
     *,
     cpp_module: Any,
@@ -616,7 +616,7 @@ def _read_cpu_fast_path(
             with cache_lock:
                 cache_stats["total_requests"] += 1
                 cache_stats["misses"] += 1
-        except Exception:
+        except (KeyError, TypeError):
             pass
         return data, False
     except read_exc_types as exc:

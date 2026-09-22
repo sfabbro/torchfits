@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from typing import Any, Callable
 
 from torch import Tensor
@@ -41,6 +40,14 @@ def read_batch(
             import torchfits._C as cpp
 
             tensors = cpp.read_images_batch(list(file_paths), hdu)
+            if len(tensors) != len(file_paths):
+                # Contract enforcement: the C++ batch reader must not silently
+                # shrink or misalign the result list (r4a-01). Fall through to
+                # per-file reads so any bad path raises naming that path.
+                raise RuntimeError(
+                    f"read_images_batch returned {len(tensors)} of "
+                    f"{len(file_paths)} results for {file_paths!r}"
+                )
             if str(device) != "cpu":
                 tensors = batch_to_device(tensors, device)
             return tensors
@@ -57,15 +64,11 @@ def read_batch(
         except read_exc_types as exc:
             if strict:
                 raise
-            warnings.warn(
-                f"read_batch: skipped {path!r}: {exc} "
-                f"({len(results)} of {len(file_paths)} files read so far; the "
-                "returned list holds only successful reads)",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            log.debug("read_batch: skipped %r: %s", path, exc, exc_info=True)
-            continue
+            log.debug("read_batch: %r failed: %s", path, exc, exc_info=True)
+            raise RuntimeError(
+                f"read_batch: failed to read {path!r} ({len(results)} of "
+                f"{len(file_paths)} files read before the failure): {exc}"
+            ) from exc
     return results
 
 
@@ -86,7 +89,7 @@ def get_batch_info(file_paths: list[str]) -> dict[str, Any]:
         try:
             if os.path.exists(path):
                 existing_files += 1
-        except Exception:
+        except OSError:
             continue
 
     return {"num_files": len(file_paths), "existing_files": existing_files}
