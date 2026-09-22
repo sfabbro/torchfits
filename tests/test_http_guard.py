@@ -126,7 +126,7 @@ def test_redirect_to_private_is_refused_end_to_end(monkeypatch, redirect_server)
 def test_redirect_hop_pinned_against_dns_rebinding(monkeypatch, redirect_server):
     """A redirect hop whose DNS rebounds must dial its re-guard-time address,
     never the private answer (redirect-to-private refused at the dial)."""
-    _RedirectHandler.target = f"http://rebind.example.invalid:8080/evil.fits"
+    _RedirectHandler.target = "http://rebind.example.invalid:8080/evil.fits"
     dialed = []
     _mock_dns_and_dial(
         monkeypatch,
@@ -174,6 +174,8 @@ def test_copy_remote_uses_guarded_helper_not_urlretrieve(monkeypatch, tmp_path):
 def test_no_bare_urlretrieve_call_sites_in_src():
     src_root = Path(torchfits.__file__).parent
     offenders = [
-        str(py) for py in sorted(src_root.rglob("*.py")) if "urlretrieve" in py.read_text()
+        str(py)
+        for py in sorted(src_root.rglob("*.py"))
+        if "urlretrieve" in py.read_text()
     ]
     assert offenders == []

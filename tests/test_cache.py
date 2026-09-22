@@ -777,9 +777,7 @@ class TestDeprecatedNoOpContract:
             torchfits.cache.get_cache_manager().configure_cpp_cache()
             torchfits.cache.configure_cache(1, 2, 3)
         messages = [
-            str(w.message)
-            for w in caught
-            if issubclass(w.category, DeprecationWarning)
+            str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
         ]
         assert any("configure_cpp_cache" in m for m in messages)
         assert any("configure_cache" in m for m in messages)

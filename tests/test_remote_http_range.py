@@ -22,9 +22,7 @@ from torchfits.vos_uri import is_vos_path, normalize_vos_uri
 @pytest.fixture
 def allow_loopback(monkeypatch):
     monkeypatch.setattr(http_util, "is_internal_url", lambda _url: False)
-    monkeypatch.setattr(
-        http_util, "_resolve_public_addrs", lambda _url: ("127.0.0.1",)
-    )
+    monkeypatch.setattr(http_util, "_resolve_public_addrs", lambda _url: ("127.0.0.1",))
 
 
 class _CountingHandler(BaseHTTPRequestHandler):

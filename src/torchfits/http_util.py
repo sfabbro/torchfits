@@ -86,8 +86,7 @@ def _resolve_public_addrs(url: str) -> tuple[str, ...]:
     unspecified) blocks, as does resolution failure.
     """
     blocked = HttpBlockedError(
-        f"{url}: access to internal or private networks is blocked "
-        "for security reasons"
+        f"{url}: access to internal or private networks is blocked for security reasons"
     )
     try:
         hostname = urllib.parse.urlparse(url).hostname

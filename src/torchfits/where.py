@@ -126,8 +126,7 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
             mask = cast(np.ndarray, (values >= low) & (values <= high))
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"cannot compare column values with BETWEEN bounds "
-                f"{low!r} AND {high!r}"
+                f"cannot compare column values with BETWEEN bounds {low!r} AND {high!r}"
             ) from exc
         if negate:
             return cast(np.ndarray, ~mask & _not_null_like(values))
