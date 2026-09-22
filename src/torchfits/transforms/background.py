@@ -15,7 +15,12 @@ from typing import Any, Tuple
 import torch
 
 from .base import FITSTransform
-from .helpers import estimate_background
+from .helpers import (
+    _ThreadedAttr,
+    _get_valid_mask,
+    _stats_upcast,
+    estimate_background,
+)
 from .state import SCALABLE
 
 __all__ = ["MeshBackgroundSubtract"]
@@ -78,6 +83,7 @@ class MeshBackgroundSubtract(FITSTransform):
 
     expects = SCALABLE
     propagates_ivar = True  # pure offset: variance is unchanged
+    _last_bg = _ThreadedAttr()
 
     def __init__(
         self,
@@ -99,8 +105,6 @@ class MeshBackgroundSubtract(FITSTransform):
         self.filter_mesh = bool(filter_mesh)
         self.min_tile_pixels = int(min_tile_pixels)
         self.weighted = bool(weighted)
-        self._last_bg: torch.Tensor | None = None
-        self._last_grid: torch.Tensor | None = None
 
     def _tile_boundaries(self, size: int, tiles: int) -> torch.Tensor:
         return torch.linspace(0, size, tiles + 1, device="cpu").round().to(torch.long)
@@ -117,8 +121,15 @@ class MeshBackgroundSubtract(FITSTransform):
         ys = self._tile_boundaries(height, gh)
         xs = self._tile_boundaries(width, gw)
         batch = flux.shape[:-2]
-        grid = flux.new_full((*batch, gh, gw), float("nan"))
-        frame_grid = None
+        # The stats dtype (float for integer/float16 flux): NaN is not
+        # representable in an integer grid, and the tile medians come back in
+        # the stats dtype.
+        grid = torch.full(
+            (*batch, gh, gw),
+            float("nan"),
+            dtype=_stats_upcast(flux).dtype,
+            device=flux.device,
+        )
 
         for i in range(gh):
             y0, y1 = int(ys[i]), int(ys[i + 1])
@@ -135,16 +146,26 @@ class MeshBackgroundSubtract(FITSTransform):
                     weighted=self.weighted,
                 )
                 med_flat = med.squeeze(-1).squeeze(-1)
+                # min_tile_pixels is a floor on the tile's own evidence: a
+                # tile with fewer valid pixels than this cannot pin its
+                # background (one garbage pixel would become the sky level),
+                # so it falls back to the frame level below.
+                n_valid = _get_valid_mask(tile, tile_mask).sum(dim=(-2, -1))
+                med_flat = torch.where(
+                    n_valid >= self.min_tile_pixels,
+                    med_flat,
+                    torch.full_like(med_flat, float("nan")),
+                )
                 grid[..., i, j] = med_flat
 
-        if self.filter_mesh and gh >= 3 and gw >= 3:
-            grid = _median_filter_3x3(grid)
-        elif self.filter_mesh and gh > 1 and gw > 1:
+        if self.filter_mesh and gh > 1 and gw > 1:
             grid = _median_filter_3x3(grid)
 
         # Tiles with too few valid pixels (or a fully masked tile) are NaN:
         # fall back to the frame-level background so the correction stays
-        # continuous instead of punching holes in the data.
+        # continuous instead of punching holes in the data. A fully invalid
+        # frame falls back to 0 (no correction) rather than NaN-poisoning
+        # every output pixel.
         frame_med, _ = estimate_background(
             flux,
             dim=(-2, -1),
@@ -155,7 +176,6 @@ class MeshBackgroundSubtract(FITSTransform):
         frame_grid = frame_med.squeeze(-1).squeeze(-1).unsqueeze(-1).unsqueeze(-1)
         grid = torch.where(torch.isfinite(grid), grid, frame_grid)
         grid = torch.where(torch.isfinite(grid), grid, torch.zeros_like(grid))
-        self._last_grid = grid
         return grid
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
@@ -166,6 +186,11 @@ class MeshBackgroundSubtract(FITSTransform):
                 "MeshBackgroundSubtract needs at least 2 dims (..., H, W), "
                 f"got shape {tuple(flux.shape)}"
             )
+        if flux.numel() == 0 or flux.shape[-2] == 0 or flux.shape[-1] == 0:
+            # No pixels: there is no background to measure or subtract, so
+            # the (empty) flux passes through unchanged with defined shapes
+            # instead of dying inside the tile/interpolation kernels.
+            return view.replace(flux)
         effective = view.effective_mask(mask)
         grid = self._estimate_grid(flux, effective, view.ivar)
         height, width = int(flux.shape[-2]), int(flux.shape[-1])
