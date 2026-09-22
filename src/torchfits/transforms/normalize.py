@@ -6,6 +6,7 @@ import torch
 
 from .base import FITSTransform
 from .helpers import (
+    _ThreadedAttr,
     _amax,
     _amin,
     _median,
@@ -83,6 +84,7 @@ class ZScaleNormalize(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_state = _ThreadedAttr()
 
     def __init__(
         self,
@@ -96,7 +98,6 @@ class ZScaleNormalize(FITSTransform):
         self.dim = tuple(dim)
         self.algorithm = algorithm
         self.weighted = bool(weighted)
-        self._last_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -145,6 +146,8 @@ class RobustNormalize(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_med = _ThreadedAttr()
+    _last_std = _ThreadedAttr()
 
     def __init__(
         self,
@@ -154,8 +157,6 @@ class RobustNormalize(FITSTransform):
     ) -> None:
         self.dim = tuple(dim)
         self.weighted = bool(weighted)
-        self._last_med: Optional[torch.Tensor] = None
-        self._last_std: Optional[torch.Tensor] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -195,6 +196,7 @@ class BackgroundSubtract(FITSTransform):
     propagates_ivar = True
 
     expects = SCALABLE
+    _last_bg = _ThreadedAttr()
 
     def __init__(
         self,
@@ -204,7 +206,6 @@ class BackgroundSubtract(FITSTransform):
     ) -> None:
         self.dim = tuple(dim)
         self.weighted = bool(weighted)
-        self._last_bg: Optional[torch.Tensor] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -252,6 +253,7 @@ class PercentileClipNormalize(FITSTransform):
     propagates_ivar = False
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_state = _ThreadedAttr()
 
     def __init__(
         self,
@@ -265,7 +267,6 @@ class PercentileClipNormalize(FITSTransform):
         self.upper_pct = upper_pct / 100.0
         self.dim = tuple(dim)
         self.weighted = bool(weighted)
-        self._last_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -318,11 +319,11 @@ class MinMaxNormalize(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_state = _ThreadedAttr()
+    _last_span = _ThreadedAttr()
 
     def __init__(self, dim: Tuple[int, ...] = (-2, -1)) -> None:
         self.dim = tuple(dim)
-        self._last_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
-        self._last_span: Optional[torch.Tensor] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -387,6 +388,7 @@ class GlobalScalarNorm(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _scalar = _ThreadedAttr()
 
     def __init__(
         self,
@@ -400,7 +402,6 @@ class GlobalScalarNorm(FITSTransform):
         self.stat = stat
         self.dim = dim
         self.weighted = bool(weighted)
-        self._scalar: torch.Tensor | None = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -440,7 +441,10 @@ class GlobalScalarNorm(FITSTransform):
                     dim=dims, keepdim=True
                 )
                 denom = torch.where(has_data, total_w, torch.ones_like(total_w))
-                scalar = (numer / denom).to(flux.dtype)
+                # Keep the statistic in the stats dtype: casting it to an
+                # integer flux dtype truncates the divisor (and the NaN fill
+                # below cannot even be built in an integer dtype).
+                scalar = numer / denom
                 if self.stat == "rms":
                     scalar = torch.sqrt(torch.clamp_min(scalar, 0.0))
                 scalar = torch.where(has_data, scalar, _nan_like(scalar, scalar.dtype))
@@ -505,6 +509,8 @@ class SigmaNormalize(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_scale = _ThreadedAttr()
+    _last_offset = _ThreadedAttr()
 
     def __init__(
         self,
@@ -522,8 +528,6 @@ class SigmaNormalize(FITSTransform):
         self.zero_preserving = bool(zero_preserving)
         self.eps = float(eps)
         self.weighted = bool(weighted)
-        self._last_scale: Optional[torch.Tensor] = None
-        self._last_offset: Optional[torch.Tensor] = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
@@ -614,6 +618,8 @@ class InterquantileScale(FITSTransform):
     propagates_ivar = True
     expects = SCALABLE
     produces = DataState.NORMALIZED
+    _last_scale = _ThreadedAttr()
+    _last_offset = _ThreadedAttr()
 
     def __init__(
         self,
@@ -635,8 +641,6 @@ class InterquantileScale(FITSTransform):
         self.zero_preserving = bool(zero_preserving)
         self.eps = float(eps)
         self.weighted = bool(weighted)
-        self._last_scale: Optional[torch.Tensor] = None
-        self._last_offset: Optional[torch.Tensor] = None
 
     def _forward_flux(
         self,

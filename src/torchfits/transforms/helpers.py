@@ -1,24 +1,93 @@
 from __future__ import annotations
 
-from typing import Callable, Tuple
+import threading
+import weakref
+from typing import Any, Callable, Tuple
 
 import torch
 
 
+class _ThreadedAttr:
+    """Data descriptor routing ``self._x = v`` to per-(instance, thread) storage.
+
+    Transforms cache their ``inverse()`` statistics in ``_last_*`` attributes
+    during ``forward()``. Plain instance attributes make one instance unsafe
+    under concurrent callers: the statistics a thread's ``inverse()`` needs get
+    clobbered by another thread's ``forward()``, silently restoring the wrong
+    values. This descriptor keeps the attribute contract (reads and writes look
+    identical; the calling thread sees its own latest ``forward()``) while the
+    instance ``__dict__`` is never mutated and no state is shared across
+    threads.
+
+    Only for call-time caches: a value written in ``__init__`` would be visible
+    only on the constructing thread, so constructor-derived constants must stay
+    plain instance attributes. The cache is intentionally not pickled — an
+    unpickled instance behaves like a fresh one (``inverse()`` raises until the
+    next ``forward()``). Assigning ``None`` clears the slot.
+    """
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    def _table(self) -> "weakref.WeakKeyDictionary[Any, Any]":
+        table = getattr(self._local, "table", None)
+        if table is None:
+            table = weakref.WeakKeyDictionary()
+            self._local.table = table
+        return table
+
+    def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        if obj is None:
+            return self
+        return self._table().get(obj)
+
+    def __set__(self, obj: Any, value: Any) -> None:
+        if value is None:
+            self._table().pop(obj, None)
+        else:
+            self._table()[obj] = value
+
+
 def _normalize_dims(ndim: int, dim: Tuple[int, ...]) -> Tuple[int, ...]:
-    """Convert negative dims to positive and return sorted unique dims."""
-    return tuple(sorted({d if d >= 0 else ndim + d for d in dim}))
+    """Convert negative dims to positive and return sorted unique dims.
+
+    Raises ValueError for dims outside ``[-ndim, ndim)``: an unchecked
+    too-negative dim wraps forward (``-ndim - 1`` reduces the *last* axis
+    instead of failing) and an unchecked too-large dim dies deep inside a
+    torch kernel with an unrelated error.
+    """
+    out: set[int] = set()
+    for d in dim:
+        norm = d if d >= 0 else ndim + d
+        if not 0 <= norm < ndim:
+            raise ValueError(
+                f"dim {d} out of range for {ndim}-D input "
+                f"(valid: {-ndim}..{ndim - 1})"
+            )
+        out.add(norm)
+    return tuple(sorted(out))
 
 
 def _stats_upcast(x: torch.Tensor) -> torch.Tensor:
-    """Promote integer inputs for stats reductions, like astropy does.
+    """Promote the input to the dtype stats reductions compute in.
 
-    FITS subsets of BZERO-scaled data come back as UInt16, and torch ships
-    no reduction kernels for the uint16/32/64 line; other integer dtypes
-    reduce but produce integer stats that break downstream arithmetic
-    (min/max sentinels, division). Float32 is the stats dtype; int64 keeps
-    precision as float64.
+    Complex dtypes are rejected: ordering-based statistics are undefined on
+    them and silently dropping the imaginary part is data loss. float16 and
+    bfloat16 promote to float32 (``torch.quantile`` rejects them and f16
+    thresholds underflow the eps floors used across the normalizers).
+    Integers promote like astropy: FITS subsets of BZERO-scaled data come
+    back as UInt16, and torch ships no reduction kernels for the
+    uint16/32/64 line; other integer dtypes reduce but produce integer stats
+    that break downstream arithmetic (min/max sentinels, division). Float32
+    is the stats dtype; int64 keeps precision as float64.
     """
+    if x.dtype.is_complex:
+        raise TypeError(
+            f"stats transforms do not support complex dtypes (got {x.dtype}); "
+            "reduce to a real component first"
+        )
+    if x.dtype in (torch.float16, torch.bfloat16):
+        return x.float()
     if x.dtype.is_floating_point:
         return x
     return x.float() if x.dtype != torch.int64 else x.double()
@@ -38,13 +107,15 @@ def _mask_fill(x: torch.Tensor, mode: str) -> torch.Tensor:
 
 
 def _get_valid_mask(x: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
-    """Combine an optional explicit mask with an implicit NaN mask.
+    """Combine an optional explicit mask with an implicit non-finite mask.
 
-    Returns a boolean tensor where ``True`` indicates a valid (non-NaN,
-    non-masked) element.  When *mask* is ``None``, the result is simply
-    ``~torch.isnan(x)``.
+    Returns a boolean tensor where ``True`` indicates a valid (finite,
+    non-masked) element. NaN *and* ±inf are invalid: an infinite pixel is
+    not a measurement of the background, and letting one count as valid
+    poisons mean/std into wiping the frame (and matches the ``isfinite``
+    convention already used by the weighted stats and IRAF zscale paths).
     """
-    valid = ~torch.isnan(x)
+    valid = torch.isfinite(x)
     if mask is not None:
         valid = valid & mask.to(torch.bool)
     return valid
@@ -55,7 +126,10 @@ def _flatten_dims(x: torch.Tensor, dims: Tuple[int, ...]) -> torch.Tensor:
     ndim = x.ndim
     keep = [d for d in range(ndim) if d not in dims]
     x_moved = x.permute(*keep, *dims)
-    return x_moved.reshape(*x_moved.shape[: len(keep)], -1)
+    folded = 1
+    for d in dims:
+        folded *= x.shape[d]
+    return x_moved.reshape(*x_moved.shape[: len(keep)], folded)
 
 
 def _unflatten_result(
@@ -72,27 +146,29 @@ def _reduce_keepdim(
     x: torch.Tensor,
     dim: Tuple[int, ...],
     func: Callable[[torch.Tensor, int, bool], torch.Tensor],
+    *,
+    empty_fill: float = float("nan"),
 ) -> torch.Tensor:
-    """Reduce *x* over *dim* using *func* (single-dim reducer), keepdim."""
+    """Reduce *x* over *dim* using *func* (single-dim reducer), keepdim.
+
+    An empty reduction (zero-size tensor or empty reduced dims) yields
+    *empty_fill* with the reduced shape instead of a torch kernel error —
+    NaN matches the all-masked group result for medians/quantiles; the
+    min/max helpers pass their ±inf sentinels instead.
+    """
     ndim = x.ndim
     dims = _normalize_dims(ndim, dim)
+    shape_out = list(x.shape)
+    for d in dims:
+        shape_out[d] = 1
+    if x.numel() == 0:
+        return torch.full(shape_out, empty_fill, dtype=x.dtype, device=x.device)
     if len(dims) == 1:
         return func(x, dims[0], True)
     x_flat = _flatten_dims(x, dims)
     result = func(x_flat, -1, True)
     # Reshape back to original ndim with reduced dims set to 1
-    shape_out = list(x.shape)
-    for d in dims:
-        shape_out[d] = 1
     return result.reshape(shape_out)
-
-
-def _sum_keepdim(
-    x: torch.Tensor, dims: Tuple[int, ...], shape: tuple[int, ...]
-) -> torch.Tensor:
-    """Sum *x* over *dims* keeping the original rank (reduced dims -> 1)."""
-    flat = _flatten_dims(x, dims)
-    return _unflatten_result(flat.sum(dim=-1, keepdim=True), shape, dims)
 
 
 def _median(
@@ -104,18 +180,13 @@ def _median(
 
     Uses ``torch.nanquantile(0.5)`` so even-sized groups interpolate between
     the two central samples (matching numpy/astropy) instead of
-    ``torch.median``'s lower-middle element. Masked-out pixels and NaNs are
-    excluded; an all-masked group yields NaN.
+    ``torch.median``'s lower-middle element. Masked-out pixels and non-finite
+    values (NaN and ±inf) are excluded; an all-masked or empty group yields
+    NaN.
     """
     x = _stats_upcast(x)
-    if x.dtype in (torch.float16, torch.bfloat16):
-        # torch.quantile only accepts float32/float64.
-        x = x.float()
-    if mask is not None:
-        valid = _get_valid_mask(x, mask)
-        x = torch.where(valid, x, _mask_fill(x, "nan"))
-    # With no explicit mask, nanquantile already skips NaN pixels; the
-    # isnan+where pass below would be a value-preserving copy.
+    valid = _get_valid_mask(x, mask)
+    x = torch.where(valid, x, _mask_fill(x, "nan"))
 
     def nan_median(t: torch.Tensor, d: int, keepdim: bool) -> torch.Tensor:
         return torch.nanquantile(t, 0.5, dim=d, keepdim=keepdim)
@@ -128,12 +199,17 @@ def _amin(
     dim: Tuple[int, ...],
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Mask-aware torch.amin over tuple dim."""
+    """Mask-aware torch.amin over tuple dim.
+
+    All-masked and empty groups yield +inf (the masked-fill sentinel), which
+    callers treat as "no valid pixels".
+    """
     x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
     x_clean = torch.where(valid, x, _mask_fill(x, "amin"))
     return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.amin(t, dim=d, keepdim=k)
+        x_clean, dim, lambda t, d, k: torch.amin(t, dim=d, keepdim=k),
+        empty_fill=float("inf"),
     )
 
 
@@ -142,12 +218,17 @@ def _amax(
     dim: Tuple[int, ...],
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Mask-aware torch.amax over tuple dim."""
+    """Mask-aware torch.amax over tuple dim.
+
+    All-masked and empty groups yield -inf (the masked-fill sentinel), which
+    callers treat as "no valid pixels".
+    """
     x = _stats_upcast(x)
     valid = _get_valid_mask(x, mask)
     x_clean = torch.where(valid, x, _mask_fill(x, "amax"))
     return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.amax(t, dim=d, keepdim=k)
+        x_clean, dim, lambda t, d, k: torch.amax(t, dim=d, keepdim=k),
+        empty_fill=float("-inf"),
     )
 
 
@@ -157,14 +238,14 @@ def _quantile(
     dim: Tuple[int, ...],
     mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Mask-aware torch.quantile over tuple dim."""
+    """Mask-aware torch.quantile over tuple dim.
+
+    Masked-out pixels and non-finite values are excluded; an all-masked or
+    empty group yields NaN.
+    """
     x = _stats_upcast(x)
-    if x.dtype in (torch.float16, torch.bfloat16):
-        # torch.quantile only accepts float32/float64.
-        x = x.float()
-    if mask is not None:
-        valid = _get_valid_mask(x, mask)
-        x = torch.where(valid, x, _mask_fill(x, "nan"))
+    valid = _get_valid_mask(x, mask)
+    x = torch.where(valid, x, _mask_fill(x, "nan"))
     return _reduce_keepdim(
         x, dim, lambda t, d, k: torch.nanquantile(t, q, dim=d, keepdim=k)
     )
@@ -179,9 +260,7 @@ def _weight_flat(
     x_flat: torch.Tensor,
     *,
     dims: Tuple[int, ...],
-    mask: torch.Tensor | None,
     ivar: torch.Tensor | None,
-    shape: tuple[int, ...],
 ) -> torch.Tensor:
     """Per-element weights on the flattened reduction plane."""
     if ivar is None:
@@ -206,18 +285,25 @@ def _weighted_quantile(
     deliberately *not* the interpolated median used by :func:`_median`, so
     ``weighted=True`` is opt-in and documented as such.
 
-    Invalid (NaN), masked and non-positive-weight samples get zero weight;
-    a group with zero total weight yields NaN.
+    Non-finite (NaN/±inf), masked and non-positive-weight samples get zero
+    weight; a group with zero total weight — all invalid, all zero-weight, or
+    empty — yields NaN.
     """
     xf = _stats_upcast(x)
-    if xf.dtype in (torch.float16, torch.bfloat16):
-        xf = xf.float()
     dims = _normalize_dims(xf.ndim, dim)
     flat = _flatten_dims(xf, dims)
+    if flat.numel() == 0:
+        return _unflatten_result(
+            torch.full(
+                (*flat.shape[:-1], 1), float("nan"), dtype=xf.dtype, device=xf.device
+            ),
+            xf.shape,
+            dims,
+        )
     valid = torch.isfinite(flat)
     if mask is not None:
         valid = valid & _flatten_dims(mask.to(torch.bool), dims)
-    w = _weight_flat(flat, dims=dims, mask=mask, ivar=ivar, shape=xf.shape)
+    w = _weight_flat(flat, dims=dims, ivar=ivar)
     w = torch.where(valid, w, torch.zeros_like(w))
     values = torch.where(valid, flat, torch.full_like(flat, float("nan")))
 
@@ -243,14 +329,18 @@ def _weighted_dispersion(
     mask: torch.Tensor | None = None,
     ivar: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Weighted RMS about *center*: ``sqrt(sum w d^2 / sum w)``."""
+    """Weighted RMS about *center*: ``sqrt(sum w d^2 / sum w)``.
+
+    Zero total weight (all invalid, all zero-weight, or empty groups) yields
+    NaN; a constant group yields 0.
+    """
     xf = _stats_upcast(x)
     dims = _normalize_dims(xf.ndim, dim)
     flat = _flatten_dims(xf, dims)
     valid = torch.isfinite(flat)
     if mask is not None:
         valid = valid & _flatten_dims(mask.to(torch.bool), dims)
-    w = _weight_flat(flat, dims=dims, mask=mask, ivar=ivar, shape=xf.shape)
+    w = _weight_flat(flat, dims=dims, ivar=ivar)
     w = torch.where(valid, w, torch.zeros_like(w))
     c = _flatten_dims(center.to(xf.dtype), dims)
     d2 = torch.where(valid, (flat - c) ** 2, torch.zeros_like(flat))
@@ -275,7 +365,14 @@ def _upcast_for_precision(x: torch.Tensor, *, precision: str = "auto") -> torch.
     ``precision="auto"`` (default): float32 stays float32 (sufficient for
     visualization stretches); float16/bfloat16 → float32; float64 unchanged.
     ``precision="float64"`` always upcasts non-float64 inputs to float64.
+    Complex dtypes are rejected (silently dropping the imaginary part is
+    data loss).
     """
+    if x.dtype.is_complex:
+        raise TypeError(
+            f"stretch primitives do not support complex dtypes (got {x.dtype}); "
+            "reduce to a real component first"
+        )
     if precision not in ("auto", "float64"):
         raise ValueError("precision must be 'auto' or 'float64'")
     if x.dtype == torch.float64:
@@ -336,7 +433,7 @@ def estimate_background(
     ----------
     mask :
         Optional boolean mask where ``True`` indicates a valid pixel.
-        Masked-out pixels (and any NaN values) are excluded from the
+        Masked-out pixels (and any non-finite values) are excluded from the
         median and MAD computation.
     ivar :
         Optional inverse-variance companion. Only used when ``weighted=True``.
@@ -348,7 +445,10 @@ def estimate_background(
         the weighted median uses the inverted-CDF definition, so with uniform
         weights it returns the lower-middle element rather than the
         interpolated median — the two paths agree to within one order-statistic
-        spacing, not bit-for-bit.
+        spacing, not bit-for-bit. Zero-information groups are defined: an
+        empty group, a fully masked group, or a group with only non-positive /
+        non-finite weights (e.g. ``ivar = inf``) yields ``(NaN, NaN)``; a
+        constant group yields ``(c, 0)``.
 
     Returns
     -------
@@ -574,8 +674,6 @@ def _zscale_iraf(
     """Vectorized IRAF zscale over tuple *dim* (one fit per group)."""
     with torch.no_grad():
         xf = _stats_upcast(x)
-        if xf.dtype in (torch.float16, torch.bfloat16):
-            xf = xf.float()
         dims = _normalize_dims(xf.ndim, dim)
         flat = _flatten_dims(xf, dims)
         n = flat.shape[-1]
@@ -585,9 +683,7 @@ def _zscale_iraf(
         if mask is not None:
             valid = valid & _flatten_dims(mask.to(torch.bool), dims).reshape(groups, n)
         if weighted and ivar is not None:
-            w = _weight_flat(
-                sample, dims=dims, mask=mask, ivar=ivar, shape=xf.shape
-            ).reshape(groups, n)
+            w = _weight_flat(sample, dims=dims, ivar=ivar).reshape(groups, n)
             valid = valid & torch.isfinite(w) & (w > 0)
         sample = torch.where(valid, sample, torch.full_like(sample, float("nan")))
         # Stride the *original* order (as IRAF/astropy do) and only then sort;
@@ -625,7 +721,6 @@ __all__ = [
     "_flatten_dims",
     "_unflatten_result",
     "_reduce_keepdim",
-    "_sum_keepdim",
     "_median",
     "_amin",
     "_amax",

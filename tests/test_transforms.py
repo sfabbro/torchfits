@@ -1,5 +1,8 @@
 """Tests for torchfits.transforms — ML-friendly FITS image preprocessing."""
 
+import pickle
+import threading
+
 import pytest
 import torch
 
@@ -20,10 +23,12 @@ from torchfits.transforms import (
     InterquantileNormalize,
     InterquantileScale,
     LogStretch,
+    MeshBackgroundSubtract,
     MinMaxNormalize,
     PercentileClipNormalize,
     RobustNormalize,
     SigmaClip,
+    SigmaNormalize,
     SqrtStretch,
     TNullToNan,
     ZScaleNormalize,
@@ -36,10 +41,12 @@ from torchfits.transforms.helpers import (
     _amin,
     _amax,
     _flatten_dims,
+    _get_valid_mask,
     _median,
     _normalize_dims,
     _quantile,
     _reduce_keepdim,
+    _weighted_quantile,
 )
 
 
@@ -1429,13 +1436,20 @@ class TestFITSScaleColumns:
         x = {"FLUX": flux, "MAG": mag}
         t = FITSScaleColumns.from_header(header)
         out = t.forward(x)
+        # Table TSCAL/TZERO arithmetic computes in float64, matching the
+        # columns table.read_torch delivers.
+        assert out["FLUX"].dtype == torch.float64
         # FLUX: physical = 0.001 * stored + 0 = [1.0, 2.0, 3.0]
-        assert torch.allclose(out["FLUX"], torch.tensor([1.0, 2.0, 3.0]))
+        assert torch.allclose(
+            out["FLUX"], torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)
+        )
         # MAG: physical = 1.0 * stored + 25.0
-        assert torch.allclose(out["MAG"], torch.tensor([35.0, 45.0, 55.0]))
+        assert torch.allclose(
+            out["MAG"], torch.tensor([35.0, 45.0, 55.0], dtype=torch.float64)
+        )
         restored = t.inverse(out)
-        assert torch.allclose(restored["FLUX"], flux)
-        assert torch.allclose(restored["MAG"], mag)
+        assert torch.allclose(restored["FLUX"], flux.double())
+        assert torch.allclose(restored["MAG"], mag.double())
 
     def test_empty_header(self) -> None:
         header: dict[str, object] = {}
@@ -1503,7 +1517,7 @@ class TestFITSScaleColumns:
         t = FITSScaleColumns({"FLUX": (0.5, 100.0)})
         data = {"FLUX": torch.tensor([1.0, 2.0, 3.0])}
         out = t.forward(data, mask=None)
-        expected = torch.tensor([100.5, 101.0, 101.5])
+        expected = torch.tensor([100.5, 101.0, 101.5], dtype=torch.float64)
         assert torch.allclose(out["FLUX"], expected)
 
     def test_forward_with_mask_tensor(self) -> None:
@@ -1512,7 +1526,7 @@ class TestFITSScaleColumns:
         data = {"FLUX": torch.tensor([1.0, 2.0, 3.0])}
         mask = torch.ones(3, dtype=torch.bool)
         out = t.forward(data, mask=mask)
-        expected = torch.tensor([2.0, 4.0, 6.0])
+        expected = torch.tensor([2.0, 4.0, 6.0], dtype=torch.float64)
         assert torch.allclose(out["FLUX"], expected)
 
     def test_inverse_with_mask_none(self) -> None:
@@ -1520,7 +1534,7 @@ class TestFITSScaleColumns:
         t = FITSScaleColumns({"FLUX": (0.5, 100.0)})
         physical = {"FLUX": torch.tensor([100.5, 101.0, 101.5])}
         out = t.inverse(physical, mask=None)
-        expected = torch.tensor([1.0, 2.0, 3.0])
+        expected = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)
         assert torch.allclose(out["FLUX"], expected)
 
 
@@ -1535,7 +1549,8 @@ class TestTNullToNan:
         x = {"FLUX": torch.tensor([1, -999, 3], dtype=torch.int32)}
         t = TNullToNan.from_header(header)
         out = t.forward(x)
-        assert out["FLUX"].dtype == torch.float32  # promoted to float
+        # Integer columns promote to the table reader's NaN-carrying dtype
+        assert out["FLUX"].dtype == torch.float64
         assert torch.isnan(out["FLUX"][1])
         assert out["FLUX"][0].item() == 1.0
         assert out["FLUX"][2].item() == 3.0
@@ -1617,7 +1632,7 @@ class TestTNullToNan:
         assert torch.isnan(out["FLUX"][1])
         assert torch.isnan(out["QUAL"][1])
         assert torch.equal(out["EXTRA"], torch.tensor([7.0, 8.0, 9.0]))
-        assert out["QUAL"].dtype == torch.float32
+        assert out["QUAL"].dtype == torch.float64
 
 
 # ---------------------------------------------------------------------------
@@ -1673,3 +1688,346 @@ class TestFITSHeaderScaleRoundtrip:
         out = FITSHeaderScale(bscale=1.0, bzero=32768.0)(raw)
         assert out.dtype.is_floating_point
         assert out.tolist() == [32768.0, 32769.0, 32767.0]
+
+# ---------------------------------------------------------------------------
+# R2 hardening: non-finite inputs, complex rejection, empty groups, weighted
+# stats contracts, integer/float16 dtypes, thread-safety, mesh tile fallback
+# ---------------------------------------------------------------------------
+
+
+class TestNonFiniteInputs:
+    def test_sigma_clip_infinite_pixel_does_not_wipe_frame(self) -> None:
+        x = torch.full((1, 8, 8), 50.0)
+        x[0, 0, 0] = float("inf")
+        out = SigmaClip(n_sigma=3.0)(x)
+        kept = out.flatten()[1:]
+        assert torch.isfinite(kept).all()
+        assert (kept - 50.0).abs().max().item() < 1e-4
+        # The infinite outlier is clipped and filled with the frame mean.
+        assert out[0, 0, 0].item() == pytest.approx(50.0, abs=1e-3)
+
+    def test_sigma_clip_negative_infinite_pixel_does_not_wipe_frame(self) -> None:
+        x = torch.full((1, 8, 8), 50.0)
+        x[0, 0, 0] = float("-inf")
+        out = SigmaClip(n_sigma=3.0)(x)
+        kept = out.flatten()[1:]
+        assert torch.isfinite(kept).all()
+        assert (kept - 50.0).abs().max().item() < 1e-4
+
+    def test_minmax_infinite_pixel_does_not_nan_frame(self) -> None:
+        x = torch.full((1, 8, 8), 50.0)
+        x[0, 0, 0] = float("inf")
+        out = MinMaxNormalize()(x)
+        valid = out.flatten()[1:]
+        assert torch.isfinite(valid).all()
+        assert valid.abs().max().item() <= 1.0 + 1e-6
+        # The infinite pixel is out of the normalized range (the transform
+        # does not clip), but it must not destroy the valid pixels.
+        assert not torch.isfinite(out[0, 0, 0])
+
+    def test_background_excludes_infinities(self) -> None:
+        x = torch.tensor([[float("inf"), float("inf"), 50.0, 50.0]])
+        med, std = estimate_background(x, dim=(-1,))
+        assert med.item() == pytest.approx(50.0)
+        assert std.item() == pytest.approx(0.0)
+        assert _median(x, (-1,)).item() == pytest.approx(50.0)
+
+    def test_all_infinite_group_yields_nan(self) -> None:
+        x = torch.full((1, 4), float("inf"))
+        med, std = estimate_background(x, dim=(-1,))
+        assert torch.isnan(med).all()
+        assert torch.isnan(std).all()
+
+    def test_all_nan_group_yields_nan(self) -> None:
+        x = torch.full((1, 4), float("nan"))
+        med, std = estimate_background(x, dim=(-1,))
+        assert torch.isnan(med).all()
+        assert torch.isnan(std).all()
+
+    def test_denormal_values_stay_finite(self) -> None:
+        x = torch.tensor([[1e-40, 2e-40, 3e-40, 4e-40]])
+        med, std = estimate_background(x, dim=(-1,))
+        assert torch.isfinite(med).all() and torch.isfinite(std).all()
+        assert med.item() == pytest.approx(2.5e-40, rel=1e-3)
+        out = RobustNormalize(dim=(-1,))(x)
+        assert torch.isfinite(out).all()
+
+    def test_asymmetric_clip_replaces_infinite_outliers(self) -> None:
+        x = torch.full((1, 8, 8), 50.0)
+        x[0, 0, 0] = float("inf")
+        out = AsymmetricSigmaClip(fill="median")(x)
+        assert out[0, 0, 0].item() == pytest.approx(50.0)
+        assert (out.flatten()[1:] - 50.0).abs().max().item() < 1e-4
+
+
+class TestComplexInputsRejected:
+    def test_stats_helpers_reject_complex(self) -> None:
+        x = torch.ones(2, 2, dtype=torch.complex64)
+        for name, fn in (
+            ("_median", lambda: _median(x, (-2, -1))),
+            ("_amin", lambda: _amin(x, (-2, -1))),
+            ("_quantile", lambda: _quantile(x, 0.5, (-2, -1))),
+            ("estimate_background", lambda: estimate_background(x)),
+            ("zscale_limits", lambda: zscale_limits(x)),
+        ):
+            with pytest.raises(TypeError):
+                fn()
+
+    def test_transforms_reject_complex(self) -> None:
+        x = torch.ones(2, 2, dtype=torch.complex64)
+        for factory in (
+            lambda: SigmaClip(),
+            lambda: AsymmetricSigmaClip(),
+            lambda: MinMaxNormalize(),
+            lambda: BackgroundSubtract(),
+            lambda: MeshBackgroundSubtract(mesh=(1, 1)),
+            lambda: GlobalScalarNorm(),
+            lambda: RobustNormalize(),
+            lambda: ZScaleNormalize(),
+            lambda: InterquantileScale(),
+            lambda: PercentileClipNormalize(),
+        ):
+            with pytest.raises(TypeError):
+                factory()(x)
+
+
+class TestEmptyInputContracts:
+    def test_median_and_quantile_empty_group_is_nan(self) -> None:
+        for name, fn in (
+            ("_median", lambda: _median(torch.zeros(2, 0), (-1,))),
+            ("_quantile", lambda: _quantile(torch.zeros(2, 0), 0.5, (-1,))),
+        ):
+            out = fn()
+            assert out.shape == (2, 1), name
+            assert torch.isnan(out).all(), name
+
+    def test_amin_amax_empty_group_match_all_masked_sentinels(self) -> None:
+        vmin = _amin(torch.zeros(2, 0), (-1,))
+        vmax = _amax(torch.zeros(2, 0), (-1,))
+        assert vmin.shape == (2, 1) and bool(torch.isposinf(vmin).all())
+        assert vmax.shape == (2, 1) and bool(torch.isneginf(vmax).all())
+
+    def test_weighted_quantile_empty_group_is_nan(self) -> None:
+        out = _weighted_quantile(
+            torch.zeros(2, 0), 0.5, (-1,), ivar=torch.ones(2, 0)
+        )
+        assert out.shape == (2, 1)
+        assert torch.isnan(out).all()
+
+    def test_estimate_background_empty_group_is_nan(self) -> None:
+        med, std = estimate_background(torch.zeros(2, 0), dim=(-1,))
+        assert med.shape == (2, 1) and std.shape == (2, 1)
+        assert torch.isnan(med).all() and torch.isnan(std).all()
+
+    def test_zero_batch_reduction_has_defined_shape(self) -> None:
+        out = _median(torch.zeros(0, 3), (-1,))
+        assert out.shape == (0, 1)
+
+    def test_mesh_empty_image_returns_empty_output(self) -> None:
+        x = torch.zeros(2, 0, 5)
+        out = MeshBackgroundSubtract(mesh=(2, 2))(x)
+        assert out.shape == x.shape
+
+    def test_mesh_zero_batch_returns_empty_output(self) -> None:
+        x = torch.zeros(0, 4, 4)
+        out = MeshBackgroundSubtract(mesh=(2, 2))(x)
+        assert out.shape == (0, 4, 4)
+
+
+class TestWeightedStatsContracts:
+    def test_true_mask_means_valid(self) -> None:
+        x = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+        mask = torch.tensor([[True, True, False, False]])
+        valid = _get_valid_mask(x, mask)
+        assert valid.tolist() == [[True, True, False, False]]
+        # Masked-out pixels carry zero weight: the inverted-CDF weighted
+        # median of [1, 2] with uniform weights is the lower-middle element.
+        wq = _weighted_quantile(x, 0.5, (-1,), mask=mask, ivar=torch.ones_like(x))
+        assert wq.item() == pytest.approx(1.0)
+
+    def test_weighted_constant_data_zero_dispersion(self) -> None:
+        x = torch.ones(2, 4, 4) * 7.0
+        med, std = estimate_background(x, ivar=torch.ones_like(x), weighted=True)
+        assert torch.allclose(med, torch.full((2, 1, 1), 7.0))
+        assert torch.equal(std, torch.zeros(2, 1, 1))
+
+    def test_weighted_zero_ivar_group_yields_nan(self) -> None:
+        x = torch.ones(2, 4, 4) * 7.0
+        med, std = estimate_background(x, ivar=torch.zeros_like(x), weighted=True)
+        assert torch.isnan(med).all() and torch.isnan(std).all()
+
+    def test_weighted_all_masked_group_yields_nan(self) -> None:
+        x = torch.ones(2, 4, 4) * 7.0
+        mask = torch.zeros(2, 4, 4, dtype=torch.bool)
+        med, std = estimate_background(
+            x, mask=mask, ivar=torch.ones_like(x), weighted=True
+        )
+        assert torch.isnan(med).all() and torch.isnan(std).all()
+
+    def test_weighted_nonfinite_ivar_is_invalid_weight(self) -> None:
+        # +inf ivar (zero measurement variance) is not a usable weight: the
+        # group has no valid samples and yields NaN, never a silent guess.
+        x = torch.ones(2, 4, 4) * 3.0
+        ivar = torch.full_like(x, float("inf"))
+        med, std = estimate_background(x, ivar=ivar, weighted=True)
+        assert torch.isnan(med).all() and torch.isnan(std).all()
+
+    def test_weighted_without_ivar_is_exact_noop(self) -> None:
+        y = torch.randn(2, 8, 8)
+        weighted = estimate_background(y, weighted=True)
+        plain = estimate_background(y)
+        assert all(torch.equal(a, b) for a, b in zip(weighted, plain))
+
+
+class TestIntegerStatsTransforms:
+    def test_mesh_int16_promotes_to_float(self) -> None:
+        x = torch.full((1, 8, 8), 50, dtype=torch.int16)
+        out = MeshBackgroundSubtract(mesh=(2, 2))(x)
+        assert out.dtype == torch.float32
+        assert out.abs().max().item() < 1e-3  # flat field -> ~0 after subtraction
+
+    def test_asymmetric_clip_nan_fill_int16(self) -> None:
+        x = torch.full((1, 8, 8), 50, dtype=torch.int16)
+        x[0, 0, 0] = 1000
+        out = AsymmetricSigmaClip(fill="nan")(x)
+        assert out.dtype == torch.float32
+        assert torch.isnan(out[0, 0, 0])
+        assert (out.flatten()[1:] - 50.0).abs().max().item() < 1e-4
+
+    def test_global_scalar_mean_int16_exact(self) -> None:
+        x = torch.tensor([[1, 2], [3, 100]], dtype=torch.int16)
+        out = GlobalScalarNorm(stat="mean")(x)
+        mean = x.double().mean()
+        assert out.dtype == torch.float32
+        assert torch.allclose(out.double(), x.double() / mean, atol=1e-6)
+
+    def test_global_scalar_rms_int16_exact(self) -> None:
+        x = torch.tensor([[1, 2], [3, 100]], dtype=torch.int16)
+        out = GlobalScalarNorm(stat="rms")(x)
+        rms = torch.sqrt((x.double() ** 2).mean())
+        assert out.dtype == torch.float32
+        assert torch.allclose(out.double(), x.double() / rms, atol=1e-6)
+
+
+class TestFloat16Thresholds:
+    def test_sigma_normalize_weighted_float16_constant_stays_finite(self) -> None:
+        x = torch.ones(4, 4, dtype=torch.float16)
+        out = SigmaNormalize(weighted=True)(
+            {"flux": x, "ivar": torch.ones_like(x)}
+        )["flux"]
+        assert torch.isfinite(out).all()
+
+    def test_sigma_normalize_std_float16_constant_stays_finite(self) -> None:
+        x = torch.ones(4, 4, dtype=torch.float16)
+        out = SigmaNormalize(stat="std")(x)
+        assert torch.isfinite(out).all()
+
+    def test_interquantile_float16_constant_stays_finite(self) -> None:
+        out = InterquantileScale()(torch.ones(4, 4, dtype=torch.float16))
+        assert torch.isfinite(out).all()
+
+    def test_stats_thresholds_stay_float32_for_float16(self) -> None:
+        med, std = estimate_background(
+            torch.ones(4, 4, dtype=torch.float16), dim=(-2, -1)
+        )
+        assert med.dtype == torch.float32 and std.dtype == torch.float32
+
+
+class TestDimValidation:
+    def test_out_of_range_dim_raises(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            _normalize_dims(2, (5,))
+
+    def test_too_negative_dim_raises(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            _normalize_dims(2, (-3,))
+
+    def test_transform_rejects_bad_dim(self) -> None:
+        with pytest.raises(ValueError):
+            RobustNormalize(dim=(5,))(torch.zeros(2, 3))
+
+
+class TestThreadSafety:
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            ZScaleNormalize,
+            RobustNormalize,
+            MinMaxNormalize,
+            BackgroundSubtract,
+            GlobalScalarNorm,
+            SigmaNormalize,
+            InterquantileScale,
+            lambda: PercentileClipNormalize(lower_pct=0, upper_pct=100),
+            lambda: MeshBackgroundSubtract(mesh=(2, 2)),
+        ],
+    )
+    def test_shared_instance_is_thread_safe(self, factory) -> None:
+        """One instance used from two threads must keep each thread's
+        inverse() paired with that thread's own forward() statistics."""
+        transform = factory()
+        data = {
+            "a": torch.randn(32, 32) + 10.0,
+            "b": torch.randn(32, 32) * 100.0 + 1000.0,
+        }
+        barrier = threading.Barrier(2, timeout=20)
+        results: dict = {}
+        errors: list = []
+
+        def worker(name: str) -> None:
+            try:
+                out = transform(data[name])
+                barrier.wait()  # both forwards complete before either inverse
+                results[name] = transform.inverse(out)
+            except Exception as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in ("a", "b")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert not errors, errors
+        for name in ("a", "b"):
+            err = (results[name] - data[name]).abs().max().item()
+            assert err < 1e-3, (
+                f"{name}: shared instance inverse used the other thread's "
+                f"statistics (round-trip error {err})"
+            )
+
+    def test_inverse_state_is_not_pickled(self) -> None:
+        transform = ZScaleNormalize()
+        transform(torch.randn(8, 8) + 5.0)
+        clone = pickle.loads(pickle.dumps(transform))
+        with pytest.raises(RuntimeError, match="prior forward"):
+            clone.inverse(torch.zeros(8, 8))
+
+
+class TestMeshTileFallback:
+    @staticmethod
+    def _sparse_tile_scene() -> tuple[torch.Tensor, torch.Tensor]:
+        img = torch.full((1, 8, 8), 10.0)
+        img[0, 0, 0] = 1e6  # lone garbage pixel in tile (0, 0)
+        mask = torch.ones(1, 8, 8, dtype=torch.bool)
+        mask[0, 0:4, 0:4] = False  # tile (0, 0): 15 masked + 1 garbage valid
+        mask[0, 0, 0] = True
+        return img, mask
+
+    def test_sparse_tile_falls_back_to_frame_background(self) -> None:
+        img, mask = self._sparse_tile_scene()
+        out = MeshBackgroundSubtract(
+            mesh=(2, 2), filter_mesh=False, min_tile_pixels=4
+        )(img, mask=mask)
+        # min_tile_pixels=4: one valid pixel cannot define the tile, so the
+        # tile falls back to the frame background (~10) and the garbage pixel
+        # survives as a ~1e6 outlier instead of punching a hole in the frame.
+        assert out[0, 0, 0].item() > 1e5
+
+    def test_min_tile_pixels_one_keeps_sparse_tile_estimate(self) -> None:
+        img, mask = self._sparse_tile_scene()
+        out = MeshBackgroundSubtract(
+            mesh=(2, 2), filter_mesh=False, min_tile_pixels=1
+        )(img, mask=mask)
+        # With min_tile_pixels=1 the single pixel defines the tile background,
+        # so the pixel is subtracted back to ~0.
+        assert abs(out[0, 0, 0].item()) < 1e3

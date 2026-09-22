@@ -7,10 +7,12 @@ import torch
 
 from .base import FITSTransform
 from .helpers import (
+    _ThreadedAttr,
     _flatten_dims,
     _get_valid_mask,
     _median,
     _normalize_dims,
+    _stats_upcast,
     _unflatten_result,
     estimate_background,
 )
@@ -43,6 +45,7 @@ class SigmaClip(FITSTransform):
     """
 
     propagates_ivar = False
+    _last_mask = _ThreadedAttr()
 
     def __init__(
         self,
@@ -57,7 +60,6 @@ class SigmaClip(FITSTransform):
         if fill not in ("mean", "median", "nan"):
             raise ValueError("fill must be 'mean', 'median', or 'nan'")
         self.fill = fill
-        self._last_mask: torch.Tensor | None = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         """Iteratively sigma-clip outliers and fill with mean or median.
@@ -77,11 +79,11 @@ class SigmaClip(FITSTransform):
         if len(self.dim) > 0:
             dims = _normalize_dims(ndim, self.dim)
         # Integer images promote to float (like astropy.sigma_clip);
-        # UInt16/32/64 additionally lack reduction kernels in torch.
-        # Done outside ``no_grad`` so the promoted tensor is still the one
-        # autograd sees (integers never require grad anyway).
-        if not data.dtype.is_floating_point:
-            data = data.float() if data.dtype != torch.int64 else data.double()
+        # UInt16/32/64 additionally lack reduction kernels in torch;
+        # complex inputs are rejected before any cast. Done outside
+        # ``no_grad`` so the promoted tensor is still the one autograd sees
+        # (integers never require grad anyway).
+        data = _stats_upcast(data)
 
         # Statistics and replacements are constants: compute them without
         # tracking gradients. The final selection below stays OUTSIDE the
@@ -226,6 +228,7 @@ class AsymmetricSigmaClip(FITSTransform):
     """
 
     propagates_ivar = False
+    _last_mask = _ThreadedAttr()
 
     def __init__(
         self,
@@ -245,13 +248,14 @@ class AsymmetricSigmaClip(FITSTransform):
         self.dim = tuple(dim)
         self.fill = fill
         self.weighted = bool(weighted)
-        self._last_mask: torch.Tensor | None = None
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         view = self.view(x)
         if view.ivar is not None:
             self._warn_ivar_not_propagated()
-        data = view.flux
+        # Same promotion as SigmaClip: integer images promote to float and
+        # complex inputs are rejected before any fill sentinel is built.
+        data = _stats_upcast(view.flux)
         # Thresholds are constants; the selection stays outside ``no_grad`` so
         # kept pixels keep their gradient (consistent with the normalizers).
         with torch.no_grad():
