@@ -6,6 +6,7 @@ import torch
 
 from .base import FITSTransform
 from .helpers import (
+    _ThreadedAttr,
     _amin,
     _amax,
 )
@@ -49,6 +50,66 @@ def _linear_remove(x: torch.Tensor, scale: float, zero: float) -> torch.Tensor:
     return (up - zero) / scale
 
 
+def _table_linear_apply(x: torch.Tensor, scale: float, zero: float) -> torch.Tensor:
+    """Compute ``TSCAL * x + TZERO`` at the reader's table convention.
+
+    ``table.read_torch`` delivers TSCAL/TZERO columns computed in **float64**
+    (integer codes above 2**24 stay exact); hand-built column dicts must replay
+    that bit-for-bit or they disagree with reader output. Image scaling stays
+    float32 per :func:`_linear_apply` — the two readers' conventions really do
+    differ.
+    """
+    return x.double() * scale + zero
+
+
+def _table_linear_remove(x: torch.Tensor, scale: float, zero: float) -> torch.Tensor:
+    """Compute ``(x - zero) / TSCAL`` — inverse of :func:`_table_linear_apply`."""
+    return (x.double() - zero) / scale
+
+
+def _require_columns(x: Any, who: str) -> Any:
+    """Column transforms act on ``{column: tensor}`` dicts only."""
+    if not isinstance(x, dict):
+        raise TypeError(
+            f"{who} expects a dict of column tensors (like table.read_torch "
+            f"output), got {type(x)}"
+        )
+    return x
+
+
+def _read_header_floats(
+    path: str,
+    hdu: int | str,
+    defaults: tuple[tuple[str, float], ...],
+) -> dict[str, float]:
+    """Skinny per-key header reads with standard defaults for absent keys.
+
+    ``read_keys`` raises ``RuntimeError`` both for an absent keyword (legal —
+    BSCALE/BZERO default to 1.0/0.0 per the FITS standard) and for IO/HDU
+    failures, which must never be papered over with identity scaling. A
+    mandatory keyword (BITPIX) distinguishes the two without matching error
+    strings: if it reads back, the HDU is fine and only the requested key is
+    absent. Non-numeric keyword values raise :class:`ValueError`.
+    """
+    import torchfits
+
+    out: dict[str, float] = {}
+    for name, default in defaults:
+        try:
+            raw = torchfits.read_keys(path, [name], hdu=hdu)[name]
+        except RuntimeError:
+            torchfits.read_keys(path, ["BITPIX"], hdu=hdu)  # raises on IO errors
+            out[name] = default
+            continue
+        try:
+            out[name] = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"header keyword {name}={raw!r} in {path} is not numeric"
+            ) from exc
+    return out
+
+
 class FITSHeaderScale(FITSTransform):
     """Apply or remove BSCALE/BZERO scaling using FITS header keywords.
 
@@ -69,7 +130,10 @@ class FITSHeaderScale(FITSTransform):
     bzero : float
         FITS BZERO keyword value.  Default 0.0.
     state : str or DataState or None
-        Declared state of the input, when it is not carried by a payload.
+        Declared state of the ``forward()`` input, when it is not carried by a
+        payload. A payload that carries its own state must agree with it;
+        ``inverse()`` inputs are validated against the state ``forward()``
+        produced instead.
 
     Example
     -------
@@ -111,15 +175,13 @@ class FITSHeaderScale(FITSTransform):
         *,
         state: DataState | str | None = None,
     ) -> FITSHeaderScale:
-        """Construct from skinny ``read_keys`` (no full header dump)."""
-        import torchfits
+        """Construct from skinny ``read_keys`` (no full header dump).
 
-        vals: dict[str, float] = {"BSCALE": 1.0, "BZERO": 0.0}
-        for name in ("BSCALE", "BZERO"):
-            try:
-                vals[name] = float(torchfits.read_keys(path, [name], hdu=hdu)[name])
-            except (RuntimeError, TypeError, ValueError):
-                pass
+        Absent BSCALE/BZERO cards default to 1.0 / 0.0 (the FITS standard);
+        IO failures and non-numeric keyword values raise instead of silently
+        producing an identity scaler.
+        """
+        vals = _read_header_floats(path, hdu, (("BSCALE", 1.0), ("BZERO", 0.0)))
         return cls(bscale=vals["BSCALE"], bzero=vals["BZERO"], state=state)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
@@ -136,11 +198,14 @@ class FITSHeaderScale(FITSTransform):
         return _linear_apply(x, self.bscale, self.bzero)
 
     def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        check_state(x, self.inverse_expects(), type(self).__name__, state=self.state)
+        # No state= prior here: the prior describes forward() inputs, while an
+        # inverse() input carries whatever forward() produced. Injecting the
+        # forward prior would reject the transform's own output.
+        check_state(x, self.inverse_expects(), type(self).__name__)
         if self.bscale == 1.0 and self.bzero == 0.0:
             return stamp_state(x, DataState.STORED)
         if is_payload(x):
-            view = self.view(x, state=self.state, expects=self.inverse_expects())
+            view = self.view(x, expects=self.inverse_expects())
             return stamp_state(
                 view.replace(
                     _linear_remove(view.flux, self.bscale, self.bzero),
@@ -163,7 +228,9 @@ class FITSScaleColumns(FITSTransform):
 
     Reads TSCAL and TZERO keywords for each column from a FITS table header
     and applies ``physical = TSCAL * stored + TZERO``.  Columns with default
-    values (TSCAL=1.0, TZERO=0.0) are passed through unchanged.
+    values (TSCAL=1.0, TZERO=0.0) are passed through unchanged.  Scaling
+    computes in **float64**, matching ``table.read_torch``'s table convention
+    bit-for-bit (the image convention of :class:`FITSHeaderScale` is float32).
 
     ``forward`` applies scaling: stored → physical.
     ``inverse`` removes it: ``(physical - TZERO) / TSCAL``.
@@ -177,6 +244,11 @@ class FITSScaleColumns(FITSTransform):
     ----------
     scales : dict[str, tuple[float, float]]
         Mapping of column name → (TSCAL, TZERO).
+    state : str or DataState or None
+        Declared state of the ``forward()`` input, when it is not carried by a
+        payload. A payload that carries its own state must agree with it;
+        ``inverse()`` inputs are validated against the state ``forward()``
+        produced instead.
     """
 
     expects = frozenset({DataState.STORED})
@@ -213,6 +285,7 @@ class FITSScaleColumns(FITSTransform):
     def forward(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        x = _require_columns(x, type(self).__name__)
         check_state(x, self.expects, type(self).__name__, state=self.state)
         if not self.scales:
             return x
@@ -221,20 +294,23 @@ class FITSScaleColumns(FITSTransform):
             if name not in out:
                 continue
             # Functional ops: never mutate the caller's tensor.
-            out[name] = _linear_apply(out[name], tscal, tzero)
+            out[name] = _table_linear_apply(out[name], tscal, tzero)
         return out
 
     def inverse(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
-        check_state(x, self.inverse_expects(), type(self).__name__, state=self.state)
+        # No state= prior here: it describes forward() inputs, while an
+        # inverse() input carries whatever forward() produced.
+        x = _require_columns(x, type(self).__name__)
+        check_state(x, self.inverse_expects(), type(self).__name__)
         if not self.scales:
             return cast("dict[str, torch.Tensor]", stamp_state(x, DataState.STORED))
         out = dict(x)
         for name, (tscal, tzero) in self.scales.items():
             if name not in out:
                 continue
-            out[name] = _linear_remove(out[name], tscal, tzero)
+            out[name] = _table_linear_remove(out[name], tscal, tzero)
         return cast("dict[str, torch.Tensor]", stamp_state(out, DataState.STORED))
 
     def __repr__(self) -> str:
@@ -249,7 +325,11 @@ class TNullToNan(FITSTransform):
 
     Reads TNULL keywords from a FITS table header and replaces the
     corresponding sentinel values in each tensor column with NaN.
-    Integer columns are promoted to float32 so NaN can be represented.
+    Integer columns are promoted to float64 so NaN can be represented and the
+    surrounding codes stay exact — the same convention ``table.read_torch``
+    uses for its NaN-carrying columns. Floating columns keep their dtype.
+    The sentinel comparison runs in the column's own dtype first, so valid
+    rows that round onto the sentinel in a narrower float cannot be NaNed.
 
     .. note::
        The table reader already turns TNULL into missing values, so this is a
@@ -257,7 +337,7 @@ class TNullToNan(FITSTransform):
 
     Parameters
     ----------
-    nulls : dict[str, float]
+    nulls : dict[str, float or int]
         Mapping of column name → TNULL value.
     """
 
@@ -265,11 +345,14 @@ class TNullToNan(FITSTransform):
 
     def __init__(
         self,
-        nulls: dict[str, float],
+        nulls: dict[str, Any],
         *,
         state: DataState | str | None = None,
     ) -> None:
-        self.nulls: dict[str, float] = {name: float(v) for name, v in nulls.items()}
+        self.nulls: dict[str, Any] = {}
+        for name, value in nulls.items():
+            float(value)  # reject non-numeric sentinels at construction
+            self.nulls[name] = value
         self.state = as_state(state)
 
     @classmethod
@@ -285,6 +368,7 @@ class TNullToNan(FITSTransform):
     def forward(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        x = _require_columns(x, type(self).__name__)
         check_state(x, self.expects, type(self).__name__, state=self.state)
         if not self.nulls:
             return x
@@ -293,10 +377,17 @@ class TNullToNan(FITSTransform):
             if name not in out:
                 continue
             val = out[name]
-            # Promote integer columns to float32 so NaN is representable
-            if val.dtype not in (torch.float32, torch.float64):
-                val = val.to(torch.float32)
-            null_mask = val.eq(tnull)
+            # Sentinel comparison runs in the column's own dtype: promoting
+            # first rounds int32/int64 codes into each other (float32 has a
+            # 24-bit mantissa) and would NaN valid rows that round onto the
+            # sentinel — or miss the sentinel itself.
+            if val.dtype.is_floating_point or val.dtype.is_complex:
+                null_mask = val.eq(float(tnull))
+            else:
+                null_mask = val.eq(int(tnull))
+                # Reader convention: NaN-carrying table columns are float64,
+                # keeping integer codes exact up to 2**53.
+                val = val.double()
             out[name] = torch.where(
                 null_mask,
                 torch.tensor(float("nan"), dtype=val.dtype, device=val.device),
@@ -335,6 +426,11 @@ class FITSHeaderNormalize(FITSTransform):
     returns ``uint16``/``uint32`` directly. It rescales flux, so it accepts
     every state except ``CONTINUUM_NORMALIZED`` (see ``SCALABLE``).
 
+    Inverse limits computed by ``forward`` (``scale_floats=True`` on float
+    headers) are cached **per thread**: one instance is safe to share across
+    ``-J`` worker threads, but ``inverse()`` must run on the thread whose
+    ``forward()`` produced its input.
+
     Parameters
     ----------
     header : dict
@@ -356,6 +452,13 @@ class FITSHeaderNormalize(FITSTransform):
         -64: (torch.float64, False, 64),
     }
 
+    # forward() limits for the scale_floats path: per-(instance, thread)
+    # storage so one instance stays correct under -J worker threads, __call__
+    # never mutates instance state, and instances stay picklable (the cache is
+    # transient and intentionally not pickled — a fresh worker re-runs
+    # forward()).
+    _fit_range = _ThreadedAttr()
+
     def __init__(self, header: dict[str, object], scale_floats: bool = False) -> None:
         self.bitpix = int(header.get("BITPIX", -32))  # type: ignore[call-overload]
         self.bscale = float(header.get("BSCALE", 1.0))  # type: ignore[arg-type]
@@ -366,6 +469,8 @@ class FITSHeaderNormalize(FITSTransform):
         self._is_integer = info is not None and info[1]
         self._is_unsigned = info is not None and not info[1] and self.bitpix > 0
         self._bits = info[2] if info else 32
+        # Header-derived physical range — a per-header constant, immutable
+        # after construction.
         self._in_range: tuple[float, float] | None = None
         # A float header without scale_floats is an identity pass: it does not
         # normalize anything, so it must not relabel the payload.
@@ -391,15 +496,15 @@ class FITSHeaderNormalize(FITSTransform):
     def from_path(
         cls, path: str, hdu: int | str = 0, *, scale_floats: bool = False
     ) -> FITSHeaderNormalize:
-        """Construct from skinny ``read_keys`` (no full header dump)."""
-        import torchfits
+        """Construct from skinny ``read_keys`` (no full header dump).
 
-        keys: dict[str, object] = {}
-        for name, default in (("BITPIX", -32), ("BSCALE", 1.0), ("BZERO", 0.0)):
-            try:
-                keys[name] = torchfits.read_keys(path, [name], hdu=hdu)[name]
-            except RuntimeError:
-                keys[name] = default
+        Absent BSCALE/BZERO cards default to 1.0 / 0.0 (the FITS standard);
+        IO failures and non-numeric keyword values raise instead of silently
+        producing an identity normalization.
+        """
+        keys = _read_header_floats(
+            path, hdu, (("BITPIX", -32.0), ("BSCALE", 1.0), ("BZERO", 0.0))
+        )
         return cls(keys, scale_floats=scale_floats)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
@@ -425,7 +530,7 @@ class FITSHeaderNormalize(FITSTransform):
             finite = bool(torch.isfinite(vmin) and torch.isfinite(vmax))
             if not finite:
                 return view.replace(torch.full_like(flux, float("nan")))
-            self._in_range = (float(vmin.item()), float(vmax.item()))
+            self._fit_range = (float(vmin.item()), float(vmax.item()))
             if vmax == vmin:
                 return view.replace(torch.zeros_like(flux))
             span = vmax - vmin
@@ -437,13 +542,14 @@ class FITSHeaderNormalize(FITSTransform):
     def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         if not (self._is_integer or self._is_unsigned or self.scale_floats):
             return x
-        if self._in_range is None:
+        limits = self._in_range if self._in_range is not None else self._fit_range
+        if limits is None:
             raise RuntimeError(
                 "FITSHeaderNormalize.inverse() requires a prior forward() pass "
-                "when scale_floats=True."
+                "on this thread when scale_floats=True."
             )
-        view = self.view(x)
-        vmin, vmax = self._in_range
+        view = self.view(x, expects=self.inverse_expects())
+        vmin, vmax = limits
         span = vmax - vmin
         out = view.flux * span + vmin
         # Undoing a normalization cannot claim any particular state; drop the
