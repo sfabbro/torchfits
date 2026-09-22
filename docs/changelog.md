@@ -120,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - transforms: Payload state is authoritative; instances are thread-safe
 - data: Download cache never promotes corrupt or partial bodies
 - data: Spectral-axis slicing, staged-cutout isolation, typed dataset contracts
+- io: Typed stream probes and read_table error contracts
+- io: LONGSTRN chain reassembly on open; negative meta caching
+- io: Device validation forms and MPS downcast warnings
+- io: Locked HDU registry unregister and exact-literal knob deprecations
+- io: Checksum verification and quantize contract pins
+- io: Write boundaries stop forging cards and corrupting compressed rewrites
+- io: Typed Range errors and single-walk HTTP cutouts
+- io: Strict batch errors and typed read-pipeline contracts
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
