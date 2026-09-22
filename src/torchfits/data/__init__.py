@@ -268,7 +268,7 @@ def _shard_row_range(
 ) -> tuple[int, int]:
     """Contiguous, near-equal ``[start, stop)`` row range for one worker slot.
 
-    Unlike ``batch_idx % num_workers`` this is even even when ``batch_size``
+    Unlike ``batch_idx % num_workers`` this is even when ``batch_size``
     dwarfs the row count, and it lets each worker skip unrelated byte ranges
     instead of decoding them.
     """
@@ -611,11 +611,14 @@ def make_loader(
     avg_file_size_mb: float = 10.0,
     **loader_kwargs: Any,
 ) -> DataLoader[Any]:
-    """Create a DataLoader with sensible defaults and optional cache warm-up.
+    """Create a DataLoader with sensible defaults and optional download warm-up.
 
     When *optimize_cache* is True and the dataset exposes a ``files``
-    attribute, :func:`torchfits.cache.optimize_for_dataset` is called to
-    pre-warm handle and file caches.
+    attribute, remote files are fetched once into the shared on-disk cache
+    and :func:`torchfits.cache.optimize_for_dataset` tunes the cache policy
+    hints for the dataset size. Cutout datasets are excluded: they stream
+    HTTP byte ranges or stage their own ephemeral copies instead of caching
+    whole files.
 
     Parameters
     ----------
@@ -636,7 +639,8 @@ def make_loader(
     optimize_cache : bool
         Call ``cache.optimize_for_dataset`` before creating the loader.
     avg_file_size_mb : float
-        Average file size in MB used for cache sizing.
+        Average file size in MB, used to estimate whether the dataset fits
+        the disk cache.
     **loader_kwargs :
         Passed through to :class:`torch.utils.data.DataLoader`.
 
@@ -660,8 +664,12 @@ def make_loader(
             from torchfits.cache import optimize_for_dataset
 
             cache_dir = getattr(dataset, "cache_dir", None)
-            # FitsCutoutDataset prefers HTTP Range cutouts — skip full prefetch.
-            if not isinstance(dataset, FitsCutoutDataset):
+            # Cutout datasets stream HTTP byte ranges or stage their own
+            # ephemeral copies; caching whole files here would download each
+            # remote twice (the cache copy would never be read).
+            if not isinstance(
+                dataset, (FitsCutoutDataset, FitsStagedCutoutIterableDataset)
+            ):
                 remote = [p for p in file_list if is_remote_url(str(p))]
                 if remote:
                     prefetch_urls(remote, cache_dir=cache_dir)

@@ -478,6 +478,39 @@ class TestMakeLoader:
         loader = make_loader(ds, batch_size=4)
         assert isinstance(loader, DataLoader)
 
+    def test_remote_files_download_once(self, tmp_path, monkeypatch):
+        """Prefetch and resolve share one fetch per remote URL (no double GET)."""
+        from unittest import mock
+
+        from torch.utils.data import Dataset as _MapDataset
+
+        monkeypatch.setenv("TORCHFITS_REMOTE_CACHE", str(tmp_path / "remote_cache"))
+        url = "https://archive.example.org/tiles/map-tile.fits"
+        calls: list[str] = []
+
+        def _mock_download(u, dest):
+            calls.append(u)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"staged")
+            return dest
+
+        class _StubDataset(_MapDataset):
+            files = [url]
+
+            def __len__(self):
+                return 2
+
+            def __getitem__(self, idx):
+                return torch.zeros(3), torch.tensor(0)
+
+        with mock.patch(
+            "torchfits.data.remote._download", side_effect=_mock_download
+        ):
+            loader = make_loader(_StubDataset(), batch_size=1, shuffle=False)
+            batches = list(loader)
+        assert len(batches) == 2
+        assert calls == [url]
+
     def test_drop_last(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
@@ -203,3 +204,134 @@ def test_staged_cutout_multi_hdu_and_companions(tmp_path):
     # Color ratio 20.0 / 10.0 == 2.0 must be preserved after scaling
     ratio = payload["flux"][1] / payload["flux"][0]
     assert torch.allclose(ratio, torch.full_like(ratio, 2.0))
+
+
+def test_make_loader_staged_remote_downloads_once(tmp_path, monkeypatch):
+    """make_loader must not fetch staged remotes a second time.
+
+    ``FitsStagedCutoutIterableDataset`` stages its own copies under
+    ``staging_dir`` and never reads the shared remote cache, so make_loader's
+    full-file prefetch would download each remote twice (once into the remote
+    cache, once into staging) and leave a dead copy behind.
+    """
+    import shutil
+
+    from torchfits.data import make_loader
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("TORCHFITS_REMOTE_CACHE", str(tmp_path / "remote_cache"))
+
+    real_mosaic = tmp_path / "real_mosaic.fits"
+    fits.PrimaryHDU(np.zeros((50, 50), dtype=np.float32)).writeto(
+        str(real_mosaic), overwrite=True
+    )
+
+    calls: list[tuple[str, Path]] = []
+
+    def _mock_download(url, dest):
+        calls.append((url, Path(dest)))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".partial")
+        shutil.copy(str(real_mosaic), str(tmp))
+        tmp.replace(dest)
+        return dest
+
+    with mock.patch("torchfits.data.remote._download", side_effect=_mock_download):
+        ds = FitsStagedCutoutIterableDataset(
+            ["https://archive.example.org/mosaics/only-tile.fits"],
+            cutouts_per_file=2,
+            cutout_size=16,
+            staging_dir=scratch,
+            cleanup=True,
+        )
+        loader = make_loader(ds, batch_size=2, num_workers=0)
+        n = sum(batch.shape[0] for batch in loader)
+
+    assert n == 2
+    # Deterministic count proof: exactly one download per remote URL, and it
+    # lands in the dataset's own staging directory.
+    assert len(calls) == 1, calls
+    assert scratch in calls[0][1].parents
+    assert not (tmp_path / "remote_cache").exists()
+
+
+def test_concurrent_staged_iterators_do_not_yank_each_others_files(
+    tmp_path, monkeypatch
+):
+    """Two iterators sharing a staging dir must not delete files out from
+    under each other's resolve->open window (r3b-08 regression).
+
+    Iterator A resolves its staged copy (existence-checked path), then a
+    concurrent iterator B runs the same file to completion and ``cleanup=True``
+    deletes it before A's ``open_subset_reader`` opens it -> A dies mid-epoch.
+    The window is pinned deterministically by wedging A's first open until B
+    has finished. Fixed by per-iterator private staging dirs
+    (``FitsStagedCutoutIterableDataset._stage_root``).
+    """
+    import shutil
+    import threading
+
+    import torchfits.io
+
+    real_mosaic = tmp_path / "real_mosaic.fits"
+    fits.PrimaryHDU(np.zeros((50, 50), dtype=np.float32)).writeto(
+        str(real_mosaic), overwrite=True
+    )
+
+    def _mock_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".partial")
+        shutil.copy(str(real_mosaic), str(tmp))
+        tmp.replace(dest)
+        return dest
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    url = "https://archive.example.org/mosaics/shared-tile.fits"
+    mk = dict(
+        cutouts_per_file=2,
+        cutout_size=16,
+        staging_dir=scratch,
+        cleanup=True,
+    )
+    ds_a = FitsStagedCutoutIterableDataset([url], **mk)
+    ds_b = FitsStagedCutoutIterableDataset([url], **mk)
+
+    real_open = torchfits.io.open_subset_reader
+    a_opening = threading.Event()
+    b_finished = threading.Event()
+    state = {"wedged": False}
+
+    def wedged_open(path, hdu=0, device="cpu"):
+        if not state["wedged"]:
+            state["wedged"] = True
+            a_opening.set()
+            assert b_finished.wait(timeout=10)
+        return real_open(path, hdu=hdu, device=device)
+
+    monkeypatch.setattr(torchfits.io, "open_subset_reader", wedged_open)
+
+    errors: list[BaseException] = []
+    got_a: list = []
+
+    def run_a():
+        try:
+            got_a.extend(list(ds_a))
+        except BaseException as exc:  # noqa: BLE001 - recorded for assertion
+            errors.append(exc)
+
+    with mock.patch("torchfits.data.remote._download", side_effect=_mock_download):
+        thread_a = threading.Thread(target=run_a)
+        thread_a.start()
+        assert a_opening.wait(timeout=10)
+        # B stages the same shared file, reads it, and cleanup=True deletes it
+        # while A sits in its resolve->open window.
+        got_b = list(ds_b)
+        b_finished.set()
+        thread_a.join(timeout=30)
+
+    assert not thread_a.is_alive()
+    assert len(got_b) == 2
+    assert errors == [], f"concurrent cleanup yanked A's staged file: {errors}"
+    assert len(got_a) == 2
