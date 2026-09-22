@@ -106,6 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - boundary: Generate the fixtures instead of relying on an ignored file
 - native-stub: Let the stubgen child find torch's shared libraries
 - native-stub: Make the committed stub invariant across the CI matrix
+- http: Pin Python fetches to guard-time DNS; guard the ftp copy path
+- where: Restore three-valued logic and quoted-literal parsing
+- schema: Resolve case-variant FITS keywords in table schema derivation
+- interop: Faithful to_astropy for dict and PathLike inputs
+- cache: Remove deprecated no-op self-calls and phantom cache config
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -185,6 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - boundary: State the torch boundary, and correct the Arrow claim
 ### Performance
 - boundary: Import torchfits.hdu and torchfits.io without torch
+- Decode string windows without copying the full backing storage
 
 ## [1.1.3] — 2026-09-09
 
