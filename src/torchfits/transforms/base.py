@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+import weakref
 from dataclasses import dataclass
 from typing import Any, Iterator, Sequence
 
@@ -20,6 +21,12 @@ from .state import (
 )
 
 _UNSET: Any = object()
+
+# Instances already warned about a non-propagated companion ``ivar``.  The
+# "warned once" bookkeeping lives here — never on the instance — so
+# ``__call__`` keeps ``__dict__`` byte-stable and one transform can be shared
+# across ``-J`` worker threads.  Weak entries drop out with their instance.
+_IVAR_WARNED: "weakref.WeakSet[Any]" = weakref.WeakSet()
 
 
 @dataclass
@@ -55,7 +62,6 @@ class PayloadView:
     ) -> Any:
         """Rebuild the original container with new flux (and optionally ivar)."""
         new_ivar = self.ivar if ivar is _UNSET else ivar
-        new_state = self.state if state is _UNSET else state
         if self.is_plain:
             return flux
         if isinstance(self.original, dict):
@@ -67,23 +73,23 @@ class PayloadView:
                 else:
                     out["ivar"] = new_ivar
             if state is not _UNSET:
-                if new_state is None:
+                if state is None:
                     out.pop("state", None)
                 else:
-                    out["state"] = new_state
+                    out["state"] = state
             return out
-        # Payload (or dataclass-like) container.
+        # Payload container.  A state the input never declared must not be
+        # fabricated here (dict payloads keep their exact shape): only an
+        # explicitly requested state change replaces it.
         from .state import Payload
 
-        if isinstance(self.original, Payload):
-            return Payload(
-                flux=flux,
-                ivar=new_ivar,
-                mask=self.mask,
-                state=new_state,
-                meta=dict(self.meta),
-            )
-        return flux
+        return Payload(
+            flux=flux,
+            ivar=new_ivar,
+            mask=self.mask,
+            state=state if state is not _UNSET else self.original.state,
+            meta=dict(self.meta),
+        )
 
 
 class FITSTransform:
@@ -240,9 +246,9 @@ class FITSTransform:
 
     def _warn_ivar_not_propagated(self) -> None:
         """Warn once per instance that ``ivar`` is passed through unchanged."""
-        if getattr(self, "_ivar_warned", False):
+        if self in _IVAR_WARNED:
             return
-        object.__setattr__(self, "_ivar_warned", True)
+        _IVAR_WARNED.add(self)
         warnings.warn(
             f"{type(self).__name__} is nonlinear: companion 'ivar' is passed "
             "through unchanged and no longer strictly describes the transformed "
@@ -307,7 +313,11 @@ class AsModule(torch.nn.Module):
         self.transform = transform
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        return self.transform.forward(x, mask=mask)
+        # Delegate to __call__ (not the raw forward) so the wrapped
+        # transform's state stamping still happens inside nn.Sequential
+        # pipelines — otherwise a payload keeps a stale state label and the
+        # double-scaling guard never fires past this adapter.
+        return self.transform(x, mask=mask)
 
 
 def as_module(transform: FITSTransform) -> AsModule:

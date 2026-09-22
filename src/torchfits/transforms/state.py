@@ -165,7 +165,9 @@ def calibration_state(
 
     The default reader applies BSCALE/BZERO (and TSCAL/TZERO for tables), so
     its output is :attr:`DataState.PHYSICAL`; ``raw_scale=True`` skips that and
-    returns :attr:`DataState.STORED`.
+    returns :attr:`DataState.STORED`. The reader's state does not depend on the
+    header's keyword values (missing BSCALE/BZERO is the identity scale, still
+    *physical*), so *header* is accepted for call-site symmetry only.
     """
     return DataState.STORED if raw_scale else DataState.PHYSICAL
 
@@ -180,10 +182,23 @@ def check_state(
     """Validate a payload's declared state against *expects*.
 
     A bare tensor carries no state and is never rejected (the caller may know
-    something the container does not). A *declared* state that is not accepted
-    raises :class:`DataStateError` naming the likely cause.
+    something the container does not). *state* is the caller's declaration for
+    inputs that do not carry one; when the payload *does* declare a state, the
+    two must agree and the payload's own state is authoritative. A stale
+    ``state=`` prior must never mask an already-calibrated payload and let it
+    be scaled a second time. A declared state that is not accepted raises
+    :class:`DataStateError` naming the likely cause.
     """
-    actual = state if state is not None else get_state(x)
+    declared = get_state(x)
+    if state is not None and declared is not None and state != declared:
+        raise DataStateError(
+            f"{transform_name} received a payload declaring state "
+            f"{declared.value!r} together with an explicit state {state.value!r}; "
+            "the payload's own state is authoritative and refusing to process "
+            "data that may already be calibrated. Drop one of the two "
+            "declarations."
+        )
+    actual = declared if declared is not None else state
     if actual is None or expects is None or actual in expects:
         return actual
     accepted = ", ".join(sorted(s.value for s in expects))
@@ -278,11 +293,19 @@ def get_meta(x: Any) -> dict[str, Any]:
 
 
 def get_state(x: Any) -> DataState | None:
-    """Return the payload's declared processing state, if any."""
+    """Return the payload's declared processing state, if any.
+
+    A ``"state"`` entry holding a tensor is table *data* (a column literally
+    named ``state``), never a declaration — column-dict transforms must not
+    crash on such tables.
+    """
     if isinstance(x, Payload):
         return x.state
     if isinstance(x, dict):
-        return as_state(x.get("state"))
+        value = x.get("state")
+        if torch.is_tensor(value):
+            return None
+        return as_state(value)
     return None
 
 
@@ -298,10 +321,16 @@ def set_flux(x: Any, flux: torch.Tensor) -> Any:
 
 
 def set_state(x: Any, state: DataState | None) -> Any:
-    """Return *x* with its declared state replaced (no-op for bare tensors)."""
+    """Return *x* with its declared state replaced (no-op for bare tensors).
+
+    A tensor-valued ``"state"`` entry is a data column, not a declaration, and
+    is left untouched.
+    """
     if isinstance(x, Payload):
         return _dc_replace(x, state=state)
     if isinstance(x, dict):
+        if torch.is_tensor(x.get("state")):
+            return x
         out = dict(x)
         if state is None:
             out.pop("state", None)

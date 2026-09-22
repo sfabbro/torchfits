@@ -10,6 +10,7 @@ iterative IRAF zscale).
 
 from __future__ import annotations
 
+import threading
 import warnings
 
 import numpy as np
@@ -18,6 +19,7 @@ import torch
 
 from transforms_reference import iraf_zscale_naive, weighted_quantile_naive
 
+import torchfits
 from torchfits.transforms import (
     AffineTransform,
     AsymmetricSigmaClip,
@@ -43,6 +45,7 @@ from torchfits.transforms import (
     SqrtStretch,
     apply_mask,
     ArcsinhStretch,
+    as_module,
     calibration_state,
     combine_masks,
     estimate_background,
@@ -1044,3 +1047,366 @@ class TestMeshNanHygiene:
         image[0, 0, 0] = float("nan")
         out = MeshBackgroundSubtract(mesh=(4, 4))(image)
         assert out.isnan().sum().item() == 1
+
+
+# ---------------------------------------------------------------------------
+# R2 slice A: state-machine matrix, container symmetry, fits_meta conventions
+# ---------------------------------------------------------------------------
+
+
+def _state_of(container) -> DataState | None:
+    return container["state"] if "state" in container else None
+
+
+class TestStateTransitionMatrix:
+    """Every legal and illegal (transform, declared-state) transition."""
+
+    _FACTORIES = {
+        "header_scale": lambda: FITSHeaderScale(bscale=2.0),
+        "scale_columns": lambda: FITSScaleColumns({"A": (2.0, 0.0)}),
+        "tnull": lambda: TNullToNan({"A": -999.0}),
+        "header_normalize": lambda: FITSHeaderNormalize({"BITPIX": 8}),
+    }
+    _COLUMN_KINDS = {"scale_columns", "tnull"}
+
+    # (kind, declared state, expectation, resulting declared state)
+    _FORWARD = [
+        ("header_scale", "stored", "ok", "physical"),
+        ("header_scale", "physical", "raise", None),
+        ("header_scale", "normalized", "raise", None),
+        ("header_scale", "continuum_normalized", "raise", None),
+        ("header_scale", None, "ok", None),
+        ("scale_columns", "stored", "ok", "physical"),
+        ("scale_columns", "physical", "raise", None),
+        ("scale_columns", "continuum_normalized", "raise", None),
+        ("scale_columns", None, "ok", None),
+        ("tnull", "stored", "ok", "stored"),
+        ("tnull", "physical", "raise", None),
+        ("tnull", "continuum_normalized", "raise", None),
+        ("tnull", None, "ok", None),
+        ("header_normalize", "stored", "ok", "normalized"),
+        ("header_normalize", "physical", "ok", "normalized"),
+        ("header_normalize", "normalized", "ok", "normalized"),
+        ("header_normalize", "continuum_normalized", "raise", None),
+        ("header_normalize", None, "ok", None),
+    ]
+
+    _INVERSE = [
+        ("header_scale", "physical", "ok", "stored"),
+        ("header_scale", "stored", "raise", None),
+        ("header_scale", "normalized", "raise", None),
+        ("header_scale", None, "ok", None),
+        ("scale_columns", "physical", "ok", "stored"),
+        ("scale_columns", "stored", "raise", None),
+        ("scale_columns", None, "ok", None),
+        ("header_normalize", "normalized", "ok", None),
+        ("header_normalize", "physical", "raise", None),
+        ("header_normalize", "stored", "raise", None),
+        ("header_normalize", None, "ok", None),
+    ]
+
+    @classmethod
+    def _payload(cls, kind: str, state: str | None) -> dict:
+        if kind in cls._COLUMN_KINDS:
+            payload: dict = {"A": torch.ones(4)}
+        else:
+            payload = {"flux": torch.ones(2, 4, 4)}
+        if state is not None:
+            payload["state"] = state
+        return payload
+
+    @pytest.mark.parametrize(
+        "kind,state,expect,out_state",
+        _FORWARD,
+        ids=[f"{k}-{s}" for k, s, _, _ in _FORWARD],
+    )
+    def test_forward_transitions(self, kind, state, expect, out_state) -> None:
+        transform = self._FACTORIES[kind]()
+        payload = self._payload(kind, state)
+        if expect == "raise":
+            with pytest.raises(DataStateError):
+                transform(payload)
+        else:
+            out = transform(payload)
+            expected = DataState(out_state) if out_state is not None else None
+            assert _state_of(out) == expected
+
+    @pytest.mark.parametrize(
+        "kind,state,expect,out_state",
+        _INVERSE,
+        ids=[f"{k}-{s}" for k, s, _, _ in _INVERSE],
+    )
+    def test_inverse_transitions(self, kind, state, expect, out_state) -> None:
+        transform = self._FACTORIES[kind]()
+        payload = self._payload(kind, state)
+        if expect == "raise":
+            with pytest.raises(DataStateError):
+                transform.inverse(payload)
+        else:
+            out = transform.inverse(payload)
+            expected = DataState(out_state) if out_state is not None else None
+            assert _state_of(out) == expected
+
+    def test_calibration_state_is_header_independent(self) -> None:
+        # The reader applies (or skips) scaling based on raw_scale alone, so
+        # the declared state must not vary with the header's keyword values.
+        header = {"BITPIX": 16, "BSCALE": 0.5, "BZERO": 100.0}
+        assert calibration_state(header) is DataState.PHYSICAL
+        assert calibration_state(header, raw_scale=True) is DataState.STORED
+
+
+class TestStatePrecedence:
+    def test_explicit_state_cannot_mask_conflicting_payload_state(self) -> None:
+        # Double-scaling must stay impossible even with a stale state= prior:
+        # the payload says "physical", so the scaler must refuse it.
+        scaler = FITSHeaderScale(bscale=2.0, state="stored")
+        with pytest.raises(DataStateError):
+            scaler({"flux": torch.ones(4), "state": "physical"})
+
+    def test_explicit_state_agreeing_with_payload_state_is_accepted(self) -> None:
+        scaler = FITSHeaderScale(bscale=2.0, state="stored")
+        out = scaler({"flux": torch.ones(4), "state": "stored"})
+        assert out["state"] == DataState.PHYSICAL
+
+    def test_inverse_round_trips_with_explicit_state_kwarg(self) -> None:
+        # state= describes the forward() input; it must not reject the
+        # transform's own inverse() input (which carries the produced state).
+        scaler = FITSHeaderScale(bscale=2.0, state="stored")
+        raw = torch.tensor([1.0, 2.0, 3.0])
+        back = scaler.inverse(scaler(raw))
+        assert torch.allclose(back, raw, atol=1e-6)
+
+    def test_column_transforms_round_trip_with_explicit_state_kwarg(self) -> None:
+        transform = FITSScaleColumns({"A": (2.0, 0.0)}, state="stored")
+        raw = {"A": torch.tensor([1.0, 2.0])}
+        back = transform.inverse(transform(raw))
+        assert torch.allclose(back["A"], raw["A"].double(), atol=1e-6)
+
+
+class TestContainerInterchange:
+    def test_never_declared_typed_payload_stays_stateless(self) -> None:
+        out = FITSHeaderScale(bscale=2.0, state="stored")(Payload(flux=torch.ones(4)))
+        assert isinstance(out, Payload) and out.state is None
+
+    def test_never_declared_dict_payload_stays_stateless(self) -> None:
+        out = FITSHeaderScale(bscale=2.0, state="stored")({"flux": torch.ones(4)})
+        assert "state" not in out
+
+    def test_declared_state_advances_identically_across_containers(self) -> None:
+        dict_out = FITSHeaderScale(bscale=2.0)(
+            {"flux": torch.ones(4), "state": "stored"}
+        )
+        typed_out = FITSHeaderScale(bscale=2.0)(
+            Payload(flux=torch.ones(4), state=DataState.STORED)
+        )
+        assert _state_of(dict_out) == DataState.PHYSICAL
+        assert typed_out.state is DataState.PHYSICAL
+
+    def test_tensor_valued_state_key_is_data_not_a_declaration(self) -> None:
+        # A table with a column literally named "state" must survive the
+        # column transforms: tensors are data, never state declarations.
+        state_col = torch.arange(3)
+        columns = {"A": torch.ones(3), "state": state_col}
+        transform = FITSScaleColumns({"A": (2.0, 0.0)})
+        out = transform(columns)
+        assert torch.equal(out["state"], state_col)
+        back = transform.inverse(out)
+        assert torch.equal(back["state"], state_col)
+        assert torch.allclose(back["A"], torch.ones(3, dtype=torch.float64))
+
+    def test_tnull_accepts_state_named_column(self) -> None:
+        state_col = torch.tensor([-999.0, 1.0, 2.0])
+        columns = {"A": torch.ones(3), "state": state_col}
+        out = TNullToNan({"A": -999.0})(columns)
+        assert torch.equal(out["state"], state_col)
+
+
+class TestInstanceThreadSafety:
+    """``__call__`` must not mutate instance state; one instance must stay
+    safe when shared across ``-J`` worker threads (round invariant)."""
+
+    @staticmethod
+    def _snapshot(transform) -> dict:
+        return dict(vars(transform))
+
+    @staticmethod
+    def _assert_unchanged(transform, before: dict) -> None:
+        after = vars(transform)
+        assert set(after) == set(before), (set(after) - set(before))
+        for key, value in before.items():
+            assert after[key] is value, key
+
+    def test_call_leaves_instance_dict_unchanged(self) -> None:
+        cases = [
+            (
+                ArcsinhStretch(a=0.1),
+                {"flux": torch.ones(2, 4, 4), "ivar": torch.ones(2, 4, 4)},
+            ),
+            (FITSHeaderScale(bscale=2.0), {"flux": torch.ones(4), "state": "stored"}),
+            (
+                FITSScaleColumns({"A": (2.0, 0.0)}),
+                {"A": torch.ones(3), "state": "stored"},
+            ),
+            (TNullToNan({"A": -999.0}), {"A": torch.ones(3), "state": "stored"}),
+            (
+                FITSHeaderNormalize({"BITPIX": -32}, scale_floats=True),
+                {"flux": torch.ones(2, 4, 4)},
+            ),
+            (
+                FITSHeaderNormalize({"BITPIX": 8}),
+                {"flux": torch.ones(2, 4, 4)},
+            ),
+            (
+                Compose([FITSHeaderScale(bscale=2.0), ArcsinhStretch(a=0.1)]),
+                {
+                    "flux": torch.ones(2, 4, 4),
+                    "ivar": torch.ones(2, 4, 4),
+                    "state": "stored",
+                },
+            ),
+        ]
+        for transform, payload in cases:
+            before = self._snapshot(transform)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                transform(payload)
+                transform(payload)
+            self._assert_unchanged(transform, before)
+
+    def test_two_threads_one_instance_round_trips_independently(self) -> None:
+        # Both threads forward() different data before either inverts; with a
+        # shared instance cache one inverse silently uses the other thread's
+        # limits.  Per-thread caches keep the round-trips exact.
+        transform = FITSHeaderNormalize({"BITPIX": -32}, scale_floats=True)
+        inputs = {
+            "a": torch.linspace(0.0, 10.0, 64).reshape(1, 8, 8),
+            "b": torch.linspace(100.0, 500.0, 64).reshape(1, 8, 8),
+        }
+        barrier = threading.Barrier(2)
+        results: dict[str, dict] = {}
+        errors: list[BaseException] = []
+        before = self._snapshot(transform)
+
+        def work(name: str) -> None:
+            try:
+                shared = transform(inputs["a"])
+                x = inputs[name]
+                out = transform(x)
+                try:
+                    barrier.wait(timeout=30)
+                except threading.BrokenBarrierError:
+                    return
+                results[name] = {"x": x, "back": transform.inverse(out), "shared": shared}
+            except BaseException as exc:  # noqa: BLE001 — reported below
+                errors.append(exc)
+                barrier.abort()
+
+        threads = [threading.Thread(target=work, args=(name,)) for name in inputs]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not errors, errors
+        assert set(results) == set(inputs)
+        self._assert_unchanged(transform, before)
+        for name, item in results.items():
+            assert torch.allclose(item["back"], item["x"], atol=1e-5), name
+        assert torch.equal(results["a"]["shared"], results["b"]["shared"])
+
+
+class TestFitsMetaScaleMath:
+    def test_scale_columns_matches_reader_float64(self, tmp_path) -> None:
+        # table.read_torch computes TSCAL/TZERO in float64; hand-built column
+        # dicts must replay that bit-for-bit or the two disagree above 2**24.
+        fits = pytest.importorskip("astropy.io.fits")
+        path = tmp_path / "scaled.fits"
+        raw_np = np.array([0, 100, 2**24 + 1, 2**30], dtype=np.int32)
+        column = fits.Column(name="A", format="J", array=raw_np)
+        table_hdu = fits.BinTableHDU.from_columns([column])
+        table_hdu.header["TSCAL1"] = 0.25
+        table_hdu.header["TZERO1"] = 1e9
+        fits.HDUList([fits.PrimaryHDU(), table_hdu]).writeto(path)
+
+        physical = torchfits.table.read_torch(str(path), hdu=1)["A"]
+        scaled = FITSScaleColumns({"A": (0.25, 1e9)})(
+            {"A": torch.from_numpy(raw_np.copy())}
+        )["A"]
+        assert scaled.dtype == torch.float64
+        assert torch.equal(scaled, physical)
+
+    def test_scale_columns_inverse_round_trips_exactly(self) -> None:
+        raw = torch.tensor([0, 100, 2**24 + 1, 2**30], dtype=torch.int32)
+        transform = FITSScaleColumns({"A": (0.25, 1e9)})
+        back = transform.inverse(transform({"A": raw}))["A"]
+        assert torch.equal(back, raw.double())
+
+    def test_tnull_sentinel_comparison_is_exact(self) -> None:
+        # float32 promotion before the compare used to NaN every int32 value
+        # within one ULP of the sentinel and mangle valid values above 2**24.
+        column = torch.tensor([-2**31, -2**31 + 1, 5], dtype=torch.int32)
+        out = TNullToNan({"A": -2**31})({"A": column})["A"]
+        assert out.dtype == torch.float64  # the reader's NaN-column convention
+        assert out[0].isnan()
+        assert out[1].item() == float(-2**31 + 1)
+        assert out[2].item() == 5.0
+
+    def test_tnull_collision_at_2_24(self) -> None:
+        column = torch.tensor([2**24, 2**24 + 1], dtype=torch.int32)
+        out = TNullToNan({"A": float(2**24)})({"A": column})["A"]
+        assert out[0].isnan()
+        assert out[1].item() == float(2**24 + 1)
+
+    def test_tnull_matches_reader_nan_columns(self, tmp_path) -> None:
+        fits = pytest.importorskip("astropy.io.fits")
+        path = tmp_path / "quantized.fits"
+        values = np.array([-2**31, 16777217, 3, 4], dtype=np.int32)
+        column = fits.Column(name="C", format="J", array=values)
+        table_hdu = fits.BinTableHDU.from_columns([column])
+        table_hdu.header["TNULL1"] = -2**31
+        table_hdu.header["TSCAL1"] = 1.0
+        table_hdu.header["TZERO1"] = 0.0
+        fits.HDUList([fits.PrimaryHDU(), table_hdu]).writeto(path)
+
+        physical = torchfits.table.read_torch(str(path), hdu=1)["C"]
+        out = TNullToNan({"C": -2**31})({"C": torch.from_numpy(values.copy())})["C"]
+        assert out.dtype == physical.dtype
+        torch.testing.assert_close(out, physical, rtol=0, atol=0, equal_nan=True)
+
+
+class TestFitsMetaErrorContracts:
+    def test_from_path_missing_file_raises(self, tmp_path) -> None:
+        # An unreadable file must never be papered over with identity scaling.
+        missing = str(tmp_path / "missing.fits")
+        with pytest.raises(RuntimeError):
+            FITSHeaderScale.from_path(missing)
+        with pytest.raises(RuntimeError):
+            FITSHeaderNormalize.from_path(missing)
+
+    def test_from_path_missing_scale_keys_default(self, tmp_path) -> None:
+        fits = pytest.importorskip("astropy.io.fits")
+        path = tmp_path / "unscaled.fits"
+        fits.PrimaryHDU(np.zeros((2, 2), dtype=np.float32)).writeto(path)
+        scaler = FITSHeaderScale.from_path(str(path))
+        assert (scaler.bscale, scaler.bzero) == (1.0, 0.0)
+        norm = FITSHeaderNormalize.from_path(str(path))
+        assert (norm.bitpix, norm.bscale, norm.bzero) == (-32, 1.0, 0.0)
+
+    def test_from_path_nonnumeric_scale_raises(self, tmp_path) -> None:
+        fits = pytest.importorskip("astropy.io.fits")
+        path = tmp_path / "garbage.fits"
+        image = fits.PrimaryHDU(np.zeros((2, 2), dtype=np.int16))
+        image.header["BSCALE"] = "ABC"
+        image.writeto(path)
+        with pytest.raises(ValueError, match="BSCALE"):
+            FITSHeaderScale.from_path(str(path))
+
+
+class TestAsModuleStamping:
+    def test_as_module_stamps_produced_state(self) -> None:
+        # nn.Sequential pipelines must keep the state machine intact: without
+        # stamping, a wrapped scaler leaves the payload labelled "stored" and
+        # the next header-scaling stage would scale it a second time.
+        wrapped = as_module(FITSHeaderScale(bscale=2.0))
+        out = wrapped({"flux": torch.ones(4), "state": "stored"})
+        assert out["state"] == DataState.PHYSICAL
