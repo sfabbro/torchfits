@@ -170,3 +170,76 @@ def test_probe_returns_empty_on_missing_file():
         )
         is False
     )
+
+
+def _write_scaled_table(tmp_path):
+    """J column with TSCAL/TZERO -> physical values cannot come from raw mmap."""
+    import numpy as np
+    from astropy.io import fits
+
+    path = str(tmp_path / "scaled.fits")
+    raw = np.array([10, 20, 30, 40], dtype=np.int32)
+    table = fits.BinTableHDU.from_columns(
+        [fits.Column(name="PHYS", format="J", array=raw)]
+    )
+    fits.HDUList([fits.PrimaryHDU(), table]).writeto(path, overwrite=True)
+    with fits.open(path, mode="update") as hdul:
+        hdul[1].header["TSCAL1"] = 0.5
+        hdul[1].header["TZERO1"] = 100.0
+    return path, raw.astype(np.float64) * 0.5 + 100.0
+
+
+def test_stream_table_scaled_probe_failure_routes_to_buffered(tmp_path, monkeypatch):
+    """A schema-probe failure must fall back to the buffered reader (r4c-07).
+
+    Falling through to the raw mmap path would either raise mid-stream or hand
+    back unscaled raw integers for a TSCAL/TZERO column.
+    """
+    import numpy as np
+
+    import torchfits
+    from torchfits._io_engine.table_streaming import stream_table
+
+    path, expected = _write_scaled_table(tmp_path)
+
+    def bad_schema(*_a, **_k):
+        raise ValueError("hostile header")
+
+    with monkeypatch.context() as m:
+        m.setattr(torchfits, "read_header", bad_schema)
+        chunks = list(
+            stream_table(
+                lambda *_: None,
+                path,
+                hdu=1,
+                columns=["PHYS"],
+                mmap=True,
+                total_rows=4,
+            )
+        )
+    got = np.concatenate([np.asarray(c["PHYS"]).reshape(-1) for c in chunks])
+    np.testing.assert_allclose(got, expected)
+
+
+def test_stream_table_probe_io_error_propagates(tmp_path, monkeypatch):
+    """IO errors during the route probes must re-raise, not fall through (r4c-07)."""
+    import numpy as np
+    import pytest
+    from astropy.io import fits
+
+    import torchfits
+    from torchfits._io_engine.table_streaming import stream_table
+
+    path = str(tmp_path / "plain.fits")
+    table = fits.BinTableHDU.from_columns(
+        [fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32))]
+    )
+    fits.HDUList([fits.PrimaryHDU(), table]).writeto(path, overwrite=True)
+
+    def io_bomb(*_a, **_k):
+        raise OSError("storage gone")
+
+    with monkeypatch.context() as m:
+        m.setattr(torchfits, "read_header", io_bomb)
+        with pytest.raises(OSError, match="storage gone"):
+            list(stream_table(lambda *_: None, path, hdu=1, mmap=True, total_rows=4))

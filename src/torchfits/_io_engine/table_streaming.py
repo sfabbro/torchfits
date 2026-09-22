@@ -69,14 +69,18 @@ def stream_table(
     # read through the mmap row path; route them through the CFITSIO reader.
     # The XTENSION probe must run even when the caller supplied total_rows —
     # otherwise ASCII tables would be routed into the binary mmap path.
+    probe_failed = False
     ascii_table = False
     if header is None:
         try:
             import torchfits as _tf
 
             ascii_table = _tf.read_hdu_type(file_path, hdu) == "ASCII_TABLE"
-        except Exception:
-            ascii_table = False
+        except (KeyError, TypeError, ValueError):
+            # Schema/decode failure probing XTENSION: never guess — route to
+            # the buffered reader below (decode errors only; IO errors and
+            # other failures propagate).
+            probe_failed = True
     else:
         ascii_table = str(header.get("XTENSION", "")).strip().upper() == "TABLE"
 
@@ -84,7 +88,7 @@ def stream_table(
     # decoded from raw mmap bytes; route to the buffered CFITSIO reader, which
     # applies scaling in-memory (same fallback as the non-streaming read).
     scaled_columns = False
-    if mmap and not ascii_table:
+    if mmap and not ascii_table and not probe_failed:
         try:
             from ..fits_schema import iter_table_columns
 
@@ -105,8 +109,10 @@ def stream_table(
                 if (tscal != 1.0 or tzero != 0.0) and not is_unsigned:
                     scaled_columns = True
                     break
-        except Exception:
-            scaled_columns = False
+        except (KeyError, TypeError, ValueError):
+            # Schema/decode failure reading TSCAL/TZERO: raw mmap bytes cannot
+            # be trusted to carry physical values, so force the buffered path.
+            probe_failed = True
 
     row = start_row
     emitted = 0
@@ -114,6 +120,7 @@ def stream_table(
         mmap
         and not ascii_table
         and not scaled_columns
+        and not probe_failed
         and hasattr(cpp, "read_fits_table_rows")
     ):
         while row <= total_rows:
@@ -160,13 +167,16 @@ def stream_table(
             reader = None
             file_handle.close()
     else:
+        # The raw mmap route is closed here (ASCII table, scaled columns, or a
+        # failed route probe) or the handle reader is unavailable: always read
+        # buffered so scaling/decoding is applied.
         while row <= total_rows:
             remaining = total_rows - row + 1
             size = min(chunk_rows, remaining)
             yield cast(
                 Dict[str, Any],
                 _squeeze_scalar_columns(
-                    cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, mmap)
+                    cpp.read_fits_table_rows(file_path, hdu, col_list, row, size, False)
                 ),
             )
             row += size

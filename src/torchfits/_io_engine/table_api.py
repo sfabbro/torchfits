@@ -13,8 +13,10 @@ from .device import to_device
 def _resolve_mmap(mmap: Union[bool, str]) -> bool:
     if isinstance(mmap, bool):
         return mmap
-    # "auto" → prefer mmap for tables (CFITSIO column mmap path).
-    return True
+    if isinstance(mmap, str) and mmap.strip().lower() == "auto":
+        # "auto" → prefer mmap for tables (CFITSIO column mmap path).
+        return True
+    raise ValueError("mmap must be bool or 'auto'")
 
 
 def _move_table_dict(
@@ -162,8 +164,13 @@ def _thin_read_table_filtered(
         target_cols = read_colnames(path, hdu=hdu)
     try:
         data = cpp.read_fits_table_filtered(path, int(hdu), target_cols, list(filters))
-    except Exception:
-        return None
+    except (RuntimeError, ValueError, TypeError) as exc:
+        # Binding-level failure (bad predicate form, read error surfaced as
+        # RuntimeError): keep the established error contract but preserve the
+        # cause instead of degrading it to a bare "fallback unavailable" None.
+        raise RuntimeError(
+            f"Failed to apply where={where!r} on table HDU {hdu!r}"
+        ) from exc
     result: dict[str, Any] = _squeeze_scalar_columns(
         _move_table_dict(dict(data), device)
     )
@@ -380,9 +387,17 @@ def read_table(
             return data
         except ValueError:
             raise
-        except Exception:
+        except (RuntimeError, OSError, TypeError, MemoryError):
+            # Expected read/decode failures fall back to the unified reader
+            # (documented above); anything else is a bug and must surface.
             pass
 
+    # Forward handle_cache_capacity only for explicit non-default values: the
+    # fallback read() deprecates the knob whenever the kwarg is present, and
+    # forwarding its ignored default would warn on every internal fallback.
+    extra: dict[str, Any] = {}
+    if handle_cache_capacity != 16:
+        extra["handle_cache_capacity"] = handle_cache_capacity
     out = read_func(
         path=path,
         hdu=hdu,
@@ -393,9 +408,9 @@ def read_table(
         start_row=start_row,
         num_rows=num_rows,
         cache_capacity=cache_capacity,
-        handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
+        **extra,
     )
     data = out[0] if return_header else out
     if isinstance(data, torch.Tensor):
