@@ -31,11 +31,20 @@ def _bit_mask(bits: int | Iterable[int]) -> int:
 
     Bits are 0-based positions, matching how FITS DQ tables are documented
     ("bit 11: flux low"): ``_bit_mask(0) == 1``, ``_bit_mask([0, 11]) == 2049``.
+    Positions ride on int64 bit ops, so 0..63 only.
     """
     if isinstance(bits, int):
         if bits < 0:
             raise ValueError(f"DQ bit positions must be non-negative, got {bits}")
+        if bits > 63:
+            raise ValueError(
+                f"DQ bit positions must be in 0..63 (bit ops ride on int64), got {bits}"
+            )
         return 1 << bits
+    if not isinstance(bits, Iterable):
+        raise TypeError(
+            f"DQ bit positions must be ints or an iterable of ints, got {bits!r}"
+        )
     total = 0
     for bit in bits:
         total |= _bit_mask(bit)
@@ -73,14 +82,21 @@ def mask_from_dq(
 
     Examples
     --------
+    >>> import torch
+    >>> dq = torch.tensor([[0, 1, 4, 5, 2048]], dtype=torch.int32)
     >>> # MaNGA-style: any non-zero DQ value is suspect.
     >>> valid = mask_from_dq(dq)
     >>> # Only bit 0 (dead, value 1) and bit 11 (flux low, value 2048) are fatal.
     >>> valid = mask_from_dq(dq, bad_bits=[0, 11])
-    >>> # Keep pixels explicitly tagged science-good (bit 0 set).
-    >>> valid = mask_from_dq(dq, bad_bits=None, good_bits=[0], require_good=True)
+    >>> # Keep pixels explicitly tagged science-good (bit 2 set).
+    >>> valid = mask_from_dq(dq, bad_bits=None, good_bits=[2], require_good=True)
     """
-    if dq.dtype.is_floating_point:
+    if require_good and good_bits is None:
+        raise ValueError(
+            "require_good=True needs good_bits=... to name the science-good "
+            "flag bit position(s)"
+        )
+    if dq.dtype.is_floating_point or dq.dtype.is_complex:
         raise TypeError(
             f"DQ extensions must be integer-typed, got {dq.dtype}. "
             "Read the extension with its native dtype."
@@ -108,6 +124,16 @@ def mask_from_ivar(
 
     Pixels with ``ivar <= min_ivar`` are invalid; NaN input is always invalid
     because comparisons against NaN are False.
+
+    Parameters
+    ----------
+    ivar :
+        Inverse-variance companion; ``0`` (and negative) means "no data".
+    min_ivar :
+        Inclusive-invalid floor: pixels need ``ivar > min_ivar`` to be valid.
+    require_finite :
+        Also reject non-finite entries (default). ``False`` keeps ``+inf``
+        (zero-variance) valid; NaN stays invalid either way.
     """
     if require_finite:
         return torch.isfinite(ivar) & (ivar > float(min_ivar))
@@ -141,15 +167,19 @@ def apply_mask(
 ) -> torch.Tensor:
     """Replace invalid (``mask == False``) pixels with *fill*.
 
-    Integer tensors are promoted to float when a NaN fill is requested, since
-    integers cannot represent NaN.
+    Integer tensors are promoted to float — the fill may be NaN, which
+    integers cannot represent. The promotion keeps every *valid* pixel exact:
+    32/64-bit integers go to float64 (float32 would round counts above
+    ``2**24``), smaller ones to float32; on MPS, which has no float64, the
+    promotion is float32 throughout.
     """
     if mask is None:
         return x
     if not x.dtype.is_floating_point:
-        if fill != fill:  # NaN
-            x = x.float()
-        else:
-            x = x.to(torch.float32)
+        x = x.to(
+            torch.float32
+            if x.dtype.itemsize <= 2 or x.device.type == "mps"
+            else torch.float64
+        )
     value = torch.tensor(fill, dtype=x.dtype, device=x.device)
     return torch.where(mask.to(torch.bool), x, value)
