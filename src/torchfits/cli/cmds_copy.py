@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import urllib.request
 
 from torchfits._io_engine.paths import cfitsio_base_path, guard_fits_path
 from torchfits.http_util import HttpBlockedError, http_open
@@ -50,11 +49,8 @@ def _copy_remote(src: str, output_path: str) -> None:
     lowered = src.lower()
     if lowered.startswith(("vos:", "vault:")):
         raise IoError(f"{src}: vos/vault remote copy is not supported")
-    if lowered.startswith(("http://", "https://")):
-        with http_open(src) as response, open(output_path, "wb") as dest:
-            shutil.copyfileobj(response, dest)
-        return
-    urllib.request.urlretrieve(src, output_path)
+    with http_open(src) as response, open(output_path, "wb") as dest:
+        shutil.copyfileobj(response, dest)
 
 
 def _copy_one(pair: tuple[str, str]) -> None:

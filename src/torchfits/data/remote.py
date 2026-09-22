@@ -136,7 +136,7 @@ def _read_resume_validators(meta_path: Path) -> dict[str, str]:
     try:
         data = json.loads(meta_path.read_text())
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (OSError, ValueError):
         return {}
 
 

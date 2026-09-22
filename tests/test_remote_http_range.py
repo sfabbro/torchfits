@@ -22,6 +22,9 @@ from torchfits.vos_uri import is_vos_path, normalize_vos_uri
 @pytest.fixture
 def allow_loopback(monkeypatch):
     monkeypatch.setattr(http_util, "is_internal_url", lambda _url: False)
+    monkeypatch.setattr(
+        http_util, "_resolve_public_addrs", lambda _url: ("127.0.0.1",)
+    )
 
 
 class _CountingHandler(BaseHTTPRequestHandler):
@@ -654,3 +657,33 @@ def test_http_range_walks_past_compressed_image(tmp_path, allow_loopback) -> Non
         pytest.fail("compressed-image walk desynced offsets")
     finally:
         server.shutdown()
+
+
+def test_http_read_range_maps_416_to_typed_fallback(monkeypatch):
+    """HTTP 416 (walk past EOF: missing HDU / truncated file) is the typed
+    ``HttpRangeNotSatisfied`` fallback signal subset callers catch, not a
+    bare ``OSError``."""
+    import urllib.error
+
+    def _raise_416(*args, **kwargs):
+        raise urllib.error.HTTPError(
+            "https://example.test/data.fits", 416, "Range Not Satisfiable", None, None
+        )
+
+    monkeypatch.setattr(http_util, "http_open", _raise_416)
+    with pytest.raises(http_util.HttpRangeNotSatisfied):
+        http_util.http_read_range("https://example.test/data.fits", 2880, 5759)
+
+
+def test_read_resume_validators_propagates_unexpected_errors(tmp_path, monkeypatch):
+    """Non-IO failures reading resume metadata must surface, not be swallowed."""
+    from torchfits.data import remote
+
+    meta = tmp_path / "x.partial.meta"
+
+    def boom():
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(type(meta), "read_text", lambda _self: boom())
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        remote._read_resume_validators(meta)

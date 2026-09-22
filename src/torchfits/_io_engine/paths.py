@@ -63,7 +63,12 @@ def coerce_fits_path(path: Any) -> Any:
 
 
 def guard_fits_path(path: str) -> str:
-    """SSRF-check CFITSIO network URLs; return *path* unchanged for CFITSIO."""
+    """SSRF-check CFITSIO network URLs; return *path* unchanged for CFITSIO.
+
+    Guard-time validation only: CFITSIO-driver connections re-resolve the
+    hostname after this check (residual TOCTOU / DNS rebinding); Python-side
+    fetches pin instead — see ``http_util.guard_cfitsio_remote_path``.
+    """
     guard_cfitsio_remote_path(path)
     return path
 
