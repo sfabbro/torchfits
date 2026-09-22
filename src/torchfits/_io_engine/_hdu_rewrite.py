@@ -13,14 +13,22 @@ from ..hdu import Header, TableHDU, TableHDURef, TensorHDU
 from .hdu_api import open_hdulist
 from .paths import guard_fits_path
 from ._write_helpers import (
+    _COMMENTARY_HEADER_KEYS,
+    _cpp_header_mapping,
+    _hdu_with_header,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
     _is_skippable_empty_primary,
     _merge_fits_write_header,
+    _merged_write_header,
     _normalize_cpp_table_data,
+    _payload_replay_header,
     _prepare_unsigned_table_data_for_write,
+    _preserved_table_tform_cards,
     _resolve_compression_algorithm,
     _table_schema_scale_header_cards,
+    _write_boundary_header,
+    _write_header_cards_if_supported,
 )
 
 
@@ -48,7 +56,14 @@ def _detach_hdus_for_rewrite(path: str) -> List[Any]:
 def _sanitize_header_for_compressed_write(
     header: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Drop structural/compression keys so CFITSIO can emit canonical metadata."""
+    """Mapping of the header cards the compressed dict writer may set.
+
+    Structural/compression keys are dropped so CFITSIO emits canonical
+    metadata; HISTORY/COMMENT are excluded (fits_update_key renders them as
+    value cards -- the replay step writes them properly); stale CHECKSUM/
+    DATASUM never carry over. Byte values must decode as ASCII strictly:
+    silently discarding undecodable bytes would write a shortened card.
+    """
     import numpy as np
 
     if not header:
@@ -93,39 +108,45 @@ def _sanitize_header_for_compressed_write(
         "TDISP",
     )
 
+    source = header if isinstance(header, Header) else Header(header)
     out: Dict[str, Any] = {}
-    for key, value in dict(header).items():
-        key_str = str(key)
+    for card in source.cards:
+        key_str = str(card.key)
         key_upper = key_str.upper()
-        if key_upper in skip_exact or any(
-            key_upper.startswith(prefix) for prefix in skip_prefix
+        if (
+            key_upper in skip_exact
+            or key_upper in _COMMENTARY_HEADER_KEYS
+            or any(key_upper.startswith(prefix) for prefix in skip_prefix)
         ):
             continue
+        if key_str in out:
+            continue
+        value = card.value
         if isinstance(value, np.generic):
             value = value.item()
         if isinstance(value, bytes):
-            value = value.decode("ascii", errors="ignore")
+            value = value.decode("ascii")
         out[key_str] = value
     return out
 
 
 def _sanitize_table_header_for_write(
     header: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Drop FITS structural keywords before delegating table writes to CFITSIO."""
-    from .._table.write import _TABLE_STRUCTURAL_SKIP_KEYS
+) -> Header:
+    """Write-boundary header for table HDUs.
 
-    out: Dict[str, Any] = {}
-    for key, value in dict(header or {}).items():
-        key_upper = str(key).upper()
-        if key_upper in _TABLE_STRUCTURAL_SKIP_KEYS or key_upper.startswith("NAXIS"):
-            continue
-        out[str(key)] = value
-    return out
+    Drops the cards the table writer derives from the payload (structural
+    block, TTYPE/TFORM/TSCAL/TZERO) plus stale CHECKSUM/DATASUM so a copied
+    header can never relabel or rescale the new data. HISTORY/COMMENT are
+    kept for the replay step; TUNIT/TDIM/TNULL annotations survive. Rewrites
+    re-add the source TFORM spelling per column (see
+    ``_preserved_table_tform_cards``).
+    """
+    return _write_boundary_header(header)
 
 
 class _TableWriteProxy:
-    __slots__ = ("_raw_data", "header", "_schema")
+    __slots__ = ("_raw_data", "header", "_schema", "_replay")
 
     def __init__(
         self,
@@ -134,7 +155,10 @@ class _TableWriteProxy:
         schema: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         self._raw_data = raw_data
-        self.header = header
+        # The C++ dict writers iterate ``header`` as a plain mapping; the
+        # full card list lives in ``_replay`` for the replay step.
+        self._replay = header
+        self.header = _cpp_header_mapping(header)
         self._schema = schema
 
 
@@ -148,14 +172,31 @@ def _prepare_table_hdu_for_payload(hdu: Any) -> Optional[_TableWriteProxy]:
     if isinstance(hdu, TableHDURef):
         hdu = hdu.materialize(device="cpu")
 
+    if (
+        getattr(hdu, "_replay", None) is not None
+        and hasattr(hdu, "_raw_data")
+        and hasattr(hdu, "_schema")
+    ):
+        # Internal write proxy: already normalized with schema-derived cards
+        # (TSCAL/TZERO/TNULL) and a card-faithful replay header. Re-preparing
+        # its raw data would drop those cards.
+        return _TableWriteProxy(hdu._raw_data, hdu._replay, hdu._schema)
+
     if isinstance(hdu, TableHDU) or (
         hasattr(hdu, "_raw_data") and hasattr(hdu, "header")
     ):
         raw_data = dict(getattr(hdu, "_raw_data", {}))
         raw_data, schema, _ = _prepare_unsigned_table_data_for_write(raw_data)
         scale_cards = _table_schema_scale_header_cards(schema)
+        # Source TFORMn spellings (astropy bare 'J'/'I', exotic '8X'/'PJ') are
+        # re-added verbatim for columns whose storage is unchanged; decoded
+        # scaled columns re-derive instead (r4b-01).
+        preserved = _preserved_table_tform_cards(hdu.header, raw_data)
         header = _merge_fits_write_header(
-            _sanitize_table_header_for_write(hdu.header), scale_cards
+            _merge_fits_write_header(
+                _sanitize_table_header_for_write(hdu.header), preserved
+            ),
+            scale_cards,
         )
         raw_data = _normalize_cpp_table_data(raw_data)
         return _TableWriteProxy(raw_data, header, schema)
@@ -164,7 +205,12 @@ def _prepare_table_hdu_for_payload(hdu: Any) -> Optional[_TableWriteProxy]:
 
 
 def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> None:
-    """Write an HDU sequence through the uncompressed C++ writer."""
+    """Write an HDU sequence through the uncompressed C++ writer.
+
+    The C++ dict writers receive commentary-free header mappings; the full
+    card list (HISTORY/COMMENT included) is replayed once per HDU afterwards
+    via fits_write_history/fits_write_comment.
+    """
     import torchfits._C as cpp
 
     guard_fits_path(path)
@@ -209,6 +255,11 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
 
     _invalidate_path_caches(path)
     cpp.write_fits_file(path, payload, overwrite)
+    for idx, item in enumerate(payload):
+        _write_header_cards_if_supported(
+            path, idx, _payload_replay_header(item), invalidate=False
+        )
+    _invalidate_path_caches(path)
 
 
 _COMPRESSION_HEADER_KEYS = frozenset(
@@ -253,7 +304,14 @@ def _hdus_have_checksums(hdus: List[Any]) -> bool:
 def _write_hdus_with_optional_compression(
     path: str, hdus: List[Any], compress: Union[bool, str] = False
 ) -> None:
-    """Rewrite HDUs, optionally using CFITSIO compressed-image writer."""
+    """Rewrite HDUs, optionally using CFITSIO compressed-image writer.
+
+    Like the uncompressed writer, the dict writers get commentary-free header
+    mappings and the full card list is replayed once per output HDU (at
+    index j+1: the compressed writer always emits its own empty primary).
+    The replay also restores BSCALE/BZERO/BLANK that the compressed mapping
+    deliberately omits.
+    """
     guard_fits_path(path)
     algorithm = _resolve_compression_algorithm(compress)
     if algorithm is None:
@@ -282,11 +340,9 @@ def _write_hdus_with_optional_compression(
         hdu_dict = _image_hdu_dict_for_fits_write(
             hdu.to_tensor("cpu"), getattr(hdu, "header", None)
         )
-        hdr = getattr(hdu, "header", None)
-        if hdr:
-            hdu_dict["header"] = _sanitize_header_for_compressed_write(
-                hdu_dict.get("header", hdr)
-            )
+        replay_header = _payload_replay_header(hdu_dict)
+        if replay_header is not None:
+            hdu_dict["header"] = _sanitize_header_for_compressed_write(replay_header)
         if algorithm and algorithm.upper() in {"P", "PLIO", "PLIO_1"}:
             d = hdu_dict.get("data")
             if isinstance(d, Tensor) and d.is_floating_point():
@@ -297,6 +353,11 @@ def _write_hdus_with_optional_compression(
 
     _invalidate_path_caches(path)
     cpp.write_fits_file_compressed_images(path, payload, True, algorithm)
+    for j, item in enumerate(payload):
+        _write_header_cards_if_supported(
+            path, j + 1, _payload_replay_header(item), invalidate=False
+        )
+    _invalidate_path_caches(path)
 
 
 def _atomic_rewrite_hdus(
@@ -347,12 +408,8 @@ def insert_hdu(
         raise TypeError("index must be an integer HDU position")
 
     if isinstance(data, TableHDU) or isinstance(data, TensorHDU):
-        new_hdu = data
-        if header is not None:
-            if isinstance(new_hdu, TensorHDU):
-                new_hdu._header = Header(header)
-            else:
-                new_hdu.header = Header(header)
+        # Never mutate the caller's HDU: build a header-replaced copy.
+        new_hdu = _hdu_with_header(data, Header(header)) if header is not None else data
     elif isinstance(data, dict) and "data" not in data:
         new_hdu = TableHDU(data, header=Header(header or {}))
     elif isinstance(data, Tensor):
@@ -380,12 +437,8 @@ def replace_hdu(
     preserve_header = header is None and not isinstance(data, (TableHDU, TensorHDU))
 
     if isinstance(data, TableHDU) or isinstance(data, TensorHDU):
-        new_hdu = data
-        if header is not None:
-            if isinstance(new_hdu, TensorHDU):
-                new_hdu._header = Header(header)
-            else:
-                new_hdu.header = Header(header)
+        # Never mutate the caller's HDU: build a header-replaced copy.
+        new_hdu = _hdu_with_header(data, Header(header)) if header is not None else data
     elif isinstance(data, dict) and "data" not in data:
         new_hdu = TableHDU(data, header=Header(header or {}))
     elif isinstance(data, Tensor):

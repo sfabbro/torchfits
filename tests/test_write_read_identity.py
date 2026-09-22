@@ -234,3 +234,169 @@ def test_tnull_tdim_vla_identity():
         assert got.num_rows == n
         assert len(got_t["VLA"]) == n
         assert got.column("TDIMCOL").to_pylist()[0] is not None
+
+
+# ---------------------------------------------------------------------------
+# Header card fidelity: HISTORY/COMMENT/CONTINUE and write(header=) overlay
+# ---------------------------------------------------------------------------
+
+
+def _card_header():
+    from torchfits.hdu import Header
+
+    hdr = Header({"OBSERVER": "X", "LONGSTR": "A" * 80, "SHORT": "s"})
+    hdr.add_history("h1")
+    hdr.add_history("h2")
+    hdr.add_comment("c1")
+    hdr.add_comment("c2")
+    return hdr
+
+
+def _assert_cards_faithful(path, hdu, label):
+    with fits.open(path) as hdul:
+        hdr = hdul[hdu].header
+    hist = [str(v) for k, v in hdr.items() if k == "HISTORY"]
+    comm = [str(v) for k, v in hdr.items() if k == "COMMENT"]
+    assert hist == ["h1", "h2"], f"{label}: HISTORY {hist!r}"
+    assert comm.count("c1") == 1 and comm.count("c2") == 1, f"{label}: COMMENT {comm!r}"
+    mangled = [v for v in hist + comm if v.lstrip().startswith("= '")]
+    assert not mangled, f"{label}: value-style commentary cards {mangled!r}"
+    assert hdr["OBSERVER"] == "X", label
+    assert hdr["LONGSTR"] == "A" * 80, f"{label}: LONGSTR {str(hdr['LONGSTR'])[:20]!r}"
+    assert hdr["SHORT"] == "s", label
+
+
+def test_header_commentary_cards_every_write_path(tmp_path):
+    """HISTORY/COMMENT survive exactly once each on every write path (no
+    'HISTORY = ...' value-style mangling, no lost duplicates, CONTINUE intact)."""
+    from torchfits.hdu import HDUList, TensorHDU
+
+    img = torch.zeros(2, 2)
+    cases = [
+        ("plain-image", lambda p, h: torchfits.write(p, img, header=h, overwrite=True), 0),
+        (
+            "compressed-image",
+            lambda p, h: torchfits.write(p, img, header=h, overwrite=True, compress=True),
+            1,
+        ),
+        (
+            "hdulist-image",
+            lambda p, h: torchfits.write(
+                p, HDUList([TensorHDU(img, header=h)]), overwrite=True
+            ),
+            0,
+        ),
+        (
+            "hdulist-image-compressed",
+            lambda p, h: torchfits.write(
+                p, HDUList([TensorHDU(img, header=h)]), overwrite=True, compress=True
+            ),
+            1,
+        ),
+        (
+            "dict-table",
+            lambda p, h: torchfits.write(
+                p, {"X": torch.arange(3)}, header=h, overwrite=True
+            ),
+            1,
+        ),
+        (
+            "dict-table-compressed",
+            lambda p, h: torchfits.write(
+                p, {"X": torch.arange(3)}, header=h, overwrite=True, compress=True
+            ),
+            1,
+        ),
+    ]
+    for label, writer, hdu in cases:
+        path = str(tmp_path / f"cards_{label}.fits")
+        writer(path, _card_header())
+        _assert_cards_faithful(path, hdu, label)
+
+    # Rewrite path: cards survive an HDU insert untouched.
+    path = str(tmp_path / "cards_rewrite.fits")
+    torchfits.write(path, img, header=_card_header(), overwrite=True)
+    from torchfits._io_engine._hdu_rewrite import insert_hdu
+
+    insert_hdu(str(tmp_path / "cards_rewrite.fits"), torch.ones(2, 2), index=0)
+    _assert_cards_faithful(path, 1, "rewrite-insert")
+
+
+def test_rewrite_preserves_long_strings(tmp_path):
+    """insert_hdu must preserve >68-char (CONTINUE) string values exactly.
+
+    Regression pin for r4b-13 (root fix still R6's at HDUList.fromfile);
+    passing since the r4c-15 open_hdulist reassembly landed.
+    """
+    path = str(tmp_path / "ls_rewrite.fits")
+    torchfits.write(
+        path, torch.zeros(2, 2), header={"LONGSTR": "A" * 80}, overwrite=True
+    )
+    from torchfits._io_engine._hdu_rewrite import insert_hdu
+
+    insert_hdu(path, torch.ones(2, 2), index=0)
+    assert fits.getheader(path, 1)["LONGSTR"] == "A" * 80
+
+
+def test_multi_hdu_commentary_independent(tmp_path):
+    """Each HDU keeps its own HISTORY/COMMENT cards (no cross-HDU bleed)."""
+    from torchfits.hdu import HDUList, Header, TensorHDU
+
+    h1 = Header({"A": 1})
+    h1.add_history("hh1")
+    h2 = Header({"B": 2})
+    h2.add_comment("cc2")
+    hdul = HDUList(
+        [TensorHDU(torch.zeros(2, 2), header=h1), TensorHDU(torch.ones(2, 2), header=h2)]
+    )
+    for label, kw in (("plain", {}), ("compressed", {"compress": True})):
+        path = str(tmp_path / f"multi_{label}.fits")
+        torchfits.write(path, hdul, overwrite=True, **kw)
+        base = 1 if kw else 0
+        with fits.open(path) as opened:
+            hist0 = [str(v) for k, v in opened[base].header.items() if k == "HISTORY"]
+            comm1 = [str(v) for k, v in opened[base + 1].header.items() if k == "COMMENT"]
+        assert hist0 == ["hh1"], f"{label}: {hist0!r}"
+        assert comm1.count("cc2") == 1, f"{label}: {comm1!r}"
+
+
+def test_write_header_param_overlays_first_hdu_every_path(tmp_path):
+    """write(header=) applies to the first HDU on every path (never silently
+    ignored)."""
+    from torchfits.hdu import HDUList, TensorHDU
+
+    img = torch.zeros(2, 2)
+    cases = [
+        ("plain-seq", lambda p: torchfits.write(p, [img, img], header={"USERTOP": "yes"}, overwrite=True), 0),
+        (
+            "compressed-seq",
+            lambda p: torchfits.write(p, [img, img], header={"USERTOP": "yes"}, overwrite=True, compress=True),
+            1,
+        ),
+        (
+            "plain-hdulist",
+            lambda p: torchfits.write(
+                p,
+                HDUList([TensorHDU(img), TensorHDU(img)]),
+                header={"USERTOP": "yes"},
+                overwrite=True,
+            ),
+            0,
+        ),
+        (
+            "compressed-hdulist",
+            lambda p: torchfits.write(
+                p,
+                HDUList([TensorHDU(img), TensorHDU(img)]),
+                header={"USERTOP": "yes"},
+                overwrite=True,
+                compress=True,
+            ),
+            1,
+        ),
+    ]
+    for label, writer, hdu in cases:
+        path = str(tmp_path / f"ov_{label}.fits")
+        writer(path)
+        assert torchfits.read_header(path, hdu=hdu).get("USERTOP") == "yes", label
+        assert torchfits.read_header(path, hdu=hdu + 1).get("USERTOP") is None, label

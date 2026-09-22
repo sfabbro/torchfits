@@ -26,6 +26,214 @@ class QuantizeError(ValueError):
     """Invalid quantize= specification or misuse."""
 
 
+# HISTORY/COMMENT carry no value and legitimately repeat; they must be written
+# by the card-replay step (fits_write_history/fits_write_comment). The C++
+# dict writers render them as value cards ('HISTORY = ...') and clobber
+# CFITSIO's standard COMMENT block with fits_update_key.
+_COMMENTARY_HEADER_KEYS = frozenset({"HISTORY", "COMMENT"})
+
+# CHECKSUM/DATASUM describe one payload byte-for-byte; replaying a copy from a
+# source header makes a freshly written file fail verification. Fresh keywords
+# are stamped by write(..., checksum=True) / restamp after rewrites.
+_STALE_CHECKSUM_KEYS = frozenset({"CHECKSUM", "DATASUM"})
+
+# Table cards the writer derives from the payload (column names/formats and
+# TSCAL/TZERO rescale). A stale copy in a user header -- typically one read
+# from a different table -- must never override the derived cards: a wrong
+# TFORM relabels the stored bytes and a wrong NAXIS2 forges rows. TUNIT/TDIM/
+# TNULL are annotations the writer does not derive and are kept.
+_TABLE_DERIVED_KEYS = frozenset(
+    {
+        "SIMPLE",
+        "XTENSION",
+        "BITPIX",
+        "NAXIS",
+        "EXTEND",
+        "PCOUNT",
+        "GCOUNT",
+        "TFIELDS",
+        "THEAP",
+    }
+)
+_TABLE_DERIVED_KEY_PREFIXES = ("NAXIS", "TTYPE", "TFORM", "TSCAL", "TZERO")
+
+# CompImage compression metadata: the compressed writer derives these from the
+# tiles it stores. A compressed image extension read back as raw cards carries
+# Z* and tile-column TFORM/TTYPE cards of its bintable skeleton; replaying them
+# onto a fresh write corrupts the new tile layout (the reader then surfaces the
+# mangled extension as a table).
+_COMPRESSION_CARD_KEYS = frozenset(
+    {
+        "ZIMAGE",
+        "ZCMPTYPE",
+        "ZBITPIX",
+        "ZNAXIS",
+        "ZPCOUNT",
+        "ZGCOUNT",
+        "ZCHECKSUM",
+        "ZHECKSUM",
+        "ZDATASUM",
+        "ZQUANTIZ",
+        "ZBLANK",
+    }
+)
+_COMPRESSION_CARD_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL")
+
+_WRITE_BOUNDARY_DROP_KEYS = (
+    _STALE_CHECKSUM_KEYS | _TABLE_DERIVED_KEYS | _COMPRESSION_CARD_KEYS
+)
+_WRITE_BOUNDARY_DROP_PREFIXES = (
+    _TABLE_DERIVED_KEY_PREFIXES + _COMPRESSION_CARD_PREFIXES
+)
+
+
+def _filter_header_cards(
+    header: Any,
+    drop_keys: frozenset,
+    drop_prefixes: tuple = (),
+) -> Header:
+    """Card-faithful copy of *header* minus the matching cards (duplicates and
+    card order preserved)."""
+    source = header if isinstance(header, Header) else Header(header or {})
+    out = Header()
+    for card in source.cards:
+        key_u = str(card.key).upper()
+        if key_u in drop_keys or key_u.startswith(drop_prefixes):
+            continue
+        out.append(card)
+    return out
+
+
+def _write_boundary_header(header: Any) -> Header:
+    """Write-boundary header for one HDU.
+
+    Cards the writer derives from the payload are dropped so stale copies in
+    a user header can never relabel or rescale the new data: the structural
+    block, CHECKSUM/DATASUM, CompImage Z* metadata and the table column
+    descriptors (TTYPE/TFORM/TSCAL/TZERO). HISTORY/COMMENT cards are kept
+    here (the replay step writes them faithfully). Rewrites re-add the source
+    TFORM spelling per column via _preserved_table_tform_cards.
+    """
+    return _filter_header_cards(
+        header, _WRITE_BOUNDARY_DROP_KEYS, _WRITE_BOUNDARY_DROP_PREFIXES
+    )
+
+
+def _prepared_tform_code(value: Any) -> Optional[str]:
+    """TFORM type char matching a prepared column's storage, or None when the
+    storage is not a plain numeric/bool cell (strings, VLA, bits)."""
+    import numpy as np
+
+    if isinstance(value, Tensor):
+        mapping = {
+            torch.int8: "B",
+            torch.uint8: "B",
+            torch.int16: "I",
+            torch.int32: "J",
+            torch.int64: "K",
+            torch.float32: "E",
+            torch.float64: "D",
+            torch.bool: "L",
+            torch.complex64: "C",
+            torch.complex128: "M",
+        }
+        return mapping.get(value.dtype)
+    if isinstance(value, np.ndarray):
+        mapping = {
+            np.dtype("int8"): "B",
+            np.dtype("uint8"): "B",
+            np.dtype("int16"): "I",
+            np.dtype("int32"): "J",
+            np.dtype("int64"): "K",
+            np.dtype("float32"): "E",
+            np.dtype("float64"): "D",
+            np.dtype("bool"): "L",
+            np.dtype("complex64"): "C",
+            np.dtype("complex128"): "M",
+        }
+        return mapping.get(value.dtype)
+    return None
+
+
+def _preserved_table_tform_cards(
+    source_header: Any, prepared_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Source ``TFORMn`` spellings preserved verbatim for columns whose
+    prepared storage still matches them.
+
+    astropy spells repeat-1 formats as bare type chars ('J', 'I'); C++
+    re-derivation relabels them '1J'/'1I'. Copies and rewrites must keep the
+    source spelling (and exotic spellings like '8X'/'PJ'). A column whose
+    materialized data left its storage domain (e.g. TSCAL/TZERO-scaled ints
+    decoded to floats) must NOT keep the old TFORM -- the label would
+    misdescribe the written cells (see r4b-01).
+    """
+    import numpy as np
+
+    src = (
+        source_header
+        if isinstance(source_header, Header)
+        else Header(source_header or {})
+    )
+    out: Dict[str, Any] = {}
+    for i, value in enumerate(prepared_data.values(), start=1):
+        tform = src.get(f"TFORM{i}")
+        if tform is None:
+            continue
+        letters = "".join(ch for ch in str(tform).upper() if ch.isalpha())
+        first = letters[:1]
+        if first in {"X", "A", "P", "Q"}:
+            # Bit/string/VLA spellings carry layout the writer does not
+            # re-derive faithfully; always preserve.
+            out[f"TFORM{i}"] = tform
+            continue
+        expected = _prepared_tform_code(value)
+        if expected is None or letters == expected:
+            out[f"TFORM{i}"] = tform
+    return out
+
+
+def _cpp_header_mapping(header: Header) -> Dict[str, Any]:
+    """Mapping view of a write-boundary header for the C++ dict writers.
+
+    HISTORY/COMMENT are excluded: the C++ ``fits_update_key`` loop mangles
+    them into value cards (the replay step writes them properly).
+    """
+    out = dict(header)
+    for key in list(out):
+        if str(key).upper() in _COMMENTARY_HEADER_KEYS:
+            del out[key]
+    return out
+
+
+def _merged_write_header(base: Any, overlay: Any) -> Header:
+    """Card-faithful header merge for write(header=) semantics.
+
+    Overlay value cards replace the base's, HISTORY/COMMENT cards append
+    (they legitimately repeat); card order and comments are preserved.
+    """
+    merged = Header(base) if isinstance(base, Header) else Header(base or {})
+    user = overlay if isinstance(overlay, Header) else Header(overlay or {})
+    for card in user.cards:
+        if str(card.key).upper() in _COMMENTARY_HEADER_KEYS:
+            merged.append(card)
+        else:
+            merged.remove(str(card.key), ignore_missing=True, remove_all=True)
+            merged.append(card)
+    return merged
+
+
+def _require_image_hdu_dict_keys(item: Dict[str, Any]) -> None:
+    """Image dict-HDUs carry exactly 'data' and 'header'; extra keys would be
+    silently dropped from the written file."""
+    extra = sorted(str(k) for k in item if k != "data" and k != "header")
+    if extra:
+        raise ValueError(
+            "HDU dictionary may contain only 'data' and 'header' keys; "
+            f"unexpected keys: {extra!r}"
+        )
+
+
 def _invalidate_path_caches(path: str) -> None:
     """Invalidate Python-side caches/handles for a path that is being modified."""
     _invalidate_io_path_caches(path)
@@ -186,10 +394,21 @@ def _image_hdu_dict_for_fits_write(
     tensor, header = _apply_image_quantize(tensor, header, quantize)
     header = _drop_stale_integer_scale_cards(header, tensor)
     data, extra_header = _unsigned_image_storage_for_fits_write(tensor)
+    full = _merge_fits_write_header(_write_boundary_header(header), extra_header)
     hdu_dict: Dict[str, Any] = {"data": data}
-    if header or extra_header:
-        hdu_dict["header"] = _merge_fits_write_header(header, extra_header)
+    if full.cards:
+        # C++ dict writers see the mapping (no HISTORY/COMMENT); the replay
+        # step writes the full card list faithfully afterwards.
+        hdu_dict["header"] = _cpp_header_mapping(full)
+        hdu_dict["_replay"] = full
     return hdu_dict
+
+
+def _payload_replay_header(payload: Any) -> Optional[Header]:
+    """Full replay header stashed on a write payload (see _replay)."""
+    if isinstance(payload, dict):
+        return payload.get("_replay")
+    return getattr(payload, "_replay", None)
 
 
 def _prepare_quantized_table_data_for_write(
@@ -336,6 +555,7 @@ def _vla_item_signature(item: Any) -> tuple[Any, ...] | None:
         mapping = {
             torch.bool: ("b", 1),
             torch.uint8: ("u", 1),
+            torch.int8: ("i", 1),
             torch.int16: ("i", 2),
             torch.int32: ("i", 4),
             torch.int64: ("i", 8),
@@ -362,7 +582,7 @@ def _vla_item_signature(item: Any) -> tuple[Any, ...] | None:
             return ("c", itemsize)
         if kind == "u" and itemsize == 1:
             return ("u", 1)
-        if kind == "i" and itemsize in (2, 4, 8):
+        if kind == "i" and itemsize in (1, 2, 4, 8):
             return ("i", itemsize)
         if kind == "f" and itemsize in (4, 8):
             return ("f", itemsize)
@@ -431,6 +651,7 @@ def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
             if value.dtype not in {
                 torch.bool,
                 torch.uint8,
+                torch.int8,
                 torch.int16,
                 torch.int32,
                 torch.int64,
@@ -472,7 +693,7 @@ def _can_use_cpp_table_writer(table_dict: Dict[str, Any]) -> bool:
             continue
         if kind == "u" and itemsize == 1:
             continue
-        if kind == "i" and itemsize in (2, 4, 8):
+        if kind == "i" and itemsize in (1, 2, 4, 8):
             continue
         if kind == "f" and itemsize in (4, 8):
             continue
@@ -705,14 +926,60 @@ def _resolve_compression_algorithm(compress: Union[bool, str]) -> Optional[str]:
 
 
 class _TableHDUWriteProxy:
-    """Small table-HDU proxy for internal writer paths."""
+    """Small table-HDU proxy for internal writer paths.
 
-    def __init__(self, raw_data: Dict[str, Any], header: Header):
+    ``header`` is the mapping view for the C++ dict writers; ``_replay``
+    carries the full card list for the replay step.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], header: Any, quantize: Any = None):
         prepared, schema, _ = _prepare_unsigned_table_data_for_write(dict(raw_data))
+        prepared, schema, _ = _prepare_quantized_table_data_for_write(
+            prepared, quantize, schema
+        )
         self._raw_data = _normalize_cpp_table_data(prepared)
-        scale_cards = _table_schema_scale_header_cards(schema)
-        self.header = _merge_fits_write_header(header, scale_cards)
         self._schema = schema
+        full = _merge_fits_write_header(
+            _write_boundary_header(header),
+            _table_schema_scale_header_cards(schema),
+        )
+        self._replay = full
+        self.header = _cpp_header_mapping(full)
+
+    def _with_header(self, overlay: Any) -> "_TableHDUWriteProxy":
+        """Header-replaced shallow copy (never mutates the caller's data)."""
+        clone = _TableHDUWriteProxy.__new__(_TableHDUWriteProxy)
+        clone._raw_data = self._raw_data
+        clone._schema = self._schema
+        full = _merge_fits_write_header(
+            _write_boundary_header(_merged_write_header(self._replay, overlay)),
+            _table_schema_scale_header_cards(self._schema),
+        )
+        clone._replay = full
+        clone.header = _cpp_header_mapping(full)
+        return clone
+
+
+def _hdu_with_header(hdu: Any, header: Any) -> Any:
+    """Shallow copy of an HDU carrying a replacement header.
+
+    User HDU objects are never mutated; internal write proxies copy by
+    value.
+    """
+    if isinstance(hdu, TensorHDU):
+        return TensorHDU(data=hdu.to_tensor("cpu"), header=header)
+    if isinstance(hdu, TableHDU):
+        return TableHDU(dict(getattr(hdu, "_raw_data", {})), header=header)
+    if isinstance(hdu, TableHDURef):
+        mat = hdu.materialize(device="cpu")
+        return TableHDU(dict(getattr(mat, "_raw_data", {})), header=header)
+    if isinstance(hdu, _TableHDUWriteProxy):
+        return hdu._with_header(header)
+    if isinstance(hdu, dict):
+        out = dict(hdu)
+        out["header"] = header
+        return out
+    raise TypeError(f"cannot replace the header of {type(hdu).__name__}")
 
 
 def _coerce_compressed_hdu_item(item: Any) -> Any:
@@ -726,6 +993,7 @@ def _coerce_compressed_hdu_item(item: Any) -> Any:
         return TensorHDU(data=img, header=Header(img_header))
     if isinstance(item, dict):
         if "data" in item:
+            _require_image_hdu_dict_keys(item)
             img = item["data"]
             if not isinstance(img, Tensor):
                 try:
@@ -746,7 +1014,10 @@ def _coerce_compressed_hdu_item(item: Any) -> Any:
             img, img_header = _unsigned_image_storage_for_fits_write(img)
             return TensorHDU(
                 data=img,
-                header=_merge_fits_write_header(item.get("header", {}), img_header),
+                header=_merge_fits_write_header(
+                    _write_boundary_header(item.get("header", {})),
+                    img_header,
+                ),
             )
         return _TableHDUWriteProxy(item, Header())
     raise NotImplementedError(

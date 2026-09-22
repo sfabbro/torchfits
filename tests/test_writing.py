@@ -430,3 +430,45 @@ def test_write_mps_tensor_copies_to_host_before_fits_write():
     finally:
         if os.path.exists(filename):
             os.remove(filename)
+
+
+def test_dict_image_hdu_form_uncompressed(tmp_path):
+    """{'data': tensor, 'header': {...}} is a single image HDU on the plain
+    write path (the same form the compressed path accepts)."""
+    path = str(tmp_path / "dictimg.fits")
+    data = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+    torchfits.write(path, {"data": data, "header": {"OBJECT": "M31"}}, overwrite=True)
+    assert torchfits.read_num_hdus(path) == 1
+    assert torch.equal(torchfits.read(path), data)
+    assert torchfits.read_header(path, hdu=0).get("OBJECT") == "M31"
+
+
+def test_rewrite_ops_do_not_mutate_input_hdu(tmp_path):
+    """insert_hdu/replace_hdu(header=) must not rewrite the caller's HDU."""
+    from torchfits._io_engine._hdu_rewrite import insert_hdu, replace_hdu
+
+    path = str(tmp_path / "mut.fits")
+    torchfits.write(path, torch.zeros(2, 2), overwrite=True)
+    item = torchfits.TensorHDU(torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"}))
+    insert_hdu(path, item, index=1, header={"NEW": 1})
+    assert dict(item.header) == {"MINE": "orig"}
+
+    path2 = str(tmp_path / "mut2.fits")
+    torchfits.write(path2, torch.zeros(2, 2), overwrite=True)
+    item2 = torchfits.TensorHDU(torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"}))
+    replace_hdu(path2, 0, item2, header={"NEW": 2})
+    assert dict(item2.header) == {"MINE": "orig"}
+
+
+def test_bytes_header_value_rejected_on_compressed_rewrite(tmp_path):
+    """Non-ASCII bytes header values must raise, never decode into a silently
+    shortened card on the no-replay rewrite path."""
+    from torchfits._io_engine._hdu_rewrite import replace_hdu
+
+    path = str(tmp_path / "rawb.fits")
+    torchfits.write(path, torch.zeros(2, 2), overwrite=True, compress=True)
+    bad = torchfits.TensorHDU(
+        torch.ones(2, 2), header=torchfits.Header({"RAW": b"\xff\xfe"})
+    )
+    with pytest.raises(UnicodeDecodeError):
+        replace_hdu(path, 0, bad, compress=True)

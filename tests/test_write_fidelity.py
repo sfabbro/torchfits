@@ -757,3 +757,125 @@ def test_chunked_read_large_uint16_exact(tmp_path):
     out = torchfits.read(path)
     assert out.dtype == torch.uint16
     assert torch.equal(out, torch.as_tensor(data))
+
+
+# ---------------------------------------------------------------------------
+# Write-path type fallthroughs: int8 columns, dict-HDU key drops, stale
+# header cards on copied headers (astropy ground truth)
+# ---------------------------------------------------------------------------
+
+
+def test_table_write_int8_column_tbyte_convention(tmp_path):
+    """int8 columns store as raw TBYTE on every write form (the signed view
+    recovers the values; astropy sees the raw unsigned bytes)."""
+    want = np.array([-128, -1, 0, 1, 127], dtype=np.int8)
+    from astropy.io import fits
+
+    for label, writer in (
+        ("write-dict", lambda p: torchfits.write(p, {"I8": want}, overwrite=True)),
+        ("table-write", lambda p: torchfits.table.write(p, {"I8": want}, overwrite=True)),
+    ):
+        path = str(tmp_path / f"i8_{label}.fits")
+        writer(path)
+        with fits.open(path) as hdul:
+            actual = np.asarray(hdul[1].data["I8"])
+        assert actual.dtype == np.uint8, label
+        np.testing.assert_array_equal(actual.view(np.int8), want, err_msg=label)
+        _assert_column_faithful(torchfits.read(path, hdu=1)["I8"], want)
+
+
+def test_dict_image_extra_keys_rejected_not_silently_dropped(tmp_path):
+    """A dict-HDU payload accepts only 'data'/'header'; extra keys must raise
+    by name, never vanish from the written file."""
+    payload = {"data": torch.zeros(2, 2), "flux": torch.ones(2)}
+    for label, kwargs in (("plain", {}), ("compressed", {"compress": True})):
+        path = tmp_path / f"extra_{label}.fits"
+        with pytest.raises(RuntimeError, match="flux"):
+            torchfits.write(str(path), payload, overwrite=True, **kwargs)
+        assert not path.exists(), label
+
+
+def test_copied_table_header_cannot_forge_rows_or_relabel_columns(tmp_path):
+    """A header read from another table must not override data-derived cards
+    (NAXIS2/TFORM/TTYPE): row count, names and values stay true (astropy)."""
+    from astropy.io import fits
+
+    src = str(tmp_path / "src.fits")
+    torchfits.write(src, {"OLD": np.arange(5, dtype=np.int64)}, overwrite=True)
+    copied = torchfits.read_header(src, hdu=1)
+
+    dst = str(tmp_path / "dst.fits")
+    torchfits.write(
+        dst, {"NEW": np.arange(3, dtype=np.int32)}, header=copied, overwrite=True
+    )
+    with fits.open(dst) as hdul:
+        tab = hdul[1].data
+        assert hdul[1].header["NAXIS2"] == 3
+        assert len(tab) == 3
+        assert list(tab.names) == ["NEW"]
+        # Semantic pin: the TFORM must describe the DATA (int32 cells as
+        # astropy decodes them), not the source table's stale '1K' label.
+        got_col = np.asarray(tab["NEW"])
+        assert got_col.dtype.newbyteorder("=") == np.int32
+        np.testing.assert_array_equal(got_col, np.arange(3, dtype=np.int32))
+    out = torchfits.read(dst, hdu=1)
+    assert torch.equal(out["NEW"], torch.arange(3, dtype=torch.int32))
+
+
+def test_stale_checksum_cards_are_not_replayed(tmp_path):
+    """CHECKSUM/DATASUM in a copied header describe the source payload; a
+    fresh write must not stamp them (the file would fail verification)."""
+    from astropy.io import fits
+
+    for label, data, hdu in (
+        ("image", torch.zeros(2, 2), 0),
+        ("table", {"X": torch.arange(3)}, 1),
+    ):
+        path = str(tmp_path / f"stale_{label}.fits")
+        torchfits.write(
+            path,
+            data,
+            header={"CHECKSUM": "abcdEFGH", "DATASUM": 42},
+            overwrite=True,
+        )
+        v = torchfits.verify_checksums(path, hdu=hdu)
+        assert v["status"] == "no_checksums", label
+        assert v["present"] is False, label
+        with fits.open(path) as hdul:
+            assert "CHECKSUM" not in hdul[hdu].header, label
+            assert "DATASUM" not in hdul[hdu].header, label
+
+
+def test_quantized_dict_table_compressed_matches_plain(tmp_path):
+    """quantize= is honored on the compressed dict-table write path: the same
+    TFORM=I + TSCAL/TZERO/TNULL storage and decode as the plain write."""
+    rng = np.random.default_rng(21)
+    flux = torch.from_numpy((1000.0 + rng.standard_normal(4096)).astype(np.float32))
+    flux[7] = float("nan")
+    table = {"ID": torch.arange(flux.numel(), dtype=torch.int32), "FLUX": flux}
+
+    p_plain = str(tmp_path / "q_plain.fits")
+    p_comp = str(tmp_path / "q_comp.fits")
+    torchfits.write(p_plain, table, overwrite=True, quantize={"FLUX": "robust"})
+    torchfits.write(
+        p_comp, table, overwrite=True, compress=True, quantize={"FLUX": "robust"}
+    )
+
+    from astropy.io import fits
+
+    for label, path in (("plain", p_plain), ("comp", p_comp)):
+        with fits.open(path) as hdul:
+            h = hdul[1].header
+        tform = str(h["TFORM2"]).upper().lstrip("0123456789")
+        assert tform == "I", f"{label}: TFORM2={h['TFORM2']}"
+        assert "TSCAL2" in h and "TZERO2" in h and "TNULL2" in h, label
+
+    got_plain = torchfits.table.read_torch(p_plain, hdu=1)
+    got_comp = torchfits.table.read_torch(p_comp, hdu=1)
+    assert torch.equal(got_plain["ID"], got_comp["ID"])
+    assert torch.equal(
+        torch.isnan(got_plain["FLUX"]), torch.isnan(got_comp["FLUX"])
+    )
+    assert bool(torch.isnan(got_plain["FLUX"][7]))
+    finite = ~torch.isnan(got_plain["FLUX"])
+    assert torch.equal(got_plain["FLUX"][finite], got_comp["FLUX"][finite])

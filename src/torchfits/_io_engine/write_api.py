@@ -25,16 +25,22 @@ from ._write_helpers import (
     _apply_image_quantize,
     _can_use_cpp_table_writer,
     _coerce_compressed_hdu_item,
+    _cpp_header_mapping,
     _drop_stale_integer_scale_cards,
+    _hdu_with_header,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
     _is_skippable_empty_primary,
     _merge_fits_write_header,
+    _merged_write_header,
     _normalize_cpp_table_data,
     _normalize_table_input,
+    _payload_replay_header,
     _prepare_quantized_table_data_for_write,
     _prepare_unsigned_table_data_for_write,
+    _require_image_hdu_dict_keys,
     _unsigned_image_storage_for_fits_write,
+    _write_boundary_header,
     _write_header_cards_if_supported,
 )
 
@@ -185,45 +191,50 @@ def write(
                         "image tensor before assembling the list"
                     )
                 compressed_hdus = list(getattr(data, "_hdus", []))
+                if header and compressed_hdus:
+                    compressed_hdus[0] = _hdu_with_header(
+                        compressed_hdus[0],
+                        _merged_write_header(
+                            getattr(compressed_hdus[0], "header", None), header
+                        ),
+                    )
             elif isinstance(data, dict):
                 if "data" in data:
-                    item_hdu = _coerce_compressed_hdu_item(data)
-                    compressed_hdus.append(item_hdu)
+                    item: Dict[str, Any] = dict(data)
+                    _require_image_hdu_dict_keys(item)
+                    if header:
+                        item["header"] = _merged_write_header(
+                            item.get("header"), header
+                        )
+                    if quantize is not None:
+                        q_img, q_hdr = _apply_image_quantize(
+                            item.get("data"), item.get("header"), quantize
+                        )
+                        item["data"] = q_img
+                        item["header"] = q_hdr
+                    compressed_hdus.append(_coerce_compressed_hdu_item(item))
                 else:
                     compressed_hdus.append(
-                        _TableHDUWriteProxy(data, Header(header or {}))
+                        _TableHDUWriteProxy(data, header, quantize=quantize)
                     )
             elif isinstance(data, (list, tuple)):
                 for item in data:
                     compressed_hdus.append(_coerce_compressed_hdu_item(item))
+                if header and compressed_hdus:
+                    compressed_hdus[0] = _hdu_with_header(
+                        compressed_hdus[0],
+                        _merged_write_header(
+                            getattr(compressed_hdus[0], "header", None), header
+                        ),
+                    )
             else:
                 raise NotImplementedError(
                     "Compressed FITS writing supports tensors, tables, or HDU lists."
                 )
 
-            if header and compressed_hdus:
-                first = compressed_hdus[0]
-                merged = Header(dict(getattr(first, "header", {})))
-                merged.update(dict(header))
-                if isinstance(first, TensorHDU):
-                    first._header = merged
-                else:
-                    first.header = merged
-
             _write_hdus_with_optional_compression(
                 path, compressed_hdus, compress=compress
             )
-            out_hdu = 1
-            for idx, item_hdu in enumerate(compressed_hdus):
-                if _is_skippable_empty_primary(idx, item_hdu):
-                    continue
-                _write_header_cards_if_supported(
-                    path,
-                    out_hdu,
-                    getattr(item_hdu, "header", None),
-                    invalidate=False,
-                )
-                out_hdu += 1
             if checksum:
                 _write_all_checksums(path)
             _invalidate_path_caches(path)
@@ -235,7 +246,13 @@ def write(
                     "quantize= is ignored for HDUList writes; quantize each "
                     "image tensor before assembling the list"
                 )
-            _write_hdus_uncompressed(path, list(getattr(data, "_hdus", [])), overwrite)
+            hdus = list(getattr(data, "_hdus", []))
+            if header and hdus:
+                hdus[0] = _hdu_with_header(
+                    hdus[0],
+                    _merged_write_header(getattr(hdus[0], "header", None), header),
+                )
+            _write_hdus_uncompressed(path, hdus, overwrite)
             if checksum:
                 _write_all_checksums(path)
             return
@@ -249,11 +266,11 @@ def write(
                 table_schema = q_schema
             if _can_use_cpp_table_writer(data):
                 data = _normalize_cpp_table_data(data)
-                header_obj: Header = Header(header) if header else Header()
+                header_obj = _write_boundary_header(header)
                 cpp.write_fits_table(
                     path,
                     data,
-                    header_obj,
+                    _cpp_header_mapping(header_obj),
                     overwrite,
                     table_schema,
                     "binary",
@@ -282,25 +299,46 @@ def write(
                 )
             )
 
+        elif isinstance(data, dict):
+            # Image dict-HDU form: exactly {"data": ..., "header": ...}.
+            _require_image_hdu_dict_keys(data)
+            payload = data["data"]
+            if isinstance(payload, np.ndarray):
+                payload = torch.as_tensor(payload)
+            if not isinstance(payload, Tensor):
+                raise TypeError("HDU dictionary 'data' must be a torch.Tensor")
+            base = (
+                _merged_write_header(data.get("header"), header)
+                if header
+                else data.get("header")
+            )
+            hdus_to_write.append(
+                _image_hdu_dict_for_fits_write(payload, base, quantize=quantize)
+            )
+
         elif hasattr(data, "__iter__") and not isinstance(data, (str, Tensor)):
             if quantize is not None:
                 raise QuantizeError(
                     "quantize= is supported for a single image tensor or dict table, "
                     "not multi-HDU sequences"
                 )
-            for item in data:
+            for n, item in enumerate(data):
+                overlay = header if (n == 0 and header) else None
                 if isinstance(item, dict):
                     if "data" in item:
+                        _require_image_hdu_dict_keys(item)
                         payload = item["data"]
+                        if isinstance(payload, np.ndarray):
+                            payload = torch.as_tensor(payload)
                         if isinstance(payload, Tensor):
-                            item_merged = dict(item)
-                            hdu_dict = _image_hdu_dict_for_fits_write(
-                                payload, item_merged.get("header")
+                            base = (
+                                _merged_write_header(item.get("header"), overlay)
+                                if overlay
+                                else item.get("header")
                             )
-                            item_merged["data"] = hdu_dict["data"]
-                            if "header" in hdu_dict:
-                                item_merged["header"] = hdu_dict["header"]
-                            hdus_to_write.append(item_merged)
+                            hdus_to_write.append(
+                                _image_hdu_dict_for_fits_write(payload, base)
+                            )
                         else:
                             raise TypeError(
                                 "HDU dictionary 'data' must be a torch.Tensor"
@@ -310,13 +348,18 @@ def write(
                             "HDU dictionaries must contain a 'data' tensor"
                         )
                 elif isinstance(item, Tensor):
-                    hdus_to_write.append(_image_hdu_dict_for_fits_write(item))
-                elif hasattr(item, "data") and isinstance(item.data, Tensor):
                     hdus_to_write.append(
                         _image_hdu_dict_for_fits_write(
-                            item.data, getattr(item, "header", None)
+                            item, _merged_write_header(None, overlay) if overlay else None
                         )
                     )
+                elif hasattr(item, "data") and isinstance(item.data, Tensor):
+                    base = (
+                        _merged_write_header(getattr(item, "header", None), overlay)
+                        if overlay
+                        else getattr(item, "header", None)
+                    )
+                    hdus_to_write.append(_image_hdu_dict_for_fits_write(item.data, base))
                 else:
                     raise TypeError(f"Unsupported HDU item type: {type(item).__name__}")
         else:
@@ -326,8 +369,9 @@ def write(
             raise ValueError("At least one writable HDU is required")
         cpp.write_fits_file(path, hdus_to_write, overwrite)
         for idx, item in enumerate(hdus_to_write):
-            item_header = item.get("header") if isinstance(item, dict) else None
-            _write_header_cards_if_supported(path, idx, item_header, invalidate=False)
+            _write_header_cards_if_supported(
+                path, idx, _payload_replay_header(item), invalidate=False
+            )
         if checksum:
             _write_all_checksums(path)
         _invalidate_path_caches(path)
