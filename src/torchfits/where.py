@@ -18,11 +18,17 @@ from ._where import (
 
 
 def _not_null_like(values: "np.ndarray") -> "np.ndarray":
-    """Boolean mask of positions that are not null-like (NaN for floats)."""
+    """Boolean mask of positions that are not null-like.
+
+    Null-like is NaN for float arrays and ``None`` for object arrays, matching
+    :func:`evaluate_where`'s ``isnull`` convention.
+    """
     import numpy as np
 
     if np.issubdtype(values.dtype, np.floating):
         return ~np.isnan(values)
+    if values.dtype == object:
+        return np.asarray([value is not None for value in values], dtype=bool)
     return np.ones(values.shape, dtype=bool)
 
 
@@ -36,6 +42,12 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
     ``table.read(..., where=)``, which uses Arrow ``pc.is_null``). Comparing
     with ``== NULL`` / ``!= NULL`` on numeric arrays is rejected — FITS nulls
     are TNULLn / NaN, not Python ``None``.
+
+    Null rows (NaN for floats, ``None`` for object arrays) follow SQL
+    three-valued logic: they are excluded from negations (``NOT``,
+    ``!=``, ``NOT IN``, ``NOT BETWEEN``), so ``NOT (X == v)`` selects
+    exactly the rows of ``X != v``. Bare ``NULL``/``NONE`` words are null
+    literals; quoted ``'null'``/``'none'`` are ordinary strings.
     """
     import numpy as np
 
@@ -87,10 +99,21 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
             "<": np.less,
             "<=": np.less_equal,
         }
+        func = operators.get(operator)
+        if func is None:
+            raise ValueError(f"Unsupported operator: {operator}")
         try:
-            return cast(np.ndarray, operators[operator](values, literal))
-        except KeyError as exc:
-            raise ValueError(f"Unsupported operator: {operator}") from exc
+            mask = cast(np.ndarray, func(values, literal))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"cannot compare column values with literal {literal!r} "
+                f"using {operator!r}"
+            ) from exc
+        if operator == "!=":
+            # SQL three-valued logic: NULL != v is unknown, so null-like rows
+            # stay excluded — NOT (X == v) must select exactly X != v.
+            mask = cast(np.ndarray, mask & _not_null_like(values))
+        return cast(np.ndarray, mask)
     if kind == "in":
         _, _, literals, negate = ast
         mask = cast(np.ndarray, np.isin(values, literals))
@@ -99,7 +122,13 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
         return mask
     if kind == "between":
         _, _, low, high, negate = ast
-        mask = cast(np.ndarray, (values >= low) & (values <= high))
+        try:
+            mask = cast(np.ndarray, (values >= low) & (values <= high))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"cannot compare column values with BETWEEN bounds "
+                f"{low!r} AND {high!r}"
+            ) from exc
         if negate:
             return cast(np.ndarray, ~mask & _not_null_like(values))
         return mask

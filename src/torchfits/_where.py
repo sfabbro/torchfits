@@ -193,7 +193,7 @@ def _normalize_where_syntax(where: str) -> str:
 
 
 def _normalize_logical_operators(where: str) -> str:
-    parts: list[str] = re.split(r"('[^']*'|\"[^\"]*\")", where)
+    parts: list[str] = re.split(_QUOTED_SEGMENT, where)
     for i in range(0, len(parts), 2):
         s = parts[i]
         s = re.sub(r"\bAND\b", "and", s, flags=re.IGNORECASE)
@@ -209,41 +209,59 @@ def _normalize_logical_operators(where: str) -> str:
 # capturing comparison operators or parentheses in pathological expressions.
 _BOUNDARY_VALUE = r"('[^']*'|\"[^\"]*\"|[+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\w+)"
 
+# Quoted string literal (with backslash escapes) captured so the keyword
+# rewrites below can leave literal content verbatim. Odd indices of
+# ``re.split(_QUOTED_SEGMENT, ...)`` are literals; even indices are syntax.
+_QUOTED_SEGMENT = r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")"
+
+
+def _rewrite_outside_quotes(where: str, rewrite) -> str:
+    parts = re.split(_QUOTED_SEGMENT, where)
+    for i in range(0, len(parts), 2):
+        parts[i] = rewrite(parts[i])
+    return "".join(parts)
+
 
 def _normalize_between(where: str) -> str:
-    where = re.sub(
-        r"\b(\w+)\s+NOT\s+BETWEEN\s+"
-        + _BOUNDARY_VALUE
-        + r"\s+AND\s+"
-        + _BOUNDARY_VALUE,
-        r"not_between(\1, \2, \3)",
-        where,
-        flags=re.IGNORECASE,
-    )
-    where = re.sub(
-        r"\b(\w+)\s+BETWEEN\s+" + _BOUNDARY_VALUE + r"\s+AND\s+" + _BOUNDARY_VALUE,
-        r"between(\1, \2, \3)",
-        where,
-        flags=re.IGNORECASE,
-    )
-    return where
+    def _rewrite(text: str) -> str:
+        text = re.sub(
+            r"\b(\w+)\s+NOT\s+BETWEEN\s+"
+            + _BOUNDARY_VALUE
+            + r"\s+AND\s+"
+            + _BOUNDARY_VALUE,
+            r"not_between(\1, \2, \3)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\b(\w+)\s+BETWEEN\s+" + _BOUNDARY_VALUE + r"\s+AND\s+" + _BOUNDARY_VALUE,
+            r"between(\1, \2, \3)",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    return _rewrite_outside_quotes(where, _rewrite)
 
 
 def _normalize_nulls(where: str) -> str:
-    where = re.sub(
-        r"\b(\w+)\s+IS\s+NOT\s+NULL\b", r"isnotnull(\1)", where, flags=re.IGNORECASE
-    )
-    where = re.sub(
-        r"\b(\w+)\s+NOT\s+NULL\b", r"isnotnull(\1)", where, flags=re.IGNORECASE
-    )
-    where = re.sub(r"\b(\w+)\s+IS\s+NULL\b", r"isnull(\1)", where, flags=re.IGNORECASE)
-    return where
+    def _rewrite(text: str) -> str:
+        text = re.sub(
+            r"\b(\w+)\s+IS\s+NOT\s+NULL\b", r"isnotnull(\1)", text, flags=re.IGNORECASE
+        )
+        text = re.sub(
+            r"\b(\w+)\s+NOT\s+NULL\b", r"isnotnull(\1)", text, flags=re.IGNORECASE
+        )
+        return re.sub(
+            r"\b(\w+)\s+IS\s+NULL\b", r"isnull(\1)", text, flags=re.IGNORECASE
+        )
+
+    return _rewrite_outside_quotes(where, _rewrite)
 
 
 def _get_constant_val(node: Any) -> Any:
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, str) and node.value.upper() in {"NULL", "NONE"}:
-            return None
+        # Quoted literals are literal values, never NULL keywords: only bare
+        # words (ast.Name) follow the none/null -> None convention.
         return node.value
     if isinstance(node, ast.Name):
         if node.id.upper() in {"NULL", "NONE"}:
