@@ -503,9 +503,7 @@ class TestMakeLoader:
             def __getitem__(self, idx):
                 return torch.zeros(3), torch.tensor(0)
 
-        with mock.patch(
-            "torchfits.data.remote._download", side_effect=_mock_download
-        ):
+        with mock.patch("torchfits.data.remote._download", side_effect=_mock_download):
             loader = make_loader(_StubDataset(), batch_size=1, shuffle=False)
             batches = list(loader)
         assert len(batches) == 2

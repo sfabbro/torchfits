@@ -88,14 +88,10 @@ def test_416_on_resume_restarts_instead_of_wedging(tmp_path):
     def fake_http_open(u, *, headers=None, timeout=None):
         seen.append(dict(headers or {}))
         if headers and "Range" in headers:
-            raise urllib.error.HTTPError(
-                u, 416, "Range Not Satisfiable", None, None
-            )
+            raise urllib.error.HTTPError(u, 416, "Range Not Satisfiable", None, None)
         return _FakeResp(200, {"Content-Length": str(len(body))}, body)
 
-    with mock.patch(
-        "torchfits.data.remote.http_open", side_effect=fake_http_open
-    ):
+    with mock.patch("torchfits.data.remote.http_open", side_effect=fake_http_open):
         local = remote.resolve_local_path(url, cache_dir=cache)
     assert Path(local).read_bytes() == body
     # The dead offset was attempted first, then a clean fetch followed.

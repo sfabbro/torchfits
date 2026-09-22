@@ -283,9 +283,9 @@ def _resolve_file_labels(
 
     return [
         int(
-            read_keys(_local_read_path(path, cache_dir=cache_dir), [label_key], hdu=hdu)[
-                label_key
-            ]
+            read_keys(
+                _local_read_path(path, cache_dir=cache_dir), [label_key], hdu=hdu
+            )[label_key]
         )
         for path in files
     ]
@@ -779,8 +779,7 @@ class FitsImageDataset(FitsTensorDataset):
         return {
             info.name: info.zeropoint
             for info in discover_bands(self.files[0])
-            if info.role == "flux"
-            and (info.name in names or info.index in indices)
+            if info.role == "flux" and (info.name in names or info.index in indices)
         }
 
     def __repr__(self) -> str:
@@ -1391,9 +1390,7 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         else:
             self.cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
         if self.cutout_size[0] < 1 or self.cutout_size[1] < 1:
-            raise ValueError(
-                f"cutout_size must be positive; got {self.cutout_size!r}"
-            )
+            raise ValueError(f"cutout_size must be positive; got {self.cutout_size!r}")
         self.hdus = _as_hdu_list(hdu)
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
