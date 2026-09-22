@@ -114,9 +114,12 @@ def clear_cache_subsystem(
 ) -> None:
     """Clear one named FITS I/O cache subsystem."""
     policy = cache_subsystem_policy(name)
+    # ``handles`` is deliberately not forwarded: it is ignored since the handle
+    # cache was removed, and forwarding the policy's False value would surface
+    # the clear_file_cache(handles=) deprecation for internal callers who never
+    # passed the knob.
     clear_file_cache(
         data=policy["data"],
-        handles=policy["handles"],
         meta=policy["meta"],
         hdu_types=policy["hdu_types"],
         stats=policy["stats"],
@@ -402,6 +405,35 @@ def _register_open_hdulist(path: str, handle: Any, hdulist: Any) -> None:
         pass
 
 
+def _unregister_open_hdulist(key: str | None, handle: Any) -> None:
+    """Drop *handle* from the open-HDUList registry under the registry lock.
+
+    Called by ``HDUList.close`` so its deregistration cannot clobber a
+    concurrent :func:`_register_open_hdulist` append or another close's
+    write-back (lost update on the shared registry).
+    """
+    with cache_lock:
+        if key is not None:
+            entries = _open_hdulist_registry.get(key, [])
+            remaining = [entry for entry in entries if entry[0] is not handle]
+            if len(remaining) != len(entries):
+                if remaining:
+                    _open_hdulist_registry[key] = remaining
+                else:
+                    _open_hdulist_registry.pop(key, None)
+            return
+        for real_path in list(_open_hdulist_registry.keys()):
+            entries = _open_hdulist_registry.get(real_path, [])
+            remaining = [entry for entry in entries if entry[0] is not handle]
+            if len(remaining) == len(entries):
+                continue
+            if remaining:
+                _open_hdulist_registry[real_path] = remaining
+            else:
+                _open_hdulist_registry.pop(real_path, None)
+            return
+
+
 def _close_hdulist_for_path(path: str) -> None:
     """Close and unregister any open HDUList file handle for *path*.
 
@@ -555,7 +587,8 @@ def clear_file_cache(
     """
     if handles is not True:
         warnings.warn(
-            "clear_file_cache(handles=...) is deprecated and ignored; handles are no longer cached",
+            "clear_file_cache(handles=) is ignored since the handle cache was "
+            "removed; it will be removed in 2.0",
             DeprecationWarning,
             stacklevel=2,
         )

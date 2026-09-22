@@ -188,35 +188,14 @@ class HDUList:
 
     def close(self) -> None:
         if self._file_handle:
-            # Unregister before closing so the registry doesn't hold a stale entry.
+            # Unregister before closing so the registry doesn't hold a stale
+            # entry. The removal itself runs under the registry lock (r4c-01):
+            # an unlocked read-modify-write here lost concurrent registrations.
             try:
-                from .._io_engine.caches import _open_hdulist_registry
+                from .._io_engine.caches import _unregister_open_hdulist
 
-                key = self._registry_key
-                if key is not None:
-                    entries = _open_hdulist_registry.get(key, [])
-                    remaining = [
-                        entry for entry in entries if entry[0] is not self._file_handle
-                    ]
-                    if not remaining:
-                        _open_hdulist_registry.pop(key, None)
-                    elif len(remaining) != len(entries):
-                        _open_hdulist_registry[key] = remaining
-                    self._registry_key = None
-                else:
-                    for real_path, entries in list(_open_hdulist_registry.items()):
-                        remaining = [
-                            entry
-                            for entry in entries
-                            if entry[0] is not self._file_handle
-                        ]
-                        if len(remaining) == len(entries):
-                            continue
-                        if remaining:
-                            _open_hdulist_registry[real_path] = remaining
-                        else:
-                            _open_hdulist_registry.pop(real_path, None)
-                        break
+                _unregister_open_hdulist(self._registry_key, self._file_handle)
+                self._registry_key = None
             except Exception:
                 pass
             self._file_handle.close()

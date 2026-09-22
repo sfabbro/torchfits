@@ -29,7 +29,8 @@ class ReadOptions:
     def __post_init__(self) -> None:
         if self.handle_cache_capacity != 16:
             warnings.warn(
-                "ReadOptions.handle_cache_capacity is deprecated and ignored; handles are no longer cached",
+                "ReadOptions.handle_cache_capacity is ignored since the handle "
+                "cache was removed; it will be removed in 2.0",
                 DeprecationWarning,
                 stacklevel=2,
             )
