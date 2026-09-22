@@ -335,3 +335,97 @@ def test_buffered_shuffle():
     assert len(shuffled) == 100
     assert set(shuffled) == set(items)
     assert shuffled != items  # Permuted
+
+
+# ---------------------------------------------------------------------------
+# R3a review: companion arity + staged cutout safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def three_band_fits(tmp_path):
+    path = tmp_path / "three.fits"
+    hdus = [fits.PrimaryHDU()]
+    for name in ("G", "R", "Z"):
+        hdus.append(fits.ImageHDU(np.ones((4, 4), dtype=np.float32), name=name))
+    fits.HDUList(hdus).writeto(str(path), overwrite=True)
+    return path
+
+
+class TestCompanionArity:
+    def test_map_rejects_mismatched_ivar_arity(self, three_band_fits):
+        from torchfits.data import FitsTensorDataset
+
+        with pytest.raises(ValueError, match="ivar_hdu must match hdu arity"):
+            FitsTensorDataset([str(three_band_fits)], hdu=["G", "R"], ivar_hdu=["Z"])
+
+    def test_iterable_rejects_mismatched_ivar_arity(self, three_band_fits):
+        from torchfits.data import FitsTensorIterableDataset
+
+        with pytest.raises(ValueError, match="ivar_hdu must match hdu arity"):
+            FitsTensorIterableDataset(
+                [str(three_band_fits)], hdu=["G", "R"], ivar_hdu=["Z"]
+            )
+
+    def test_iterable_rejects_mismatched_mask_arity(self, three_band_fits):
+        from torchfits.data import FitsTensorIterableDataset
+
+        with pytest.raises(ValueError, match="mask_hdu must match hdu arity"):
+            FitsTensorIterableDataset(
+                [str(three_band_fits)], hdu=["G", "R"], mask_hdu=["Z"]
+            )
+
+
+class TestStagedCutoutSafety:
+    def test_cutout_size_must_be_positive(self, three_band_fits):
+        from torchfits.data import FitsStagedCutoutIterableDataset
+
+        with pytest.raises(ValueError, match="cutout_size"):
+            FitsStagedCutoutIterableDataset(
+                [str(three_band_fits)], cutout_size=0, hdu="G"
+            )
+
+    def test_duplicate_urls_download_once_and_survive_cleanup(self, tmp_path):
+        """A staged copy must outlive every occurrence of its URL.
+
+        ``cleanup=True`` used to unlink the staged file after the first
+        occurrence's cutouts: a second occurrence re-downloaded it, and a
+        concurrent iterator could crash in its resolve->open window on the
+        unlinked path.
+        """
+        import shutil
+        from unittest import mock
+
+        import torchfits.data.remote as remote
+        from torchfits.data import FitsStagedCutoutIterableDataset
+
+        mosaic = tmp_path / "mosaic.fits"
+        fits.PrimaryHDU(np.zeros((8, 8), dtype=np.float32)).writeto(
+            str(mosaic), overwrite=True
+        )
+
+        calls: list[str] = []
+
+        def _serve(url, dest):
+            calls.append(url)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(dest.suffix + ".partial")
+            shutil.copy(mosaic, tmp)
+            tmp.replace(dest)
+            return dest
+
+        url = "https://archive.example.org/mosaics/dup.fits"
+        with mock.patch.object(remote, "_download", side_effect=_serve):
+            ds = FitsStagedCutoutIterableDataset(
+                [url, url],
+                cutouts_per_file=1,
+                cutout_size=4,
+                hdu=0,
+                staging_dir=tmp_path / "scratch",
+                cleanup=True,
+            )
+            items = list(ds)
+
+        assert len(items) == 2
+        assert all(t.shape == (1, 4, 4) for t in items)
+        assert calls == [url]

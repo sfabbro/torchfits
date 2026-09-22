@@ -6,6 +6,9 @@ import contextlib
 import glob as _glob
 import os
 import random
+import shutil
+import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
@@ -13,7 +16,13 @@ from typing import Any, Callable, Iterator, Sequence
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
-from .remote import is_remote_url, prefetch_urls, resolve_local_path
+from .remote import (
+    cleanup_downloaded_file,
+    ephemeral_scratch_dir,
+    is_remote_url,
+    prefetch_urls,
+    resolve_local_path,
+)
 
 HduRef = int | str
 HduSpec = HduRef | Sequence[HduRef]
@@ -24,7 +33,7 @@ def _resolve_rank_and_world_size(
 ) -> tuple[int, int]:
     """Resolve distributed rank and world size across explicit inputs, env vars, and torch.distributed."""
     if rank is not None and world_size is not None:
-        return max(0, int(rank)), max(1, int(world_size))
+        return _checked_rank_and_world_size(int(rank), int(world_size))
 
     r = rank
     w = world_size
@@ -54,7 +63,23 @@ def _resolve_rank_and_world_size(
         if w is None:
             w = torch.distributed.get_world_size()
 
-    return (0 if r is None else max(0, int(r))), (1 if w is None else max(1, int(w)))
+    return _checked_rank_and_world_size(
+        0 if r is None else int(r), 1 if w is None else int(w)
+    )
+
+
+def _checked_rank_and_world_size(rank: int, world_size: int) -> tuple[int, int]:
+    """Validate a resolved ``(rank, world_size)`` pair.
+
+    Sharding partitions rows exactly only when ``0 <= rank < world_size``;
+    silently clamping out-of-range ranks duplicates another rank's rows.
+    """
+    if not 0 <= rank < world_size:
+        raise ValueError(
+            f"rank must satisfy 0 <= rank < world_size; "
+            f"got rank={rank}, world_size={world_size}"
+        )
+    return rank, world_size
 
 
 def _shard_sequence(seq: list[Any], rank: int, world_size: int) -> list[Any]:
@@ -85,6 +110,30 @@ def _worker_shard(
     start = worker_id * per_worker + min(worker_id, remainder)
     size = per_worker + (1 if worker_id < remainder else 0)
     return sharded, list(range(start, start + size)), seed + worker_id
+
+
+def _shard_work_plan(
+    seq: list[Any],
+    rank: int | None,
+    world_size: int | None,
+    seed: int,
+    shuffle: bool,
+) -> tuple[list[Any], list[int], int, int, int]:
+    """Rank + DataLoader-worker shard of *seq* with this worker's yield order.
+
+    Returns ``(sharded, indices, worker_seed, rank, world_size)``: *indices*
+    is this worker's contiguous slice of *sharded* (leftover rows go to the
+    first workers), permuted when *shuffle*, and ``worker_seed`` is
+    ``seed + worker_id`` so shuffles are deterministic per worker and epoch.
+    """
+    rank, world_size = _resolve_rank_and_world_size(rank, world_size)
+    sharded, indices, worker_seed = _worker_shard(seq, rank, world_size, seed)
+    if shuffle:
+        g = torch.Generator()
+        g.manual_seed(worker_seed)
+        perm = torch.randperm(len(indices), generator=g).tolist()
+        indices = [indices[i] for i in perm]
+    return sharded, indices, worker_seed, rank, world_size
 
 
 def _buffered_shuffle(
@@ -211,8 +260,13 @@ def _resolve_file_labels(
     label_key: str | None,
     labels: list[int] | None,
     hdu: int = 0,
+    cache_dir: Path | None = None,
 ) -> list[int] | None:
     """Per-file integer labels from an explicit list or a primary-header key.
+
+    Remote paths are resolved through the download cache first, exactly like
+    the data reads: CFITSIO cannot open vos paths at all, and an HTTP URL
+    would otherwise be fetched once here and once at read time.
 
     Returns ``None`` when neither is supplied, which keeps the legacy
     label-free payload return for spectra.
@@ -227,7 +281,14 @@ def _resolve_file_labels(
         return None
     from torchfits import read_keys
 
-    return [int(read_keys(path, [label_key], hdu=hdu)[label_key]) for path in files]
+    return [
+        int(
+            read_keys(_local_read_path(path, cache_dir=cache_dir), [label_key], hdu=hdu)[
+                label_key
+            ]
+        )
+        for path in files
+    ]
 
 
 # Zeropoint header keys, most specific first. FITS files name the same
@@ -278,13 +339,21 @@ class BandInfo:
         """Factor turning counts into flux: ``10**(-0.4 * ZP)``.
 
         Returns ``None`` when the header declares no zeropoint. With
-        ``exptime_normalized=False`` the factor is divided by ``EXPTIME`` so
-        the result is per-second.
+        ``exptime_normalized=False`` the stored counts are exposure totals
+        rather than per-second values, so the factor is divided by ``EXPTIME``
+        to make the result per-second; a missing or non-positive ``EXPTIME``
+        cannot be divided out and raises :class:`ValueError` instead of
+        silently returning a non-per-second factor.
         """
         if self.zeropoint is None:
             return None
         scale = float(10.0 ** (-0.4 * float(self.zeropoint)))
-        if not exptime_normalized and self.exptime:
+        if not exptime_normalized:
+            if self.exptime is None or self.exptime <= 0:
+                raise ValueError(
+                    f"exptime_normalized=False needs a positive EXPTIME; "
+                    f"band {self.name!r} has EXPTIME={self.exptime!r}"
+                )
             scale /= float(self.exptime)
         return scale
 
@@ -350,14 +419,19 @@ def discover_bands(
     for index in range(n_hdus):
         try:
             bitpix, shape = torchfits.read_shape(resolved, index)
-        except Exception:
-            continue
+        except RuntimeError:
+            # Table HDUs are not image extensions and are skipped by design;
+            # surface every other failure instead of silently dropping a
+            # band from the listing (which would build datasets with fewer
+            # channels than the file has).
+            header = torchfits.read_header(resolved, index)
+            xtension = str(header.get("XTENSION") or "").upper()
+            if xtension in {"TABLE", "BINTABLE"} and not header.get("ZIMAGE"):
+                continue
+            raise
         if len(shape) < 2:
             continue
-        try:
-            header = torchfits.read_header(resolved, index)
-        except Exception:
-            continue
+        header = torchfits.read_header(resolved, index)
         extname = header.get("EXTNAME")
         name = str(extname).strip() if extname else f"HDU{index}"
         if not extname:
@@ -401,17 +475,21 @@ def discover_bands(
 
 
 def _slice_leading(
-    payload: Any, *, index: int | None, window: tuple[int, int] | None
+    payload: Any, *, index: int | None, window: tuple[int, int] | None, axis: int = 0
 ) -> Any:
-    """Index and/or window the leading (spectral) axis of a cube payload."""
+    """Index and/or window the spectral axis of a cube payload.
+
+    ``axis`` locates the spectral axis of each tensor: 0 for a single cube
+    HDU, 1 when several cube HDUs were stacked on a leading channel axis.
+    """
     if index is None and window is None:
         return payload
 
     def _apply(tensor: torch.Tensor) -> torch.Tensor:
         if index is not None:
-            tensor = tensor[index]
+            tensor = tensor.select(axis, index)
         if window is not None:
-            tensor = tensor[window[0] : window[1]]
+            tensor = tensor[(slice(None),) * axis + (slice(window[0], window[1]),)]
         return tensor
 
     if isinstance(payload, dict):
@@ -623,6 +701,9 @@ class FitsImageDataset(FitsTensorDataset):
 
         Use :func:`discover_bands` to inspect zeropoints before choosing
         bands; see :meth:`BandInfo.flux_scale` for counts→flux conversion.
+        ``bands=None`` selects every extension whose name does not look like
+        a companion; if *every* extension looks like a companion, all of them
+        are selected.
         """
         files = _resolve_paths(paths)
         if not files:
@@ -693,10 +774,13 @@ class FitsImageDataset(FitsTensorDataset):
         """
         if not self.files:
             return {}
+        names = {str(h) for h in self.hdus if isinstance(h, str)}
+        indices = {int(h) for h in self.hdus if isinstance(h, int)}
         return {
             info.name: info.zeropoint
             for info in discover_bands(self.files[0])
             if info.role == "flux"
+            and (info.name in names or info.index in indices)
         }
 
     def __repr__(self) -> str:
@@ -743,7 +827,12 @@ class FitsCubeDataset(FitsTensorDataset):
     def __getitem__(self, idx: int) -> tuple[Any, torch.Tensor]:
         payload, label = super().__getitem__(idx)
         return (
-            _slice_leading(payload, index=self.slice_index, window=self.spectral_slice),
+            _slice_leading(
+                payload,
+                index=self.slice_index,
+                window=self.spectral_slice,
+                axis=1 if len(self.hdus) > 1 else 0,
+            ),
             label,
         )
 
@@ -782,6 +871,10 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
         self.hdus = _as_hdu_list(hdu)
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
+        if self.ivar_hdus is not None and len(self.ivar_hdus) != len(self.hdus):
+            raise ValueError("ivar_hdu must match hdu arity")
+        if self.mask_hdus is not None and len(self.mask_hdus) != len(self.hdus):
+            raise ValueError("mask_hdu must match hdu arity")
         self.mask_is_dq = bool(mask_is_dq)
         self.bad_bits = bad_bits
         self.transform = transform
@@ -797,16 +890,9 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
 
     def _generate(self) -> Iterator[Any]:
-        rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files, indices, worker_seed = _worker_shard(
-            self.files, rank, world_size, self.seed
+        sharded_files, indices, worker_seed, _, _ = _shard_work_plan(
+            self.files, self.rank, self.world_size, self.seed, self.shuffle
         )
-
-        if self.shuffle:
-            g = torch.Generator()
-            g.manual_seed(worker_seed)
-            perm = torch.randperm(len(indices), generator=g).tolist()
-            indices = [indices[i] for i in perm]
 
         for i, idx in enumerate(indices):
             ahead = [
@@ -899,7 +985,10 @@ class FitsCubeIterableDataset(FitsTensorIterableDataset):
     def __iter__(self) -> Iterator[Any]:
         for payload in super().__iter__():
             yield _slice_leading(
-                payload, index=self.slice_index, window=self.spectral_slice
+                payload,
+                index=self.slice_index,
+                window=self.spectral_slice,
+                axis=1 if len(self.hdus) > 1 else 0,
             )
 
     def __repr__(self) -> str:
@@ -964,6 +1053,10 @@ class FitsSpectrumDataset(Dataset[Any]):
             )
         self.files = _resolve_paths(paths)
         self.hdus = _as_hdu_list(hdu)
+        if column is not None and len(self.hdus) > 1:
+            raise ValueError("table column spectra only support a single arm")
+        if column is not None and not isinstance(self.hdus[0], int):
+            raise ValueError("table spectrum path requires integer hdu index")
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
         if self.ivar_hdus is not None and len(self.ivar_hdus) != len(self.hdus):
@@ -994,7 +1087,9 @@ class FitsSpectrumDataset(Dataset[Any]):
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
         self.mask_is_dq = bool(mask_is_dq)
         self.bad_bits = bad_bits
-        resolved = _resolve_file_labels(self.files, label_key=label_key, labels=labels)
+        resolved = _resolve_file_labels(
+            self.files, label_key=label_key, labels=labels, cache_dir=self.cache_dir
+        )
         self.labels = resolved
 
     def __len__(self) -> int:
@@ -1122,8 +1217,6 @@ class FitsSpectrumDataset(Dataset[Any]):
         )
         if self.column is not None:
             payload = self._read_table_arm(path)
-            if self.layout != "dict" and len(self.hdus) > 1:
-                raise ValueError("table column spectra only support a single arm")
         else:
             payload = self._layout_arms(self._read_image_arms(path))
         if self.transform is not None:
@@ -1192,11 +1285,10 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         self.world_size = world_size
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
-        resolved = _resolve_file_labels(self.files, label_key=label_key, labels=labels)
-        self.labels = resolved
-        self._label_by_path = (
-            None if resolved is None else dict(zip(self.files, resolved))
+        resolved = _resolve_file_labels(
+            self.files, label_key=label_key, labels=labels, cache_dir=self.cache_dir
         )
+        self.labels = resolved
         self._spec_reader = FitsSpectrumDataset(
             self.files[:1],
             hdu=self.hdu,
@@ -1216,16 +1308,16 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         )
 
     def _generate(self) -> Iterator[Any]:
-        rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files, indices, worker_seed = _worker_shard(
-            self.files, rank, world_size, self.seed
+        sharded_files, indices, worker_seed, rank, world_size = _shard_work_plan(
+            self.files, self.rank, self.world_size, self.seed, self.shuffle
         )
-
-        if self.shuffle:
-            g = torch.Generator()
-            g.manual_seed(worker_seed)
-            perm = torch.randperm(len(indices), generator=g).tolist()
-            indices = [indices[i] for i in perm]
+        # Positional shard of the label list (same split as the files) so
+        # duplicate paths keep their own labels.
+        sharded_labels = (
+            _shard_sequence(self.labels, rank, world_size)
+            if self.labels is not None
+            else None
+        )
 
         for i, idx in enumerate(indices):
             ahead = [
@@ -1237,19 +1329,16 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
             )
             if self.column is not None:
                 payload = self._spec_reader._read_table_arm(path)
-                if self.layout != "dict" and len(self.hdus) > 1:
-                    raise ValueError("table column spectra only support a single arm")
             else:
                 payload = self._spec_reader._layout_arms(
                     self._spec_reader._read_image_arms(path)
                 )
             if self.transform is not None:
                 payload = self.transform(payload)
-            if self._label_by_path is None:
+            if sharded_labels is None:
                 yield payload
             else:
-                label = self._label_by_path[sharded_files[idx]]
-                yield payload, torch.tensor(label, dtype=torch.long)
+                yield payload, torch.tensor(sharded_labels[idx], dtype=torch.long)
 
     def __iter__(self) -> Iterator[Any]:
         stream = self._generate()
@@ -1295,11 +1384,16 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         bad_bits: int | Sequence[int] | None = None,
     ) -> None:
         self.files = _resolve_paths(paths)
+        self._url_counts = Counter(self.files)
         self.cutouts_per_file = max(1, int(cutouts_per_file))
         if isinstance(cutout_size, int):
             self.cutout_size = (cutout_size, cutout_size)
         else:
             self.cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
+        if self.cutout_size[0] < 1 or self.cutout_size[1] < 1:
+            raise ValueError(
+                f"cutout_size must be positive; got {self.cutout_size!r}"
+            )
         self.hdus = _as_hdu_list(hdu)
         self.ivar_hdus = None if ivar_hdu is None else _as_hdu_list(ivar_hdu)
         self.mask_hdus = None if mask_hdu is None else _as_hdu_list(mask_hdu)
@@ -1331,28 +1425,36 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         x1 = rng.randint(0, max_x) if max_x > 0 else 0
         return x1, y1, min(width, x1 + cw), min(height, y1 + ch)
 
-    def _generate(self) -> Iterator[Any]:
-        import random
+    def _stage_root(self) -> tuple[Path, Path]:
+        """``(root, stage_root)`` for this iterator's staged downloads.
 
+        With ``cleanup=True`` every iterator stages into a private directory
+        that is removed at close: cleanup unlinks files, and a concurrent
+        iterator over the same remote that resolved the same shared path
+        would crash in its open window when the copy is unlinked. With
+        ``cleanup=False`` the shared staging root is kept so copies are
+        reused across iterators and epochs and nothing is ever deleted.
+        """
+        root = self.staging_dir or ephemeral_scratch_dir()
+        if not self.cleanup:
+            return root, root
+        root.mkdir(parents=True, exist_ok=True)
+        return root, Path(tempfile.mkdtemp(prefix="it-", dir=root))
+
+    def _generate(self) -> Iterator[Any]:
+        root, stage_root = self._stage_root()
+        try:
+            yield from self._cutout_stream(stage_root)
+        finally:
+            if self.cleanup and stage_root != root:
+                shutil.rmtree(stage_root, ignore_errors=True)
+
+    def _cutout_stream(self, stage_root: Path) -> Iterator[Any]:
         from torchfits.io import open_subset_reader
 
-        from .remote import (
-            cleanup_downloaded_file,
-            ephemeral_scratch_dir,
-            is_remote_url,
+        sharded_files, indices, worker_seed, _, _ = _shard_work_plan(
+            self.files, self.rank, self.world_size, self.seed, self.shuffle_files
         )
-
-        stage_root = self.staging_dir or ephemeral_scratch_dir()
-        rank, world_size = _resolve_rank_and_world_size(self.rank, self.world_size)
-        sharded_files, indices, worker_seed = _worker_shard(
-            self.files, rank, world_size, self.seed
-        )
-
-        if self.shuffle_files:
-            g = torch.Generator()
-            g.manual_seed(worker_seed)
-            perm = torch.randperm(len(indices), generator=g).tolist()
-            indices = [indices[i] for i in perm]
 
         rng = random.Random(worker_seed)
         ch, cw = self.cutout_size
@@ -1474,7 +1576,10 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
                             payload = self.transform(payload)
                         yield payload
             finally:
-                if self.cleanup and is_remote:
+                # Keep the staged copy while another occurrence of the same
+                # URL still needs it (later in this shard or a sibling
+                # worker's); unlinking it there would race their open.
+                if self.cleanup and is_remote and self._url_counts[file_ref] < 2:
                     cleanup_downloaded_file(local_path)
 
     def __iter__(self) -> Iterator[Any]:

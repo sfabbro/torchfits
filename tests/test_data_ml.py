@@ -665,3 +665,358 @@ class TestImageMaskCompanions:
 
         with pytest.raises(ValueError, match="mix DQ bitfields and plain masks"):
             FitsImageDataset.from_bands(str(path))
+
+
+# ---------------------------------------------------------------------------
+# R3a review: spectral-axis correctness, label integrity, sharding exactness
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_worker(monkeypatch, worker_id: int, num_workers: int) -> None:
+    """Pretend this call runs inside DataLoader worker ``worker_id``."""
+    import types
+
+    info = types.SimpleNamespace(id=worker_id, num_workers=num_workers)
+    monkeypatch.setattr(torch.utils.data, "get_worker_info", lambda: info)
+
+
+class TestCubeSpectralAxisAcrossBands:
+    """``spectral_slice``/``slice_index`` act on the spectral axis of every
+    band, not on the channel axis a multi-HDU stack puts in front of it."""
+
+    @pytest.fixture
+    def two_band_cubes(self, tmp_path):
+        path = tmp_path / "mcube.fits"
+        data = np.arange(2 * 5 * 4 * 6, dtype=np.float32).reshape(2, 5, 4, 6)
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(data[0]),
+                fits.ImageHDU(data[1], name="CUBE2"),
+                fits.ImageHDU(np.ones_like(data[0]), name="IVAR1"),
+                fits.ImageHDU(np.ones_like(data[1]), name="IVAR2"),
+            ]
+        ).writeto(str(path), overwrite=True)
+        return path, data
+
+    def test_map_window_slices_spectral_axis(self, two_band_cubes):
+        from torchfits.data import FitsCubeDataset
+
+        path, data = two_band_cubes
+        payload, _ = FitsCubeDataset(
+            [str(path)], hdu=[0, "CUBE2"], spectral_slice=(1, 4), labels=[0]
+        )[0]
+        assert payload.shape == (2, 3, 4, 6)
+        assert np.allclose(payload.numpy(), data[:, 1:4])
+
+    def test_slice_index_selects_plane_from_each_band(self, two_band_cubes):
+        from torchfits.data import FitsCubeDataset
+
+        path, data = two_band_cubes
+        payload, _ = FitsCubeDataset(
+            [str(path)], hdu=[0, "CUBE2"], slice_index=1, labels=[0]
+        )[0]
+        assert payload.shape == (2, 4, 6)
+        assert np.allclose(payload.numpy(), data[:, 1])
+
+    def test_iterable_window_slices_spectral_axis(self, two_band_cubes):
+        from torchfits.data import FitsCubeIterableDataset
+
+        path, data = two_band_cubes
+        payload = next(
+            iter(
+                FitsCubeIterableDataset(
+                    [str(path)],
+                    hdu=[0, "CUBE2"],
+                    ivar_hdu=["IVAR1", "IVAR2"],
+                    spectral_slice=(1, 4),
+                )
+            )
+        )
+        assert payload["flux"].shape == (2, 3, 4, 6)
+        assert payload["ivar"].shape == (2, 3, 4, 6)
+        assert np.allclose(payload["flux"].numpy(), data[:, 1:4])
+
+    def test_window_bounds_clamp_or_reject(self, two_band_cubes):
+        from torchfits.data import FitsCubeDataset
+
+        path, data = two_band_cubes
+        # stop beyond the extent clamps to the available planes
+        payload, _ = FitsCubeDataset(
+            [str(path)], hdu=0, spectral_slice=(3, 99), labels=[0]
+        )[0]
+        assert payload.shape == (2, 4, 6)
+        assert np.allclose(payload.numpy(), data[0][3:])
+        # start beyond the extent yields an empty spectral axis (Python slice
+        # semantics) with the dtype preserved
+        payload, _ = FitsCubeDataset(
+            [str(path)], hdu=0, spectral_slice=(9, 12), labels=[0]
+        )[0]
+        assert payload.shape == (0, 4, 6)
+        assert payload.dtype == torch.float32
+        for bad in ((-1, 2), (3, 3), (4, 2)):
+            with pytest.raises(ValueError, match="spectral_slice"):
+                FitsCubeDataset([str(path)], hdu=0, spectral_slice=bad, labels=[0])
+
+
+class TestSpectrumIterableLabelIntegrity:
+    def test_duplicate_paths_keep_distinct_labels(self, spectrum_mef):
+        from torchfits.data import FitsSpectrumIterableDataset
+
+        ds = FitsSpectrumIterableDataset(
+            [str(spectrum_mef), str(spectrum_mef)],
+            hdu="FLUX",
+            row=0,
+            labels=[1, 2],
+        )
+        assert sorted(int(label) for _, label in ds) == [1, 2]
+
+    def test_label_key_resolves_remote_through_cache(self, tmp_path):
+        """``label_key=`` must read headers from the cached local copy.
+
+        It used to hand the raw remote URI straight to ``read_keys``: vos/URL
+        spectra failed at construction (and HTTP fetched the file once via
+        CFITSIO and again via ``resolve_local_path``).
+        """
+        import shutil
+        from unittest import mock
+
+        import torchfits.data.remote as remote
+        from torchfits.data import FitsSpectrumDataset
+
+        fixture = tmp_path / "spec.fits"
+        header = fits.PrimaryHDU().header
+        header["CLASS"] = 3
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(header=header),
+                fits.ImageHDU(
+                    np.arange(8, dtype=np.float32)[None, :].repeat(2, 0), name="FLUX"
+                ),
+            ]
+        ).writeto(str(fixture), overwrite=True)
+
+        calls: list[str] = []
+
+        def _serve(url, dest):
+            calls.append(url)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(fixture, dest)
+            return dest
+
+        url = "vos://vos.test!spec.fits"
+        with mock.patch.object(remote, "_download", side_effect=_serve):
+            ds = FitsSpectrumDataset(
+                [url],
+                hdu="FLUX",
+                row=0,
+                label_key="CLASS",
+                cache_dir=tmp_path / "cache",
+            )
+            payload, label = ds[0]
+
+        assert payload["flux"].shape == (8,)
+        assert int(label) == 3
+        assert calls == [url]
+
+
+class TestTableColumnSpectrumContract:
+    """``column=`` table spectra are single-arm: say so at construction.
+
+    ``hdu=[1, 2]`` with ``column=`` used to read only the first table and
+    silently drop the second arm under ``layout="dict"`` (the "single arm"
+    guard was layout-gated and ran at read time).
+    """
+
+    @pytest.fixture
+    def two_table_spectra(self, tmp_path):
+        path = tmp_path / "tables.fits"
+        hdus = [fits.PrimaryHDU()]
+        for _ in range(2):
+            hdus.append(
+                fits.BinTableHDU.from_columns(
+                    [
+                        fits.Column(
+                            name="FLUX",
+                            format="E",
+                            array=np.arange(6, dtype=np.float32),
+                        )
+                    ]
+                )
+            )
+        fits.HDUList(hdus).writeto(str(path), overwrite=True)
+        return path
+
+    def test_multi_hdu_table_spectra_rejected(self, two_table_spectra):
+        from torchfits.data import FitsSpectrumDataset
+
+        with pytest.raises(ValueError, match="single arm"):
+            FitsSpectrumDataset([str(two_table_spectra)], hdu=[1, 2], column="FLUX")
+
+    def test_named_hdu_table_spectra_rejected_at_construction(self, two_table_spectra):
+        from torchfits.data import FitsSpectrumDataset
+
+        with pytest.raises(ValueError, match="integer hdu"):
+            FitsSpectrumDataset([str(two_table_spectra)], hdu="T1", column="FLUX")
+
+    def test_iterable_rejects_multi_hdu_table_spectra(self, two_table_spectra):
+        from torchfits.data import FitsSpectrumIterableDataset
+
+        with pytest.raises(ValueError, match="single arm"):
+            FitsSpectrumIterableDataset(
+                [str(two_table_spectra)], hdu=[1, 2], column="FLUX"
+            )
+
+
+class TestBandZeropointContracts:
+    def test_band_zeropoints_reports_selected_bands_only(self, bands_fits):
+        from torchfits.data import FitsImageDataset
+
+        ds = FitsImageDataset.from_bands(str(bands_fits), bands=["G", "R"])
+        assert ds.band_zeropoints() == {"G": 25.0, "R": 24.0}
+
+    def test_flux_scale_per_second_requires_exptime(self, tmp_path):
+        from torchfits.data import discover_bands
+
+        path = tmp_path / "zp.fits"
+        hdu = fits.ImageHDU(np.ones((3, 3), dtype=np.float32), name="G")
+        hdu.header["ZP"] = 25.0
+        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(str(path), overwrite=True)
+        g = next(b for b in discover_bands(str(path)) if b.name == "G")
+        assert g.flux_scale() == pytest.approx(10.0 ** (-0.4 * 25.0))
+        with pytest.raises(ValueError, match="EXPTIME"):
+            g.flux_scale(exptime_normalized=False)
+
+
+class TestDiscoverBandsRobustness:
+    def test_skips_table_hdus(self, tmp_path):
+        from torchfits.data import discover_bands
+
+        path = tmp_path / "mix.fits"
+        cols = [
+            fits.Column(name="flux", format="E", array=np.arange(4, dtype=np.float32))
+        ]
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(np.ones((2, 2), dtype=np.float32)),
+                fits.BinTableHDU.from_columns(cols),
+                fits.ImageHDU(np.ones((2, 2), dtype=np.float32), name="G"),
+            ]
+        ).writeto(str(path), overwrite=True)
+        assert [b.name for b in discover_bands(str(path))] == ["HDU0", "G"]
+
+    def test_surfaces_shape_failures_on_image_hdus(self, tmp_path, monkeypatch):
+        """A read failure on an image extension must not silently vanish.
+
+        The band list feeds ``from_bands``; a silently dropped extension
+        builds a dataset with fewer channels than the file has.
+        """
+        import torchfits
+        from torchfits.data import discover_bands
+
+        path = tmp_path / "img.fits"
+        fits.PrimaryHDU(np.ones((2, 2), dtype=np.float32)).writeto(
+            str(path), overwrite=True
+        )
+        real = torchfits.read_shape
+
+        def _boom(p, hdu=0):
+            if int(hdu) == 0:
+                raise RuntimeError("Could not read image parameters")
+            return real(p, hdu)
+
+        monkeypatch.setattr(torchfits, "read_shape", _boom)
+        with pytest.raises(RuntimeError):
+            discover_bands(str(path))
+
+    def test_surfaces_header_failures(self, tmp_path, monkeypatch):
+        import torchfits
+        from torchfits.data import discover_bands
+
+        path = tmp_path / "img.fits"
+        fits.PrimaryHDU(np.ones((2, 2), dtype=np.float32)).writeto(
+            str(path), overwrite=True
+        )
+
+        def _boom(p, hdu=0):
+            raise OSError("truncated")
+
+        monkeypatch.setattr(torchfits, "read_header", _boom)
+        with pytest.raises(OSError):
+            discover_bands(str(path))
+
+
+class TestIterableFileSharding:
+    """Exact partition of files across ranks and DataLoader workers."""
+
+    @pytest.fixture
+    def tagged_images(self, tmp_path):
+        paths = []
+        for i in range(5):
+            p = tmp_path / f"img_{i}.fits"
+            fits.PrimaryHDU(np.full((2, 2), float(i), dtype=np.float32)).writeto(
+                str(p), overwrite=True
+            )
+            paths.append(str(p))
+        return paths
+
+    @staticmethod
+    def _values(items):
+        return [float(t.flatten()[0]) for t in items]
+
+    def test_partition_exact_with_workers(self, tagged_images, monkeypatch):
+        from torchfits.data import FitsTensorIterableDataset
+
+        for world_size, num_workers in ((1, 1), (2, 2), (3, 2), (8, 3)):
+            seen: list[float] = []
+            for rank in range(world_size):
+                for worker_id in range(num_workers):
+                    _install_fake_worker(monkeypatch, worker_id, num_workers)
+                    ds = FitsTensorIterableDataset(
+                        tagged_images, rank=rank, world_size=world_size
+                    )
+                    seen += self._values(ds)
+            assert sorted(seen) == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+    def test_shuffle_deterministic_and_shards_disjoint(
+        self, tagged_images, monkeypatch
+    ):
+        from torchfits.data import FitsTensorIterableDataset
+
+        kwargs = dict(shuffle=True, shuffle_buffer_size=3, seed=11, world_size=2)
+        ds0 = FitsTensorIterableDataset(tagged_images, rank=0, **kwargs)
+        epoch1 = self._values(ds0)
+        assert self._values(ds0) == epoch1  # same seed => same order every epoch
+        assert set(epoch1) == {0.0, 2.0, 4.0}  # count preserved under shuffle
+
+        ds1 = FitsTensorIterableDataset(tagged_images, rank=1, **kwargs)
+        rank1 = self._values(ds1)
+        assert set(rank1) == {1.0, 3.0}  # different ranks disjoint
+        assert set(epoch1) | set(rank1) == {0.0, 1.0, 2.0, 3.0, 4.0}
+
+        _install_fake_worker(monkeypatch, 0, 2)
+        w0 = self._values(ds0)
+        _install_fake_worker(monkeypatch, 0, 2)
+        assert self._values(ds0) == w0  # worker shards deterministic
+        _install_fake_worker(monkeypatch, 1, 2)
+        w1 = self._values(ds0)
+        assert not set(w0) & set(w1)  # workers disjoint
+        assert sorted(w0 + w1) == [0.0, 2.0, 4.0]  # workers cover the rank shard
+
+    def test_iterable_epoch_yield_matches_map_len(self, tagged_images):
+        from torchfits.data import FitsTensorDataset, FitsTensorIterableDataset
+
+        ds_map = FitsTensorDataset(tagged_images)
+        ds_iter = FitsTensorIterableDataset(
+            tagged_images, shuffle=True, shuffle_buffer_size=2, seed=1
+        )
+        assert len(list(ds_iter)) == len(ds_map) == 5
+
+    def test_rank_out_of_range_raises(self, tagged_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        with pytest.raises(ValueError, match="rank"):
+            list(FitsTensorIterableDataset(tagged_images, rank=2, world_size=2))
+        with pytest.raises(ValueError, match="rank"):
+            list(FitsTensorIterableDataset(tagged_images, rank=-1, world_size=2))
+        with pytest.raises(ValueError, match="world_size"):
+            list(FitsTensorIterableDataset(tagged_images, rank=0, world_size=0))
