@@ -118,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - transforms: Finite-only statistics with defined empty-input results
 - transforms: FITS scale and TNULL helpers follow reader conventions
 - transforms: Payload state is authoritative; instances are thread-safe
+- data: Download cache never promotes corrupt or partial bodies
+- data: Spectral-axis slicing, staged-cutout isolation, typed dataset contracts
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
@@ -198,6 +200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 - boundary: Import torchfits.hdu and torchfits.io without torch
 - Decode string windows without copying the full backing storage
+- data: Make_loader and staged cutouts fetch each remote once
 
 ## [1.1.3] — 2026-09-09
 
