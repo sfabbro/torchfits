@@ -111,6 +111,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - schema: Resolve case-variant FITS keywords in table schema derivation
 - interop: Faithful to_astropy for dict and PathLike inputs
 - cache: Remove deprecated no-op self-calls and phantom cache config
+- transforms: Stretch inverse overflow and delta-method ivar contract
+- transforms: Exact image RGB dtype control and Lupton astropy parity
+- transforms: Exact mask promotion and typed mask errors
+- transforms: MeshBackgroundSubtract honors min_tile_pixels and survives empty inputs
+- transforms: Finite-only statistics with defined empty-input results
+- transforms: FITS scale and TNULL helpers follow reader conventions
+- transforms: Payload state is authoritative; instances are thread-safe
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
