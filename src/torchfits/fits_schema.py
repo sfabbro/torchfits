@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
     import torch
@@ -82,7 +82,7 @@ def parse_tform(tform: str) -> TformInfo:
 
 
 def tform_code_and_repeat(tform: Any) -> tuple[str, int] | None:
-    """Return (code, repeat) for a scalar TFORM, or None if unparseable."""
+    """Return (code, repeat) for a non-VLA TFORM, or None if unparseable or VLA."""
     if not isinstance(tform, str):
         return None
     info = parse_tform(tform)
@@ -103,19 +103,42 @@ def _tfields_count(header: Mapping[str, Any]) -> int:
         return 0
 
 
+def _kw_lookup(header: Mapping[str, Any]) -> Callable[[str], Any]:
+    """Return a case-insensitive FITS keyword getter for ``header``.
+
+    Exact-case ``dict.get`` first (the hot path).  A miss folds the mapping to
+    uppercase once so case-variant keyword spellings still resolve: FITS
+    keywords are case-insensitive, and dropping a lowercase ``TZERO``/``TNULL``
+    silently changes dtype / null interpretation.
+    """
+    folded: dict[str, Any] | None = None
+
+    def get(key: str) -> Any:
+        val = header.get(key)
+        if val is not None:
+            return val
+        nonlocal folded
+        if folded is None:
+            folded = {str(k).upper(): v for k, v in header.items()}
+        return folded.get(key)
+
+    return get
+
+
 def _iter_tfields_indexed(
     header: Mapping[str, Any],
 ) -> Iterator[tuple[int, str, str, str | None]]:
     """Yield (index, name, tform, tdim) using TFIELDS fast-path or card scan."""
     tfields = _tfields_count(header)
     if tfields > 0:
+        get = _kw_lookup(header)
         for i in range(1, tfields + 1):
             si = str(i)
-            name = header.get("TTYPE" + si)
+            name = get("TTYPE" + si)
             if name is None:
                 continue
-            tform = header.get("TFORM" + si)
-            tdim = header.get("TDIM" + si)
+            tform = get("TFORM" + si)
+            tdim = get("TDIM" + si)
             yield (
                 i,
                 str(name),
@@ -159,13 +182,14 @@ def iter_table_columns(
     selected: set[str] | None = None,
 ) -> Iterator[TableColumnMeta]:
     """Walk table columns from a FITS header mapping."""
+    get = _kw_lookup(header)
     for idx, name, tform, tdim in _iter_tfields_indexed(header):
         if selected is not None and name not in selected:
             continue
         info = parse_tform(tform) if tform else parse_tform("")
-        tnull = header.get(f"TNULL{idx}")
-        tscal_raw = header.get(f"TSCAL{idx}")
-        tzero_raw = header.get(f"TZERO{idx}")
+        tnull = get(f"TNULL{idx}")
+        tscal_raw = get(f"TSCAL{idx}")
+        tzero_raw = get(f"TZERO{idx}")
         tscal = float(tscal_raw) if tscal_raw is not None else 1.0
         tzero = float(tzero_raw) if tzero_raw is not None else 0.0
         yield TableColumnMeta(
@@ -283,8 +307,9 @@ def unsigned_column_dtypes_from_header(
 def column_tnull_map(header_map: Mapping[str, Any]) -> dict[str, Any]:
     """Map column name -> TNULL value from a flat header dict."""
     out: dict[str, Any] = {}
+    get = _kw_lookup(header_map)
     for idx, name, _, _ in _iter_tfields_indexed(header_map):
-        tnull = header_map.get(f"TNULL{idx}")
+        tnull = get(f"TNULL{idx}")
         if tnull is not None:
             out[name] = tnull
     return out
