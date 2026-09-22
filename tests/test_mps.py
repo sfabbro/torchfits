@@ -284,3 +284,90 @@ def test_dataset_mps(tmp_path: Path) -> None:
     assert item0.device.type == "mps"
     assert item0.shape == (1, 16, 16)
     assert torch.allclose(item0.squeeze(0).cpu(), data[0:16, 0:16])
+
+
+# ---------------------------------------------------------------------------
+# Device validation and MPS downcast warnings (CPU-runnable; r4c-05 / r4c-06).
+# ---------------------------------------------------------------------------
+
+
+def test_validate_device_accepts_all_documented_forms() -> None:
+    from torchfits._io_engine.device import validate_device
+
+    for dev in (
+        "cpu",
+        "cuda",
+        "cuda:0",
+        "cuda:12",
+        "mps",
+        "mps:0",
+        torch.device("cpu"),
+        torch.device("cuda", 3),
+    ):
+        assert validate_device(dev) == str(dev)
+
+
+def test_validate_device_rejects_undocumented_forms() -> None:
+    from torchfits._io_engine.device import validate_device
+
+    for bad in ("gpu", "cpu:0", "cuda:", "mps:", "cuda:abc", "mps:1:2", "cuda:-1", ""):
+        with pytest.raises(ValueError) as exc_info:
+            validate_device(bad)
+        msg = str(exc_info.value)
+        for form in ("cpu", "cuda", "cuda:N", "mps", "mps:N"):
+            assert form in msg
+
+
+def _intercept_mps_transfer(monkeypatch):
+    """Fake the final ``.to('mps…')`` transfer so MPS downcasts are observable
+    on CPU-only hosts (the downcast itself is device-independent)."""
+    seen: dict = {}
+    real_to = torch.Tensor.to
+
+    def fake_to(self, *args, **kwargs):
+        target = args[0] if args else kwargs.get("device")
+        if isinstance(target, str) and target.startswith("mps"):
+            seen.setdefault("dtype_at_transfer", self.dtype)
+            return self
+        return real_to(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "to", fake_to)
+    return seen
+
+
+def test_mps_float64_downcast_warns_and_returns_float32(monkeypatch) -> None:
+    from torchfits._io_engine.device import to_device
+
+    seen = _intercept_mps_transfer(monkeypatch)
+    t = torch.zeros(3, dtype=torch.float64)
+    with pytest.warns(UserWarning, match="float64"):
+        out = to_device(t, "mps")
+    assert out.dtype == torch.float32
+    assert seen["dtype_at_transfer"] == torch.float32
+
+
+def test_mps_complex128_downcast_warns_and_returns_complex64(monkeypatch) -> None:
+    from torchfits._io_engine.device import to_device
+
+    seen = _intercept_mps_transfer(monkeypatch)
+    t = torch.zeros(3, dtype=torch.complex128)
+    with pytest.warns(UserWarning, match="complex128"):
+        out = to_device(t, "mps")
+    assert out.dtype == torch.complex64
+    assert seen["dtype_at_transfer"] == torch.complex64
+
+
+def test_mps_batch_downcast_warns_once_per_call(monkeypatch) -> None:
+    from torchfits._io_engine.device import batch_to_device
+
+    _intercept_mps_transfer(monkeypatch)
+    ts = [torch.zeros(2, dtype=torch.float64) for _ in range(4)]
+    with pytest.warns(UserWarning) as record:
+        out = batch_to_device(ts, "mps:0")
+    assert all(t.dtype == torch.float32 for t in out)
+    f64_warnings = [
+        w
+        for w in record
+        if issubclass(w.category, UserWarning) and "float64" in str(w.message)
+    ]
+    assert len(f64_warnings) == 1
