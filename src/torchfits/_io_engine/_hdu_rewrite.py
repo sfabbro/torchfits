@@ -20,7 +20,6 @@ from ._write_helpers import (
     _invalidate_path_caches,
     _is_skippable_empty_primary,
     _merge_fits_write_header,
-    _merged_write_header,
     _normalize_cpp_table_data,
     _payload_replay_header,
     _prepare_unsigned_table_data_for_write,

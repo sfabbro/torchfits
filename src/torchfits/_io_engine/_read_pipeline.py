@@ -531,8 +531,7 @@ def _read_batch_hdus(
                 # Never pair tensors with the wrong HDUs (r4a-01): fall
                 # through to the per-HDU loop, which attributes failures.
                 logger.debug(
-                    "read_hdus_batch returned %d of %d results; "
-                    "falling back per HDU",
+                    "read_hdus_batch returned %d of %d results; falling back per HDU",
                     len(data),
                     len(hdu),
                 )

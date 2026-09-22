@@ -134,9 +134,7 @@ def test_public_read_subset_walks_headers_once(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
-def test_open_subset_reader_walks_headers_once_for_many_cutouts(
-    tmp_path, monkeypatch
-):
+def test_open_subset_reader_walks_headers_once_for_many_cutouts(tmp_path, monkeypatch):
     """A persistent reader walks once at open and never again per cutout
     (r4a-03; was one walk per cutout on top of the open walk)."""
     data = np.arange(4 * 6, dtype=np.float32).reshape(4, 6)
@@ -159,9 +157,7 @@ def _header_block(cards: list[str]) -> bytes:
 
 
 @pytest.mark.parametrize("malformed", ["missing_bitpix", "garbage_naxis1"])
-def test_malformed_prior_hdu_falls_back_not_raw_error(
-    tmp_path, monkeypatch, malformed
-):
+def test_malformed_prior_hdu_falls_back_not_raw_error(tmp_path, monkeypatch, malformed):
     """Hostile/truncated cards in a prior HDU must raise HttpRangeUnsupported
     (full-file fallback), never leak KeyError/ValueError (r4a-08)."""
     if malformed == "missing_bitpix":
@@ -183,15 +179,18 @@ def test_malformed_prior_hdu_falls_back_not_raw_error(
                 "NAXIS2  =                    4",
             ]
         )
-    target = _header_block(
-        [
-            "XTENSION= 'IMAGE   '           ",
-            "BITPIX  =                   16",
-            "NAXIS   =                    2",
-            "NAXIS1  =                    2",
-            "NAXIS2  =                    2",
-        ]
-    ) + (np.zeros((2, 2), dtype=">i2")).tobytes()
+    target = (
+        _header_block(
+            [
+                "XTENSION= 'IMAGE   '           ",
+                "BITPIX  =                   16",
+                "NAXIS   =                    2",
+                "NAXIS1  =                    2",
+                "NAXIS2  =                    2",
+            ]
+        )
+        + (np.zeros((2, 2), dtype=">i2")).tobytes()
+    )
     _serve_payload(monkeypatch, bad + target)
 
     with pytest.raises(HttpRangeUnsupported):

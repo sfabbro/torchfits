@@ -30,7 +30,6 @@ from ._write_helpers import (
     _hdu_with_header,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
-    _is_skippable_empty_primary,
     _merge_fits_write_header,
     _merged_write_header,
     _normalize_cpp_table_data,
@@ -208,7 +207,7 @@ def write(
                         )
                     if quantize is not None:
                         q_img, q_hdr = _apply_image_quantize(
-                            item.get("data"), item.get("header"), quantize
+                            item["data"], item.get("header"), quantize
                         )
                         item["data"] = q_img
                         item["header"] = q_hdr
@@ -350,7 +349,8 @@ def write(
                 elif isinstance(item, Tensor):
                     hdus_to_write.append(
                         _image_hdu_dict_for_fits_write(
-                            item, _merged_write_header(None, overlay) if overlay else None
+                            item,
+                            _merged_write_header(None, overlay) if overlay else None,
                         )
                     )
                 elif hasattr(item, "data") and isinstance(item.data, Tensor):
@@ -359,7 +359,9 @@ def write(
                         if overlay
                         else getattr(item, "header", None)
                     )
-                    hdus_to_write.append(_image_hdu_dict_for_fits_write(item.data, base))
+                    hdus_to_write.append(
+                        _image_hdu_dict_for_fits_write(item.data, base)
+                    )
                 else:
                     raise TypeError(f"Unsupported HDU item type: {type(item).__name__}")
         else:

@@ -236,7 +236,9 @@ def test_quantize_honored_on_compressed_dict_writes(tmp_path):
     x[0, 0] = float("nan")
 
     p_img = str(tmp_path / "qimg.fits")
-    torchfits.write(p_img, {"data": x}, overwrite=True, compress=True, quantize="robust")
+    torchfits.write(
+        p_img, {"data": x}, overwrite=True, compress=True, quantize="robust"
+    )
     bitpix, shape = torchfits.read_shape(p_img, hdu=1)
     assert bitpix == 16
     assert shape == tuple(x.shape)

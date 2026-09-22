@@ -773,7 +773,10 @@ def test_table_write_int8_column_tbyte_convention(tmp_path):
 
     for label, writer in (
         ("write-dict", lambda p: torchfits.write(p, {"I8": want}, overwrite=True)),
-        ("table-write", lambda p: torchfits.table.write(p, {"I8": want}, overwrite=True)),
+        (
+            "table-write",
+            lambda p: torchfits.table.write(p, {"I8": want}, overwrite=True),
+        ),
     ):
         path = str(tmp_path / f"i8_{label}.fits")
         writer(path)
@@ -873,9 +876,7 @@ def test_quantized_dict_table_compressed_matches_plain(tmp_path):
     got_plain = torchfits.table.read_torch(p_plain, hdu=1)
     got_comp = torchfits.table.read_torch(p_comp, hdu=1)
     assert torch.equal(got_plain["ID"], got_comp["ID"])
-    assert torch.equal(
-        torch.isnan(got_plain["FLUX"]), torch.isnan(got_comp["FLUX"])
-    )
+    assert torch.equal(torch.isnan(got_plain["FLUX"]), torch.isnan(got_comp["FLUX"]))
     assert bool(torch.isnan(got_plain["FLUX"][7]))
     finite = ~torch.isnan(got_plain["FLUX"])
     assert torch.equal(got_plain["FLUX"][finite], got_comp["FLUX"][finite])

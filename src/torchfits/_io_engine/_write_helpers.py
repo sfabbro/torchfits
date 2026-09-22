@@ -82,15 +82,13 @@ _COMPRESSION_CARD_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL")
 _WRITE_BOUNDARY_DROP_KEYS = (
     _STALE_CHECKSUM_KEYS | _TABLE_DERIVED_KEYS | _COMPRESSION_CARD_KEYS
 )
-_WRITE_BOUNDARY_DROP_PREFIXES = (
-    _TABLE_DERIVED_KEY_PREFIXES + _COMPRESSION_CARD_PREFIXES
-)
+_WRITE_BOUNDARY_DROP_PREFIXES = _TABLE_DERIVED_KEY_PREFIXES + _COMPRESSION_CARD_PREFIXES
 
 
 def _filter_header_cards(
     header: Any,
-    drop_keys: frozenset,
-    drop_prefixes: tuple = (),
+    drop_keys: frozenset[str],
+    drop_prefixes: tuple[str, ...] = (),
 ) -> Header:
     """Card-faithful copy of *header* minus the matching cards (duplicates and
     card order preserved)."""
@@ -125,7 +123,7 @@ def _prepared_tform_code(value: Any) -> Optional[str]:
     import numpy as np
 
     if isinstance(value, Tensor):
-        mapping = {
+        mapping: Dict[Any, str] = {
             torch.int8: "B",
             torch.uint8: "B",
             torch.int16: "I",
@@ -168,7 +166,6 @@ def _preserved_table_tform_cards(
     decoded to floats) must NOT keep the old TFORM -- the label would
     misdescribe the written cells (see r4b-01).
     """
-    import numpy as np
 
     src = (
         source_header

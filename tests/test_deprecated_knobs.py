@@ -26,7 +26,9 @@ READ_OPTIONS_HANDLE_CACHE_CAPACITY_TEXT = (
 
 
 def _deprecation_messages(caught):
-    return [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    return [
+        str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+    ]
 
 
 def test_clear_file_cache_handles_kwarg_warns_exact_text() -> None:

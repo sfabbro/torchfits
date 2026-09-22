@@ -273,10 +273,16 @@ def test_header_commentary_cards_every_write_path(tmp_path):
 
     img = torch.zeros(2, 2)
     cases = [
-        ("plain-image", lambda p, h: torchfits.write(p, img, header=h, overwrite=True), 0),
+        (
+            "plain-image",
+            lambda p, h: torchfits.write(p, img, header=h, overwrite=True),
+            0,
+        ),
         (
             "compressed-image",
-            lambda p, h: torchfits.write(p, img, header=h, overwrite=True, compress=True),
+            lambda p, h: torchfits.write(
+                p, img, header=h, overwrite=True, compress=True
+            ),
             1,
         ),
         (
@@ -347,7 +353,10 @@ def test_multi_hdu_commentary_independent(tmp_path):
     h2 = Header({"B": 2})
     h2.add_comment("cc2")
     hdul = HDUList(
-        [TensorHDU(torch.zeros(2, 2), header=h1), TensorHDU(torch.ones(2, 2), header=h2)]
+        [
+            TensorHDU(torch.zeros(2, 2), header=h1),
+            TensorHDU(torch.ones(2, 2), header=h2),
+        ]
     )
     for label, kw in (("plain", {}), ("compressed", {"compress": True})):
         path = str(tmp_path / f"multi_{label}.fits")
@@ -355,7 +364,9 @@ def test_multi_hdu_commentary_independent(tmp_path):
         base = 1 if kw else 0
         with fits.open(path) as opened:
             hist0 = [str(v) for k, v in opened[base].header.items() if k == "HISTORY"]
-            comm1 = [str(v) for k, v in opened[base + 1].header.items() if k == "COMMENT"]
+            comm1 = [
+                str(v) for k, v in opened[base + 1].header.items() if k == "COMMENT"
+            ]
         assert hist0 == ["hh1"], f"{label}: {hist0!r}"
         assert comm1.count("cc2") == 1, f"{label}: {comm1!r}"
 
@@ -367,10 +378,18 @@ def test_write_header_param_overlays_first_hdu_every_path(tmp_path):
 
     img = torch.zeros(2, 2)
     cases = [
-        ("plain-seq", lambda p: torchfits.write(p, [img, img], header={"USERTOP": "yes"}, overwrite=True), 0),
+        (
+            "plain-seq",
+            lambda p: torchfits.write(
+                p, [img, img], header={"USERTOP": "yes"}, overwrite=True
+            ),
+            0,
+        ),
         (
             "compressed-seq",
-            lambda p: torchfits.write(p, [img, img], header={"USERTOP": "yes"}, overwrite=True, compress=True),
+            lambda p: torchfits.write(
+                p, [img, img], header={"USERTOP": "yes"}, overwrite=True, compress=True
+            ),
             1,
         ),
         (

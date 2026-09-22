@@ -223,9 +223,7 @@ def test_fallback_table_dtype_parity_bit_and_unsigned(tmp_path):
     n = 8
     cols = [
         afits.Column(name="FLAGS", format="X", array=np.array([0b10101010] * n)),
-        afits.Column(
-            name="U16", format="I", bzero=32768, array=np.arange(n) + 32768
-        ),
+        afits.Column(name="U16", format="I", bzero=32768, array=np.arange(n) + 32768),
         afits.Column(name="I32", format="J", array=np.arange(n, dtype=np.int32)),
     ]
     path = str(tmp_path / "conv.fits")

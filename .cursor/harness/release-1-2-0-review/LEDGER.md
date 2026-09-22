@@ -43,3 +43,25 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/data/datasets.py` | R3-A | full (12 classes + helpers) | r3a-01..r3a-15, r3b-08 | fixed (r3a-16/17 deferred-recorded) |
 | `src/torchfits/data/remote.py` | R3-B | full | r3b-01..r3b-05 | fixed |
 | `src/torchfits/data/__init__.py` | R3-B | full | r3b-06, r3b-07, r3a-08 (shared helper) | fixed |
+| `src/torchfits/_io_engine/_read_pipeline.py` | R4-A | deep | r4a-01, r4a-04, r4a-05, r4a-09 | fixed |
+| `src/torchfits/_io_engine/_read_pipeline_fallback.py` | R4-A | deep | r4a-05, r4a-06, r4a-11 | fixed |
+| `src/torchfits/_io_engine/image.py` | R4-A | deep | r4a-01 | fixed |
+| `src/torchfits/_io_engine/image_meta.py` | R4-A | deep | r4a-05, r4a-10, r4a-12, r4a-14 | fixed (r4a-12/14 deferred) |
+| `src/torchfits/_io_engine/batch.py` | R4-A | full | r4a-01, r4a-05 | fixed |
+| `src/torchfits/_io_engine/subset.py` | R4-A | deep | r4a-03, r4a-05, r4a-07, r4a-14 | fixed (r4a-14 deferred) |
+| `src/torchfits/_io_engine/http_subset.py` | R4-A | deep | r4a-03, r4a-07, r4a-08 | fixed (R1 family lines untouched) |
+| `src/torchfits/_io_engine/write_api.py` | R4-B | deep | r4b-01, r4b-02, r4b-03, r4b-04, r4b-06, r4b-07, r4b-08 | fixed |
+| `src/torchfits/_io_engine/_write_helpers.py` | R4-B | deep | r4b-01..r4b-05, r4b-08, r4b-12 | fixed |
+| `src/torchfits/_io_engine/_hdu_rewrite.py` | R4-B | deep | r4b-02, r4b-08, r4b-10, r4b-12, r4b-13 | fixed (r4b-13 root → R6; r4c-15 wrapper in mitigation) |
+| `src/torchfits/_io_engine/quantize.py` | R4-B | deep | — | clean (`int16-robust-quantize` holds) |
+| `src/torchfits/_io_engine/checksum_api.py` | R4-B | deep | r4b-09, r4b-11 | fixed |
+| `src/torchfits/_io_engine/table_api.py` | R4-C | full | r4c-10, r4c-11 | fixed |
+| `src/torchfits/_io_engine/table_reader_api.py` | R4-C | full | — | clean |
+| `src/torchfits/_io_engine/table_streaming.py` | R4-C | full | r4c-07 | fixed |
+| `src/torchfits/_io_engine/caches.py` | R4-C | full | r4c-01, r4c-02, r4c-03, r4c-09, r4c-12 | fixed |
+| `src/torchfits/_io_engine/device.py` | R4-C | full | r4c-05, r4c-06 | fixed |
+| `src/torchfits/_io_engine/options.py` | R4-C | full | r4c-04 | fixed |
+| `src/torchfits/_io_engine/paths.py` | R4-C | full | r4c-14 (note) | clean (R1 family lines untouched) |
+| `src/torchfits/_io_engine/hdu_api.py` | R4-C | full | r4c-08, r4c-09, r4c-12, r4c-15 | fixed |
+| `src/torchfits/_io_engine/__init__.py` | R4-C | full | — | clean |
+| `src/torchfits/_hdu/hdu_list.py` | R4-C (authorized close() block only) | block-level | r4c-01 | fixed — R6 reviews whole file; must reference r4c-01 (do not re-fix) and root-fix r4b-13 at `fromfile` |

@@ -449,13 +449,17 @@ def test_rewrite_ops_do_not_mutate_input_hdu(tmp_path):
 
     path = str(tmp_path / "mut.fits")
     torchfits.write(path, torch.zeros(2, 2), overwrite=True)
-    item = torchfits.TensorHDU(torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"}))
+    item = torchfits.TensorHDU(
+        torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"})
+    )
     insert_hdu(path, item, index=1, header={"NEW": 1})
     assert dict(item.header) == {"MINE": "orig"}
 
     path2 = str(tmp_path / "mut2.fits")
     torchfits.write(path2, torch.zeros(2, 2), overwrite=True)
-    item2 = torchfits.TensorHDU(torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"}))
+    item2 = torchfits.TensorHDU(
+        torch.ones(2, 2), header=torchfits.Header({"MINE": "orig"})
+    )
     replace_hdu(path2, 0, item2, header={"NEW": 2})
     assert dict(item2.header) == {"MINE": "orig"}
 

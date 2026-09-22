@@ -356,7 +356,9 @@ def read_fallback_table(
                         path, hdu_num, col_list, False
                     )
             else:
-                table_result = cpp_module.read_fits_table(path, hdu_num, col_list, False)
+                table_result = cpp_module.read_fits_table(
+                    path, hdu_num, col_list, False
+                )
         except (RuntimeError, TypeError, ValueError) as exc:
             decode_errors.append(exc)
             table_result = None
