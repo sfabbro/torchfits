@@ -175,6 +175,10 @@ class SqrtStretch(FITSTransform):
     inverse variance of ``4`` across the frame — the classic result that the
     stretched data have unit-ish noise regardless of flux level.
 
+    Integer inputs return float32 on both passes (never a truncated or
+    wrapped integer result), matching :class:`ArcsinhStretch` and
+    :class:`LogStretch`.
+
     Parameters
     ----------
     propagate_ivar : bool
@@ -194,7 +198,9 @@ class SqrtStretch(FITSTransform):
     ) -> torch.Tensor:
         view = self.view(x)
         flux = view.flux
-        out = torch.sqrt(torch.clamp_min(flux, 0.0))
+        out = torch.sqrt(torch.clamp_min(_upcast_for_precision(flux), 0.0)).to(
+            _stretch_dtype(flux)
+        )
         if view.ivar is None:
             return cast(torch.Tensor, view.replace(out))
         if not self.propagate_ivar:
@@ -214,7 +220,9 @@ class SqrtStretch(FITSTransform):
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         view = self.view(x)
-        return cast(torch.Tensor, view.replace(view.flux.pow(2)))
+        flux = view.flux
+        val = torch.square(_upcast_for_precision(flux))
+        return cast(torch.Tensor, view.replace(val.to(_stretch_dtype(flux))))
 
     def __repr__(self) -> str:
         return "SqrtStretch()"

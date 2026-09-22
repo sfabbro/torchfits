@@ -15,10 +15,14 @@ import os
 import tempfile
 
 import numpy as np
+import pytest
 import torch
 
 from torchfits.transforms import (
     FITSHeaderNormalize,
+    ArcsinhStretch,
+    LogStretch,
+    SqrtStretch,
     TNullToNan,
 )
 
@@ -302,5 +306,96 @@ class TestEndToEndFITSHeaderNormalize:
             restored = t.inverse(normalised)
             expected = torch.from_numpy(raw_phys_np.astype("float64"))
             assert torch.allclose(restored.double(), expected, atol=2.0)
+        finally:
+            os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Instance-state safety under shared use (-J threads / DataLoader workers)
+# ---------------------------------------------------------------------------
+
+
+class TestTransformInstanceSafety:
+    """INVARIANT: ``__call__`` must not mutate instance state — state lives in
+    the ``Payload``. One instance must be safe under ``-J`` worker threads."""
+
+    @pytest.mark.parametrize(
+        "factory",
+        [SqrtStretch, lambda: LogStretch(a=10.0), lambda: ArcsinhStretch(a=0.5)],
+    )
+    def test_call_leaves_instance_dict_unchanged(self, factory) -> None:
+        transform = factory()
+        payload = {"flux": torch.ones(4), "ivar": torch.ones(4)}
+        before = dict(vars(transform))
+        transform(payload)  # pass-through-with-warning path
+        transform.forward(payload["flux"])
+        transform.inverse(payload["flux"])
+        assert dict(vars(transform)) == before
+        assert set(vars(transform)) == set(before)
+
+    def test_shared_instance_is_thread_safe(self) -> None:
+        import threading
+
+        from torchfits.transforms import ArcsinhStretch
+
+        transform = ArcsinhStretch(a=0.3, propagate_ivar=True)
+        payload = {
+            "flux": torch.linspace(0.1, 20.0, 512, dtype=torch.float64),
+            "ivar": torch.linspace(1.0, 5.0, 512, dtype=torch.float64),
+        }
+        expected = transform(payload)
+
+        results: list[dict] = [None] * 8  # type: ignore[list-item]
+
+        def worker(index: int) -> None:
+            results[index] = transform(payload)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for got in results:
+            assert torch.equal(got["flux"], expected["flux"])
+            assert torch.equal(got["ivar"], expected["ivar"])
+
+
+# ---------------------------------------------------------------------------
+# DQ end-to-end: FITS DQ bitfield -> validity mask -> masked flux
+# ---------------------------------------------------------------------------
+
+
+class TestDqMaskEndToEnd:
+    def test_dq_extension_decodes_true_is_valid_through_the_reader(self):
+        """A real FITS DQ extension: bit 0 (value 1) and bit 11 (value 2048)
+        are fatal; the decoded mask follows True = valid everywhere."""
+        from astropy.io import fits
+
+        from torchfits import read_tensor
+        from torchfits.transforms import apply_mask, mask_from_dq
+
+        flux = np.arange(16, dtype=np.float32).reshape(4, 4)
+        dq = np.zeros((4, 4), dtype=np.int32)
+        dq[0, 0] = 1  # bit 0
+        dq[3, 3] = 2048  # bit 11
+        dq[1, 1] = 4  # bit 2: benign for bad_bits=[0, 11]
+        primary = fits.PrimaryHDU()
+        image_hdu = fits.ImageHDU(flux)
+        image_hdu.header["EXTNAME"] = "SCI"
+        dq_hdu = fits.ImageHDU(dq)
+        dq_hdu.header["EXTNAME"] = "DQ"
+        with tempfile.NamedTemporaryFile(suffix=".fits", delete=False) as tmp:
+            path = tmp.name
+        try:
+            fits.HDUList([primary, image_hdu, dq_hdu]).writeto(path, overwrite=True)
+            sci = read_tensor(path, hdu="SCI")
+            dq_read = read_tensor(path, hdu="DQ")
+            valid = mask_from_dq(dq_read.to(torch.int32), bad_bits=[0, 11])
+            assert valid.dtype == torch.bool
+            assert not valid[0, 0] and not valid[3, 3]
+            assert valid[1, 1]  # benign flag survives
+            filled = apply_mask(sci, valid, fill=0.0)
+            assert filled[0, 0] == 0.0 and filled[3, 3] == 0.0
+            assert filled[1, 1] == pytest.approx(5.0)
         finally:
             os.unlink(path)
