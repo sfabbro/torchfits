@@ -207,3 +207,42 @@ def test_arrow_nulls_become_masked_column():
 
     tbl = to_astropy(pa.table({"a": pa.array([1, None, 3], type=pa.int32())}))
     assert tbl["a"].mask.tolist() == [False, True, False]
+
+
+def test_root_to_astropy_dict_nulls_become_masked():
+    """Dict input must not silently turn nulls into NaN / widen int to float."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+
+    tbl = torchfits.to_astropy({"a": [1, None, 3], "f": [1.0, None, 3.0]})
+    for name in ("a", "f"):
+        col = tbl[name]
+        assert getattr(col, "mask", None) is not None, name
+        assert col.mask.tolist() == [False, True, False], name
+    assert tbl["a"].dtype.kind in "iu"
+    assert tbl["a"][0] == 1 and tbl["a"][2] == 3
+    assert tbl["f"][0] == 1.0 and tbl["f"][2] == 3.0
+
+
+def test_root_to_astropy_dict_vector_keeps_shape():
+    """2-D tensor columns keep their (N, repeat) shape like table.to_astropy."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+
+    tbl = torchfits.to_astropy({"v": torch.arange(6).reshape(2, 3)})
+    assert tbl["v"].shape == (2, 3)
+    assert np.asarray(tbl["v"]).tolist() == [[0, 1, 2], [3, 4, 5]]
+
+
+def test_root_to_astropy_accepts_pathlike(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.io import fits as afits
+
+    path = tmp_path / "pathlike.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([1, 2], dtype="<i4"))]
+    ).writeto(str(path))
+
+    tbl = torchfits.to_astropy(path)
+    assert len(tbl) == 2

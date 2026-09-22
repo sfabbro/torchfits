@@ -1,3 +1,4 @@
+import os
 from typing import TYPE_CHECKING, Any, Dict, cast
 
 import torch
@@ -97,7 +98,7 @@ def to_polars(
 
 
 def to_astropy(
-    data: Dict[str, Any] | str,
+    data: Dict[str, Any] | str | os.PathLike[str],
     decode_bytes: bool = False,
     encoding: str = "ascii",
     strip: bool = True,
@@ -105,21 +106,16 @@ def to_astropy(
 ) -> Any:
     """Convert a dictionary of PyTorch tensors, or a FITS table path, to Astropy.
 
-    A file path uses :func:`torchfits.table.to_astropy` (MaskedColumn / TUNIT).
-    A tensor dict is a numpy Table without FITS TNULL/TUNIT metadata.
+    A file path (``str`` or ``os.PathLike``) uses
+    :func:`torchfits.table.to_astropy` (MaskedColumn / TUNIT).
+    A tensor dict is a numpy Table without FITS TNULL/TUNIT metadata; Arrow
+    nulls become :class:`astropy.table.MaskedColumn` and fixed-size vector
+    tensors keep their ``(N, repeat)`` shape.
     """
-    if isinstance(data, str):
-        from torchfits._table.interop import to_astropy as table_to_astropy
+    from torchfits._table.interop import to_astropy as table_to_astropy
 
-        return table_to_astropy(data)
-
-    import importlib
-
-    try:
-        astropy_table_mod = importlib.import_module("astropy.table")
-        Table = astropy_table_mod.Table
-    except ImportError:
-        raise ImportError("Astropy is required for to_astropy conversion.") from None
+    if isinstance(data, (str, os.PathLike)):
+        return table_to_astropy(os.fspath(data))
 
     arrow_table = to_arrow(
         data,
@@ -128,14 +124,7 @@ def to_astropy(
         strip=strip,
         vla_policy=vla_policy,
     )
-    cols: dict[str, Any] = {}
-    for name in arrow_table.column_names:
-        chunked_arr = arrow_table[name]
-        try:
-            cols[name] = chunked_arr.to_numpy(zero_copy_only=False)
-        except Exception:
-            cols[name] = chunked_arr.to_pylist()
-    return Table(cols)
+    return table_to_astropy(arrow_table)
 
 
 def to_arrow(
@@ -148,9 +137,9 @@ def to_arrow(
     """
     Convert a dictionary of PyTorch tensors to a PyArrow Table.
 
-    Uses ``bytes(tensor.untyped_storage())`` + ``pa.Array.from_buffers`` for
-    numeric columns (one copy, same cost as the previous numpy path) and
-    pure-Python byte decoding for string columns.  No numpy dependency.
+    Uses zero-copy ``pa.Array.from_buffers`` over the tensor's NumPy view for
+    numeric columns (mutations to the source tensor are visible in the Arrow
+    buffer) and pure-Python byte decoding for string columns.
 
     Args:
         data: Dictionary mapping column names to PyTorch tensors or lists of tensors (VLA).
