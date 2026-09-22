@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 from typing import Any, Dict
 
 
@@ -17,8 +18,12 @@ def _cpp() -> Any:
 
 
 def _validate_hdu(hdu: int) -> int:
-    if isinstance(hdu, bool) or not isinstance(hdu, int):
+    if isinstance(hdu, bool):
         raise TypeError("hdu must be a non-negative integer")
+    try:
+        hdu = operator.index(hdu)
+    except TypeError:
+        raise TypeError("hdu must be a non-negative integer") from None
     if hdu < 0:
         raise ValueError("hdu must be a non-negative integer")
     return int(hdu)
@@ -36,14 +41,16 @@ def write_checksums(path: str, hdu: int = 0) -> None:
 def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
     """Verify DATASUM/CHECKSUM keywords for an HDU (CFITSIO).
 
-    CFITSIO ``ffvcks`` status codes:
+    CFITSIO ``ffvcks`` status codes (``datastatus`` / ``hdustatus``):
     - ``0`` — checksum keywords absent (nothing to verify)
     - ``1`` — checksum present and correct
     - ``-1`` — checksum present but incorrect (corrupt)
 
     Returns a dict with ``datastatus``, ``hdustatus``, ``ok``, ``present``,
     and ``status`` (``"ok"``, ``"no_checksums"``, or ``"fail"``).
-    ``present`` is False when CFITSIO reports no checksum keywords.
+    ``status`` is ``"fail"`` only when a present checksum is incorrect; a
+    correct DATASUM without a CHECKSUM keyword (or vice versa) is ``"ok"``.
+    ``present`` is False when CFITSIO reports no checksum keywords at all.
     """
     from .paths import coerce_fits_path, guard_fits_path
 
@@ -53,17 +60,17 @@ def verify_checksums(path: str, hdu: int = 0) -> Dict[str, Any]:
     data_i = int(datastatus)
     hdu_i = int(hdustatus)
 
-    if data_i == 0 and hdu_i == 0:
+    if data_i < 0 or hdu_i < 0:
+        status_str = "fail"
+        ok = False
+        present = True
+    elif data_i == 0 and hdu_i == 0:
         status_str = "no_checksums"
         ok = True
         present = False
-    elif data_i == 1 and hdu_i == 1:
+    else:
         status_str = "ok"
         ok = True
-        present = True
-    else:
-        status_str = "fail"
-        ok = False
         present = True
 
     return {

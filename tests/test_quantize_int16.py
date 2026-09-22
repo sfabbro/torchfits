@@ -224,3 +224,36 @@ def test_ndarray_input_roundtrip():
     assert packed.codes.shape == arr.shape
     rt = dequantize_int16(packed.codes, packed.scale, packed.zero).numpy()
     assert _bulk_rms(arr, rt) < 1.0
+
+
+def test_quantize_honored_on_compressed_dict_writes(tmp_path):
+    """quantize= applies to every write form: image dict-HDUs and dict tables
+    under compress=True pack to int16 with the scale/BLANK cards."""
+    rng = np.random.default_rng(9)
+    x = torch.from_numpy(
+        (1000.0 + rng.standard_normal(256)).astype(np.float32).reshape(16, 16)
+    )
+    x[0, 0] = float("nan")
+
+    p_img = str(tmp_path / "qimg.fits")
+    torchfits.write(p_img, {"data": x}, overwrite=True, compress=True, quantize="robust")
+    bitpix, shape = torchfits.read_shape(p_img, hdu=1)
+    assert bitpix == 16
+    assert shape == tuple(x.shape)
+    got = torchfits.read(p_img, hdu=1)
+    assert bool(torch.isnan(got[0, 0]))
+    finite = ~torch.isnan(x.reshape(-1))
+    err = (got.reshape(-1)[finite] - x.reshape(-1)[finite]).abs()
+    assert float(err.max()) < 2.0
+
+    p_tab = str(tmp_path / "qtab.fits")
+    v = torch.cat([torch.randn(64) * 5 + 50, torch.tensor([float("nan")])])
+    torchfits.write(
+        p_tab, {"V": v}, overwrite=True, compress=True, quantize={"V": "robust"}
+    )
+    th = torchfits.read_header(p_tab, hdu=1)
+    assert str(th["TFORM1"]).upper().lstrip("0123456789") == "I"
+    assert int(th["TNULL1"]) == -32767
+    got_v = torchfits.table.read_torch(p_tab, hdu=1)["V"]
+    assert bool(torch.isnan(got_v[-1]))
+    assert not bool(torch.isnan(got_v[:-1]).any())

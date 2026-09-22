@@ -91,3 +91,30 @@ def test_write_checksum_kwarg_covers_every_path(tmp_path):
     d = tmp_path / "plain.fits"
     tf.write(str(d), torch.ones(2, 2), overwrite=True)
     assert tf.verify_checksums(str(d), hdu=0)["status"] == "no_checksums"
+
+
+def test_verify_datasum_only_reports_ok_not_fail(tmp_path):
+    """A correct DATASUM with no CHECKSUM is not corruption (ffvcks: 1/0)."""
+    path = tmp_path / "ds_only.fits"
+    torchfits.write(str(path), torch.zeros(2, 2), overwrite=True, checksum=True)
+    with open(path, "r+b") as f:
+        raw = f.read()
+        idx = raw.find(b"CHECKSUM")
+        assert idx != -1
+        f.seek(idx)
+        f.write(b" " * 80)
+    out = torchfits.verify_checksums(str(path), hdu=0)
+    assert out["datastatus"] == 1
+    assert out["hdustatus"] == 0
+    assert out["status"] == "ok"
+    assert out["ok"] is True
+    assert out["present"] is True
+
+
+def test_checksum_api_accepts_numpy_integer_hdu(tmp_path):
+    import numpy as np
+
+    path = tmp_path / "np_hdu.fits"
+    torchfits.write(str(path), torch.zeros(2, 2), overwrite=True)
+    torchfits.write_checksums(str(path), hdu=np.int64(0))
+    assert torchfits.verify_checksums(str(path), hdu=np.int64(0))["status"] == "ok"
