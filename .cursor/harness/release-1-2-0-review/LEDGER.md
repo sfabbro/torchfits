@@ -29,3 +29,14 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cli/cmds_copy.py` | R1-C family | full | r1c-07 | fixed |
 | `src/torchfits/data/remote.py` | R1-C family | full | r1c-09 | fixed |
 | `src/torchfits/_io_engine/http_subset.py` | R1-C family | full | r1c-08 | fixed (typed 416 → subset fallback) |
+| `src/torchfits/transforms/__init__.py` | R2-A | full | r2a-12 | reviewed; doc fixes → R15 |
+| `src/torchfits/transforms/base.py` | R2-A | full | r2a-06, r2a-08, r2a-09, r2a-15, r2a-17 | fixed (r2a-17 deferred) |
+| `src/torchfits/transforms/state.py` | R2-A | full | r2a-01, r2a-10, r2a-13, r2a-17 | fixed (r2a-17 deferred) |
+| `src/torchfits/transforms/fits_meta.py` | R2-A | full | r2a-01..r2a-05, r2a-07, r2a-11, r2a-12, r2a-14, r2a-16, r2a-17 | fixed (r2a-12/16/17 deferred) |
+| `src/torchfits/transforms/helpers.py` | R2-B | full | r2b-01, r2b-02, r2b-03, r2b-06, r2b-08, r2b-09, r2b-10, r2b-11 | fixed |
+| `src/torchfits/transforms/clip.py` | R2-B | full | r2b-01, r2b-02, r2b-06, r2b-11 | fixed |
+| `src/torchfits/transforms/normalize.py` | R2-B | full | r2b-01, r2b-04, r2b-06, r2b-08, r2b-09 | fixed |
+| `src/torchfits/transforms/background.py` | R2-B | full | r2b-05, r2b-06, r2b-07, r2b-11 | fixed |
+| `src/torchfits/transforms/mask.py` | R2-C | full | r2c-01, r2c-02, r2c-09, r2c-11 | fixed |
+| `src/torchfits/transforms/rgb.py` | R2-C | full | r2c-04, r2c-05, r2c-06, r2c-07, r2c-08 | fixed |
+| `src/torchfits/transforms/stretch.py` | R2-C | full | r2c-03, r2c-10 | fixed (r2c-10 via base.py cross-slice) |
