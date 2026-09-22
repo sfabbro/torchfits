@@ -40,7 +40,8 @@ class TestInverseDtypeContract:
         assert torch.allclose(round_trip.float(), x.float(), rtol=1e-5, atol=1e-4)
 
     @pytest.mark.parametrize(
-        "factory", [SqrtStretch, lambda: LogStretch(a=10.0), lambda: ArcsinhStretch(a=0.5)]
+        "factory",
+        [SqrtStretch, lambda: LogStretch(a=10.0), lambda: ArcsinhStretch(a=0.5)],
     )
     def test_forward_and_inverse_agree_on_int_promotion(self, factory) -> None:
         x = torch.tensor([[0, 10, 255]], dtype=torch.uint8)
@@ -80,12 +81,8 @@ class TestClampedIvar:
 class TestDeltaMethodNumerics:
     def test_sqrt_poisson_variance_stabilisation_is_four(self) -> None:
         counts = torch.logspace(0, 6, 25, dtype=torch.float64)
-        out = SqrtStretch(propagate_ivar=True)(
-            {"flux": counts, "ivar": 1.0 / counts}
-        )
-        assert torch.allclose(
-            out["ivar"], torch.full_like(counts, 4.0), rtol=1e-10
-        )
+        out = SqrtStretch(propagate_ivar=True)({"flux": counts, "ivar": 1.0 / counts})
+        assert torch.allclose(out["ivar"], torch.full_like(counts, 4.0), rtol=1e-10)
 
     @pytest.mark.parametrize(
         "factory",

@@ -207,11 +207,11 @@ def test_write_rgb_image_roundtrip(tmp_path) -> None:
 def test_rgb_dtype_is_exact_on_empty_and_full_images() -> None:
     """``dtype=`` must control the output precision on every code path."""
     for dtype in (torch.float16, torch.float32, torch.float64):
-        empty = rgb(torch.zeros(0, 5), torch.zeros(0, 5), torch.zeros(0, 5), dtype=dtype)
-        assert empty.dtype == dtype
-        full = rgb(
-            torch.ones(4, 4), torch.ones(4, 4), torch.ones(4, 4), dtype=dtype
+        empty = rgb(
+            torch.zeros(0, 5), torch.zeros(0, 5), torch.zeros(0, 5), dtype=dtype
         )
+        assert empty.dtype == dtype
+        full = rgb(torch.ones(4, 4), torch.ones(4, 4), torch.ones(4, 4), dtype=dtype)
         assert full.dtype == dtype
 
 
@@ -271,18 +271,19 @@ def test_lupton_rgb_float_parity_with_astropy() -> None:
         ref = make_lupton_rgb(
             r, g, b, minimum=minimum, stretch=stretch, Q=q, output_dtype=np.float64
         )
-        ours = (
-            lupton_rgb(
-                torch.from_numpy(r),
-                torch.from_numpy(g),
-                torch.from_numpy(b),
-                Q=q,
-                stretch=stretch,
-                minimum=minimum,
-            )
-            .numpy()
+        ours = lupton_rgb(
+            torch.from_numpy(r),
+            torch.from_numpy(g),
+            torch.from_numpy(b),
+            Q=q,
+            stretch=stretch,
+            minimum=minimum,
+        ).numpy()
+        assert np.allclose(ours, ref, rtol=0, atol=1e-12), (
+            q,
+            stretch,
+            np.abs(ours - ref).max(),
         )
-        assert np.allclose(ours, ref, rtol=0, atol=1e-12), (q, stretch, np.abs(ours - ref).max())
 
 
 def test_write_rgb_image_rejects_empty_images(tmp_path) -> None:

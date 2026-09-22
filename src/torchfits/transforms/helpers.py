@@ -61,8 +61,7 @@ def _normalize_dims(ndim: int, dim: Tuple[int, ...]) -> Tuple[int, ...]:
         norm = d if d >= 0 else ndim + d
         if not 0 <= norm < ndim:
             raise ValueError(
-                f"dim {d} out of range for {ndim}-D input "
-                f"(valid: {-ndim}..{ndim - 1})"
+                f"dim {d} out of range for {ndim}-D input (valid: {-ndim}..{ndim - 1})"
             )
         out.add(norm)
     return tuple(sorted(out))
@@ -208,7 +207,9 @@ def _amin(
     valid = _get_valid_mask(x, mask)
     x_clean = torch.where(valid, x, _mask_fill(x, "amin"))
     return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.amin(t, dim=d, keepdim=k),
+        x_clean,
+        dim,
+        lambda t, d, k: torch.amin(t, dim=d, keepdim=k),
         empty_fill=float("inf"),
     )
 
@@ -227,7 +228,9 @@ def _amax(
     valid = _get_valid_mask(x, mask)
     x_clean = torch.where(valid, x, _mask_fill(x, "amax"))
     return _reduce_keepdim(
-        x_clean, dim, lambda t, d, k: torch.amax(t, dim=d, keepdim=k),
+        x_clean,
+        dim,
+        lambda t, d, k: torch.amax(t, dim=d, keepdim=k),
         empty_fill=float("-inf"),
     )
 

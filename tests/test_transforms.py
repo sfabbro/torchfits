@@ -1689,6 +1689,7 @@ class TestFITSHeaderScaleRoundtrip:
         assert out.dtype.is_floating_point
         assert out.tolist() == [32768.0, 32769.0, 32767.0]
 
+
 # ---------------------------------------------------------------------------
 # R2 hardening: non-finite inputs, complex rejection, empty groups, weighted
 # stats contracts, integer/float16 dtypes, thread-safety, mesh tile fallback
@@ -1808,9 +1809,7 @@ class TestEmptyInputContracts:
         assert vmax.shape == (2, 1) and bool(torch.isneginf(vmax).all())
 
     def test_weighted_quantile_empty_group_is_nan(self) -> None:
-        out = _weighted_quantile(
-            torch.zeros(2, 0), 0.5, (-1,), ivar=torch.ones(2, 0)
-        )
+        out = _weighted_quantile(torch.zeros(2, 0), 0.5, (-1,), ivar=torch.ones(2, 0))
         assert out.shape == (2, 1)
         assert torch.isnan(out).all()
 
@@ -1912,9 +1911,9 @@ class TestIntegerStatsTransforms:
 class TestFloat16Thresholds:
     def test_sigma_normalize_weighted_float16_constant_stays_finite(self) -> None:
         x = torch.ones(4, 4, dtype=torch.float16)
-        out = SigmaNormalize(weighted=True)(
-            {"flux": x, "ivar": torch.ones_like(x)}
-        )["flux"]
+        out = SigmaNormalize(weighted=True)({"flux": x, "ivar": torch.ones_like(x)})[
+            "flux"
+        ]
         assert torch.isfinite(out).all()
 
     def test_sigma_normalize_std_float16_constant_stays_finite(self) -> None:
@@ -2015,9 +2014,9 @@ class TestMeshTileFallback:
 
     def test_sparse_tile_falls_back_to_frame_background(self) -> None:
         img, mask = self._sparse_tile_scene()
-        out = MeshBackgroundSubtract(
-            mesh=(2, 2), filter_mesh=False, min_tile_pixels=4
-        )(img, mask=mask)
+        out = MeshBackgroundSubtract(mesh=(2, 2), filter_mesh=False, min_tile_pixels=4)(
+            img, mask=mask
+        )
         # min_tile_pixels=4: one valid pixel cannot define the tile, so the
         # tile falls back to the frame background (~10) and the garbage pixel
         # survives as a ~1e6 outlier instead of punching a hole in the frame.
@@ -2025,9 +2024,9 @@ class TestMeshTileFallback:
 
     def test_min_tile_pixels_one_keeps_sparse_tile_estimate(self) -> None:
         img, mask = self._sparse_tile_scene()
-        out = MeshBackgroundSubtract(
-            mesh=(2, 2), filter_mesh=False, min_tile_pixels=1
-        )(img, mask=mask)
+        out = MeshBackgroundSubtract(mesh=(2, 2), filter_mesh=False, min_tile_pixels=1)(
+            img, mask=mask
+        )
         # With min_tile_pixels=1 the single pixel defines the tile background,
         # so the pixel is subtracted back to ~0.
         assert abs(out[0, 0, 0].item()) < 1e3

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 import torch
@@ -459,7 +460,9 @@ class FITSHeaderNormalize(FITSTransform):
     # forward()).
     _fit_range = _ThreadedAttr()
 
-    def __init__(self, header: dict[str, object], scale_floats: bool = False) -> None:
+    def __init__(
+        self, header: Mapping[str, object], scale_floats: bool = False
+    ) -> None:
         self.bitpix = int(header.get("BITPIX", -32))  # type: ignore[call-overload]
         self.bscale = float(header.get("BSCALE", 1.0))  # type: ignore[arg-type]
         self.bzero = float(header.get("BZERO", 0.0))  # type: ignore[arg-type]

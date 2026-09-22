@@ -1232,7 +1232,7 @@ class TestInstanceThreadSafety:
     @staticmethod
     def _assert_unchanged(transform, before: dict) -> None:
         after = vars(transform)
-        assert set(after) == set(before), (set(after) - set(before))
+        assert set(after) == set(before), set(after) - set(before)
         for key, value in before.items():
             assert after[key] is value, key
 
@@ -1296,7 +1296,11 @@ class TestInstanceThreadSafety:
                     barrier.wait(timeout=30)
                 except threading.BrokenBarrierError:
                     return
-                results[name] = {"x": x, "back": transform.inverse(out), "shared": shared}
+                results[name] = {
+                    "x": x,
+                    "back": transform.inverse(out),
+                    "shared": shared,
+                }
             except BaseException as exc:  # noqa: BLE001 — reported below
                 errors.append(exc)
                 barrier.abort()
@@ -1344,11 +1348,11 @@ class TestFitsMetaScaleMath:
     def test_tnull_sentinel_comparison_is_exact(self) -> None:
         # float32 promotion before the compare used to NaN every int32 value
         # within one ULP of the sentinel and mangle valid values above 2**24.
-        column = torch.tensor([-2**31, -2**31 + 1, 5], dtype=torch.int32)
-        out = TNullToNan({"A": -2**31})({"A": column})["A"]
+        column = torch.tensor([-(2**31), -(2**31) + 1, 5], dtype=torch.int32)
+        out = TNullToNan({"A": -(2**31)})({"A": column})["A"]
         assert out.dtype == torch.float64  # the reader's NaN-column convention
         assert out[0].isnan()
-        assert out[1].item() == float(-2**31 + 1)
+        assert out[1].item() == float(-(2**31) + 1)
         assert out[2].item() == 5.0
 
     def test_tnull_collision_at_2_24(self) -> None:
@@ -1360,16 +1364,16 @@ class TestFitsMetaScaleMath:
     def test_tnull_matches_reader_nan_columns(self, tmp_path) -> None:
         fits = pytest.importorskip("astropy.io.fits")
         path = tmp_path / "quantized.fits"
-        values = np.array([-2**31, 16777217, 3, 4], dtype=np.int32)
+        values = np.array([-(2**31), 16777217, 3, 4], dtype=np.int32)
         column = fits.Column(name="C", format="J", array=values)
         table_hdu = fits.BinTableHDU.from_columns([column])
-        table_hdu.header["TNULL1"] = -2**31
+        table_hdu.header["TNULL1"] = -(2**31)
         table_hdu.header["TSCAL1"] = 1.0
         table_hdu.header["TZERO1"] = 0.0
         fits.HDUList([fits.PrimaryHDU(), table_hdu]).writeto(path)
 
         physical = torchfits.table.read_torch(str(path), hdu=1)["C"]
-        out = TNullToNan({"C": -2**31})({"C": torch.from_numpy(values.copy())})["C"]
+        out = TNullToNan({"C": -(2**31)})({"C": torch.from_numpy(values.copy())})["C"]
         assert out.dtype == physical.dtype
         torch.testing.assert_close(out, physical, rtol=0, atol=0, equal_nan=True)
 
