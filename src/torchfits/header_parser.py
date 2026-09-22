@@ -21,7 +21,6 @@ class FastHeaderParser:
     """
 
     # FITS value type patterns
-    _STRING_PATTERN = re.compile(r"'([^']*(?:''[^']*)*)'")
     _COMPLEX_PATTERN = re.compile(
         r"^\(\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*,\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\)$"
     )
