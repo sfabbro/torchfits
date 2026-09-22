@@ -60,8 +60,13 @@ def read_subset(
             if not cached:
                 try:
                     file_handle.close()
-                except Exception:
+                except (OSError, ValueError, RuntimeError):
+                    # Cleanup only: never mask the in-flight error.
                     pass
+    except OSError:
+        # IO errors surface typed; wrapping them in RuntimeError would hide
+        # FileNotFoundError/PermissionError from callers (r4a-05).
+        raise
     except Exception as exc:
         raise RuntimeError(f"Failed to read subset from '{path}': {exc}") from exc
 
@@ -88,6 +93,7 @@ class SubsetReader:
         self._device = device
         self._reader: Any = None
         self._shape: Tuple[int, int] | None = None
+        self._http_meta: Any = None
 
         is_http_url, is_vos_path, resolve_local_path = _remote_helpers()
         if is_http_url(path):
@@ -96,6 +102,7 @@ class SubsetReader:
 
                 meta = locate_uncompressed_2d(path, hdu)
                 self._http_url = path
+                self._http_meta = meta
                 self._shape = (int(meta["naxis2"]), int(meta["naxis1"]))
                 return
             except (HttpRangeUnsupported, HttpRangeNotSatisfied):
@@ -127,7 +134,13 @@ class SubsetReader:
         if self._http_url is not None:
             try:
                 out: Tensor = read_subset_http(
-                    self._http_url, self._http_hdu, x1, y1, x2, y2
+                    self._http_url,
+                    self._http_hdu,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    _meta=self._http_meta,
                 )
             except (HttpRangeUnsupported, HttpRangeNotSatisfied):
                 import torchfits._C as cpp
@@ -138,6 +151,7 @@ class SubsetReader:
                 if isinstance(hdu, str):
                     hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
                 self._http_url = None
+                self._http_meta = None
                 self._reader = cpp.SubsetReader(path, int(hdu))
                 self._shape = None
                 out = cast(

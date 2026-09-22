@@ -88,18 +88,23 @@ def _parse_header_at(url: str, offset: int) -> tuple[dict[str, Any], int]:
 def _data_nbytes(cards: dict[str, Any]) -> int:
     try:
         naxis = int(cards.get("NAXIS", 0) or 0)
-    except (TypeError, ValueError):
-        naxis = 0
+    except (TypeError, ValueError) as exc:
+        raise HttpRangeUnsupported(f"malformed NAXIS: {exc}") from exc
     if naxis <= 0:
         return 0
-    bitpix = int(cards["BITPIX"])
-    elem = _bitpix_elem_bytes(bitpix)
-    n = 1
-    for i in range(1, naxis + 1):
-        key = f"NAXIS{i}"
-        if key not in cards:
-            return 0
-        n *= int(cards[key])
+    try:
+        bitpix = int(cards["BITPIX"])
+        elem = _bitpix_elem_bytes(bitpix)
+        n = 1
+        for i in range(1, naxis + 1):
+            key = f"NAXIS{i}"
+            n *= int(cards[key])
+    except HttpRangeUnsupported:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        # Malformed/truncated cards must trigger the full-file fallback,
+        # never leak raw KeyError/ValueError to callers (r4a-08).
+        raise HttpRangeUnsupported(f"malformed image cards: {exc}") from exc
     return n * elem
 
 
@@ -203,9 +208,17 @@ def read_subset_http(
     y1: int,
     x2: int,
     y2: int,
+    *,
+    _meta: dict[str, Any] | None = None,
 ) -> Tensor:
-    """Range-fetch one row-band cutout from an uncompressed 2D HTTP(S) image."""
-    meta = locate_uncompressed_2d(url, hdu)
+    """Range-fetch one row-band cutout from an uncompressed 2D HTTP(S) image.
+
+    Pass ``_meta`` from a prior :func:`locate_uncompressed_2d` on the same URL
+    to skip the header walk (r4a-03). A caller-supplied snapshot is trusted
+    for the reader's lifetime — the same open-time snapshot semantics as
+    ``SubsetReader``; a remote file replaced mid-session needs a new reader.
+    """
+    meta = _meta if _meta is not None else locate_uncompressed_2d(url, hdu)
     naxis1 = int(meta["naxis1"])
     naxis2 = int(meta["naxis2"])
     elem = int(meta["elem_bytes"])
