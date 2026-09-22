@@ -79,8 +79,10 @@ def sample_cache_root() -> Path:
 class CacheConfig:
     """Cache configuration for different environments.
 
-    ``max_files`` and ``max_memory_mb`` are unused: the C++ handle pool was
-    removed. ``disk_cache_gb`` still describes on-disk remote/sample roots.
+    ``max_files``, ``max_memory_mb``, and ``prefetch_enabled`` are unused
+    policy hints: the C++ handle pool was removed and no live cache reads
+    them. ``disk_cache_gb`` sizes ``optimize_for_dataset``'s heuristic and
+    describes on-disk remote/sample roots.
     """
 
     # The individual detectors are cheap (cached torch.cuda probe, two
@@ -240,7 +242,7 @@ class CacheManager:
             from ._io_engine.caches import get_cache_performance
 
             io_stats = get_cache_performance()
-        except Exception:
+        except (ImportError, AttributeError):
             pass
 
         hits = io_stats.get("hits", 0)
@@ -276,7 +278,11 @@ class CacheManager:
     def optimize_for_dataset(
         self, file_paths: list[str], avg_file_size_mb: float
     ) -> None:
-        """Optimize cache settings for a specific dataset."""
+        """Tune the policy hints for a specific dataset size.
+
+        Adjusts ``max_files`` / ``prefetch_enabled``; these hints do not size
+        live caches (see :class:`CacheConfig`).
+        """
         total_size_gb = len(file_paths) * avg_file_size_mb / 1024
 
         # Adjust cache size based on dataset
@@ -288,8 +294,6 @@ class CacheManager:
             # Large dataset - use LRU strategy
             optimal_files = int(self.config.disk_cache_gb * 1024 / avg_file_size_mb)
             self.config.max_files = min(optimal_files, 1000)
-
-        self.configure_cpp_cache()
 
 
 # Global cache manager instance
@@ -303,16 +307,13 @@ def get_cache_manager() -> CacheManager:
     if _cache_manager is None:
         with _cache_manager_lock:
             if _cache_manager is None:
-                manager = CacheManager()
-                manager.configure_cpp_cache()
-                _cache_manager = manager
+                _cache_manager = CacheManager()
     return _cache_manager
 
 
 def configure_for_environment() -> None:
-    """Auto-configure cache for different environments."""
-    manager = get_cache_manager()
-    manager.configure_cpp_cache()
+    """Ensure the global cache manager exists with the auto-detected policy."""
+    get_cache_manager()
 
 
 def get_cache_stats() -> Dict[str, Any]:
@@ -346,12 +347,13 @@ def clear_cache(*, disk: bool = False) -> None:
 
 
 def clear_all_caches() -> None:
-    """Clear **all** torchfits caches: in-process LRUs, C++ handles, *and* disk.
+    """Clear **all** torchfits caches: in-process LRUs, C++ ``SharedReadMeta``,
+    *and* disk.
 
     This is the nuclear option.  It removes:
 
     * Python-side read/image-meta/header-cards / HDU-type LRUs
-    * C++ ``SharedReadMeta`` and handle-pool state
+    * C++ ``SharedReadMeta`` state
     * Downloaded files under ``cache_root()`` (remote + samples)
 
     After this call every subsequent read re-fetches / re-opens.
@@ -371,7 +373,7 @@ def stats() -> Dict[str, Any]:
         from ._io_engine.caches import get_cache_performance
 
         result = {**result, "io": get_cache_performance()}
-    except Exception:
+    except (ImportError, AttributeError):
         pass
     return result
 
@@ -381,17 +383,16 @@ def configure_cache(
 ) -> None:
     """Deprecated no-op: retained for one release cycle.
 
-    The native cache these arguments targeted no longer exists.
+    The native cache these arguments targeted no longer exists; the
+    arguments are accepted and ignored (they configure no live state).
     """
+    del max_files, max_memory_mb, disk_cache_gb
     warnings.warn(
         "torchfits.cache.configure_cache is a deprecated no-op: there is no "
         "native handle-pool cache to configure.",
         DeprecationWarning,
         stacklevel=2,
     )
-    global _cache_manager
-    config = CacheConfig(max_files, max_memory_mb, disk_cache_gb)
-    _cache_manager = CacheManager(config)
 
 
 def optimize_for_dataset(file_paths: list[str], avg_file_size_mb: float = 10.0) -> None:

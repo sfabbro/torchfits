@@ -4,8 +4,9 @@ Test caching functionality.
 
 import os
 import tempfile
+import warnings
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -486,8 +487,6 @@ class TestCacheManager:
 
         assert manager1 is manager2
 
-        # Test that configure_cpp_cache was called (optional, maybe check if cpp cache is configured correctly, but simple singleton check is required)
-
 
 class TestCacheConfig:
     """Test CacheConfig functionality."""
@@ -630,8 +629,7 @@ class TestCacheConfig:
 class TestCacheOptimization:
     """Test CacheOptimization functionality."""
 
-    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
-    def test_optimize_for_dataset_small(self, mock_configure_cpp_cache):
+    def test_optimize_for_dataset_small(self):
         # Create a test configuration
         config = CacheConfig(disk_cache_gb=10)
         manager = torchfits.cache.CacheManager(config)
@@ -647,10 +645,8 @@ class TestCacheOptimization:
             # Should enable aggressive caching for the entire dataset
             assert manager.config.max_files == 100
             assert manager.config.prefetch_enabled is True
-            mock_configure_cpp_cache.assert_called_once()
 
-    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
-    def test_optimize_for_dataset_large(self, mock_configure_cpp_cache):
+    def test_optimize_for_dataset_large(self):
         # Create a test configuration
         config = CacheConfig(disk_cache_gb=10)
         manager = torchfits.cache.CacheManager(config)
@@ -669,10 +665,8 @@ class TestCacheOptimization:
             assert manager.config.max_files == 102
             # prefetch_enabled should not be forced to True in this branch
             # (assuming default was False, or at least it doesn't change it)
-            mock_configure_cpp_cache.assert_called_once()
 
-    @patch("torchfits.cache.CacheManager.configure_cpp_cache")
-    def test_optimize_for_dataset_huge_many_files(self, mock_configure_cpp_cache):
+    def test_optimize_for_dataset_huge_many_files(self):
         # Create a test configuration
         config = CacheConfig(disk_cache_gb=100)
         manager = torchfits.cache.CacheManager(config)
@@ -687,19 +681,6 @@ class TestCacheOptimization:
 
             # Verification
             assert manager.config.max_files == 1000
-            mock_configure_cpp_cache.assert_called_once()
-
-
-def test_configure_for_environment():
-    """Test configure_for_environment configures the cpp cache via the manager."""
-    with patch("torchfits.cache.get_cache_manager") as mock_get_cache_manager:
-        mock_manager = MagicMock()
-        mock_get_cache_manager.return_value = mock_manager
-
-        torchfits.cache.configure_for_environment()
-
-        mock_get_cache_manager.assert_called_once()
-        mock_manager.configure_cpp_cache.assert_called_once()
 
 
 class TestCacheManagerFunctions:
@@ -751,6 +732,82 @@ def test_cached_reads_are_isolated_from_caller_mutation(tmp_path):
     i1 = torchfits.read(image_path.as_posix())
     i1.add_(5)
     assert torch.equal(torchfits.read(image_path.as_posix()), torch.ones(4, 4))
+
+
+class TestDeprecatedNoOpContract:
+    """Option-A cache no-ops must warn only on explicit user calls.
+
+    Regression (r1a-01): ``get_cache_manager`` / ``configure_for_environment``
+    / ``optimize_for_dataset`` invoked the deprecated ``configure_cpp_cache``
+    no-op internally, so every process's first ``torchfits`` I/O call emitted a
+    ``DeprecationWarning`` — raised as an error under the common
+    ``-W error::DeprecationWarning`` / pytest ``filterwarnings = error``
+    configurations.
+    """
+
+    def test_configure_for_environment_emits_no_deprecation(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            torchfits.cache.configure_for_environment()
+        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep == []
+
+    def test_get_cache_manager_creation_emits_no_deprecation(self, monkeypatch):
+        monkeypatch.setattr(torchfits.cache, "_cache_manager", None)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            manager = torchfits.cache.get_cache_manager()
+        assert isinstance(manager, torchfits.cache.CacheManager)
+        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep == []
+
+    def test_optimize_for_dataset_emits_no_deprecation(self, monkeypatch):
+        manager = torchfits.cache.CacheManager(CacheConfig(disk_cache_gb=10))
+        monkeypatch.setattr(torchfits.cache, "get_cache_manager", lambda: manager)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            torchfits.cache.optimize_for_dataset(["a.fits", "b.fits"], 1.0)
+        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep == []
+
+    def test_explicit_deprecated_calls_still_warn(self):
+        """The deprecation contract for explicit user calls is preserved."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            torchfits.cache.get_cache_manager().configure_cpp_cache()
+            torchfits.cache.configure_cache(1, 2, 3)
+        messages = [
+            str(w.message)
+            for w in caught
+            if issubclass(w.category, DeprecationWarning)
+        ]
+        assert any("configure_cpp_cache" in m for m in messages)
+        assert any("configure_cache" in m for m in messages)
+
+    def test_configure_cache_is_documented_noop(self):
+        """``configure_cache`` is a documented no-op (changelog 1.1.2): it must
+        not replace the global cache manager with phantom-knob config (which
+        also raced ``get_cache_manager``'s lock-free read side)."""
+        before = torchfits.cache.get_cache_manager()
+        stats_before = torchfits.cache.get_cache_stats()["config"]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            torchfits.cache.configure_cache(7, 8, 9)
+        assert torchfits.cache.get_cache_manager() is before
+        assert torchfits.cache.get_cache_stats()["config"] == stats_before
+
+    def test_cache_stats_surface_engine_errors(self, monkeypatch):
+        """Stats aggregation must not silently swallow engine failures."""
+        import torchfits._io_engine.caches as caches
+
+        def boom() -> dict:
+            raise RuntimeError("engine broken")
+
+        monkeypatch.setattr(caches, "get_cache_performance", boom)
+        with pytest.raises(RuntimeError, match="engine broken"):
+            torchfits.cache.get_cache_stats()
+        with pytest.raises(RuntimeError, match="engine broken"):
+            torchfits.cache.stats()
 
 
 if __name__ == "__main__":
