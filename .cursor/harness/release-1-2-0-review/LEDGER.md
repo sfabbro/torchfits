@@ -51,8 +51,8 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_io_engine/subset.py` | R4-A | deep | r4a-03, r4a-05, r4a-07, r4a-14 | fixed (r4a-14 deferred) |
 | `src/torchfits/_io_engine/http_subset.py` | R4-A | deep | r4a-03, r4a-07, r4a-08 | fixed (R1 family lines untouched) |
 | `src/torchfits/_io_engine/write_api.py` | R4-B | deep | r4b-01, r4b-02, r4b-03, r4b-04, r4b-06, r4b-07, r4b-08 | fixed |
-| `src/torchfits/_io_engine/_write_helpers.py` | R4-B | deep | r4b-01..r4b-05, r4b-08, r4b-12 | fixed |
-| `src/torchfits/_io_engine/_hdu_rewrite.py` | R4-B | deep | r4b-02, r4b-08, r4b-10, r4b-12, r4b-13 | fixed (r4b-13 root → R6; r4c-15 wrapper in mitigation) |
+| `src/torchfits/_io_engine/_write_helpers.py` | R4-B | deep | r4b-01..r4b-05, r4b-08, r4b-12, r4b-14, r4b-15 | fixed |
+| `src/torchfits/_io_engine/_hdu_rewrite.py` | R4-B | deep | r4b-02, r4b-08, r4b-10, r4b-12, r4b-13, r4b-14, r4b-15 | fixed (r4b-13 root → R6; r4c-15 wrapper in mitigation) |
 | `src/torchfits/_io_engine/quantize.py` | R4-B | deep | — | clean (`int16-robust-quantize` holds) |
 | `src/torchfits/_io_engine/checksum_api.py` | R4-B | deep | r4b-09, r4b-11 | fixed |
 | `src/torchfits/_io_engine/table_api.py` | R4-C | full | r4c-10, r4c-11 | fixed |
