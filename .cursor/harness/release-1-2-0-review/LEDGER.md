@@ -40,3 +40,6 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/transforms/mask.py` | R2-C | full | r2c-01, r2c-02, r2c-09, r2c-11 | fixed |
 | `src/torchfits/transforms/rgb.py` | R2-C | full | r2c-04, r2c-05, r2c-06, r2c-07, r2c-08 | fixed |
 | `src/torchfits/transforms/stretch.py` | R2-C | full | r2c-03, r2c-10 | fixed (r2c-10 via base.py cross-slice) |
+| `src/torchfits/data/datasets.py` | R3-A | full (12 classes + helpers) | r3a-01..r3a-15, r3b-08 | fixed (r3a-16/17 deferred-recorded) |
+| `src/torchfits/data/remote.py` | R3-B | full | r3b-01..r3b-05 | fixed |
+| `src/torchfits/data/__init__.py` | R3-B | full | r3b-06, r3b-07, r3a-08 (shared helper) | fixed |
