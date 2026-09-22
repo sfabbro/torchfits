@@ -129,15 +129,85 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
             auto_hdu_cache.pop(cache_key, None)
 
     resolved = find_first_hdu(path, handle_cache_capacity=handle_cache_capacity)
-    if resolved is None:
-        return 0
+    # Cache the negative answer too (no payload HDU -> 0): uncached, every call
+    # on a payload-less file re-opened it and re-walked every HDU header. The
+    # stored signature rotates the answer when the file is replaced.
+    value = 0 if resolved is None else int(resolved)
 
     with cache_lock:
-        auto_hdu_cache[cache_key] = (sig, int(resolved))
+        auto_hdu_cache[cache_key] = (sig, value)
         auto_hdu_cache.move_to_end(cache_key)
         while len(auto_hdu_cache) > 512:
             auto_hdu_cache.popitem(last=False)
-    return int(resolved)
+    return value
+
+
+def _reassemble_longstr_cards(cards: Any) -> list[Any] | None:
+    """Join LONGSTRN ``&``+CONTINUE chains in an ordered header card list.
+
+    ``cpp.open_and_read_headers`` surfaces CONTINUE segments verbatim (the raw
+    quoted field rides in the card's comment slot), so ``HDUList.fromfile``
+    headers kept the ``&`` marker and detached CONTINUE cards while
+    ``read_header`` joined them. Mirrors ``FastHeaderParser`` semantics: a
+    string value ending in ``&`` joins the CONTINUE card(s) that follow (the
+    ``&`` is chain notation and is restored verbatim when no CONTINUE
+    follows). Returns a rebuilt card list, or ``None`` when nothing needs
+    joining.
+    """
+    from ..header_parser import FastHeaderParser
+
+    out: list[Any] = []
+    target: int | None = None  # index of the string card CONTINUE extends
+    marker: int | None = None  # index of the card with a pending trailing '&'
+    changed = False
+
+    def restore_marker() -> None:
+        nonlocal marker, changed
+        if marker is not None:
+            card = out[marker]
+            out[marker] = card._replace(value=card.value + "&")
+            marker = None
+            changed = True
+
+    for card in cards:
+        if card.key != "CONTINUE":
+            # Any non-CONTINUE card ends the chain: the '&' is content again.
+            restore_marker()
+            out.append(card)
+            if isinstance(card.value, str):
+                if card.value.endswith("&"):
+                    out[-1] = card._replace(value=card.value[:-1])
+                    marker = len(out) - 1
+                    changed = True
+                target = len(out) - 1
+            continue
+        field = (
+            card.comment
+            if str(card.comment).strip()
+            else (card.value if isinstance(card.value, str) else "")
+        )
+        if target is None or not isinstance(out[target].value, str):
+            out.append(card)  # orphan CONTINUE: keep verbatim
+            continue
+        comment_start = FastHeaderParser._find_comment_separator(field)
+        segment = (field[:comment_start] if comment_start != -1 else field).strip()
+        changed = True  # the CONTINUE card itself is consumed
+        if not segment:
+            continue
+        has_marker = segment.startswith("'") and segment.endswith("&'")
+        seg_value = (
+            FastHeaderParser._parse_string_value(segment)
+            if segment.startswith("'")
+            else segment
+        )
+        if has_marker and isinstance(seg_value, str) and seg_value.endswith("&"):
+            seg_value = seg_value[:-1]
+        head = out[target]
+        out[target] = head._replace(value=head.value + seg_value)
+        marker = target if has_marker else None
+
+    restore_marker()
+    return out if changed else None
 
 
 def open_hdulist(path: str, mode: str = "r") -> HDUList:
@@ -154,7 +224,18 @@ def open_hdulist(path: str, mode: str = "r") -> HDUList:
         raise FileNotFoundError(f"FITS file not found: {path}")
 
     try:
-        return HDUList.fromfile(path, mode)
+        hdul = HDUList.fromfile(path, mode)
+        # r4c-15: join LONGSTRN '&'+CONTINUE chains in place (the object is
+        # shared with TensorHDU's DataView) so open() headers carry the same
+        # string values read_header produces.
+        for i in range(len(hdul)):
+            header = hdul[i].header
+            rebuilt = _reassemble_longstr_cards(header.cards)
+            if rebuilt is not None:
+                header.clear()
+                for card in rebuilt:
+                    header.append(card)
+        return hdul
     except PermissionError:
         raise PermissionError(f"Permission denied accessing file: {path}")
     except Exception as exc:
@@ -192,10 +273,9 @@ def _resolve_hdu_index(
 
     # Skinny fallback: probe EXTNAME only (no full header dump).
     # Missing EXTNAME (common on primary) must continue, not abort the scan.
-    try:
-        n_hdus = int(cpp.read_num_hdus(path))
-    except Exception:
-        n_hdus = 1024
+    # File-level failures propagate: a missing/unreadable file must not be
+    # reported as "HDU not found" after probing phantom HDUs.
+    n_hdus = int(cpp.read_num_hdus(path))
     for i in range(max(0, n_hdus)):
         try:
             keys = cpp.read_keys(path, i, ["EXTNAME"])
