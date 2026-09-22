@@ -8,6 +8,8 @@ protocol — no numpy dependency.
 
 from __future__ import annotations
 
+import ctypes
+
 import torch
 
 
@@ -41,9 +43,11 @@ def decode_byte_tensor(
     if width == 0:
         return [""] * n_rows
 
-    storage = tensor.untyped_storage()
-    offset = tensor.storage_offset()  # element_size == 1 for uint8
-    raw = bytes(storage)[offset : offset + n_rows * width]
+    # memcpy the view's window straight from the storage pointer. The obvious
+    # ``bytes(tensor.untyped_storage())`` copies the whole backing storage
+    # (a small window of a large column would copy the entire column) and
+    # ``bytes(UntypedStorage)`` additionally walks elements in Python.
+    raw = ctypes.string_at(tensor.data_ptr(), n_rows * width)
 
     result: list[str] = []
     for i in range(n_rows):
