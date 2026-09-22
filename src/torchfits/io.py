@@ -170,8 +170,6 @@ def read(
     :func:`torchfits.table.read` or :func:`torchfits.table.read_polars`.
     For explicit image tensors, prefer :func:`read_tensor`.
     """
-    if "mode" in kwargs:
-        raise TypeError("read() got multiple values for argument 'mode'")
     kwargs = dict(kwargs)
     kwargs["mode"] = mode
     from ._io_engine._read_pipeline import read_unified as _read_unified_impl
@@ -497,7 +495,7 @@ def read_batch_info(file_paths: list[str]) -> Any:
 
 
 def get_cache_performance() -> Any:
-    """Return cache hit/miss statistics for the handle and metadata caches."""
+    """Return cache hit/miss statistics for the in-process I/O caches."""
     return _get_cache_performance_impl()
 
 
