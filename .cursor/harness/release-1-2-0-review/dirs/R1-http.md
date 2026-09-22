@@ -1,0 +1,107 @@
+# R1 slice C — `src/torchfits/` root modules (http/header/where/string) + HTTP/SSRF family step
+
+Agent `R1-HTTPSSRF` · baseline HEAD `1bb6958` (worktree shared with R1-RootIO / R1-RootFacade; no commits made).
+Finding prefix: `r1c`. Depth: full review of all 7 primary files + the 5 authorized family files.
+
+## Findings
+
+| ID | Sev | Class | Files:symbols | Description (with repro) | Fix & validation | Status |
+|---|---|---|---|---|---|---|
+| r1c-01 | BLOCKER | 1 Silent wrong result | `_where.py:_get_constant_val` | Quoted `'null'`/`'none'` string literals silently parsed as NULL: `parse_where_expression("NAME == 'none'")` → `("cmp","NAME","==",None)` and `NAME IN ('NULL','x')` → `[None, "x"]`. Matching a literal string `none`/`null` in a FITS string column became impossible; `== NULL` null semantics silently substituted. Repro: `tests/test_where_semantics.py::test_quoted_null_words_stay_strings` (before: `At index 3 diff: None != 'none'`). | `ast.Constant` values returned verbatim; only bare `ast.Name` words keep the `none`/`null` → `None` convention (matches `_parse_where_literal`, which already treats quoted values literally). Test fails before / passes after. | fixed |
+| r1c-02 | BLOCKER | 1 Silent wrong result | `_where.py:_normalize_between/_normalize_nulls/_normalize_logical_operators` | Keyword rewrites corrupted quoted string literals (valid input): `NAME == 'a BETWEEN 1 AND 2'` → literal rewritten to `'between(a, 1, 2)'`; `NAME == 'x IS NULL'` → `'isnull(x)'`; `NAME == 'O''NEIL AND x'` → `"O'NEIL and x"` (AND lowercased inside the literal; splitter was escape-unaware). Repro: `test_keyword_rewrites_do_not_touch_quoted_literals` (before: `'between(a, 1, 2)' != 'a BETWEEN 1 AND 2'`). | All three rewriters now run only over syntax segments via `_QUOTED_SEGMENT` (escape-aware quoted-literal splitter). No alias/grammar additions. Test fails before / passes after; existing `tests/test_where.py` (pinned ASTs) stays green. | fixed |
+| r1c-03 | BLOCKER | 1 Wrong result / row-set | `where.py:_not_null_like, evaluate_where` | Row-set self-inconsistency under the module's own NaN/None-as-null convention: `X != 5` kept NaN rows (`array([ True, False, True])`) while `NOT X == 5` dropped them (`array([ True, False, False])`) — contradicting the in-code claim "NOT (X == 5) stays equivalent to X != 5"; object-`None` rows survived every negation although `isnull` counts them null. Repro: `test_neq_and_not_agree_excluding_nan`, `test_object_none_is_null_like_for_negation` (before: `ACTUAL: array([False, True, True]) DESIRED: array([False, False, True])`). | SQL three-valued logic everywhere: `cmp !=` filters null-like rows; `_not_null_like` treats object `None` as null-like. Now `NOT (X == v)` ≡ `X != v` ≡ `NOT IN`/`NOT BETWEEN` null handling — agrees with the Arrow contract in `_table/_read_where.py` ("negations must not resurrect NULLs"). `evaluate_where` docstring documents the convention. Tests fail before / pass after; `test_negated_in_and_between_exclude_nan` pins the already-correct paths. | fixed |
+| r1c-04 | MAJOR | 5 Error contract | `where.py:evaluate_where` | NumPy internals leaked from the public helper on incomparable column/literal pairs: `evaluate_where(parse("A == 'zzz'"), {"A": np.array([1,2,3])})` raised `numpy._core._exceptions._UFuncNoLoopError` (untyped third-party exception escaping the API; mirrors the class of bug already fixed for pyarrow in `test__evaluate_where_never_leaks_pyarrow_exceptions`). | `cmp` and `BETWEEN` evaluation wraps `(TypeError, ValueError)` → typed `ValueError` naming the literal/operator. `test_evaluate_where_wraps_bad_comparisons_as_value_error` fails before (`_UFuncNoLoopError`) / passes after. | fixed |
+| r1c-05 | MAJOR | Perf 1/2 (copies) | `_string_decode.py:decode_byte_tensor` | `bytes(tensor.untyped_storage())` copied the **entire backing storage** per call — a 200-row window of a 4 MB string column copied 4,000,000 bytes instead of 4,000 (1000×; full columns/mmap-backed views made every string-column window decode O(file)); additionally `bytes(UntypedStorage)` walks elements in Python (~2.9 µs/element). Repro: micro-timing script below. | `ctypes.string_at(tensor.data_ptr(), n_rows*width)` — numpy-free memcpy of exactly the window (offset handled by `data_ptr`). Count proof: bytes copied per call 4,000,000 → 4,000. Throwaway same-host micro-timing (200-row window of a 4 MB column, median): BEFORE 9,316,606.6 µs (n=5) → AFTER 62.9 µs (n=50), speedup ×148,042 (both sides asserted byte-identical outputs first). Regression anchors `tests/test_string_decode.py` (offset window, strided view, width-0). Component profile proving the mechanism: `storage slice 0.79 µs / bytes(st[off:off+n]) 11,430 µs / ctypes.string_at 0.79 µs / numpy.tobytes 1.24 µs` (all byte-identical). | fixed |
+| r1c-06 | BLOCKER | 6 Security (SSRF/DNS rebinding) | `http_util.py:_resolve_public_addrs, _Pinned*, ValidatingRedirectHandler, http_request, build_http_opener` | Python fetches validated one DNS answer but the connection re-resolved at dial time: a rebound answer reached private hosts after passing the guard — on initial hops **and** redirect hops. Repro (dial-spy tests): `test_connection_pins_guard_time_resolution` before: `assert ['127.0.0.1'] == ['8.8.8.8']`; `test_redirect_hop_pinned_against_dns_rebinding` before: `assert ['93.184.216.34', '127.0.0.1'] == ['93.184.216.34', '8.8.8.8']` (private answer dialed = SSRF). | `_resolve_public_addrs` is the single resolve+validate point (guard and pin share one `getaddrinfo` result); `_PinnedHTTPConnection`/`_PinnedHTTPSConnection`/`_PinnedFTPHandler` dial only the validated addresses with original Host/SNI (`server_hostname=self.host`); `ValidatingRedirectHandler.redirect_request` re-guards AND re-pins per hop. Tests fail before / pass after (`dialed == [guard-time addr]`, private never dialed). | fixed |
+| r1c-07 | BLOCKER | 6 Security (SSRF) | `cli/cmds_copy.py:_copy_remote` | Bare `urllib.request.urlretrieve` on the ftp branch (live at HEAD; contradicts playbook `cfitsio-http-ssrf` "guard then http_open (redirect-safe), never bare urlretrieve"): the fetch used urllib's DEFAULT opener — no redirect re-guard, no pinning — after a stale earlier guard (DNS-rebinding window on ftp copy). Repro: `test_copy_remote_uses_guarded_helper_not_urlretrieve` before: `AssertionError: bare urllib.request.urlretrieve must not be used`; `test_no_bare_urlretrieve_call_sites_in_src` before: `assert ['/scratch/.../cli/cmds_copy.py'] == []`. | All remote copy (http/https/ftp) routes through `http_open` (guarded + pinned opener); `urllib.request` import dropped. Migration set verified clean: `grep urlretrieve\|urlopen src/torchfits` → NONE (scan test + shell grep). The `http_open` branch guard confirmed: `http_open` → `http_request` → `_resolve_public_addrs` raises `HttpBlockedError` before any dial (`test_http_open_blocks_private_before_dial`: `dialed == []`). Tests fail before / pass after. | fixed |
+| r1c-08 | MAJOR | 5/7 Error contract / truncated files | `http_util.py:http_read_range` (+ `http_subset.py` walk contract) | HTTP 416 (walk past EOF: missing HDU on a remote image, truncated file) surfaced as untyped `OSError: ... HTTP 416` (`test_http_read_range_maps_416_to_typed_fallback` before: `expected HttpRangeNotSatisfied, got OSError: https://example.test/data.fits: HTTP 416`). `subset.py`'s fallback contract catches only `HttpRangeUnsupported`/`HttpRangeNotSatisfied`, so Range-cutout reads failed hard instead of falling back to full-file cache + CFITSIO. | 416 maps to typed `HttpRangeNotSatisfied` (its documented meaning: "server does not return a usable byte Range body"); docstring updated. Test fails before / passes after; `tests/test_remote_http_range.py` Range suite stays green. | fixed |
+| r1c-09 | MINOR | 5 Error contract | `data/remote.py:_read_resume_validators` | `except Exception: return {}` silently swallowed non-IO failures while reading resume metadata (any bug/error became "no validators" → partial discarded/restarted silently). Repro: `test_read_resume_validators_propagates_unexpected_errors` before: `Failed: DID NOT RAISE RuntimeError` (run against the reverted line). | Narrowed to `except (OSError, ValueError)` (JSON decode + IO). Test fails before / passes after (`1 passed`). | fixed |
+| r1c-10 | CLEANUP | Dead code | `header_parser.py:FastHeaderParser._STRING_PATTERN` | Unused regex — only `_COMPLEX_PATTERN` is referenced (dead-code sweep candidate confirmed dead; `_parse_card`/`_parse_hierarch_card` ARE live via `fast_parse_header_cards` + tests). | Deleted (zero behavior change). Covered by `test_header_value_typing/duplicate_keys/ascii_strictness` + `test_io_invariants` (`_parse_card`) — all green. | fixed |
+| r1c-11 | MINOR | 8 Docs faithfulness | `where.py:__all__`, `docs/api-tables.md` | Doc gaps (docs land at R15): the "Predicate Helpers" section omits `evaluate_where` (example-only) and `where_identifier_re` from "Additional public names"; the NaN/None three-valued-logic semantics and quoted-vs-bare NULL word rules are undocumented (they are now the pinned contract, r1c-01/03). | Doc text recorded verbatim in "Doc text owed at R15" below. No src change needed (semantics now match the module docstring). | deferred |
+| r1c-12 | MINOR | 6 Security (defense-in-depth) | `cpp_src/security.h` vs `_io_engine/paths.py` | Blocked-prefix enumeration (assignment item 4): `security.h` blocks leading `\|`, trailing `\|`, `sh://` (case-folded, `!`+whitespace-stripped); Python side (`paths.py`/`http_util`) guards network schemes `http/https/ftp` (case-folded, `!`-stripped via `_strip_leading_cfitsio_bang`) and has **no** `\|`/`sh://` mirror — those are enforced solely by `check_fits_filename_security` at every open (`fits_bindings.cpp:65-67` confirms the cached fast path also runs it). Layering is complementary and fully exercised by `tests/test_security.py` (pipe/sh injection, uppercase `SH://`, `!`-prefixed variants) — no functional gap found. A Python-side mirror would be defense-in-depth only. | Recorded for R10 to decide: add the `\|`/`sh://` fail-closed mirror to `guard_fits_path`, or document the layering split. NOT edited per assignment (do NOT touch `cpp_src`). | deferred |
+| r1c-13 | MINOR | 5 Error contract | `_string_decode.py:decode_byte_tensor` | `encoding, errors="ignore"` silently drops undecodable bytes in string columns (corrupt/high-bit data mangled instead of a typed error). Kept for 1.2.0: raising changes behavior for legacy files with non-ASCII bytes and needs a cross-path decision (Arrow/C++ decode parity). | Deferred: needs an oracle-backed decision across all string-decode paths. | deferred |
+| r1c-14 | MINOR | 8 Docs faithfulness | `http_util.py:guard_cfitsio_remote_path`, `_io_engine/paths.py:guard_fits_path` | CFITSIO-driver guarantee had to be narrowed to the truth (work item 3): CFITSIO resolves internally, so those connections re-resolve after the guard. | Docstrings now say "guard-time validation only; CFITSIO driver connections re-resolve (residual TOCTOU)"; Python-side fetches pin instead. `docs/compatibility.md` note text recorded below (lands at R15). | deferred (doc note) / fixed (docstrings) |
+
+### HTTP/SSRF family work items — status
+
+1. **Python-side fetch redirect-safe + pinned** — DONE (r1c-06): per-hop re-guard (`ValidatingRedirectHandler.redirect_request` → `_resolve_public_addrs`, raising `HttpBlockedError` "redirect to internal…" per hop) and connection pinned to the guard-time resolution with original Host/SNI (`_PinnedHTTPConnection`/`_PinnedHTTPSConnection`; `_PinnedFTPHandler` dials the pin — FTP has no Host/SNI; `ftp_open`'s internal `gethostbyname` answer is ignored). Redirect-to-private refusal tests: `test_redirect_to_private_is_refused_end_to_end` (Location → `10.0.0.5`, refused at re-guard, only fixture hop dialed) and the failing-first `test_redirect_hop_pinned_against_dns_rebinding` (a redirect hop that rebinds to `127.0.0.1` never dials the private answer). Honest note: literal redirect-to-private re-guarding already existed at HEAD (`test_redirect_to_internal_is_blocked`); the genuinely broken redirect-to-private path at HEAD was the **rebinding** variant (guard passes the public answer, dial re-resolves private) and the `urlretrieve` ftp branch (no redirect guard at all) — both failing-first-tested here (r1c-06/07).
+2. **Migration set** — DONE (r1c-07): `grep -rn "urlretrieve\|urlopen\|http_open" src/torchfits` post-fix: only `http_open` at guarded sites (`cmds_copy.py`, `cmds_probe.py`, `data/remote.py`, `http_util.py` itself). Shell scan result: `remaining unguarded-fetch call sites: NONE`. `cmds_copy.py:57` urlretrieve branch removed; the `http_open` branch guards before open (`http_request` → `_resolve_public_addrs` pre-dial, pinned test `test_http_open_blocks_private_before_dial` asserts `dialed == []`).
+3. **CFITSIO-driver URLs** — DONE (r1c-14): guard sits immediately before every CFITSIO open in the façades (verified call sites: `_cpp.py`, `hdu_list.py`, `table_hdu*.py`, `_io_engine/*`, `_table/*` all `guard_fits_path(path)` immediately before their open); `guard_fits_path`/`guard_cfitsio_remote_path` docstrings narrowed to "guard-time validation; CFITSIO driver connections re-resolve (residual TOCTOU)". `docs/compatibility.md` note text below.
+4. **Tests** — DONE: private/loopback blocked at guard (`test_http_open_blocks_private_before_dial`, existing `test_security.py`/`test_http_probe_fixture.py` bars re-run green); redirect-to-private refused (E2E + rebinding variants above); `cmds_copy` routes through the guarded helper (`test_copy_remote_uses_guarded_helper_not_urlretrieve` + `test_no_bare_urlretrieve_call_sites_in_src`). All in `tests/test_http_guard.py` (new) + `tests/test_remote_http_range.py` (extended).
+
+### Assignment item 4 checks
+
+- `is_remote_path` **includes ftp**: `cli/common.py:24 _REMOTE_PREFIXES = ("http://", "https://", "ftp://", "vos://", "vos:", "vault:")` ✓ (verified, unchanged).
+- Blocked prefixes `security.h` vs Python: see r1c-12 (enumerated both; complementary layers; recorded for R10).
+
+### Doc text owed at R15 (verbatim; do not edit docs/ in this round)
+
+1. `docs/compatibility.md` (append to the remote/SSRF area):
+   > **CFITSIO-driver URLs — residual TOCTOU.** `http://`/`https://`/`ftp://` paths opened by CFITSIO itself are validated by `guard_fits_path` at guard time only: CFITSIO resolves the hostname internally and its connections may re-resolve after the check (residual TOCTOU / DNS rebinding). Python-side fetches (`torchfits probe`, remote cache downloads, `torchfits copy`) pin the connection to the guard-time resolved addresses (original Host/SNI preserved) and re-validate every redirect hop, so DNS rebinding cannot reach private hosts on those paths.
+2. `docs/api-tables.md` — "Predicate Helpers" section, after the example:
+   > Null rows follow SQL three-valued logic: NaN (float arrays) and `None` (object arrays) are the null convention (`isnull` / `isnotnull`). `NOT`, `!=`, `NOT IN`, and `NOT BETWEEN` exclude null rows, so `NOT (X == v)` selects exactly the rows of `X != v`. Bare `NULL`/`NONE` words are null literals; quoted `'null'`/`'none'` are ordinary strings. Incomparable column/literal comparisons raise `ValueError`.
+   And extend "Additional public names" to: `evaluate_where`, `parse_where_expression`, `parse_where_literal`, `tokenize_where_expression`, `normalize_where_syntax`, `where_identifier_re`, `where_columns_from_ast`.
+3. `docs/compatibility.md` (string decode): fixed-width string columns decode with `errors="ignore"` (undecodable bytes are dropped); strict decoding is deferred pending cross-path (Arrow/C++/numpy) parity.
+
+### Evidence excerpts
+
+Failing-first run (`tests/test_where_semantics.py tests/test_string_decode.py tests/test_http_guard.py` vs unfixed code):
+```
+FAILED tests/test_where_semantics.py::test_neq_and_not_agree_excluding_nan - AssertionError: ACTUAL: array([ True, False,  True]) DESIRED: array([ True, False, False])
+FAILED tests/test_where_semantics.py::test_object_none_is_null_like_for_negation - AssertionError: ACTUAL: array([False,  True,  True]) DESIRED: array([False, False,  True])
+FAILED tests/test_where_semantics.py::test_quoted_null_words_stay_strings - AssertionError: assert ('cmp', 'NAME', '==', None) == ('cmp', 'NAME', '==', 'none')
+FAILED tests/test_where_semantics.py::test_keyword_rewrites_do_not_touch_quoted_literals - AssertionError: 'between(a, 1, 2)' != 'a BETWEEN 1 AND 2'
+FAILED tests/test_where_semantics.py::test_evaluate_where_wraps_bad_comparisons_as_value_error - numpy._core._exceptions._UFuncNoLoopError: ufunc 'equal' did not contain a loop with signature matching types (Int64DType, StrDType)
+FAILED tests/test_http_guard.py::test_connection_pins_guard_time_resolution - AssertionError: assert ['127.0.0.1'] == ['8.8.8.8']
+FAILED tests/test_http_guard.py::test_redirect_hop_pinned_against_dns_rebinding - AssertionError: assert ['93.184.216.34', '127.0.0.1'] == ['93.184.216.34', '8.8.8.8']
+FAILED tests/test_http_guard.py::test_copy_remote_uses_guarded_helper_not_urlretrieve - AssertionError: bare urllib.request.urlretrieve must not be used
+FAILED tests/test_http_guard.py::test_no_bare_urlretrieve_call_sites_in_src - AssertionError: assert ['/scratch/src/torchfits/src/torchfits/cli/cmds_copy.py'] == []
+9 failed, 6 passed in 2.34s
+```
+`test_http_read_range_maps_416_to_typed_fallback` (run standalone vs unfixed code):
+```
+E   AssertionError: expected HttpRangeNotSatisfied, got OSError: https://example.test/data.fits: HTTP 416
+1 failed in 0.04s
+```
+`test_read_resume_validators_propagates_unexpected_errors` (run vs the reverted line):
+```
+E   Failed: DID NOT RAISE RuntimeError
+1 failed in 1.43s
+```
+Perf evidence (throwaway script, same host; old logic verbatim vs shipped `decode_byte_tensor`; identical outputs asserted before timing):
+```
+count proof: bytes copied per call  4000000 (old, whole storage) -> 4000 (new, window)
+micro-timing medians (200-row window of a 4 MB column): BEFORE 9316606.6 us (n=5)  AFTER 62.9 us (n=50)  speedup x148042
+component profile (4 KB window): storage slice 0.79 us | bytes(st[off:off+n]) 11430.60 us | ctypes.string_at 0.79 us | numpy.tobytes 1.24 us | bytes(view.tolist()) 41.87 us (all byte-identical)
+```
+
+After-fix targeted runs (all green):
+```
+CONSOLIDATED (all 16 affected suites in one run: where_semantics, string_decode, http_guard, remote_http_range, security, http_probe_fixture, where, public_where, public_boundary, header_value_typing, header_duplicate_keys, header_ascii_strictness, io_invariants, output_parity, docs_integrity, cli) → 293 passed in 123.61s
+tests/test_where_semantics.py tests/test_string_decode.py tests/test_http_guard.py tests/test_io_invariants.py        → 58 passed
+tests/test_remote_http_range.py tests/test_http_guard.py tests/test_security.py tests/test_http_probe_fixture.py      → 35 passed (+2 added later: 1 passed each targeted)
+tests/test_where.py tests/test_public_where.py tests/test_header_value_typing.py tests/test_header_duplicate_keys.py tests/test_header_ascii_strictness.py → 28 passed
+tests/test_io_invariants.py tests/test_public_boundary.py                                                            → 52 passed
+tests/test_output_parity.py (decode oracle)                                                                          → 17 passed
+tests/test_docs_integrity.py                                                                                         → 69 passed
+tests/test_cli.py -k copy                                                                                            → 4 passed
+```
+
+## Per-file disposition
+
+| file | depth | finding IDs | status |
+|---|---|---|---|
+| `src/torchfits/http_util.py` | full | r1c-06, r1c-08, r1c-14 | fixed (doc note deferred) |
+| `src/torchfits/header_parser.py` | full | r1c-10 | fixed |
+| `src/torchfits/vos_uri.py` | full | — (no defects; `normalize_vos_uri` only reached after `is_vos_path`, case-fold handling correct) | clean |
+| `src/torchfits/_string_decode.py` | full | r1c-05, r1c-13 | fixed (errors=deferred) |
+| `src/torchfits/_tensor_buffer.py` | full | — (lifetime OK: `pa.py_buffer(numpy view)` holds the tensor storage chain; aliasing is the documented zero-copy contract; mmap storage lifetime owned by the producing reader) | clean |
+| `src/torchfits/where.py` | full | r1c-03, r1c-04 | fixed |
+| `src/torchfits/_where.py` | full | r1c-01, r1c-02 | fixed |
+| `src/torchfits/_io_engine/paths.py` (family) | full | r1c-12, r1c-14 | fixed docstring (r1c-12 deferred to R10) |
+| `src/torchfits/cli/common.py` (family) | full | — (`is_remote_path` includes ftp ✓; no fetches here) | clean |
+| `src/torchfits/cli/cmds_copy.py` (family) | full | r1c-07 | fixed |
+| `src/torchfits/data/remote.py` (family) | full | r1c-09 | fixed |
+| `src/torchfits/_io_engine/http_subset.py` (family) | full | r1c-08 (walk contract) | fixed via `http_read_range` typed 416 |
+
+Invariants re-verified near changed behavior: `cfitsio-http-ssrf` (now fully satisfied — no bare urlretrieve remains; guards outside generator bodies untouched), `copy-is-binary` (unchanged: local `copy2`, remote guarded fetch), `where-prefer-mask`/`tnull-read-torch` (read-side untouched), `docs-api-sync` (no new public symbols; `__all__` unchanged or shrank — `_where.py`/`where.py` exports untouched, all new helpers `_`-prefixed), `minimal-diff`.
