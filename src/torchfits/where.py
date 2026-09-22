@@ -113,7 +113,7 @@ def evaluate_where(ast: tuple[Any, ...], data: Mapping[str, Any]) -> np.ndarray:
             # SQL three-valued logic: NULL != v is unknown, so null-like rows
             # stay excluded — NOT (X == v) must select exactly X != v.
             mask = cast(np.ndarray, mask & _not_null_like(values))
-        return cast(np.ndarray, mask)
+        return mask
     if kind == "in":
         _, _, literals, negate = ast
         mask = cast(np.ndarray, np.isin(values, literals))

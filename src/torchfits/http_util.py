@@ -143,7 +143,7 @@ def _pin_addrs_for(request: urllib.request.Request) -> tuple[str, ...]:
     return _resolve_public_addrs(request.full_url)
 
 
-def _connect_pinned(conn: http.client.HTTPConnection) -> None:
+def _connect_pinned(conn: Any) -> None:
     """Create ``conn``'s socket against its pinned addresses only.
 
     ``conn.host`` (used for the Host header and TLS SNI) keeps the original
@@ -205,8 +205,9 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
     def connect(self) -> None:
         _connect_pinned(self)
-        server_hostname = self._tunnel_host if self._tunnel_host else self.host
-        self.sock = self._context.wrap_socket(
+        tunnel_host = getattr(self, "_tunnel_host", None)
+        server_hostname = tunnel_host if tunnel_host else self.host
+        self.sock = getattr(self, "_context").wrap_socket(
             self.sock, server_hostname=server_hostname
         )
 
@@ -214,7 +215,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 def _conn_factory(
     base: Any, pinned_addrs: tuple[str, ...]
 ) -> Callable[..., http.client.HTTPConnection]:
-    def factory(host: str, **kwargs: Any) -> http.client.HTTPConnection:
+    def factory(host: str, **kwargs: Any) -> Any:
         return base(host, pinned_addrs, **kwargs)
 
     return factory
@@ -232,7 +233,7 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         return self.do_open(
             _conn_factory(_PinnedHTTPSConnection, _pin_addrs_for(req)),
             req,
-            context=self._context,
+            context=getattr(self, "_context", None),
         )
 
 
@@ -253,7 +254,7 @@ class _PinnedFTPHandler(urllib.request.FTPHandler):
         passwd: str,
         host: str,
         port: int,
-        dirs: list[str],
+        dirs: Any,  # runtime: list[str] path components (typeshed says str)
         timeout: Any,
     ) -> Any:
         addrs = getattr(self, "_pinned_addrs", None) or (host,)
@@ -265,6 +266,8 @@ class _PinnedFTPHandler(urllib.request.FTPHandler):
                 )
             except OSError as exc:
                 last = exc
+        if last is None:  # unreachable: addrs is never empty
+            raise OSError(f"failed to connect to {host}: no pinned addresses")
         raise last
 
 
@@ -324,7 +327,7 @@ class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
                         del new_req.headers[header]
                     new_req.remove_header(header)
             # Pin this hop to the addresses just validated (per-hop re-guard).
-            new_req._torchfits_pin = pinned
+            setattr(new_req, "_torchfits_pin", pinned)
         return new_req
 
 
@@ -391,7 +394,7 @@ def http_request(
         merged.update(headers)
     request = urllib.request.Request(url, headers=merged, method=method)
     # Pin the connection to the addresses validated above (DNS rebinding).
-    request._torchfits_pin = addrs
+    setattr(request, "_torchfits_pin", addrs)
     return request
 
 

@@ -1,7 +1,7 @@
 from functools import lru_cache
 import re
 import ast
-from typing import Any, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 _WHERE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -215,7 +215,7 @@ _BOUNDARY_VALUE = r"('[^']*'|\"[^\"]*\"|[+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\w+)
 _QUOTED_SEGMENT = r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")"
 
 
-def _rewrite_outside_quotes(where: str, rewrite) -> str:
+def _rewrite_outside_quotes(where: str, rewrite: Callable[[str], str]) -> str:
     parts = re.split(_QUOTED_SEGMENT, where)
     for i in range(0, len(parts), 2):
         parts[i] = rewrite(parts[i])
