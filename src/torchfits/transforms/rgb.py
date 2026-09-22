@@ -21,11 +21,23 @@ import torch
 
 from .helpers import _quantile, estimate_background
 
-# Astropy softens near-zero Q to this floor so asinh(frac*Q) stays finite.
-# The threshold is float32 machine epsilon (2**-23): Q values below it are
-# treated as zero and replaced by _LUPTON_Q_FLOOR.
+# Astropy's LuptonAsinhStretch softens extreme Q to keep asinh(frac*Q) tame:
+# near-zero Q (below float32 machine epsilon, 2**-23) is treated as zero and
+# replaced by _LUPTON_Q_FLOOR; Q above _LUPTON_Q_MAX is capped.
 _LUPTON_Q_EPS: Final = 1.0 / 2**23
 _LUPTON_Q_FLOOR: Final = 0.1
+_LUPTON_Q_MAX: Final = 1e10
+
+
+def _require_float_dtype(dtype: torch.dtype | None) -> None:
+    """Refuse integer ``dtype=`` requests: the [0, 1] floats would truncate
+    to an all-zero image instead of a scaled one."""
+    if dtype is not None and not dtype.is_floating_point:
+        raise TypeError(
+            f"dtype must be a floating dtype (e.g. torch.float32), got {dtype}: "
+            "casting [0, 1] floats to an integer dtype truncates to zeros; "
+            "scale to 0..255 and cast explicitly for integer output"
+        )
 
 
 def lupton_rgb(
@@ -47,17 +59,22 @@ def lupton_rgb(
     ``dtype`` casts only the returned image; the stretch is always evaluated
     in the working dtype (float64 on CPU) for accuracy. Pass
     ``torch.float32`` when feeding a network so the preview does not cost 2×
-    the memory of the data it came from.
+    the memory of the data it came from. Must be a floating dtype — integer
+    requests raise ``TypeError`` because an un-scaled float→int cast would
+    truncate the image to zeros.
     """
     if Q < 0:
         raise ValueError(f"Q must be non-negative, got {Q}")
     if stretch <= 0:
         raise ValueError(f"stretch must be > 0, got {stretch}")
+    _require_float_dtype(dtype)
 
-    # Match Astropy's Q floor for near-zero softening.
+    # Match Astropy's Q softening clamps (LuptonAsinhStretch.__init__).
     q = float(Q)
     if abs(q) < _LUPTON_Q_EPS:
         q = _LUPTON_Q_FLOOR
+    elif q > _LUPTON_Q_MAX:
+        q = _LUPTON_Q_MAX
 
     r_t = torch.as_tensor(r)
     work_dtype = torch.float32 if r_t.device.type == "mps" else torch.float64
@@ -298,7 +315,8 @@ def rgb(
         ``counts * 10**(-0.4*(zp - 22.5))``.
     dtype :
         Cast the returned image to this dtype (math stays in the working
-        dtype). Use ``torch.float32`` when the preview feeds a network.
+        dtype). Use ``torch.float32`` when the preview feeds a network. Must
+        be a floating dtype — integer requests raise ``TypeError``.
 
     Returns
     -------
@@ -311,6 +329,7 @@ def rgb(
         raise ValueError(f"saturation must be >= 0, got {saturation}")
     if scene not in ("auto", "empty", "filled"):
         raise ValueError(f"scene must be 'auto', 'empty', or 'filled', got {scene!r}")
+    _require_float_dtype(dtype)
 
     stack = _as_band_stack(*bands)
     # Keep NaN through stats / equalize so mosaic holes are not a fake sky
@@ -338,7 +357,8 @@ def rgb(
 
     mixed = _mix_to_rgb(stack, weights)
     if mixed.numel() == 0:
-        return mixed.clamp(0.0, 1.0)
+        out = mixed.clamp(0.0, 1.0)
+        return out if dtype is None else out.to(dtype)
 
     luma = mixed.mean(dim=-1)
     med, mad, p_lo, p_hi = _scalar_stats(luma)
@@ -398,8 +418,10 @@ def write_rgb_image(path: str, rgb: torch.Tensor) -> None:
     if rgb.dim() != 3 or int(rgb.shape[-1]) != 3:
         raise ValueError("rgb must have shape (H, W, 3)")
     height, width, _ = map(int, rgb.shape)
+    if height == 0 or width == 0:
+        raise ValueError(f"cannot write an empty {height}x{width} image as PNG")
     flat = (
-        torch.clamp(rgb, 0.0, 1.0)
+        torch.nan_to_num(torch.clamp(rgb, 0.0, 1.0), nan=0.0)
         .mul(255.0)
         .round()
         .to(dtype=torch.uint8)
@@ -416,7 +438,7 @@ def write_rgb_image(path: str, rgb: torch.Tensor) -> None:
     png = (
         b"\x89PNG\r\n\x1a\n"
         + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", zlib.compress(scanlines.numpy().tobytes(), level=6))
+        + _png_chunk(b"IDAT", zlib.compress(bytes(scanlines.untyped_storage()), level=6))
         + _png_chunk(b"IEND", b"")
     )
     with open(path, "wb") as handle:

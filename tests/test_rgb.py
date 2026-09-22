@@ -7,7 +7,7 @@ import math
 import pytest
 import torch
 
-from torchfits.transforms.rgb import rgb
+from torchfits.transforms.rgb import lupton_rgb, rgb
 
 
 def _sky_scene(
@@ -197,3 +197,117 @@ def test_write_rgb_image_roundtrip(tmp_path) -> None:
     )
     stripped = b"".join(raw[i * stride + 1 : (i + 1) * stride] for i in range(height))
     assert stripped == pixels
+
+
+# ---------------------------------------------------------------------------
+# dtype= contract and Astropy float-precision parity (R2 review)
+# ---------------------------------------------------------------------------
+
+
+def test_rgb_dtype_is_exact_on_empty_and_full_images() -> None:
+    """``dtype=`` must control the output precision on every code path."""
+    for dtype in (torch.float16, torch.float32, torch.float64):
+        empty = rgb(torch.zeros(0, 5), torch.zeros(0, 5), torch.zeros(0, 5), dtype=dtype)
+        assert empty.dtype == dtype
+        full = rgb(
+            torch.ones(4, 4), torch.ones(4, 4), torch.ones(4, 4), dtype=dtype
+        )
+        assert full.dtype == dtype
+
+
+def test_lupton_rgb_dtype_is_exact() -> None:
+    for dtype in (torch.float16, torch.float32, torch.float64):
+        out = lupton_rgb(
+            torch.rand(4, 4), torch.rand(4, 4), torch.rand(4, 4), dtype=dtype
+        )
+        assert out.dtype == dtype
+
+
+def test_integer_dtype_request_raises_not_black_image() -> None:
+    """Casting the [0, 1] floats to an integer dtype silently truncates the
+    whole image to zeros — a typed error instead."""
+    bands = (torch.rand(4, 4), torch.rand(4, 4), torch.rand(4, 4))
+    with pytest.raises(TypeError, match="floating"):
+        lupton_rgb(*bands, dtype=torch.uint8)
+    with pytest.raises(TypeError, match="floating"):
+        rgb(*bands, dtype=torch.int16)
+
+
+def test_rgb_nan_inf_inputs_stay_finite_in_range() -> None:
+    g = torch.full((8, 8), math.inf)
+    g[0, 0] = math.nan
+    out = rgb(g, torch.zeros(8, 8), torch.zeros(8, 8), dtype=torch.float32)
+    assert out.dtype == torch.float32
+    assert torch.isfinite(out).all()
+    assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0
+
+
+def test_lupton_rgb_float_parity_with_astropy() -> None:
+    """Float-precision parity with astropy's make_lupton_rgb Lupton pipeline.
+
+    Covers the Q softening clamps astropy applies (near-zero Q floors to 0.1,
+    Q above 1e10 caps at 1e10) plus a saturated star, negative pixels and a
+    non-zero minimum.
+    """
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("astropy")
+    from astropy.visualization import make_lupton_rgb
+
+    rng = np.random.default_rng(0)
+    r = np.abs(rng.normal(0, 40, (24, 24)))
+    r[0, 0] = 1e6
+    r[1, 1] = 0.0
+    g = np.abs(rng.normal(0, 30, (24, 24)))
+    g[2, 2] = -5.0
+    b = np.abs(rng.normal(0, 20, (24, 24)))
+    cases = [
+        (8.0, 0.5, 0.0),
+        (8.0, 5.0, 0.0),
+        (3.0, 1.5, 2.0),
+        (0.0, 0.5, 0.0),  # near-zero Q floor
+        (1e12, 0.5, 0.0),  # Q above astropy's 1e10 cap
+    ]
+    for q, stretch, minimum in cases:
+        ref = make_lupton_rgb(
+            r, g, b, minimum=minimum, stretch=stretch, Q=q, output_dtype=np.float64
+        )
+        ours = (
+            lupton_rgb(
+                torch.from_numpy(r),
+                torch.from_numpy(g),
+                torch.from_numpy(b),
+                Q=q,
+                stretch=stretch,
+                minimum=minimum,
+            )
+            .numpy()
+        )
+        assert np.allclose(ours, ref, rtol=0, atol=1e-12), (q, stretch, np.abs(ours - ref).max())
+
+
+def test_write_rgb_image_rejects_empty_images(tmp_path) -> None:
+    """Zero-width/height PNGs are invalid per spec — raise instead of writing."""
+    from torchfits.transforms.rgb import write_rgb_image
+
+    with pytest.raises(ValueError, match="empty"):
+        write_rgb_image(str(tmp_path / "e1.png"), torch.zeros(0, 5, 3))
+    with pytest.raises(ValueError, match="empty"):
+        write_rgb_image(str(tmp_path / "e2.png"), torch.zeros(5, 0, 3))
+
+
+def test_write_rgb_image_nan_pixels_are_black(tmp_path) -> None:
+    """NaN pixels map to black deterministically (no float->uint8 UB)."""
+    import struct as _struct
+    import zlib as _zlib
+
+    from torchfits.transforms.rgb import write_rgb_image
+
+    image = torch.zeros(1, 2, 3)
+    image[0, 0, 0] = math.nan
+    path = tmp_path / "nan.png"
+    write_rgb_image(str(path), image)
+    blob = path.read_bytes()
+    idat = blob.find(b"IDAT")
+    size = _struct.unpack(">I", blob[idat - 4 : idat])[0]
+    raw = _zlib.decompress(blob[idat + 4 : idat + 4 + size])
+    assert list(raw[1:4]) == [0, 0, 0]
