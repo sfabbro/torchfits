@@ -17,6 +17,7 @@ import logging
 import threading
 import os
 import tempfile
+import urllib.error
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
@@ -185,7 +186,12 @@ def _download_http(url: str, dest: Path) -> Path:
                 existing = 0
             mode = "ab" if append else "wb"
             content_length = response.headers.get("Content-Length")
-            expected = int(content_length) if content_length else None
+            try:
+                expected = int(content_length) if content_length else None
+            except ValueError:
+                # Malformed/duplicated length: same trust level as an absent
+                # one (connection-close framing, warned below).
+                expected = None
             wrote = 0
             if not append:
                 # Capture validators so a later interrupted attempt can resume
@@ -214,8 +220,8 @@ def _download_http(url: str, dest: Path) -> Path:
                 # Connection-close framing: clean EOF is indistinguishable
                 # from a dropped connection mid-body. Promote, but say so.
                 warnings.warn(
-                    f"{url}: server omitted Content-Length; the cached copy's "
-                    "completeness could not be verified",
+                    f"{url}: server sent no usable Content-Length; the cached "
+                    "copy's completeness could not be verified",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -227,6 +233,14 @@ def _download_http(url: str, dest: Path) -> Path:
                 raise OSError(
                     f"{url}: short download ({wrote} bytes, expected {expected})"
                 )
+            if not append and wrote == 0:
+                # A zero-byte body cannot be distinguished from a connection
+                # dropped before the first chunk; never promote it to the
+                # permanent cache (a cached empty file would be trusted
+                # forever). Mirrors the _download_vos empty-copy check.
+                tmp.unlink(missing_ok=True)
+                meta_path.unlink(missing_ok=True)
+                raise OSError(f"{url}: empty download")
             if status == 206 and content_range is not None:
                 range_start, range_end, total = content_range
                 range_size = range_end - range_start + 1
@@ -241,14 +255,30 @@ def _download_http(url: str, dest: Path) -> Path:
                         f"{url}: incomplete Range download "
                         f"({final_size} bytes, total={total})"
                     )
+        tmp.replace(dest)
+        try:
+            meta_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return dest
     except HttpBlockedError:
         raise
-    tmp.replace(dest)
-    try:
-        meta_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return dest
+    except urllib.error.HTTPError as exc:
+        if exc.code == 416 and "Range" in headers:
+            # Resume offset at/behind EOF (interrupted after the last byte,
+            # or the remote changed size): the partial is dead. Drop it and
+            # fetch cleanly instead of retrying the same doomed Range.
+            tmp.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+            return _download_http(url, dest)
+        raise
+    finally:
+        if _fcntl is None:
+            # Token-named temporaries are unique per attempt and cannot be
+            # resumed: never leave them behind on failure (on success they
+            # were already promoted/removed, so this is a no-op).
+            tmp.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
 
 
 def _download_vos(path: str, dest: Path) -> Path:
@@ -259,16 +289,22 @@ def _download_vos(path: str, dest: Path) -> Path:
             "vos/vault paths require the optional 'vos' package (pip/pixi install vos)"
         ) from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".partial")
-    if tmp.exists():
-        tmp.unlink()
-    uri = normalize_vos_uri(path)
-    client = vos.Client()
-    client.copy(uri, str(tmp))
-    if not tmp.is_file() or tmp.stat().st_size == 0:
-        raise OSError(f"{path}: vos copy produced empty file")
-    tmp.replace(dest)
-    return dest
+    tmp = _partial_path_for(dest)
+    try:
+        if tmp.exists():
+            tmp.unlink()
+        uri = normalize_vos_uri(path)
+        client = vos.Client()
+        client.copy(uri, str(tmp))
+        if not tmp.is_file() or tmp.stat().st_size == 0:
+            raise OSError(f"{path}: vos copy produced empty file")
+        tmp.replace(dest)
+        return dest
+    finally:
+        if _fcntl is None:
+            # Token-named temporaries are unique per attempt and cannot be
+            # resumed: never leave them behind on failure.
+            tmp.unlink(missing_ok=True)
 
 
 def _download(url: str, dest: Path) -> Path:
