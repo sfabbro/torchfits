@@ -292,3 +292,56 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `benchmarks/replays/upstream_sources.json` | R12 | full | — | clean |
 | `benchmarks/run_cfitsio_direct_bench.py` | R12 | full | — | clean |
 | `benchmarks/suites.py` | R12 | full | — | clean |
+| `scripts/aggregate_matrix_bench.py` | R13 | scan | — | clean (scan) |
+| `scripts/bench_cfitsio_direct.sh` | R13 | scan | — | clean (scan) |
+| `scripts/bench_deficit_focus.sh` | R13 | scan | — | clean (scan) |
+| `scripts/bench_exhaustive_local.sh` | R13 | scan | — | clean (scan) |
+| `scripts/bench_release_scorecard.sh` | R13 | scan | — | clean (scan) |
+| `scripts/bench_suite.sh` | R13 | scan | — | clean (scan) |
+| `scripts/build_docs_pages.sh` | R13 | full | — | clean |
+| `scripts/build_wheels_local.sh` | R13 | scan | — | clean (scan) |
+| `scripts/canfar_denoise_incontainer.sh` | R13 | scan | — | clean (scan) |
+| `scripts/canfar_gpu_bench_incontainer.sh` | R13 | scan | — | clean (scan) |
+| `scripts/canfar_matrix_bench_incontainer.sh` | R13 | scan | — | clean (scan) |
+| `scripts/check_docs_links.py` | R13 | scan | — | clean (scan) |
+| `scripts/check_duplicate_cpp.py` | R13 | scan | — | clean (scan) |
+| `scripts/check_torch_extra_pins.py` | R13 | scan | — | clean (scan) |
+| `scripts/check_wheel_contents.py` | R13 | full | — | clean |
+| `scripts/ci_local.sh` | R13 | full | — | clean |
+| `scripts/cibuildwheel.sh` | R13 | scan | — | clean (scan) |
+| `scripts/cibw_before_build.sh` | R13 | scan | — | clean (scan) |
+| `scripts/cibw_test.sh` | R13 | scan | — | clean (scan) |
+| `scripts/clean_install_smoke.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_canfar_bench_vos.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_cfht_calib_frames.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_cfht_megacam_sample.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_cfht_megapipe_sample.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_example_samples.sh` | R13 | scan | — | clean (scan) |
+| `scripts/fetch_rgb_sky_samples.sh` | R13 | scan | — | clean (scan) |
+| `scripts/gen_native_stub.py` | R13 | full | — | clean |
+| `scripts/gpu-bootstrap.sh` | R13 | scan | — | clean (scan) |
+| `scripts/gpu-env-loader.sh` | R13 | full | — | clean |
+| `scripts/import_canfar_bench_artifacts.py` | R13 | scan | — | clean (scan) |
+| `scripts/launch_canfar_denoise.sh` | R13 | scan | — | clean (scan) |
+| `scripts/launch_canfar_gpu_bench.sh` | R13 | scan | — | clean (scan) |
+| `scripts/launch_canfar_matrix_grid.sh` | R13 | scan | — | clean (scan) |
+| `scripts/patch_bench_docs.py` | R13 | scan | — | clean (scan) |
+| `scripts/patch_canfar_exhaustive_docs.sh` | R13 | scan | — | clean (scan) |
+| `scripts/publish_canfar_bench_vos.sh` | R13 | scan | — | clean (scan) |
+| `scripts/publish_canfar_wheel_bundle.sh` | R13 | scan | — | clean (scan) |
+| `scripts/release_lane.py` | R13 | full | — | clean |
+| `scripts/release_notes.py` | R13 | scan | — | clean (scan) |
+| `scripts/render_bench_deficits.py` | R13 | full | — | clean |
+| `scripts/render_bench_highlights.py` | R13 | full | r13a-01 | fixed (r13a-01) |
+| `scripts/render_bench_iopath_table.py` | R13 | full | — | clean |
+| `scripts/render_bench_ml.py` | R13 | scan | — | clean (scan) |
+| `scripts/render_bench_quick.py` | R13 | scan | — | clean (scan) |
+| `scripts/render_full_benchmarks_table.py` | R13 | full | r13a-02 | fixed (r13a-02) |
+| `scripts/run_exhaustive_bench_and_patch_docs.sh` | R13 | scan | — | clean (scan) |
+| `scripts/selfcheck_canfar_launcher.sh` | R13 | scan | — | clean (scan) |
+| `scripts/sync_docs_examples.sh` | R13 | full | — | clean |
+| `scripts/torch_lanes.json` | R13 | full | — | clean |
+| `scripts/update_changelog.py` | R13 | full | — | clean |
+| `scripts/verify_wheel_cuda_canfar.sh` | R13 | scan | — | clean (scan) |
+| `scripts/verify_wheel_cuda_canfar_incontainer.sh` | R13 | scan | — | clean (scan) |
+| `scripts/verify_wheel_matrix.sh` | R13 | scan | — | clean (scan) |

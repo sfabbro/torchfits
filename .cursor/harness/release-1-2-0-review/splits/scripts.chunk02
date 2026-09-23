@@ -1,0 +1,17 @@
+scripts/publish_canfar_wheel_bundle.sh
+scripts/release_lane.py
+scripts/release_notes.py
+scripts/render_bench_deficits.py
+scripts/render_bench_highlights.py
+scripts/render_bench_iopath_table.py
+scripts/render_bench_ml.py
+scripts/render_bench_quick.py
+scripts/render_full_benchmarks_table.py
+scripts/run_exhaustive_bench_and_patch_docs.sh
+scripts/selfcheck_canfar_launcher.sh
+scripts/sync_docs_examples.sh
+scripts/torch_lanes.json
+scripts/update_changelog.py
+scripts/verify_wheel_cuda_canfar.sh
+scripts/verify_wheel_cuda_canfar_incontainer.sh
+scripts/verify_wheel_matrix.sh
