@@ -217,6 +217,66 @@ def test_concurrent_read_then_mutate_fresh_data():
     assert results2 == [[7, 8, 9]], f"stale rows after replace: {results2}"
 
 
+def test_invalidation_reaches_every_threads_reader_cache(tmp_path):
+    """Shared-meta invalidation must drop every thread's cached reader (r8b).
+
+    Each thread owns its thread-local TableReader cache; the writer-side
+    evict_everywhere hook is not involved here. After a content replacement
+    invisible to stat plus ``clear_shared_read_meta_cache``, every thread's
+    next read must observe the new file generation (uid bump on the shared
+    meta), never the decode stamped into its cached handle.
+    """
+    import importlib
+
+    from test_reader_cache_freshness import (
+        build_format_swap_pair,
+        replace_bytes_invisible,
+    )
+
+    m = importlib.import_module("torchfits._C")
+    path, b_bytes = build_format_swap_pair(tmp_path)
+
+    n_threads = 4
+    primed = threading.Barrier(n_threads + 1)
+    proceed = threading.Barrier(n_threads + 1)
+    errors: list[Exception] = []
+    results: list[list[float]] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            first = m.read_fits_table_rows(path, 1, ["A"], 1, -1, False)["A"]
+            if first.dtype != torch.int32 or first.tolist() != [1, 2, 3]:
+                raise AssertionError(f"unexpected prime read: {first}")
+            primed.wait(10)
+            proceed.wait(10)
+            got = m.read_fits_table_rows(path, 1, ["A"], 1, -1, False)["A"]
+            with lock:
+                results.append(got.tolist())
+        except Exception as exc:  # noqa: BLE001
+            with lock:
+                errors.append(exc)
+            try:
+                primed.abort()
+                proceed.abort()
+            except threading.BrokenBarrierError:
+                pass
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    primed.wait(10)
+    replace_bytes_invisible(path, b_bytes)
+    m.clear_shared_read_meta_cache()
+    proceed.wait(10)
+    for t in threads:
+        t.join(10)
+        assert not t.is_alive(), "reader worker hung"
+
+    assert not errors, f"concurrent invalidation failures: {errors[:3]}"
+    assert results == [[7.5, 8.5, 9.5]] * n_threads, f"stale generations: {results}"
+
+
 if __name__ == "__main__":
     test_concurrent_same_file_read()
     test_concurrent_same_file_table_read()

@@ -113,6 +113,38 @@ def test_table_metadata_cache_invalidated_out_of_band(tmp_path, probe):
         assert after == 3
 
 
+def test_reader_cache_generation_rotates_on_shared_meta_invalidation(tmp_path):
+    """The thread-local TableReader cache must follow shared-meta invalidation.
+
+    A content replacement invisible to stat (same inode/size/mtime) can only be
+    observed through explicit invalidation: ``clear_shared_read_meta_cache``
+    erases the path's SharedReadMeta and its generation (uid) is minted anew on
+    the next lookup. The reader cache must stamp that generation on acquire and
+    drop handles from an older one, or it keeps decoding with the stale column
+    layout (silently wrong values) even after the documented clear.
+    """
+    import importlib
+    import os
+
+    from test_reader_cache_freshness import (
+        build_format_swap_pair,
+        replace_bytes_invisible,
+    )
+
+    m = importlib.import_module("torchfits._C")
+    path, b_bytes = build_format_swap_pair(tmp_path)
+
+    first = m.read_fits_table_rows(path, 1, ["A"], 1, -1, False)["A"]
+    assert first.dtype == torch.int32 and first.tolist() == [1, 2, 3]
+
+    replace_bytes_invisible(path, b_bytes)
+    m.clear_shared_read_meta_cache()
+
+    got = m.read_fits_table_rows(path, 1, ["A"], 1, -1, False)["A"]
+    assert got.dtype == torch.float32, f"stale decode dtype: {got.dtype}"
+    assert got.tolist() == [7.5, 8.5, 9.5], f"stale reader cache data: {got.tolist()}"
+
+
 def test_extname_resolution_fails_when_name_disappears(tmp_path):
     """A name that no longer exists must raise, never resolve to a stale index."""
     path = _write(tmp_path, sci_index=1)

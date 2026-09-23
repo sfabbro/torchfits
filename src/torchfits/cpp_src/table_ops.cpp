@@ -77,6 +77,13 @@ void write_fits_table(const char* filename, nb::dict tensor_dict, nb::dict heade
         }
         if (kind == "ascii") {
             is_ascii = true;
+        } else if (kind != "binary") {
+            // Unknown table types must fail loudly (the catch below closes the
+            // handle): silently treating a typo as "binary" is a write-path
+            // type fallthrough.
+            throw std::invalid_argument(
+                std::string("Unknown table_type '") + table_type +
+                "' (expected 'binary' or 'ascii')");
         }
         torchfits::write_table_hdu(fptr, tensor_dict, header, schema_obj, is_ascii);
     } catch (...) {
@@ -310,6 +317,16 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
                     "append_rows column length mismatch for " + col_name
                 );
             }
+            // The payload width must match the column repeat exactly, like
+            // every other fixed-width column (and populate_rows' BIT branch):
+            // a partial-width run would silently zero-pad the missing bits.
+            if (repeat > 0 && user_repeat != repeat) {
+                rollback_inserted_rows(fptr, start_row, num_rows);
+                throw std::runtime_error(
+                    "append_rows repeat mismatch for " + col_name +
+                    ": column repeat=" + std::to_string(repeat) +
+                    " payload width=" + std::to_string(user_repeat));
+            }
             if (user_repeat <= 0 || user_repeat > repeat) {
                 rollback_inserted_rows(fptr, start_row, num_rows);
                 throw std::runtime_error(
@@ -358,10 +375,22 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
                 }
             }
 
-            fits_write_col(
-                fptr, TBIT, colnum, start_row, 1,
-                num_rows * repeat, bits.data(), &status
-            );
+            // fits_write_col(TBIT) maps a flat element run onto raw data-unit
+            // bits and ignores per-row byte padding when repeat % 8 != 0, so
+            // keep every call within a single row (same as populate_rows and
+            // write_table_hdu): one flat run across rows shifts every row
+            // after the first.
+            for (long r = 0; r < num_rows; ++r) {
+                fits_write_col(
+                    fptr, TBIT, colnum, start_row + r, 1, repeat,
+                    bits.data() + static_cast<size_t>(r * repeat), &status
+                );
+                if (status != 0) {
+                    rollback_inserted_rows(fptr, start_row, num_rows);
+                    throw std::runtime_error(
+                        "Failed to append BIT column rows for " + col_name);
+                }
+            }
             continue;
         }
 

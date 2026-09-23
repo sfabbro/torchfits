@@ -57,10 +57,30 @@ struct ReaderCacheKeyHash {
 // Cache entries are only ever inserted/removed by their owning thread, but
 // evict() from another thread may destroy an idle cached reader, so map_/lru_
 // are mutex-guarded.
+// Generation of a path's SharedReadMeta (its uid). The uid is minted anew
+// whenever the meta is invalidated (erased and recreated) or its stat check
+// rotates it on an out-of-band change, so a cache entry stamped with an older
+// generation knows its reader predates the invalidation even when the file's
+// stat identity did not change (r8b / R7-CPP2).
+uint64_t shared_meta_generation(const std::string& filename) {
+    return torchfits::detail::get_shared_meta_for_path(filename)
+        ->uid.load(std::memory_order_relaxed);
+}
+
+// A TableReader handed out by the cache together with the SharedReadMeta
+// generation it was validated against. release() stamps that generation —
+// never a fresher one — so an invalidation landing during the read still
+// drops the handle at the next acquire.
+struct AcquiredReader {
+    std::unique_ptr<torchfits::TableReader> reader;
+    uint64_t generation = 0;
+};
+
 struct ThreadLocalReaderCache {
     struct Entry {
         std::unique_ptr<torchfits::TableReader> reader;
         std::list<ReaderCacheKey>::iterator lru_it;
+        uint64_t meta_uid = 0;
     };
 
     ThreadLocalReaderCache() {
@@ -81,27 +101,39 @@ struct ThreadLocalReaderCache {
     std::list<ReaderCacheKey> lru_;
     static constexpr size_t kCapacity = 8;
 
-    std::unique_ptr<torchfits::TableReader> acquire(const ReaderCacheKey& key) {
+    AcquiredReader acquire(const ReaderCacheKey& key) {
+        const uint64_t generation = shared_meta_generation(key.filename);
+        AcquiredReader slot;
+        slot.generation = generation;
         std::lock_guard<std::mutex> l(mu_);
         auto it = map_.find(key);
         if (it == map_.end()) {
-            return std::unique_ptr<torchfits::TableReader>();
+            return slot;
         }
-        lru_.splice(lru_.end(), lru_, it->second.lru_it);
+        const uint64_t entry_generation = it->second.meta_uid;
+        // The entry is consumed here and re-added by release(); dropping its
+        // LRU node keeps lru_ 1:1 with map_. Splicing it to the back instead
+        // left a ghost node per acquire: unbounded list growth, and capacity
+        // eviction could then destroy live entries through stale keys.
+        lru_.erase(it->second.lru_it);
         auto reader = std::move(it->second.reader);
         map_.erase(it);
-        if (!reader->file_unchanged()) {
-            // The file was replaced or rewritten since this reader was cached
-            // (e.g. a writer on another thread whose eviction raced this
-            // thread's release): the handle, cached offset and pread fd are
-            // stale. Drop it and let the caller open fresh.
-            return std::unique_ptr<torchfits::TableReader>();
+        if (generation != entry_generation || !reader->file_unchanged()) {
+            // Stale handle: either shared-meta invalidation minted a new
+            // generation for this path (the file was rewritten or replaced and
+            // the caches were told), or the file was replaced behind the
+            // caches' back (e.g. a writer on another thread whose eviction
+            // raced this thread's release). The handle, cached offsets and
+            // pread fd belong to the previous generation — drop it and let
+            // the caller open fresh.
+            return slot;
         }
-        return reader;
+        slot.reader = std::move(reader);
+        return slot;
     }
 
-    void release(ReaderCacheKey key, std::unique_ptr<torchfits::TableReader> reader) {
-        if (!reader) {
+    void release(const ReaderCacheKey& key, AcquiredReader slot) {
+        if (!slot.reader) {
             return;
         }
         std::lock_guard<std::mutex> l(mu_);
@@ -111,7 +143,7 @@ struct ThreadLocalReaderCache {
             map_.erase(victim);
         }
         lru_.push_back(key);
-        map_[key] = Entry{std::move(reader), std::prev(lru_.end())};
+        map_[key] = Entry{std::move(slot.reader), std::prev(lru_.end()), slot.generation};
     }
 
     // Drop any cached reader for `filename` from this cache. A reader is only
@@ -337,18 +369,18 @@ void bind_table(nb::module_& m) {
     m.def("read_fits_table", [](const std::string& filename, int hdu_num, const std::vector<std::string>& column_names, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
         ReaderCacheKey key{filename, hdu_num};
-        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
-        if (!reader) {
-            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        AcquiredReader handle = g_reader_cache.acquire(key);
+        if (!handle.reader) {
+            handle.reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
         }
         if (mmap) {
-            auto result = reader->read_columns_mmap(column_names);
-            g_reader_cache.release(key, std::move(reader));
+            auto result = handle.reader->read_columns_mmap(column_names);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             return tensor_map_to_python(result);
         } else {
-            auto result_map = reader->read_columns(column_names, 1, -1, true);
-            g_reader_cache.release(key, std::move(reader));
+            auto result_map = handle.reader->read_columns(column_names, 1, -1, true);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             nb::object out = nb::object(table_result_to_python(result_map, false));
             return out;
@@ -360,18 +392,18 @@ void bind_table(nb::module_& m) {
                                      long start_row, long num_rows, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
         ReaderCacheKey key{filename, hdu_num};
-        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
-        if (!reader) {
-            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        AcquiredReader handle = g_reader_cache.acquire(key);
+        if (!handle.reader) {
+            handle.reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
         }
         if (mmap) {
-            auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
-            g_reader_cache.release(key, std::move(reader));
+            auto result = handle.reader->read_columns_mmap(column_names, start_row, num_rows);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             return tensor_map_to_python(result);
         } else {
-            auto result_map = reader->read_columns(column_names, start_row, num_rows, true);
-            g_reader_cache.release(key, std::move(reader));
+            auto result_map = handle.reader->read_columns(column_names, start_row, num_rows, true);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             nb::object out = table_result_to_python(result_map, false);
             return out;
@@ -398,13 +430,13 @@ void bind_table(nb::module_& m) {
                                            long start_row, long num_rows, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
         ReaderCacheKey key{filename, hdu_num};
-        std::unique_ptr<torchfits::TableReader> reader = g_reader_cache.acquire(key);
-        if (!reader) {
-            reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        AcquiredReader handle = g_reader_cache.acquire(key);
+        if (!handle.reader) {
+            handle.reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
         }
         if (mmap) {
-            auto result_map = reader->read_columns_mmap(column_names, start_row, num_rows);
-            g_reader_cache.release(key, std::move(reader));
+            auto result_map = handle.reader->read_columns_mmap(column_names, start_row, num_rows);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             nb::dict mapped = tensor_map_to_python(result_map);
             nb::dict numpy_result;
@@ -423,8 +455,8 @@ void bind_table(nb::module_& m) {
             }
             return nb::object(numpy_result);
         } else {
-            auto result_map = reader->read_columns(column_names, start_row, num_rows, true);
-            g_reader_cache.release(key, std::move(reader));
+            auto result_map = handle.reader->read_columns(column_names, start_row, num_rows, true);
+            g_reader_cache.release(key, std::move(handle));
             nb::gil_scoped_acquire acquire;
             nb::object out = table_result_to_python(result_map, true);
             return out;
