@@ -151,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - packaging: Vendor CFITSIO in the conda package metadata
 - docs: Drop the setkey --comment example
 - io: Reassemble long strings on the slow header path
+- table: Keep the first column when TTYPE is duplicated
+- table: Exclude NaN rows from where comparisons
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
