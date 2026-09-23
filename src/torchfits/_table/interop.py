@@ -486,9 +486,7 @@ def _fixed_size_list_to_astropy(
         # Exotic value type: object rows (None where the whole row is masked);
         # element-level Nones are preserved inside the row lists.
         pylist = chunked_arr.to_pylist()
-        rows_mask = (
-            row_mask if row_mask is not None else np.zeros(n_rows, dtype=bool)
-        )
+        rows_mask = row_mask if row_mask is not None else np.zeros(n_rows, dtype=bool)
         values = np.array(
             [None if m else v for v, m in zip(pylist, rows_mask.tolist())],
             dtype=object,

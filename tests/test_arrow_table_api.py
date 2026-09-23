@@ -1345,7 +1345,9 @@ def test_repeat1_round_trip_agrees_with_astropy(tmp_path):
     path = tmp_path / "r1j.fits"
     afits.BinTableHDU.from_columns(
         [
-            afits.Column(name="S", format="1J", array=np.arange(3, dtype="<i4").reshape(3, 1))
+            afits.Column(
+                name="S", format="1J", array=np.arange(3, dtype="<i4").reshape(3, 1)
+            )
         ]
     ).writeto(str(path), overwrite=True)
     gt = AstropyTable.read(str(path))["S"]
@@ -1383,9 +1385,7 @@ def test_byte_vector_column_is_uint8_fsl(tmp_path):
 
     for mmap in (True, False):
         for decode_bytes in (True, False):
-            tbl = torchfits.table.read(
-                str(path), decode_bytes=decode_bytes, mmap=mmap
-            )
+            tbl = torchfits.table.read(str(path), decode_bytes=decode_bytes, mmap=mmap)
             col = tbl["BV"]
             assert pa.types.is_fixed_size_list(col.type), (mmap, decode_bytes, col.type)
             assert col.type.list_size == 8

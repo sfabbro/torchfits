@@ -44,7 +44,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/data/remote.py` | R3-B | full | r3b-01..r3b-05 | fixed |
 | `src/torchfits/data/__init__.py` | R3-B | full | r3b-06, r3b-07, r3a-08 (shared helper) | fixed |
 | `src/torchfits/_io_engine/_read_pipeline.py` | R4-A | deep | r4a-01, r4a-04, r4a-05, r4a-09 | fixed |
-| `src/torchfits/_io_engine/_read_pipeline_fallback.py` | R4-A | deep | r4a-05, r4a-06, r4a-11 | fixed |
+| `src/torchfits/_io_engine/_read_pipeline_fallback.py` | R4-A; r5a-11 | deep | r4a-05, r4a-06, r4a-11, r5a-11 | fixed (r5a-11 double-open 2→1 via R5 authorization) |
 | `src/torchfits/_io_engine/image.py` | R4-A | deep | r4a-01 | fixed |
 | `src/torchfits/_io_engine/image_meta.py` | R4-A | deep | r4a-05, r4a-10, r4a-12, r4a-14 | fixed (r4a-12/14 deferred) |
 | `src/torchfits/_io_engine/batch.py` | R4-A | full | r4a-01, r4a-05 | fixed |
@@ -65,3 +65,19 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_io_engine/hdu_api.py` | R4-C | full | r4c-08, r4c-09, r4c-12, r4c-15 | fixed |
 | `src/torchfits/_io_engine/__init__.py` | R4-C | full | — | clean |
 | `src/torchfits/_hdu/hdu_list.py` | R4-C (authorized close() block only) | block-level | r4c-01 | fixed — R6 reviews whole file; must reference r4c-01 (do not re-fix) and root-fix r4b-13 at `fromfile` |
+| `src/torchfits/_table/read.py` | R5-A | deep | r5a-01, r5a-03, r5a-05, r5a-08, r5a-09, r5a-10, r5a-15 | fixed (`__all__` sealed, 8 names confirmed) |
+| `src/torchfits/_table/_read_scan.py` | R5-A | deep | r5a-01, r5a-05, r5a-10 | fixed |
+| `src/torchfits/_table/_read_schema.py` | R5-A | deep | r5a-02, r5a-03, r5a-04 | fixed |
+| `src/torchfits/_table/_read_where.py` | R5-A | deep | r5a-07 | fixed |
+| `src/torchfits/_table/engine.py` | R5-A | deep | r5a-06 (A-14) | fixed |
+| `src/torchfits/_table_engine/__init__.py` | R5-A | surface | — | clean |
+| `src/torchfits/_table_engine/backend_policy.py` | R5-A | surface | — | clean |
+| `src/torchfits/_table_engine/read_policy.py` | R5-A | surface | r5a-13 (docs drift) | clean |
+| `src/torchfits/_table/write.py` | R5-B | deep | r5b-01, r5b-06 | fixed (r5b-01 QuantizeError contract) |
+| `src/torchfits/_table/mutation.py` | R5-B | deep | r5b-02, r5b-03, r5b-04, r5b-08 | fixed |
+| `src/torchfits/_table/_mutation_coerce.py` | R5-B | deep | r5b-02, r5b-05 | fixed (r5b-05 candidate refuted with evidence) |
+| `src/torchfits/_table/utils.py` | R5-B | deep | r5b-04, r5b-07 | fixed (dedupe r5b-07 → R6-B) |
+| `src/torchfits/_table/interop.py` | R5-C | deep | r5c-01, r5c-02, r5c-04, r5c-05, r5c-06, r5c-08 | fixed |
+| `src/torchfits/_table/arrow_convert.py` | R5-C | deep | r5c-03, r5c-07, r5c-14 | fixed |
+| `src/torchfits/_table/cache.py` | R5-C | deep | r5c-10 | clean (live acquisition seam — residue candidate RE-DERIVED, zero-change) |
+| `src/torchfits/_table/__init__.py` | R5-C | surface | r5c-12 (docs) | clean |

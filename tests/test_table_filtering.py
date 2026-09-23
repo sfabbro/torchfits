@@ -313,9 +313,9 @@ def numeric_fits(tmp_path):
     """10-row numeric-only table (all columns scalar, no strings)."""
     path = str(tmp_path / "numeric.fits")
     ids = np.arange(10, dtype=np.int32)
-    fits.BinTableHDU.from_columns([fits.Column(name="ID", format="J", array=ids)]).writeto(
-        path
-    )
+    fits.BinTableHDU.from_columns(
+        [fits.Column(name="ID", format="J", array=ids)]
+    ).writeto(path)
     return path
 
 
@@ -430,7 +430,9 @@ def test_empty_result_preserves_unnamed_columns(tmp_path):
         [
             fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32)),
             fits.Column(
-                name="VEC", format="5J", array=np.arange(20, dtype=np.int32).reshape(4, 5)
+                name="VEC",
+                format="5J",
+                array=np.arange(20, dtype=np.int32).reshape(4, 5),
             ),
         ]
     )
@@ -454,7 +456,9 @@ def test_capability_check_covers_unnamed_columns(tmp_path):
         [
             fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32)),
             fits.Column(
-                name="VEC", format="5J", array=np.arange(20, dtype=np.int32).reshape(4, 5)
+                name="VEC",
+                format="5J",
+                array=np.arange(20, dtype=np.int32).reshape(4, 5),
             ),
         ]
     )
@@ -516,7 +520,9 @@ def test_read_ranges_zero_length_ranges_ok():
     import torch
     from torchfits._table.engine import _read_ranges_as_chunk
 
-    reader = _StubReader([{"T": torch.tensor([1, 2]), "L": [1, 2]}, {"T": torch.tensor([5]), "L": [5]}])
+    reader = _StubReader(
+        [{"T": torch.tensor([1, 2]), "L": [1, 2]}, {"T": torch.tensor([5]), "L": [5]}]
+    )
     out = _read_ranges_as_chunk(reader, ["T", "L"], [(0, 2), (0, 0), (5, 1)])
     assert out["T"].tolist() == [1, 2, 5]
     assert out["L"] == [1, 2, 5]
@@ -532,7 +538,9 @@ def test_complex_projection_columns_are_served(tmp_path):
     hdu = fits.BinTableHDU.from_columns(
         [
             fits.Column(
-                name="CX", format="C", array=np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+                name="CX",
+                format="C",
+                array=np.array([1 + 2j, 3 + 4j], dtype=np.complex64),
             ),
             fits.Column(name="ID", format="J", array=np.arange(2, dtype=np.int32)),
         ]
@@ -605,9 +613,11 @@ def test_fallback_table_opens_file_once_per_call(tmp_path):
         counts["path"] += 1
         return orig_rftr(*args, **kwargs)
 
-    with mock.patch.object(cpp, "open_fits_file", c_open), mock.patch.object(
-        cpp, "read_fits_table", c_rft
-    ), mock.patch.object(cpp, "read_fits_table_rows", c_rftr):
+    with (
+        mock.patch.object(cpp, "open_fits_file", c_open),
+        mock.patch.object(cpp, "read_fits_table", c_rft),
+        mock.patch.object(cpp, "read_fits_table_rows", c_rftr),
+    ):
         out = torchfits.read(path, 1)
 
     assert out["ID"].shape == (64,)

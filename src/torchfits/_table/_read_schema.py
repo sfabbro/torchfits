@@ -446,7 +446,9 @@ def _schema_from_header(
 
     # Named columns plus TTYPE-less ones (auto-named COL<i>), in file order.
     cols = list(fits_schema.iter_table_columns(header, selected=selected))
-    cols += [c for c in _unnamed_columns(header) if selected is None or c.name in selected]
+    cols += [
+        c for c in _unnamed_columns(header) if selected is None or c.name in selected
+    ]
     cols.sort(key=lambda c: c.index)
 
     for col in cols:

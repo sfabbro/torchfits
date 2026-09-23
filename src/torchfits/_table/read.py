@@ -190,9 +190,9 @@ def read(
 
     # rows= is a scatter selection only the C++ range engine can honor —
     # route it there for every backend (r5a-01).
-    if (backend in {"auto", "cpp"} or rows is not None) and not should_skip_cpp_for_where(
-        backend, where
-    ):
+    if (
+        backend in {"auto", "cpp"} or rows is not None
+    ) and not should_skip_cpp_for_where(backend, where):
         single = _read_cpp_table_chunk(
             path=path,
             hdu=hdu,
