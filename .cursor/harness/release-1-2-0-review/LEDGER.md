@@ -108,7 +108,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cli/cmds_convert.py` | R7-C | deep | r7c-01, r7c-09 | fixed |
 | `src/torchfits/cli/cmds_setkey.py` | R7-C | deep | r7c-03..r7c-07, r7c-10 | fixed |
 | `src/torchfits/cli/cmds_transform.py` | R7-C | deep | r7c-14 | clean (decision-5 verified+pinned) |
-| `docs/cli.md` | R7-A (sole editor) | n/a | r7a-06, r7a-10, r7b-09 + decision rows 1/3 | fixed |
+| `docs/cli.md` | R15 | full | r7a-06, r7a-10, r7b-09, r15a-04 | fixed |
 | `src/torchfits/cpp_src/table_reader.h` | R8-A | deep (2948 ln) | r8a-01..r8a-08, r8a-10, r8a-11 | fixed (r8a-10/11 verified+pinned) |
 | `src/torchfits/cpp_src/table_types.h` | R8-B | full | — | clean |
 | `src/torchfits/cpp_src/table_ops.h` | R8-B | full | — | clean |
@@ -384,3 +384,71 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `examples/gallery_images.py` | R14 | scan | — | clean |
 | `examples/gallery_tables_lc.py` | R14 | scan | — | clean |
 | `examples/test_examples.py` | R14 | full | r14a-04 | fixed (r14a-04) |
+| `docs/api-core-io.md` | R15 | scan | — | clean |
+| `docs/api-data.md` | R15 | scan | — | clean |
+| `docs/api-tables.md` | R15 | full | r15a-03, r15a-06 | fixed |
+| `docs/api-transforms.md` | R15 | scan | — | clean |
+| `docs/api.md` | R15 | full | r15a-07 | fixed |
+| `docs/architecture.md` | R15 | full | r15a-02 | fixed |
+| `docs/assets/bench/20260719_075555/megacam_results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260719_144337/results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260719_144337/summary.md` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260719_144337/torchfits_deficits.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260807_013736/results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260807_013736/summary.md` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cpu_20260807_013736/torchfits_deficits.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260719_144457/results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260719_144457/summary.md` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260719_144457/torchfits_deficits.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260807_013736/results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260807_013736/summary.md` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_cuda_20260807_013736/torchfits_deficits.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_mps_20260719_143706/megacam_results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_mps_20260719_143706/ml_results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_mps_20260719_143706/results.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_mps_20260719_143706/summary.md` | R15 | scan | — | clean |
+| `docs/assets/bench/exhaustive_mps_20260719_143706/torchfits_deficits.csv` | R15 | scan | — | clean |
+| `docs/assets/bench/ml_20260719_145743/ml_results.csv` | R15 | scan | — | clean |
+| `docs/assets/gallery/cli_rgb_demo.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/image_compose_pipeline.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/image_cutout.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/lightcurve_asymmetric_sigma_clip.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/lightcurve_sigma_clip.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/lupton_rgb_sdss.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/megapipe_cutout_collage.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/ml_gz_class_grid.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/rgb_sky_collage.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/rgb_vs_lupton_dwarf.png` | R15 | scan | — | clean |
+| `docs/assets/gallery/table_fits_scale_columns.png` | R15 | scan | — | clean |
+| `docs/assets/katex/contrib/auto-render.min.js` | R15 | scan | — | clean |
+| `docs/assets/katex/fonts/KaTeX_AMS-Regular.woff2` | R15 | scan | — | clean |
+| `docs/assets/katex/fonts/KaTeX_Main-Regular.woff2` | R15 | scan | — | clean |
+| `docs/assets/katex/fonts/KaTeX_Math-Italic.woff2` | R15 | scan | — | clean |
+| `docs/assets/katex/fonts/KaTeX_Size1-Regular.woff2` | R15 | scan | — | clean |
+| `docs/assets/katex/fonts/KaTeX_Size2-Regular.woff2` | R15 | scan | — | clean |
+| `docs/assets/katex/katex.min.css` | R15 | scan | — | clean |
+| `docs/assets/katex/katex.min.js` | R15 | scan | — | clean |
+| `docs/benchmarks.md` | R15 | scan | — | clean |
+| `docs/changelog.md` | R15 | scan | — | clean |
+| `docs/cli-recipes.md` | R15 | scan | — | clean |
+| `docs/compatibility.md` | R15 | full | r15a-01 | fixed |
+| `docs/contributing.md` | R15 | scan | — | clean |
+| `docs/denoise-pipeline.md` | R15 | scan | — | clean |
+| `docs/examples-ml.md` | R15 | scan | — | clean |
+| `docs/examples-transforms.md` | R15 | scan | — | clean |
+| `docs/examples.md` | R15 | full | r15a-04 | fixed |
+| `docs/index.md` | R15 | scan | — | clean |
+| `docs/install.md` | R15 | scan | — | clean |
+| `docs/javascripts/katex.js` | R15 | scan | — | clean |
+| `docs/logo.svg` | R15 | scan | — | clean |
+| `docs/migration_astropy.md` | R15 | scan | — | clean |
+| `docs/migration_fitsio.md` | R15 | scan | — | clean |
+| `docs/parity.md` | R15 | scan | — | clean |
+| `docs/python-workflows.md` | R15 | scan | — | clean |
+| `docs/quickstart.md` | R15 | scan | — | clean |
+| `docs/release.md` | R15 | full | r15a-05, r15a-08 | fixed |
+| `docs/roadmap.md` | R15 | scan | — | clean |
+| `docs/stylesheets/extra.css` | R15 | scan | — | clean |
+| `docs/torchfits-logo-hero.png` | R15 | scan | — | clean |
+| `docs/torchfits-logo-mark.png` | R15 | scan | — | clean |
+| `docs/torchfits-logo.png` | R15 | scan | — | clean |
