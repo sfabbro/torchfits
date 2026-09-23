@@ -14,6 +14,7 @@
 #include <atomic>
 #include <limits>
 #include <cerrno>
+#include <exception>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -356,13 +357,93 @@ int resolve_hdu_name_cached(const std::string& path, const std::string& hdu_name
 }
 
 // ---------------------------------------------------------------------------
+// checked_num_hdus — HDU count with a completeness check (r7a-08)
+// ---------------------------------------------------------------------------
+namespace {
+// fits_get_num_hdus (ffthdu) walks HDU headers and silently stops at the first
+// one CFITSIO cannot parse (the walk's error status is discarded), so a file
+// truncated mid-header — or with a hostile HDU header tail — under-reports its
+// HDU count and every caller exits 0 with the wrong inventory (astropy warns;
+// we used to be silent). Detect it honestly: bytes past the last parsed HDU
+// that begin an HDU header (SIMPLE / XTENSION, possibly a partial card) mean
+// the walk stopped early. Contract boundaries: trailing bytes that do not
+// begin an HDU are tolerated (same as the read paths — garbage after the last
+// HDU is ignored), and a file truncated after a complete header set
+// under-reports nothing: that error surfaces at read time.
+int checked_num_hdus(FITSFile& file) {
+    fitsfile* fptr = file.get_fptr();
+    int num_hdus = file.get_num_hdus();
+    if (num_hdus <= 0 || fptr == nullptr) {
+        return num_hdus;
+    }
+
+    int status = 0;
+    char name[FLEN_FILENAME] = {0};
+    fits_file_name(fptr, name, &status);
+    if (status != 0 || name[0] == '\0') {
+        return num_hdus;
+    }
+    const std::string path(name);
+    if (has_cfitsio_extended_filename_syntax(path) ||
+        path.find("://") != std::string::npos) {
+        return num_hdus;  // no reliable on-disk extent to compare
+    }
+    struct stat st {};
+    if (::stat(path.c_str(), &st) != 0) {
+        return num_hdus;
+    }
+
+    int mstatus = 0;
+    file.ensure_hdu(num_hdus - 1, &mstatus);
+    if (mstatus != 0) {
+        return num_hdus;
+    }
+    LONGLONG headstart = 0, datastart = 0, dataend = 0;
+    int astatus = 0;
+    fits_get_hduaddrll(fptr, &headstart, &datastart, &dataend, &astatus);
+    if (astatus != 0) {
+        return num_hdus;
+    }
+    // ffghadll: dataend is the byte offset where the next HDU would begin —
+    // the exclusive, record-aligned end of the last parsed HDU.
+    const LONGLONG fsize = static_cast<LONGLONG>(st.st_size);
+    if (dataend <= 0 || dataend >= fsize) {
+        return num_hdus;  // no trailing bytes (a short file is data truncation)
+    }
+
+    unsigned char probe[8] = {0};
+    int fd = d::open_readonly_fd(path);
+    if (fd == -1) {
+        return num_hdus;
+    }
+    ssize_t got = ::pread(fd, probe, sizeof(probe), static_cast<off_t>(dataend));
+    ::close(fd);
+    if (got <= 0) {
+        return num_hdus;
+    }
+    auto starts_hdu_header = [probe, got](const char* word) {
+        const size_t want = std::strlen(word);
+        const size_t have = std::min(static_cast<size_t>(got), want);
+        return std::memcmp(probe, word, have) == 0;
+    };
+    if (starts_hdu_header("SIMPLE") || starts_hdu_header("XTENSION")) {
+        throw std::runtime_error(
+            "FITS file appears truncated or corrupt: the HDU scan parsed " +
+            std::to_string(num_hdus) + " HDU(s) but another HDU header at byte " +
+            std::to_string(dataend) + " could not be parsed: " + path);
+    }
+    return num_hdus;
+}
+}  // namespace
+
+// ---------------------------------------------------------------------------
 // open_and_read_headers — batch header read, returns (FITSFile*, vector<HDUInfo>)
 // ---------------------------------------------------------------------------
 std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::string& path, int mode) {
     auto file = std::unique_ptr<FITSFile>(new FITSFile(path.c_str(), mode));
     std::vector<HDUInfo> hdus;
 
-    int num_hdus = file->get_num_hdus();
+    int num_hdus = checked_num_hdus(*file);
     hdus.reserve(num_hdus);
 
     for (int i = 0; i < num_hdus; ++i) {
@@ -379,6 +460,23 @@ std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::stri
 // ---------------------------------------------------------------------------
 // read_images_batch
 // ---------------------------------------------------------------------------
+namespace {
+// Batch error vectors must always carry text: an exception with an empty
+// what() (or a non-std::exception throw) previously left errors[i] empty and
+// the undefined results[i] tensor was returned to Python as if the read had
+// succeeded (silent fall-through).
+void record_batch_error(std::vector<std::string>& errors, size_t i) {
+    try {
+        std::rethrow_exception(std::current_exception());
+    } catch (const std::exception& e) {
+        const char* what = e.what();
+        errors[i] = (what != nullptr && what[0] != '\0') ? what : "unknown error";
+    } catch (...) {
+        errors[i] = "unknown error";
+    }
+}
+}  // namespace
+
 std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& paths, int hdu_num, bool use_mmap) {
     size_t n = paths.size();
     std::vector<torch::Tensor> results(n);
@@ -392,8 +490,8 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
     try {
         FITSFile file(paths[0].c_str(), 0);
         results[0] = file.read_tensor(hdu_num, use_mmap);
-    } catch (const std::exception& e) {
-        errors[0] = e.what();
+    } catch (...) {
+        record_batch_error(errors, 0);
     }
     auto t1 = std::chrono::steady_clock::now();
     auto first_read_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -419,8 +517,8 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
             try {
                 FITSFile file(paths[i].c_str(), 0);
                 results[i] = file.read_tensor(hdu_num, use_mmap);
-            } catch (const std::exception& e) {
-                errors[i] = e.what();
+            } catch (...) {
+                record_batch_error(errors, i);
             }
         }
     } else {
@@ -439,8 +537,8 @@ std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& pat
                     try {
                         FITSFile file(paths[i].c_str(), 0);
                         results[i] = file.read_tensor(hdu_num, use_mmap);
-                    } catch (const std::exception& e) {
-                        errors[i] = e.what();
+                    } catch (...) {
+                        record_batch_error(errors, i);
                     }
                 }
             });
@@ -468,7 +566,18 @@ std::vector<torch::Tensor> read_hdus_batch(const std::string& path, const std::v
     std::vector<torch::Tensor> results;
     results.reserve(hdus.size());
     for (int hdu_num : hdus) {
-        results.push_back(file.read_tensor(hdu_num, use_mmap));
+        try {
+            results.push_back(file.read_tensor(hdu_num, use_mmap));
+        } catch (const std::exception& e) {
+            // Attribute the failure to its path + HDU (r4a-01 error contract):
+            // the bare inner text ("Could not move to HDU") names neither.
+            throw std::runtime_error(
+                "Error reading " + path + " HDU " + std::to_string(hdu_num) + ": " +
+                ((e.what() != nullptr && e.what()[0] != '\0') ? e.what() : "unknown error"));
+        } catch (...) {
+            throw std::runtime_error(
+                "Error reading " + path + " HDU " + std::to_string(hdu_num) + ": unknown error");
+        }
     }
     return results;
 }
@@ -483,7 +592,16 @@ torch::Tensor read_hdus_sequence_last(const std::string& path, const std::vector
     FITSFile file(path.c_str(), 0);
     torch::Tensor out;
     for (int hdu_num : hdus) {
-        out = file.read_tensor(hdu_num, use_mmap);
+        try {
+            out = file.read_tensor(hdu_num, use_mmap);
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                "Error reading " + path + " HDU " + std::to_string(hdu_num) + ": " +
+                ((e.what() != nullptr && e.what()[0] != '\0') ? e.what() : "unknown error"));
+        } catch (...) {
+            throw std::runtime_error(
+                "Error reading " + path + " HDU " + std::to_string(hdu_num) + ": unknown error");
+        }
     }
     return out;
 }
@@ -518,6 +636,25 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
         d::read_image_params_9d(fptr, &bitpix, &naxis, naxes_ll, &status);
         if (status != 0) {
             throw std::runtime_error("Could not read image parameters");
+        }
+        if (naxis == 0) {
+            // NAXIS=0: empty 1-D array keyed on BITPIX — the same contract as
+            // read_tensor / read_full_nocache. Letting it fall through builds a
+            // 0-d garbage scalar via an empty IntArrayRef.
+            torch::ScalarType dtype;
+            switch (bitpix) {
+                case BYTE_IMG:   dtype = torch::kUInt8; break;
+                case SHORT_IMG:  dtype = torch::kInt16; break;
+                case LONG_IMG:   dtype = torch::kInt32; break;
+                case LONGLONG_IMG: dtype = torch::kInt64; break;
+                case FLOAT_IMG:  dtype = torch::kFloat32; break;
+                case DOUBLE_IMG: dtype = torch::kFloat64; break;
+                default:         dtype = torch::kUInt8; break;
+            }
+            int close_status = 0;
+            fits_close_file(fptr, &close_status);
+            fptr = nullptr;
+            return torch::empty({0}, torch::TensorOptions().dtype(dtype));
         }
         scale_info = d::detect_scale_info_fast(fptr, bitpix);
 
@@ -1459,7 +1596,7 @@ void bind_fits(nb::module_& m) {
             long long n = 0;
             {
                 nb::gil_scoped_release release;
-                n = self.get_num_hdus();
+                n = checked_num_hdus(self);
             }
             return n;
         })
@@ -1596,7 +1733,17 @@ void bind_fits(nb::module_& m) {
         const bool scaled = scale_info.scaled;
 
         if (shape.empty()) {
-            return alloc_numpy_array<uint8_t>({0}).cast();
+            // NAXIS=0: empty 1-D array keyed on BITPIX — same contract as
+            // read_tensor / read_full_nocache / read_full_unmapped (every _cpp
+            // full-image reader must agree on dtype).
+            switch (bitpix) {
+                case SHORT_IMG:    return alloc_numpy_array<int16_t>({0}).cast();
+                case LONG_IMG:     return alloc_numpy_array<int32_t>({0}).cast();
+                case LONGLONG_IMG: return alloc_numpy_array<int64_t>({0}).cast();
+                case FLOAT_IMG:    return alloc_numpy_array<float>({0}).cast();
+                case DOUBLE_IMG:   return alloc_numpy_array<double>({0}).cast();
+                default:           return alloc_numpy_array<uint8_t>({0}).cast();
+            }
         }
 
         int datatype = 0;
@@ -2174,7 +2321,7 @@ void bind_fits(nb::module_& m) {
         long long n = 0;
         {
             nb::gil_scoped_release release;
-            n = file.get_num_hdus();
+            n = checked_num_hdus(file);
         }
         return n;
     });
@@ -2489,7 +2636,7 @@ void bind_fits(nb::module_& m) {
                 }
             }
             FITSFile file(filename.c_str(), 0);
-            const int num_hdus = file.get_num_hdus();
+            const int num_hdus = checked_num_hdus(file);
             if (meta) {
                 std::unique_lock<std::shared_mutex> lock(meta->mutex);
                 meta->num_hdus = num_hdus;

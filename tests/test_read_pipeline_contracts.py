@@ -312,3 +312,20 @@ def test_read_kwargs_handle_cache_capacity_warns_literal_text(tmp_path):
         "ReadOptions.handle_cache_capacity is ignored since the handle cache was "
         "removed; it will be removed in 2.0"
     ]
+
+
+def test_read_list_corrupt_file_in_batch_of_three_raises_naming_path(tmp_path):
+    """r4a-01 end-to-end: one corrupt file in a batch of three must raise
+    naming the corrupt path — the C++ batch error vectors propagate and the
+    per-file fallback attributes failures. Never a shrunken or None-padded
+    list, never silence."""
+    good1 = str(tmp_path / "ok1.fits")
+    good2 = str(tmp_path / "ok2.fits")
+    bad = tmp_path / "corrupt_in_trio.fits"
+    torchfits.write(good1, torch.ones(4, 4), overwrite=True)
+    torchfits.write(good2, torch.full((4, 4), 2.0), overwrite=True)
+    bad.write_bytes(b"NOTAFITSFILE" + b"\x00" * 2880)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        torchfits.read([good1, str(bad), good2])
+    assert "corrupt_in_trio.fits" in str(excinfo.value)
