@@ -68,7 +68,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_table/read.py` | R5-A | deep | r5a-01, r5a-03, r5a-05, r5a-08, r5a-09, r5a-10, r5a-15 | fixed (`__all__` sealed, 8 names confirmed) |
 | `src/torchfits/_table/_read_scan.py` | R5-A | deep | r5a-01, r5a-05, r5a-10 | fixed |
 | `src/torchfits/_table/_read_schema.py` | R5-A | deep | r5a-02, r5a-03, r5a-04 | fixed |
-| `src/torchfits/_table/_read_where.py` | R5-A | deep | r5a-07 | fixed |
+| `src/torchfits/_table/_read_where.py` | R20 | deep | r5a-07, r20a-01 | fixed (NaN comparisons excluded) |
 | `src/torchfits/_table/engine.py` | R5-A | deep | r5a-06 (A-14) | fixed |
 | `src/torchfits/_table_engine/__init__.py` | R5-A | surface | — | clean |
 | `src/torchfits/_table_engine/backend_policy.py` | R5-A | surface | — | clean |
@@ -109,11 +109,11 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cli/cmds_setkey.py` | R7-C | deep | r7c-03..r7c-07, r7c-10 | fixed |
 | `src/torchfits/cli/cmds_transform.py` | R7-C | deep | r7c-14 | clean (decision-5 verified+pinned) |
 | `docs/cli.md` | R19 | full | r7a-06, r7a-10, r7b-09, r15a-04, r7c-24 | fixed (r7c-24) |
-| `src/torchfits/cpp_src/table_reader.h` | R8-A | deep (2948 ln) | r8a-01..r8a-08, r8a-10, r8a-11 | fixed (r8a-10/11 verified+pinned) |
+| `src/torchfits/cpp_src/table_reader.h` | R20 | deep (2948 ln) | r8a-01..r8a-08, r8a-10, r8a-11, r20a-01 | fixed (float/double != excludes NaN) |
 | `src/torchfits/cpp_src/table_types.h` | R8-B | full | — | clean |
 | `src/torchfits/cpp_src/table_ops.h` | R8-B | full | — | clean |
 | `src/torchfits/cpp_src/table_ops.cpp` | R8-B | full (1094 ln) | r8b-01, r8b-04, r8b-07, r8b-09 | fixed (r8b-07 pinned; r8b-09 deferred) |
-| `src/torchfits/cpp_src/table_bindings.cpp` | R8-B | full (511 ln) | r8b-02, r8b-03, r8b-05, r8b-06, r8b-08 | fixed (r8b-05/06 pinned; r8b-08 deferred) |
+| `src/torchfits/cpp_src/table_bindings.cpp` | R20 | full | r8b-02, r8b-03, r8b-05, r8b-06, r8b-08, r20a-02 | fixed (r20a-02 first TTYPE; r8b-08 still deferred) |
 | `src/torchfits/cpp_src/fits_bindings.cpp` | R9-A | deep (2627 ln) | r9a-01, r9a-02, r9a-04, r9a-05, r9a-06, r9a-07, r9a-08, r9a-09, r9a-10..r9a-13 | fixed (r9a-03/08/09 re-derived+pinned; r9a-10/11 verify-only; r9a-12 pin) |
 | `src/torchfits/cpp_src/fits_file.cpp` | R9-B (rescue) | full (1206 ln) | r9b-02, r9b-03, r9b-04, r9b-05 | fixed |
 | `src/torchfits/cpp_src/fits_detail.h` | R9-B (rescue) | full (795 ln) | r9b-01, r9b-04 | fixed |
@@ -136,7 +136,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_astropy_upstream_smoke.py` | R11 | full | — | clean |
 | `tests/test_bench_ranking_mmap.py` | R11 | full | — | clean |
 | `tests/test_bench_suites.py` | R11 | full | r11a-03, r11a-04, r11a-07 | fixed (r11a-03, r11a-04); r11a-07 deferred |
-| `tests/test_bug_table_duplicate_names.py` | R11 | full | — | clean |
+| `tests/test_bug_table_duplicate_names.py` | R20 | full | r20a-02 | fixed |
 | `tests/test_byteswap.py` | R11 | full | r11a-06 | fixed (r11a-06) |
 | `tests/test_bz2.py` | R11 | full | — | clean |
 | `tests/test_cache.py` | R11 | full | r11a-08 | deferred (r11a-08) |
@@ -261,7 +261,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_table_read_contracts.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_views_dataview_index.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_vla_edge_rows.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
-| `tests/test_where_matrix.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_where_matrix.py` | R20 | full | r20a-01 | fixed |
 | `tests/test_where_semantics.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `benchmarks/__init__.py` | R12 | full | — | clean |
 | `benchmarks/bench_all.py` | R12 | full | — | clean |
