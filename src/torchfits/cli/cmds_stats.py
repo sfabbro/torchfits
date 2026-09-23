@@ -11,6 +11,7 @@ import torchfits
 
 from .common import (
     EXIT_OK,
+    CliError,
     IoError,
     add_emit_format_args,
     add_file_jobs_arg,
@@ -56,13 +57,20 @@ def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
             types = {
                 index: hdu_type_name(headers[index], hdul[index]) for index in indices
             }
+    except CliError:
+        raise
     except Exception as exc:
         raise IoError(f"{path}: {exc}") from exc
     records: list[dict[str, Any]] = []
     for index in indices:
         if types[index] != "IMAGE":
             continue
-        tensor = torchfits.read_tensor(path, hdu=index)
+        try:
+            tensor = torchfits.read_tensor(path, hdu=index)
+        except CliError:
+            raise
+        except Exception as exc:
+            raise IoError(f"{path}:{index} {exc}") from exc
         if not isinstance(tensor, torch.Tensor):
             raise IoError(f"{path}:{index} read_tensor did not return a tensor")
         header = headers[index]
@@ -72,6 +80,11 @@ def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
         # upcast copy serves both the reductions and the flat mean/std.
         stats_t = tensor if tensor.dtype.is_floating_point else tensor.float()
         flat = stats_t.reshape(-1)
+        # An empty region has no defined statistics: every stat is NaN, which
+        # -f json/jsonl serializes as null (JSON has no NaN literal). torch's
+        # reductions raise on numel() == 0.
+        empty = flat.numel() == 0
+        nan = float("nan")
         records.append(
             {
                 "file": path,
@@ -79,11 +92,11 @@ def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
                 "name": header_extname(header, index),
                 "shape": list(tensor.shape),
                 "dtype": str(tensor.dtype).replace("torch.", ""),
-                "min": float(stats_t.min()),
-                "max": float(stats_t.max()),
-                "mean": float(flat.mean()),
-                "std": float(flat.std(unbiased=False)),
-                "median": float(flat.median()),
+                "min": nan if empty else float(stats_t.min()),
+                "max": nan if empty else float(stats_t.max()),
+                "mean": nan if empty else float(flat.mean()),
+                "std": nan if empty else float(flat.std(unbiased=False)),
+                "median": nan if empty else float(flat.median()),
             }
         )
     return records

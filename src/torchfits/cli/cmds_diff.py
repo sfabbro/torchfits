@@ -35,12 +35,19 @@ def _image_record(path: str, index: int) -> dict[str, Any]:
     tensor = torchfits.read_tensor(path, hdu=index)
     if not isinstance(tensor, torch.Tensor):
         raise IoError(f"{path}:{index} read_tensor did not return a tensor")
+    # min/max/mean must run on an upcast copy (torch has no uint reductions)
+    # that KEEPS float64 in float64: tensor.float().mean() rounds float64
+    # images to float32 and hides real mean differences. An empty region has
+    # no defined stats (NaN, which _values_equal treats as equal to NaN);
+    # torch reductions raise on numel() == 0.
     stats_t = tensor if tensor.dtype.is_floating_point else tensor.float()
+    empty = stats_t.numel() == 0
+    nan = float("nan")
     return {
         "shape": list(tensor.shape),
-        "min": float(stats_t.min()),
-        "max": float(stats_t.max()),
-        "mean": float(tensor.float().mean()),
+        "min": nan if empty else float(stats_t.min()),
+        "max": nan if empty else float(stats_t.max()),
+        "mean": nan if empty else float(stats_t.mean()),
     }
 
 
@@ -76,7 +83,7 @@ def _diff_pair(path_a: str, path_b: str) -> list[str]:
                     val_b = map_b.get(key)
                     if not _values_equal(val_a, val_b):
                         diffs.append(f"HDU {index} {key}: {val_a!r} vs {val_b!r}")
-                if type_a == "IMAGE":
+                if type_a == "IMAGE" and type_b == "IMAGE":
                     stats_a = _image_record(path_a, index)
                     stats_b = _image_record(path_b, index)
                     for field in ("shape", "min", "max", "mean"):

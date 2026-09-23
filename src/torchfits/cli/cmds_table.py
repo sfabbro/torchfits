@@ -13,7 +13,9 @@ import torchfits
 
 from .common import (
     EXIT_OK,
+    CliError,
     IoError,
+    _json_safe,
     add_emit_format_args,
     add_hdu_arg,
     emit_records,
@@ -85,6 +87,8 @@ def run(args: argparse.Namespace) -> int:
                     }
                     record["preview"] = _preview_rows(path, index, args.preview)
                     records.append(record)
+        except CliError:
+            raise
         except Exception as exc:
             raise IoError(f"{path}: {exc}") from exc
     fmt = resolve_emit_format(args)
@@ -99,5 +103,14 @@ def run(args: argparse.Namespace) -> int:
             print(f"  {field['name']}: {field['type']}")
         if record["preview"]:
             print("preview:")
-            print(json.dumps(record["preview"], default=json_default, indent=2))
+            # Same JSON contract as -f json: non-finite floats serialize as
+            # null so the preview block is valid JSON (no bare NaN/Infinity).
+            print(
+                json.dumps(
+                    _json_safe(record["preview"]),
+                    default=json_default,
+                    indent=2,
+                    allow_nan=False,
+                )
+            )
     return EXIT_OK

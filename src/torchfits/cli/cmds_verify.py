@@ -10,6 +10,7 @@ import torchfits
 from .common import (
     EXIT_OK,
     EXIT_VERIFY_FAIL,
+    CliError,
     IoError,
     add_emit_format_args,
     add_file_jobs_arg,
@@ -47,13 +48,24 @@ def _verify_one(path: str, hdu: str | None) -> tuple[list[dict[str, Any]], bool]
     try:
         with torchfits.open(path) as hdul:
             indices = selected_hdu_indices(len(hdul), hdu)
+            # Reuse the headers already read by torchfits.open instead of
+            # re-opening the file via read_header for every HDU (1 + 2N opens
+            # per call down to 1 + N).
+            headers = {index: hdul[index].header for index in indices}
+    except CliError:
+        raise
     except Exception as exc:
         raise IoError(f"{path}: {exc}") from exc
     records: list[dict[str, Any]] = []
     all_ok = True
     for index in indices:
-        result = torchfits.verify_checksums(path, hdu=index)
-        header = torchfits.read_header(path, index)
+        try:
+            result = torchfits.verify_checksums(path, hdu=index)
+        except CliError:
+            raise
+        except Exception as exc:
+            raise IoError(f"{path}:{index} {exc}") from exc
+        header = headers[index]
         ok = bool(result.get("ok"))
         status_str = str(result.get("status", "fail"))
         all_ok = all_ok and ok

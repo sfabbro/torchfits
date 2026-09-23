@@ -61,6 +61,10 @@ def _parse_box(raw: str) -> tuple[int, int, int, int]:
         x1, y1, x2, y2 = (int(part) for part in parts)
     except (TypeError, ValueError) as exc:
         raise UsageError("--box values must be integers") from exc
+    if x1 < 0 or y1 < 0:
+        raise UsageError("--box coordinates must be non-negative")
+    if x1 >= x2 or y1 >= y2:
+        raise UsageError("--box selects no pixels (need x1 < x2, y1 < y2)")
     return x1, y1, x2, y2
 
 
