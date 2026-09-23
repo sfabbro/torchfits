@@ -134,6 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - io: Orphan CONTINUE cards never fuse into unrelated keywords
 - hdu: View contracts, SSRF-guarded reopens, refresh long strings
 - hdu: LONGSTRN chains reassembled at HDUList.fromfile construction
+- cli: Convert same-path refusal, setkey integrity, arith saturation
+- cli: Diff/stats/table correctness and typed exit contracts
+- cli: Internal errors exit 5 with traceback; exit matrix pinned
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
