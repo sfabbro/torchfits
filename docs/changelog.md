@@ -149,6 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - docs: Record MPS warnings, cutout CRPIX, and null filters
 - docs: Match the release lane table to torch_lanes.json
 - packaging: Vendor CFITSIO in the conda package metadata
+- docs: Drop the setkey --comment example
+- io: Reassemble long strings on the slow header path
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
