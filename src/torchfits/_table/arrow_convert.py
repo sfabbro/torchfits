@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 # -- imported from the parent table module (resolved via bottom-of-file import) -----
 
-from .._table.utils import _fits_tform_is_bit, _require_pyarrow  # noqa: E402
+from .._table.utils import _fits_tform_is_bit, _parse_tform, _require_pyarrow  # noqa: E402
 from .._tensor_buffer import tensor_to_arrow_array  # noqa: E402
 
 # Dtypes supported by the numpy-free buffer-protocol fast path.
@@ -57,7 +57,7 @@ def _coerce_null_sentinel(value: "np.ndarray", sentinel: Any) -> Any:
         if arr.dtype.kind in {"i", "u", "b"}:
             return np.array(sentinel, dtype=arr.dtype).item()
         return float(sentinel)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -70,6 +70,30 @@ def _column_tnull_from_meta(
     if not field:
         return None
     return field.get("fits_tnull")
+
+
+def _tform_code(tform: Any) -> Optional[str]:
+    """TFORM repeat code (``A``, ``B``, ``X``, …) or None when unknown."""
+    if not tform:
+        return None
+    _vla, code, _repeat = _parse_tform(tform)
+    return code or None
+
+
+def _tform_is_scalar(tform: Any) -> bool:
+    """True when the TFORM maps to a scalar column (repeat 1, non-VLA).
+
+    String (``A``) and bit (``X``) matrices keep their width semantics;
+    1-bit columns are handled as scalar booleans in the bit decoder.
+    """
+    if not tform:
+        return False
+    vla, code, repeat = _parse_tform(tform)
+    return (
+        not vla
+        and repeat == 1
+        and code in {"L", "B", "I", "J", "K", "E", "D", "C", "M"}
+    )
 
 
 # -- uint8-matrix decode helpers ---------------------------------------------------
@@ -98,6 +122,9 @@ def _uint8_matrix_to_fixed_bool_list(pa: Any, value: "np.ndarray") -> Any:
     if width <= 0:
         return _pa_array(pa, [[] for _ in range(int(arr.shape[0]))])
     values = _pa_array(pa, arr.astype(np.bool_, copy=False).reshape(-1))
+    if width == 1:
+        # Repeat-1 bit columns map to scalar booleans.
+        return values
     return pa.FixedSizeListArray.from_arrays(values, width)
 
 
@@ -125,7 +152,7 @@ def _decode_uint8_matrix_to_arrow(
             import pyarrow.compute as pc
 
             return pc.cast(_pa_array(pa, byte_view), pa.string())
-        except Exception:
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
             pass
     if strip:
         # Stripping while still in bytes form is much faster than stripping unicode.
@@ -167,6 +194,10 @@ def _numpy_to_arrow_array(
     arr = np.ascontiguousarray(value)
     if unsigned_dtype and arr.dtype.kind == "f":
         arr = arr.astype(np.dtype(unsigned_dtype), copy=False)
+    if arr.ndim == 2 and arr.shape[1] == 1 and _tform_is_scalar(fits_tform):
+        # Repeat-1 columns are scalar per the schema mapping; a width-1
+        # payload must not surface as FixedSizeList<T>[1].
+        arr = arr.reshape(-1)
     if arr.ndim <= 1:
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
@@ -179,9 +210,17 @@ def _numpy_to_arrow_array(
         if arr.dtype == np.uint8:
             if _fits_tform_is_bit(fits_tform):
                 return _uint8_matrix_to_fixed_bool_list(pa, arr)
-            if decode_bytes and not _fits_tform_is_bit(fits_tform):
-                return _decode_uint8_matrix_to_arrow(pa, arr, encoding, strip)
-            return _uint8_matrix_to_fixed_binary(pa, arr)
+            code = _tform_code(fits_tform)
+            if code is None or code == "A":
+                # Only char ('A') matrices — or schema-less input — follow the
+                # strings/bytes contract; numeric byte ('B') vectors fall
+                # through to the generic vector mapping below so the data
+                # path agrees with the schema (FixedSizeList<uint8>[w]).
+                return (
+                    _decode_uint8_matrix_to_arrow(pa, arr, encoding, strip)
+                    if decode_bytes
+                    else _uint8_matrix_to_fixed_binary(pa, arr)
+                )
         flat = arr.reshape(-1)
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
@@ -352,6 +391,10 @@ def _chunk_to_record_batch(
                 return tf
         if field_meta and name in field_meta:
             return field_meta[name].get("fits_tform")
+        if null_meta and name in null_meta:
+            # The FITS field metadata (also used for TNULL) carries the TFORM
+            # even when column_tforms is not built (decode_bytes=False reads).
+            return null_meta[name].get("fits_tform")
         return None
 
     def _unsigned_dtype_for(name: str) -> str | None:

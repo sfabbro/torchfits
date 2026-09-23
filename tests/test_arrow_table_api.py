@@ -1245,3 +1245,188 @@ def test_empty_rows_preserves_schema():
         assert set(table.column_names) == {"RA", "ID", "NAME"}
     finally:
         os.unlink(path)
+
+
+def test_chunk_repeat1_vector_surfaces_scalar():
+    """Repeat-1 TFORM chunks surface Arrow scalars, matching read() (r5c-03)."""
+    pa = pytest.importorskip("pyarrow")
+
+    from torchfits._table.arrow_convert import _chunk_to_record_batch
+
+    values = np.arange(6, dtype=np.int32).reshape(3, 2)[:, :1]  # (3, 1)
+    for tform in ("1J", "J"):
+        batch = _chunk_to_record_batch(
+            {"A": values},
+            False,
+            "ascii",
+            True,
+            field_meta={"A": {"fits_tform": tform}},
+        )
+        assert batch.schema.field("A").type == pa.int32(), tform
+        assert batch.column("A").to_pylist() == [0, 2, 4]
+
+    # width-2 vectors keep their fixed-size-list type
+    batch = _chunk_to_record_batch(
+        {"A": np.arange(6, dtype=np.int32).reshape(3, 2)},
+        False,
+        "ascii",
+        True,
+        field_meta={"A": {"fits_tform": "2J"}},
+    )
+    assert pa.types.is_fixed_size_list(batch.schema.field("A").type)
+
+
+def test_chunk_repeat1_tensor_surfaces_scalar():
+    """The torch tensor route agrees with the numpy route (r5c-03)."""
+    pa = pytest.importorskip("pyarrow")
+
+    from torchfits._table.arrow_convert import _chunk_to_record_batch
+
+    batch = _chunk_to_record_batch(
+        {"A": torch.arange(3, dtype=torch.int32).reshape(3, 1)},
+        False,
+        "ascii",
+        True,
+        field_meta={"A": {"fits_tform": "1J"}},
+    )
+    assert batch.schema.field("A").type == pa.int32()
+    assert batch.column("A").to_pylist() == [0, 1, 2]
+
+
+def test_chunk_repeat1_bit_surfaces_scalar_bool():
+    """A 1-bit column is a scalar boolean, not FixedSizeList<bool>[1] (r5c-03)."""
+    pa = pytest.importorskip("pyarrow")
+
+    from torchfits._table.arrow_convert import _chunk_to_record_batch
+
+    batch = _chunk_to_record_batch(
+        {"B": np.zeros((3, 1), np.uint8)},
+        False,
+        "ascii",
+        True,
+        field_meta={"B": {"fits_tform": "1X"}},
+    )
+    assert batch.schema.field("B").type == pa.bool_()
+    # multi-bit columns keep the fixed-size-list-of-bool mapping
+    batch = _chunk_to_record_batch(
+        {"B": np.zeros((3, 8), np.uint8)},
+        False,
+        "ascii",
+        True,
+        field_meta={"B": {"fits_tform": "8X"}},
+    )
+    assert pa.types.is_fixed_size_list(batch.schema.field("B").type)
+
+
+def test_width1_fixed_list_to_astropy_is_scalar():
+    """Arrow width-1 lists surface as scalars on the way back out (r5c-03)."""
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+
+    from torchfits.table import to_astropy
+
+    arr = pa.array([[1], [2], [3]], type=pa.list_(pa.int32(), 1))
+    col = to_astropy(pa.table({"w": arr}))["w"]
+    assert np.shape(col) == (3,), np.shape(col)
+    assert col.dtype.kind == "i"
+    assert np.asarray(col).tolist() == [1, 2, 3]
+
+
+def test_repeat1_round_trip_agrees_with_astropy(tmp_path):
+    """(N, 1) + TFORM 1J round-trips to (N,) exactly like astropy (r5c-03)."""
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.io import fits as afits
+    from astropy.table import Table as AstropyTable
+
+    from torchfits._table.arrow_convert import _chunk_to_record_batch
+    from torchfits.table import to_astropy
+
+    path = tmp_path / "r1j.fits"
+    afits.BinTableHDU.from_columns(
+        [
+            afits.Column(name="S", format="1J", array=np.arange(3, dtype="<i4").reshape(3, 1))
+        ]
+    ).writeto(str(path), overwrite=True)
+    gt = AstropyTable.read(str(path))["S"]
+    assert np.shape(gt) == (3,)
+
+    batch = _chunk_to_record_batch(
+        {"S": np.arange(3, dtype=np.int32).reshape(3, 1)},
+        False,
+        "ascii",
+        True,
+        field_meta={"S": {"fits_tform": "1J"}},
+    )
+    col = to_astropy(batch)["S"]
+    assert np.shape(col) == np.shape(gt) == (3,)
+    assert np.asarray(col).tolist() == np.asarray(gt).tolist()
+
+
+def test_byte_vector_column_is_uint8_fsl(tmp_path):
+    """TFORM 'B' byte vectors map to FixedSizeList<uint8>[w], never strings.
+
+    r5c-14 (BLOCKER): the data path must agree with table.schema() and
+    read_torch on every decode/mmap combination — decoding byte vectors as
+    text silently corrupted every value.
+    """
+    pa = pytest.importorskip("pyarrow")
+    from astropy.io import fits as afits
+
+    import torchfits
+
+    path = tmp_path / "bytevec.fits"
+    values = np.arange(24, dtype=np.uint8).reshape(3, 8)
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="BV", format="8B", array=values)]
+    ).writeto(str(path), overwrite=True)
+
+    for mmap in (True, False):
+        for decode_bytes in (True, False):
+            tbl = torchfits.table.read(
+                str(path), decode_bytes=decode_bytes, mmap=mmap
+            )
+            col = tbl["BV"]
+            assert pa.types.is_fixed_size_list(col.type), (mmap, decode_bytes, col.type)
+            assert col.type.list_size == 8
+            assert col.type.value_type == pa.uint8()
+            assert col.to_pylist() == values.tolist(), (mmap, decode_bytes)
+
+    rt = torchfits.table.read_torch(str(path))
+    assert tuple(rt["BV"].shape) == (3, 8)
+    assert rt["BV"].dtype == torch.uint8
+    assert rt["BV"].numpy().tolist() == values.tolist()
+
+
+def test_chunk_byte_vector_vs_char_dispatch():
+    """Only TFORM 'A' matrices take the string/bytes path; 'B' vectors stay
+    byte vectors (r5c-14)."""
+    pa = pytest.importorskip("pyarrow")
+
+    from torchfits._table.arrow_convert import _chunk_to_record_batch
+
+    values = np.arange(24, dtype=np.uint8).reshape(3, 8)
+    for decode in (True, False):
+        batch = _chunk_to_record_batch(
+            {"BV": values},
+            decode,
+            "ascii",
+            True,
+            column_tforms={"BV": "8B"},
+        )
+        field = batch.schema.field("BV")
+        assert pa.types.is_fixed_size_list(field.type), (decode, field.type)
+        assert field.type.value_type == pa.uint8()
+        assert batch.column("BV").to_pylist() == values.tolist(), decode
+
+    # char matrices keep their documented decode contract
+    chars = np.array([[65, 66, 67, 68], [69, 70, 71, 72]], dtype=np.uint8)
+    decoded = _chunk_to_record_batch(
+        {"S": chars}, True, "ascii", True, column_tforms={"S": "4A"}
+    )
+    assert pa.types.is_string(decoded.schema.field("S").type)
+    assert decoded.column("S").to_pylist() == ["ABCD", "EFGH"]
+    raw = _chunk_to_record_batch(
+        {"S": chars}, False, "ascii", True, column_tforms={"S": "4A"}
+    )
+    assert pa.types.is_fixed_size_binary(raw.schema.field("S").type)

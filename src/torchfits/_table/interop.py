@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -21,19 +22,47 @@ def _split_io_kwargs(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, 
     return io_kwargs, other_kwargs
 
 
+def _as_input_path(data: Any) -> Optional[str]:
+    """Return *data* as a filesystem path string, or None for in-memory inputs."""
+    if isinstance(data, str):
+        return data
+    if isinstance(data, os.PathLike):
+        return os.fspath(data)
+    return None
+
+
+def _reject_detached_kwargs(fn: str, kwargs: dict[str, Any]) -> None:
+    """Raise when I/O keyword arguments have no file path to act on.
+
+    In-memory inputs (Arrow tables, batches, tensors) cannot honor ``hdu`` /
+    ``columns`` / ``where`` / ... ; silently ignoring them would be a no-op.
+    """
+    if kwargs:
+        raise TypeError(
+            f"{fn}() got keyword arguments that require a file path: "
+            f"{', '.join(sorted(kwargs))}"
+        )
+
+
 def _materialize_arrow_table(data: str | Any | Iterable[Any], **kwargs: Any) -> Any:
-    """Normalize path/reader/batches into a single pyarrow.Table."""
+    """Normalize path/reader/batches into a single pyarrow.Table.
+
+    A path input (``str`` or ``os.PathLike``) reads through :func:`read`;
+    keyword arguments are forwarded verbatim so unknown ones raise.  A
+    zero-batch reader contributes its schema so empty sources materialize
+    to an empty table instead of raising.
+    """
     pa = _require_pyarrow()
 
-    if isinstance(data, str):
-        io_kwargs, _ = _split_io_kwargs(kwargs)
-        return read(data, **io_kwargs)
+    path = _as_input_path(data)
+    if path is not None:
+        return read(path, **kwargs)
 
     if hasattr(data, "to_batches"):
         return data
 
     if hasattr(data, "read_next_batch"):
-        return pa.Table.from_batches(list(data))
+        return pa.Table.from_batches(list(data), schema=getattr(data, "schema", None))
 
     if hasattr(pa, "RecordBatch") and isinstance(data, pa.RecordBatch):
         return pa.Table.from_batches([data])
@@ -68,18 +97,23 @@ def write_parquet(
 
     pa = _require_pyarrow()
 
-    if isinstance(data, str):
+    path = _as_input_path(data)
+    if path is not None:
         if stream:
-            data = reader(data, **kwargs)
+            data = reader(path, **kwargs)
         else:
-            data = read(data, **kwargs)
+            data = read(path, **kwargs)
+    else:
+        _reject_detached_kwargs("write_parquet", kwargs)
 
     # Normalize to a concrete iterable after the str → reader/read path.
     data_iter: Any = data
 
     if not stream:
         if hasattr(data_iter, "read_next_batch"):
-            table = pa.Table.from_batches(list(data_iter))
+            table = pa.Table.from_batches(
+                list(data_iter), schema=getattr(data_iter, "schema", None)
+            )
         elif hasattr(data_iter, "to_batches"):
             table = data_iter
         else:
@@ -90,6 +124,10 @@ def write_parquet(
         return
 
     writer = None
+    schema = getattr(data_iter, "schema", None)
+    if schema is not None:
+        # Eager writer so empty sources still produce a valid file.
+        writer = pq.ParquetWriter(where, schema, compression=compression)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -137,16 +175,23 @@ def write_csv(
 
     write_options = pacsv.WriteOptions(delimiter=delimiter)
 
-    if isinstance(data, str):
-        data = reader(data, **kwargs) if stream else read(data, **kwargs)
+    path = _as_input_path(data)
+    if path is not None:
+        data = reader(path, **kwargs) if stream else read(path, **kwargs)
+    else:
+        _reject_detached_kwargs("write_csv", kwargs)
 
     if not stream:
-        table = _materialize_arrow_table(data, **kwargs)
+        table = _materialize_arrow_table(data)
         pacsv.write_csv(table, where, write_options=write_options)
         return
 
     data_iter: Any = data
     writer = None
+    schema = getattr(data_iter, "schema", None)
+    if schema is not None:
+        # Eager writer so empty sources still produce a valid file.
+        writer = pacsv.CSVWriter(where, schema, write_options=write_options)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -195,11 +240,14 @@ def write_ipc(
             "pyarrow.feather/ipc is required for Arrow IPC export"
         ) from exc
 
-    if isinstance(data, str):
-        data = reader(data, **kwargs) if stream else read(data, **kwargs)
+    path = _as_input_path(data)
+    if path is not None:
+        data = reader(path, **kwargs) if stream else read(path, **kwargs)
+    else:
+        _reject_detached_kwargs("write_ipc", kwargs)
 
     if not stream:
-        table = _materialize_arrow_table(data, **kwargs)
+        table = _materialize_arrow_table(data)
         feather.write_feather(table, where, compression=compression)
         return
 
@@ -207,6 +255,10 @@ def write_ipc(
 
     data_iter: Any = data
     writer = None
+    schema = getattr(data_iter, "schema", None)
+    if schema is not None:
+        # Eager writer so empty sources still produce a valid file.
+        writer = ipc.new_file(where, schema, options=write_options)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -246,18 +298,24 @@ def to_pandas(
 
     pa = _require_pyarrow()
 
-    if isinstance(data, str):
+    path = _as_input_path(data)
+    if path is not None:
         io_kwargs, pandas_kwargs = _split_io_kwargs(kwargs)
         if stream:
             return (
                 pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs)
-                for batch in scan(data, **io_kwargs)
+                for batch in scan(path, **io_kwargs)
             )
-        return read(data, **io_kwargs).to_pandas(**pandas_kwargs)
+        return read(path, **io_kwargs).to_pandas(**pandas_kwargs)
 
     # Batch/table inputs must not receive I/O kwargs (hdu, columns, ...);
     # forward only the pandas-valid remainder.
-    _, pandas_kwargs = _split_io_kwargs(kwargs)
+    io_kwargs, pandas_kwargs = _split_io_kwargs(kwargs)
+    if io_kwargs:
+        raise TypeError(
+            "to_pandas() got I/O keyword arguments that require a file path: "
+            f"{', '.join(sorted(io_kwargs))}"
+        )
 
     if hasattr(data, "to_pandas"):
         return data.to_pandas(**pandas_kwargs)
@@ -271,6 +329,9 @@ def to_pandas(
         pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs) for batch in data
     ]
     if not frames:
+        schema = getattr(data, "schema", None)
+        if schema is not None:
+            return pa.Table.from_batches([], schema=schema).to_pandas(**pandas_kwargs)
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
@@ -297,14 +358,15 @@ def to_polars(
     except ImportError as exc:
         raise ImportError("polars is required for to_polars conversion") from exc
 
-    if isinstance(data, str):
-        io_kwargs, _ = _split_io_kwargs(kwargs)
+    path = _as_input_path(data)
+    if path is not None:
         if stream:
             return (
-                pl.from_arrow(batch, rechunk=rechunk)
-                for batch in scan(data, **io_kwargs)
+                pl.from_arrow(batch, rechunk=rechunk) for batch in scan(path, **kwargs)
             )
-        return pl.from_arrow(read(data, **io_kwargs), rechunk=rechunk)
+        return pl.from_arrow(read(path, **kwargs), rechunk=rechunk)
+
+    _reject_detached_kwargs("to_polars", kwargs)
 
     if stream:
         return (pl.from_arrow(batch, rechunk=rechunk) for batch in data)
@@ -341,8 +403,105 @@ def _astropy_fits_column_meta(
             if entry:
                 meta[col.name] = entry
         return meta
-    except Exception:
+    except (KeyError, IndexError, TypeError, ValueError):
+        # Header/column metadata shape oddities lose only the extras;
+        # IO and decode failures propagate.
         return {}
+
+
+def _null_fill_for(pa: Any, value_type: Any) -> Any:
+    """Typed fill used under masked slots (invisible to MaskedColumn users)."""
+    if pa.types.is_floating(value_type):
+        return float("nan")
+    if pa.types.is_boolean(value_type):
+        return False
+    if pa.types.is_integer(value_type):
+        return 0
+    return ""
+
+
+def _fixed_size_list_to_astropy(
+    pa: Any,
+    Column: Any,
+    MaskedColumn: Any,
+    chunked_arr: Any,
+    name: str,
+    meta: dict[str, Any],
+) -> Any:
+    """Convert a FixedSizeList column to a numpy array or astropy MaskedColumn.
+
+    Nulls at any level (list slots or vector elements) become a first-class
+    mask — the astropy ground truth for TNULL vector columns — instead of
+    degrading to NaN/object values.  Width-1 lists surface as scalars (FITS
+    repeat==1 columns map to scalar).
+    """
+    import numpy as np
+
+    unit = meta.get("unit")
+    arr_type = chunked_arr.type
+    list_size = int(arr_type.list_size)
+    n_rows = int(len(chunked_arr))
+    squeeze = list_size == 1
+
+    arr = (
+        chunked_arr.combine_chunks()
+        if isinstance(chunked_arr, pa.ChunkedArray)
+        else chunked_arr
+    )
+    if isinstance(arr, pa.ChunkedArray):
+        arr = arr.chunk(0) if arr.num_chunks else None
+
+    if arr is None:
+        value_dtype = (
+            pa.array([], type=arr_type.value_type).to_numpy(zero_copy_only=False).dtype
+        )
+        np_arr = np.empty((n_rows, list_size), dtype=value_dtype)
+        if squeeze:
+            np_arr = np_arr.reshape(n_rows)
+        return Column(np_arr, name=name, unit=unit)
+
+    child = arr.values.slice(int(arr.offset) * list_size, n_rows * list_size)
+    mask_np = np.zeros((n_rows, list_size), dtype=bool)
+    if child.null_count:
+        mask_np |= np.asarray(child.is_null().to_numpy(zero_copy_only=False)).reshape(
+            n_rows, list_size
+        )
+    row_mask = None
+    if arr.null_count:
+        row_mask = np.asarray(arr.is_null().to_numpy(zero_copy_only=False))
+        mask_np |= row_mask[:, None]
+
+    data_np = None
+    try:
+        if mask_np.any():
+            data_np = child.fill_null(_null_fill_for(pa, arr_type.value_type)).to_numpy(
+                zero_copy_only=False
+            )
+        else:
+            data_np = child.to_numpy(zero_copy_only=False)
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
+        data_np = None
+
+    if data_np is None:
+        # Exotic value type: object rows (None where the whole row is masked);
+        # element-level Nones are preserved inside the row lists.
+        pylist = chunked_arr.to_pylist()
+        rows_mask = (
+            row_mask if row_mask is not None else np.zeros(n_rows, dtype=bool)
+        )
+        values = np.array(
+            [None if m else v for v, m in zip(pylist, rows_mask.tolist())],
+            dtype=object,
+        )
+        return MaskedColumn(data=values, mask=rows_mask, name=name, unit=unit)
+
+    data_np = np.asarray(data_np).reshape(n_rows, list_size)
+    if squeeze:
+        data_np = data_np.reshape(n_rows)
+        mask_np = mask_np.reshape(n_rows)
+    if mask_np.any():
+        return MaskedColumn(data=data_np, mask=mask_np, name=name, unit=unit)
+    return Column(data_np, name=name, unit=unit)
 
 
 def _arrow_column_to_astropy(
@@ -359,34 +518,18 @@ def _arrow_column_to_astropy(
 
     unit = meta.get("unit")
     arr_type = chunked_arr.type
-    is_fixed_list = pa.types.is_fixed_size_list(arr_type)
+
+    if pa.types.is_fixed_size_list(arr_type):
+        return _fixed_size_list_to_astropy(
+            pa, Column, MaskedColumn, chunked_arr, name, meta
+        )
 
     if chunked_arr.null_count == 0:
-        if is_fixed_list:
-            # TDIM-style vector column: flatten then reshape (N, list_size).
-            list_size = arr_type.list_size
-            arr = (
-                chunked_arr.combine_chunks()
-                if isinstance(chunked_arr, pa.ChunkedArray)
-                else chunked_arr
-            )
-            if isinstance(arr, pa.ChunkedArray):
-                arr = arr.chunk(0) if arr.num_chunks else None
-            if arr is None:
-                np_arr = np.empty((0, list_size), dtype=np.int64)
-            else:
-                flat = arr.flatten()
-                np_arr = np.asarray(flat.to_numpy(zero_copy_only=False))
-                try:
-                    np_arr = np_arr.reshape(-1, list_size)
-                except ValueError:
-                    pass
-            return Column(np_arr, name=name, unit=unit)
         try:
             return Column(
                 chunked_arr.to_numpy(zero_copy_only=False), name=name, unit=unit
             )
-        except Exception:
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
             values = np.asarray(chunked_arr.to_pylist(), dtype=object)
             return Column(values, name=name, unit=unit)
 
@@ -408,7 +551,7 @@ def _arrow_column_to_astropy(
     if filled is not None:
         try:
             data_np = filled.to_numpy(zero_copy_only=False)
-        except Exception:
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
             data_np = None
     else:
         data_np = None
@@ -427,15 +570,20 @@ def to_astropy(
     """Convert FITS table path, Arrow Table, or record batches to an Astropy Table.
 
     Args:
-        data: FITS file path, pyarrow.Table, or iterable of pyarrow.RecordBatch.
+        data: FITS file path (``str`` or ``os.PathLike``), pyarrow.Table, or
+            iterable of pyarrow.RecordBatch.
         **kwargs: Additional I/O keyword arguments passed to :func:`read` when
-            data is a file path.
+            data is a file path.  Unknown keyword arguments — or any keyword
+            arguments when data is in-memory — raise :class:`TypeError` rather
+            than being silently ignored.
 
     Returns:
         astropy.table.Table: An Astropy Table containing the data. Columns
-        with Arrow nulls become :class:`astropy.table.MaskedColumn`; when the
-        input is a file path, TUNIT maps to ``.unit`` and fixed-size vector
-        columns keep their ``(N, repeat)`` shape (TDIM).
+        with Arrow nulls (including vector element nulls) become
+        :class:`astropy.table.MaskedColumn`; when the input is a file path,
+        TUNIT maps to ``.unit`` and fixed-size vector columns keep their
+        ``(N, repeat)`` shape — except width-1 columns, which surface as
+        scalars (FITS repeat==1 maps to scalar).
     """
     import importlib
 
@@ -446,6 +594,9 @@ def to_astropy(
         Table = astropy_table_mod.Table
     except ImportError as exc:
         raise ImportError("astropy is required for to_astropy conversion") from exc
+
+    if _as_input_path(data) is None:
+        _reject_detached_kwargs("to_astropy", kwargs)
 
     pa_table = _materialize_arrow_table(data, **kwargs)
     field_meta = _astropy_fits_column_meta(data, kwargs)
@@ -658,6 +809,8 @@ def to_duckdb(
     if not isinstance(relation_name, str) or not relation_name:
         raise ValueError("relation_name must be a non-empty string")
 
+    if _as_input_path(data) is None:
+        _reject_detached_kwargs("to_duckdb", kwargs)
     arrow_table = _materialize_arrow_table(data, **kwargs)
     con = connection if connection is not None else duckdb.connect()
     con.register(relation_name, arrow_table)

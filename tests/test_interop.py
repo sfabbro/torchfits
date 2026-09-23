@@ -246,3 +246,226 @@ def test_root_to_astropy_accepts_pathlike(tmp_path):
 
     tbl = torchfits.to_astropy(path)
     assert len(tbl) == 2
+
+
+def _vector_tnull_fits(tmp_path):
+    from astropy.io import fits as afits
+
+    path = tmp_path / "vtnull.fits"
+    vec = afits.Column(
+        name="V",
+        format="3J",
+        array=np.array([[1, 8, 3], [8, 5, 6], [7, 8, 9], [1, 2, 8]], dtype="<i4"),
+        null=8,
+    )
+    afits.BinTableHDU.from_columns([vec]).writeto(str(path), overwrite=True)
+    return path
+
+
+def test_to_astropy_vector_tnull_matches_astropy(tmp_path):
+    """Vector TNULL columns surface MaskedColumn like astropy (r5c-01)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.table import Table as AstropyTable
+
+    from torchfits.table import to_astropy
+
+    path = _vector_tnull_fits(tmp_path)
+    gt = AstropyTable.read(str(path))["V"]
+    ours = to_astropy(str(path))["V"]
+
+    assert hasattr(ours, "mask"), f"expected MaskedColumn, got {type(ours).__name__}"
+    assert ours.dtype.kind == gt.dtype.kind
+    assert ours.dtype.itemsize == gt.dtype.itemsize
+    assert np.shape(ours) == np.shape(gt) == (4, 3)
+    assert np.array_equal(np.asarray(ours.mask), np.asarray(gt.mask))
+    m = np.asarray(gt.mask)
+    assert np.array_equal(np.asarray(ours)[~m], np.asarray(gt)[~m])
+
+
+def test_to_astropy_arrow_fsl_nulls_masked_not_object():
+    """Arrow fixed-size-list nulls: typed MaskedColumn, not float64/NaN (r5c-01)."""
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+
+    from torchfits.table import to_astropy
+
+    arr = pa.array([[1, None], [None, 3]], type=pa.list_(pa.int32(), 2))
+    col = to_astropy(pa.table({"w": arr}))["w"]
+    assert hasattr(col, "mask"), f"expected MaskedColumn, got {type(col).__name__}"
+    assert col.dtype.kind == "i", col.dtype
+    assert col.mask.tolist() == [[False, True], [True, False]]
+    assert np.asarray(col)[0][0] == 1 and np.asarray(col)[1][1] == 3
+
+
+def test_table_to_astropy_accepts_pathlike(tmp_path):
+    """torchfits.table.to_astropy(Path) must not raise TypeError (r5c-02, r1b-10)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.io import fits as afits
+
+    from torchfits.table import to_astropy
+
+    path = tmp_path / "pathlike.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([1, 2], dtype="<i4"))]
+    ).writeto(str(path))
+
+    tbl = to_astropy(path)
+    assert len(tbl) == 2
+
+
+def test_interop_pathlike_data_inputs(tmp_path):
+    """PathLike data reaches read() via os.fspath in every interop entry (r5c-02)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("pandas")
+    from astropy.io import fits as afits
+
+    from torchfits.table import to_pandas, write_csv
+
+    path = tmp_path / "pathlike2.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([1, 2], dtype="<i4"))]
+    ).writeto(str(path))
+
+    df = to_pandas(path)
+    assert df["A"].tolist() == [1, 2]
+
+    out = tmp_path / "out.csv"
+    write_csv(str(out), path)
+    assert out.exists()
+    assert out.read_text().strip().splitlines()[0].replace('"', "") == "A"
+
+
+def test_to_astropy_rejects_unknown_kwargs(tmp_path):
+    """Delegation contract: kwargs go to read(); unusable ones raise (r5c-04)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    import pyarrow as pap
+    from astropy.io import fits as afits
+
+    from torchfits.table import to_astropy
+
+    path = tmp_path / "kw.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([1, 2], dtype="<i4"))]
+    ).writeto(str(path))
+
+    with pytest.raises(TypeError):
+        to_astropy(str(path), bogus_kwarg=1)
+    with pytest.raises(TypeError):
+        to_astropy(pap.table({"A": [1, 2]}), hdu=1)
+
+
+def test_to_astropy_empty_reader(tmp_path):
+    """Zero-batch RecordBatchReader materializes to an empty Table (r5c-05)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.io import fits as afits
+
+    from torchfits.table import reader as treader, to_astropy
+
+    path = tmp_path / "empty.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([], dtype="<i4"))]
+    ).writeto(str(path))
+
+    tbl = to_astropy(treader(str(path)))
+    assert tbl.colnames == ["A"]
+    assert len(tbl) == 0
+
+
+def test_stream_write_empty_source_creates_file(tmp_path):
+    """Streaming writes of empty sources still produce output files (r5c-06)."""
+    pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+    from astropy.io import fits as afits
+
+    from torchfits.table import write_csv, write_ipc, write_parquet
+
+    path = tmp_path / "empty2.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([], dtype="<i4"))]
+    ).writeto(str(path))
+
+    csv_out = tmp_path / "o.csv"
+    write_csv(str(csv_out), str(path), stream=True)
+    assert csv_out.exists()
+    assert csv_out.read_text().splitlines()[0].replace('"', "").strip() == "A"
+
+    pq_out = tmp_path / "o.parquet"
+    write_parquet(str(pq_out), str(path), stream=True)
+    assert pq_out.exists()
+    tbl = pq.read_table(str(pq_out))
+    assert tbl.num_rows == 0 and tbl.column_names == ["A"]
+
+    ipc_out = tmp_path / "o.arrow"
+    write_ipc(str(ipc_out), str(path), stream=True)
+    assert ipc_out.exists()
+
+
+def test_to_pandas_empty_reader_keeps_columns(tmp_path):
+    """Empty sources keep their schema columns in pandas output (r5c-06)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("pandas")
+    from astropy.io import fits as afits
+
+    from torchfits.table import reader as treader, to_pandas
+
+    path = tmp_path / "empty3.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([], dtype="<i4"))]
+    ).writeto(str(path))
+
+    df = to_pandas(treader(str(path)))
+    assert list(df.columns) == ["A"]
+
+
+def test_to_astropy_empty_fixed_list_dtype():
+    """Empty fixed-size-list results preserve the Arrow value dtype (r5c-07)."""
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+
+    from torchfits.table import to_astropy
+
+    tab = pa.table({"v": pa.chunked_array([], type=pa.list_(pa.float32(), 2))})
+    col = to_astropy(tab)["v"]
+    assert np.shape(col) == (0, 2)
+    assert col.dtype == np.float32
+
+
+def test_to_astropy_meta_ioerror_propagates(tmp_path, monkeypatch):
+    """Header-meta extraction re-raises IO errors instead of dropping units (r5c-08)."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("astropy")
+    from astropy.io import fits as afits
+
+    from torchfits.table import to_astropy
+
+    path = tmp_path / "ioerr.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="A", format="J", array=np.array([1], dtype="<i4"))]
+    ).writeto(str(path))
+
+    def boom(*args, **kwargs):
+        raise OSError("header read failed")
+
+    monkeypatch.setattr(torchfits, "read_header", boom)
+    with pytest.raises(OSError):
+        to_astropy(str(path))
+
+
+def test_to_arrow_keeps_tensor_storage_alive():
+    """Arrow arrays keep source storage alive after the tensor is dropped (r5c-11)."""
+    pytest.importorskip("pyarrow")
+    import gc
+    import weakref
+
+    def build():
+        t = torch.arange(64, dtype=torch.float32)
+        return torchfits.to_arrow({"v": t}), weakref.ref(t.untyped_storage())
+
+    arrow, ref = build()
+    gc.collect()
+    assert ref() is not None, "Arrow buffer dropped the source tensor storage"
+    assert arrow["v"].to_pylist() == [float(x) for x in range(64)]

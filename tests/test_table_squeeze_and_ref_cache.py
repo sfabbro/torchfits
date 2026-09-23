@@ -1,6 +1,7 @@
 """Scalar (N,1) columns squeeze to (N,); TableHDURef columns follow header edits."""
 
 import numpy as np
+import pytest
 import torch
 from torchfits.hdu import Header, TableHDU, TableHDURef
 
@@ -94,3 +95,28 @@ def test_tablehduref_cache_invalidation_on_del():
 
     del header["TTYPE2"]
     assert ref.columns == ["x", "COL2"]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="r5c-09 to_arrow(columns=) kwarg collision at _hdu/table_hdu_ref.py:306; R6-B flips this",
+)
+def test_tablehduref_to_arrow_columns_kwarg(tmp_path):
+    """TableHDURef.to_arrow(columns=...) must accept a column subset."""
+    import pytest  # noqa: F401  (marker use requires the import at module scope)
+
+    from astropy.io import fits as afits
+
+    import torchfits
+
+    path = tmp_path / "refcols.fits"
+    afits.BinTableHDU.from_columns(
+        [
+            afits.Column(name="A", format="J", array=np.array([1, 2], dtype="<i4")),
+            afits.Column(name="B", format="J", array=np.array([3, 4], dtype="<i4")),
+        ]
+    ).writeto(str(path))
+
+    with torchfits.open(str(path)) as hdul:
+        out = hdul[1].to_arrow(columns=["A"])
+    assert out.column_names == ["A"]
