@@ -48,6 +48,34 @@ def _cfitsio_domain(case_id: str, operation: str) -> str:
     return "fits"
 
 
+def _case_stem(case_id: str) -> str:
+    """Drop the operation suffix. Tables use ``::``; image rows use ``:``."""
+    if "::" in case_id:
+        return case_id.split("::", 1)[0]
+    if ":" in case_id:
+        return case_id.split(":", 1)[0]
+    return case_id
+
+
+def _cfitsio_operation(domain: str, operation: str) -> str:
+    """Scorecard operation name → op column in ``cfitsio_direct.csv``."""
+    if domain == "fitstable":
+        return {
+            "read_full": "table_read",
+            "projection": "table_proj",
+            "row_slice": "table_slice",
+            "scan_count": "table_scan",
+            "predicate_filter": "table_pred",
+        }.get(operation, operation)
+    if operation == "cutout_100x100":
+        return "cutout"
+    if operation == "random_ext_full_reads_200":
+        return "random_ext"
+    if operation.startswith("repeated_cutouts_"):
+        return "cutout_rep"
+    return operation
+
+
 def _load_cfitsio_times(results_dir: Path) -> dict[tuple[str, str, str], float]:
     """Map (domain, case_id, operation) -> median cfitsio_direct time."""
     csv_path = results_dir / "cfitsio_direct.csv"
@@ -136,8 +164,8 @@ def render_full_table(results_dir: Path) -> str:
         }:
             grouped[key]["fitsio"] = time_s
 
-        case_name = case_id.split("::")[0]
-        cf_key = (domain, case_name, operation)
+        case_name = _case_stem(case_id)
+        cf_key = (domain, case_name, _cfitsio_operation(domain, operation))
         if cf_key in cfitsio_times:
             grouped[key]["cfitsio"] = cfitsio_times[cf_key]
 
@@ -190,7 +218,7 @@ def render_full_table(results_dir: Path) -> str:
         cfitsio_str = format_time(cfitsio)
 
         # Clean case name (remove suffix operation)
-        case_name = case_id.split("::")[0]
+        case_name = _case_stem(case_id)
 
         # Size representation
         size_str = f"{size_mb:.2f} MB" if size_mb > 0.05 else f"{size_mb * 1024:.1f} KB"

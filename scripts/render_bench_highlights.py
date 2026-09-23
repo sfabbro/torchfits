@@ -8,15 +8,19 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-# Target cases to highlight
+# case_id values are the ones bench_fits_io / bench_gpu_transports / bench_fitstable
+# actually write. Image rows use a single colon (`name:operation`). GPU full
+# reads embed `::` inside the id (`name::read_full_gpu`). Cutout ids do not
+# append the operation a second time.
+# Tuple: domain, file, case_id, operation, device, mmap_target, label.
 TARGET_CASES = [
-    # Domain, File, Case ID, Operation, Device, Label
     (
         "fits",
         "results.csv",
-        "large_float32_2d::read_full",
+        "large_float32_2d:read_full",
         "read_full",
         "CPU",
+        "on",
         "Large tensor read (Float32 2D, 16.0 MB)",
     ),
     (
@@ -25,14 +29,16 @@ TARGET_CASES = [
         "large_float32_2d::read_full_gpu",
         "read_full",
         "CUDA",
+        "on",
         "Large tensor read (Float32 2D @ CUDA)",
     ),
     (
         "fits",
         "results.csv",
-        "compressed_rice_1::read_full",
+        "compressed_rice_1:read_full",
         "read_full",
         "CPU",
+        "on",
         "Compressed tensor read (Rice, 1.1 MB)",
     ),
     (
@@ -41,22 +47,25 @@ TARGET_CASES = [
         "compressed_rice_1::read_full_gpu",
         "read_full",
         "CUDA",
+        "on",
         "Compressed tensor read (Rice @ CUDA)",
     ),
     (
         "fits",
         "results.csv",
-        "repeated_cutouts_50x_100x100::repeated_cutouts_50x_100x100",
+        "repeated_cutouts_50x_100x100:repeated_cutouts_50x_100x100",
         "repeated_cutouts_50x_100x100",
         "CPU",
+        "n/a",
         "Repeated cutouts (50x 100x100)",
     ),
     (
         "fits",
         "results.csv",
-        "repeated_cutouts_50x_100x100_gpu::repeated_cutouts_50x_100x100",
+        "repeated_cutouts_50x_100x100_gpu",
         "repeated_cutouts_50x_100x100",
         "CUDA",
+        "n/a",
         "Repeated cutouts (50x 100x100 @ CUDA)",
     ),
     (
@@ -65,6 +74,7 @@ TARGET_CASES = [
         "mixed_100000::read_full",
         "read_full",
         "CPU",
+        "on",
         "Table read (100k rows, 8 cols, mixed)",
     ),
     (
@@ -73,9 +83,39 @@ TARGET_CASES = [
         "varlen_100000::read_full",
         "read_full",
         "CPU",
+        "on",
         "Varlen table read (100k rows, 3 cols)",
     ),
 ]
+
+_SMART = {"torchfits", "torchfits_device"}
+_SPECIALIZED = {"torchfits_specialized", "torchfits_specialized_device"}
+
+
+def _is_comparable(row: dict[str, str]) -> bool:
+    return str(row.get("comparable", "True")).strip().lower() not in {"false", "0"}
+
+
+def _rows_for_case(
+    rows: list[dict[str, str]], case_id: str, mmap_target: str
+) -> list[dict[str, str]]:
+    """Keep one mmap mode. A matrix CSV must not let the last row win."""
+    ok = [
+        row
+        for row in rows
+        if row.get("case_id") == case_id
+        and row.get("status") == "OK"
+        and _is_comparable(row)
+    ]
+    preferred = [
+        row for row in ok if (row.get("mmap_target") or "") in {mmap_target, ""}
+    ]
+    if preferred:
+        return preferred
+    targets = {row.get("mmap_target") for row in ok}
+    if len(targets) == 1:
+        return ok
+    return []
 
 
 def load_csv(csv_path: Path) -> List[Dict[str, str]]:
@@ -118,9 +158,8 @@ def render_highlights(results_dir: Path) -> str:
         "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
 
-    for domain, filename, case_id, op, device, label in TARGET_CASES:
-        # Filter rows matching this case_id
-        case_rows = [r for r in all_rows if r.get("case_id") == case_id]
+    for _domain, _filename, case_id, _op, device, mmap_target, label in TARGET_CASES:
+        case_rows = _rows_for_case(all_rows, case_id, mmap_target)
         if not case_rows:
             continue
 
@@ -131,21 +170,17 @@ def render_highlights(results_dir: Path) -> str:
         fitsio_time = None
 
         for row in case_rows:
-            status = row.get("status")
-            if status != "OK":
-                continue
             lib = row.get("library")
-            method = row.get("method")
+            method = row.get("method") or ""
             time_s = row.get("time_s")
 
-            if lib == "torchfits":
-                if "specialized" in method:
-                    tf_pers_time = time_s
-                else:
-                    tf_time = time_s
-            elif lib == "astropy":
+            if lib == "torchfits" and method in _SMART:
+                tf_time = time_s
+            elif lib == "torchfits" and method in _SPECIALIZED:
+                tf_pers_time = time_s
+            elif lib == "astropy" and "specialized" not in method:
                 astropy_time = time_s
-            elif lib == "fitsio":
+            elif lib == "fitsio" and "specialized" not in method:
                 fitsio_time = time_s
 
         # Speedups
@@ -172,7 +207,7 @@ def render_highlights(results_dir: Path) -> str:
         fitsio_str = format_time(fitsio_time)
 
         lines.append(
-            f"| {label} | {device} | **{tf_str}** | {tf_str if tf_pers_str == '—' else tf_pers_str} | {astropy_str} | {fitsio_str} | **{astropy_win}** | **{fitsio_win}** |"
+            f"| {label} | {device} | **{tf_str}** | {tf_pers_str} | {astropy_str} | {fitsio_str} | **{astropy_win}** | **{fitsio_win}** |"
         )
 
     lines.append("")
