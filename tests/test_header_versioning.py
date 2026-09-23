@@ -98,6 +98,28 @@ def test_header_delitem_removes_all_history_cards():
     assert [c.key for c in h.cards] == ["SIMPLE"]
 
 
+def test_header_delitem_removes_all_comment_cards():
+    """header-delitem-history: del must not orphan COMMENT cards either."""
+    h = Header()
+    h["SIMPLE"] = True
+    h.add_comment("a")
+    h.add_comment("b")
+    del h["COMMENT"]
+    assert "COMMENT" not in h
+    assert [c.key for c in h.cards] == ["SIMPLE"]
+
+
+def test_header_rejects_unsupported_cards_input():
+    """Unsupported constructor input must raise, not silently build an
+    empty header (a generator or bare string used to vanish without error)."""
+    with pytest.raises(TypeError):
+        Header(iter([("K", 1, "")]))
+    with pytest.raises(TypeError):
+        Header("K1      = 1")
+    with pytest.raises(TypeError):
+        Header(5)
+
+
 def test_header_pop_removes_all_history_cards():
     h = Header()
     h.add_history("a")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -139,3 +140,34 @@ def test_non_ascii_return_header_typing_matches_read_header(tmp_path):
     for key in ("COUNT", "BITPIX"):
         assert type(from_tensor[key]) is type(reference[key]), key
         assert from_tensor[key] == reference[key], key
+
+
+def test_numpy_scalar_header_values_roundtrip(tmp_path):
+    """numpy scalars and 0-d arrays must round-trip through write -> read as
+    plain-Python values with plain-Python types (A-01)."""
+    path = tmp_path / "np_scalars.fits"
+    torchfits.write(
+        path,
+        torch.zeros(2, 2),
+        header={
+            "I64": np.int64(7),
+            "F32": np.float32(1.5),
+            "F64": np.float64(2.5),
+            "BOOL": np.bool_(True),
+            "ZERODF": np.array(3.25),
+            "ZERODI": np.array(9),
+        },
+        overwrite=True,
+    )
+
+    header = torchfits.read_header(path)
+    assert header["I64"] == 7 and type(header["I64"]) is int
+    assert header["F32"] == 1.5 and type(header["F32"]) is float
+    assert header["F64"] == 2.5 and type(header["F64"]) is float
+    assert header["BOOL"] is True and type(header["BOOL"]) is bool
+    assert header["ZERODF"] == 3.25 and type(header["ZERODF"]) is float
+    assert header["ZERODI"] == 9 and type(header["ZERODI"]) is int
+
+    reference = fits.getheader(str(path))
+    for key in ("I64", "F32", "F64", "BOOL", "ZERODF", "ZERODI"):
+        assert reference[key] == header[key], key

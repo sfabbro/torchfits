@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 import os
 from dataclasses import dataclass
 from importlib import import_module
@@ -14,6 +15,7 @@ from torchfits._io_engine.paths import (
 )
 
 from ._repr import render_html_table
+from .card import _reassemble_longstr_cards
 from .header import Header
 
 if TYPE_CHECKING:
@@ -61,7 +63,6 @@ class HDUList:
     ):
         self._hdus: List[Union[TensorHDU, TableHDU, TableHDURef]] = hdus or []
         self._file_handle: Any = None
-        self._extname_idx: Optional[dict[str, int]] = None
         self._registry_key: Optional[str] = None
 
     @classmethod
@@ -91,11 +92,16 @@ class HDUList:
         try:
             import torchfits._C as cpp
 
-            try:
-                handle, hdu_infos = cpp.open_and_read_headers(
+            open_and_read_headers = getattr(cpp, "open_and_read_headers", None)
+            if open_and_read_headers is not None:
+                handle, hdu_infos = open_and_read_headers(
                     path, 0 if mode == "r" else 1
                 )
-            except AttributeError:
+            else:
+                # Legacy extension builds without the batch open: read per HDU.
+                # Presence is checked up front so an AttributeError raised
+                # *inside* the batch open surfaces instead of silently
+                # rerouting the whole read through this fallback.
                 handle = cpp.open_fits_file(path, mode)
                 hdu_infos = []
                 num_hdus = cpp.get_num_hdus(handle)
@@ -119,7 +125,12 @@ class HDUList:
             for info in hdu_infos:
                 # info.header already holds the full card list from the single
                 # batch read above; re-reading would double header I/O per open.
-                header = Header(info.header)
+                # LONGSTRN '&'+CONTINUE chains are rejoined at construction
+                # (r4b-13 root fix): cpp keeps the chain markers and detached
+                # CONTINUE cards verbatim, so without reassembly every >68-char
+                # string value read back truncated and every rewrite through
+                # this header corrupted it.
+                header = Header(_reassemble_longstr_cards(info.header))
 
                 hdu_type = info.type
                 i = info.index
@@ -153,21 +164,23 @@ class HDUList:
     def __getitem__(
         self, key: Union[int, str]
     ) -> Union[TensorHDU, TableHDU, TableHDURef]:
-        if isinstance(key, int):
-            return self._hdus[key]
-
-        if self._extname_idx is None:
-            self._extname_idx = {}
+        if isinstance(key, str):
+            # Scanned live (a few header.get calls per lookup): a cached name
+            # index went stale as soon as a caller renamed EXTNAME on a live
+            # header, and HDU counts are tiny.
             for i, hdu in enumerate(self._hdus):
                 name = hdu.header.get("EXTNAME")
-                if name is not None and name not in self._extname_idx:
-                    self._extname_idx[name] = i
+                if name is not None and name == key:
+                    return self._hdus[i]
+            raise KeyError(f"HDU '{key}' not found")
 
-        idx = self._extname_idx.get(key)
-        if idx is not None:
-            return self._hdus[idx]
-
-        raise KeyError(f"HDU '{key}' not found")
+        try:
+            return self._hdus[operator.index(key)]
+        except TypeError:
+            raise TypeError(
+                "HDUList indices must be int or EXTNAME str; got "
+                f"{type(key).__name__}"
+            ) from None
 
     def __enter__(self) -> HDUList:
         return self
@@ -211,7 +224,6 @@ class HDUList:
 
     def append(self, hdu: Union[TensorHDU, TableHDU]) -> None:
         self._hdus.append(hdu)
-        self._extname_idx = None
 
     def validate(self) -> bool:
         try:

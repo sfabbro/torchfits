@@ -70,6 +70,13 @@ class Header(dict[str, Any]):
                     else:
                         parsed = self._coerce_card(card)
                     self._append_card(parsed, update_mapping=True, bump=False)
+            else:
+                # Anything else (generator, bare string, scalar) used to fall
+                # through every branch and silently build an empty header.
+                raise TypeError(
+                    f"cannot build a Header from {type(cards).__name__}; "
+                    "expected a Header, dict, or card sequence"
+                )
 
     def __setitem__(self, key: str, value: Any) -> None:
         if (
