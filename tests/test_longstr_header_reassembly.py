@@ -116,10 +116,9 @@ def test_fromfile_direct_joins_longstr_chain(tmp_path):
     assert header["LONGSTR"] == value
     assert all(card.key != "CONTINUE" for card in header.cards)
     # Byte-identical with the read_header oracle and with open().
-    assert (
-        header["LONGSTR"].encode("ascii")
-        == torchfits.read_header(path, hdu=0)["LONGSTR"].encode("ascii")
-    )
+    assert header["LONGSTR"].encode("ascii") == torchfits.read_header(path, hdu=0)[
+        "LONGSTR"
+    ].encode("ascii")
     assert torchfits.open(path)[0].header["LONGSTR"] == value
 
 
@@ -127,9 +126,7 @@ def test_fromfile_direct_joins_chain_with_per_card_comments(tmp_path):
     """Quoted-comment edge case: comments on every chain card must not hide
     the '&' markers; the joined value keeps the first card's comment."""
     expected = (
-        "This is a long string that needs "
-        "the continuation of the string."
-        "final part."
+        "This is a long string that needs the continuation of the string.final part."
     )
     path = _write_raw_cards(
         tmp_path / "chain_comments.fits",

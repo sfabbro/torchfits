@@ -39,8 +39,8 @@ def _is_string_typed(key: str, value: str) -> bool:
 
 
 def _reassemble_longstr_cards(
-    cards: Sequence[Union["Card", tuple]],
-) -> Union[list[Card], Sequence]:
+    cards: Sequence[Union["Card", tuple[Any, ...]]],
+) -> Union[list[Card], Sequence[Any]]:
     """Join LONGSTRN ``&``+CONTINUE chains in an ordered card sequence.
 
     ``cpp.open_and_read_headers`` / ``cpp.read_header`` surface parsed

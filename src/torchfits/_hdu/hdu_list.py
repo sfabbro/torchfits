@@ -94,9 +94,7 @@ class HDUList:
 
             open_and_read_headers = getattr(cpp, "open_and_read_headers", None)
             if open_and_read_headers is not None:
-                handle, hdu_infos = open_and_read_headers(
-                    path, 0 if mode == "r" else 1
-                )
+                handle, hdu_infos = open_and_read_headers(path, 0 if mode == "r" else 1)
             else:
                 # Legacy extension builds without the batch open: read per HDU.
                 # Presence is checked up front so an AttributeError raised
@@ -178,8 +176,7 @@ class HDUList:
             return self._hdus[operator.index(key)]
         except TypeError:
             raise TypeError(
-                "HDUList indices must be int or EXTNAME str; got "
-                f"{type(key).__name__}"
+                f"HDUList indices must be int or EXTNAME str; got {type(key).__name__}"
             ) from None
 
     def __enter__(self) -> HDUList:
