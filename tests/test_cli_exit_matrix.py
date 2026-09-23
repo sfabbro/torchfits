@@ -155,7 +155,16 @@ def cases(matrix_env):
         "arith": (
             ["arith", img, "--op", "add", "--value", "1.0", "-o", str(root / "a.fits")],
             ["arith", img, "--op", "add", "-o", str(root / "a.fits")],
-            ["arith", missing, "--op", "add", "--value", "1.0", "-o", str(root / "a.fits")],
+            [
+                "arith",
+                missing,
+                "--op",
+                "add",
+                "--value",
+                "1.0",
+                "-o",
+                str(root / "a.fits"),
+            ],
         ),
         "cutout": (
             ["cutout", img, "-o", str(root / "c.fits"), "-e", "0", "--box", "0,0,2,2"],

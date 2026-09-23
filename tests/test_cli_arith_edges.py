@@ -45,10 +45,14 @@ def test_arith_uint32_mul_saturates_instead_of_wrapping(tmp_path):
 def test_arith_fractional_scalar_on_integer_warns(tmp_path):
     img = tmp_path / "img.fits"
     torchfits.write(
-        str(img), torch.arange(100, 116, dtype=torch.int16).reshape(4, 4), overwrite=True
+        str(img),
+        torch.arange(100, 116, dtype=torch.int16).reshape(4, 4),
+        overwrite=True,
     )
     out = tmp_path / "out.fits"
-    result = _run_cli("arith", str(img), "--op", "add", "--value", "0.5", "-o", str(out))
+    result = _run_cli(
+        "arith", str(img), "--op", "add", "--value", "0.5", "-o", str(out)
+    )
     assert result.returncode == 0, result.stderr
     # --dtype auto keeps the input dtype: 100 + 0.5 cannot keep the .5 in an
     # int16 output, and the dropped fraction must be warned about.
@@ -64,7 +68,14 @@ def test_arith_div_by_zero_refused(tmp_path):
     torchfits.write(str(zero), torch.zeros(2, 2), overwrite=True)
 
     result = _run_cli(
-        "arith", str(img), "--op", "div", "--value", "0", "-o", str(tmp_path / "o1.fits")
+        "arith",
+        str(img),
+        "--op",
+        "div",
+        "--value",
+        "0",
+        "-o",
+        str(tmp_path / "o1.fits"),
     )
     assert result.returncode == 2, result.stderr
     assert "division by zero" in result.stderr

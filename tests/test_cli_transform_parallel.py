@@ -45,8 +45,12 @@ def test_transform_parallel_matches_serial(tmp_path, name):
     out4 = tmp_path / "j4"
     out1.mkdir()
     out4.mkdir()
-    r1 = _run_cli("transform", *inputs, "--name", name, "--out-dir", str(out1), "-J", "1")
-    r4 = _run_cli("transform", *inputs, "--name", name, "--out-dir", str(out4), "-J", "4")
+    r1 = _run_cli(
+        "transform", *inputs, "--name", name, "--out-dir", str(out1), "-J", "1"
+    )
+    r4 = _run_cli(
+        "transform", *inputs, "--name", name, "--out-dir", str(out4), "-J", "4"
+    )
     assert r1.returncode == 0, r1.stderr
     assert r4.returncode == 0, r4.stderr
 

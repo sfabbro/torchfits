@@ -37,10 +37,14 @@ def test_diff_float64_mean_is_computed_in_float64(tmp_path):
     path_a = tmp_path / "prec_a.fits"
     path_b = tmp_path / "prec_b.fits"
     torchfits.write(
-        str(path_a), torch.tensor([1e8, 1.0, -1e8, 0.0], dtype=torch.float64), overwrite=True
+        str(path_a),
+        torch.tensor([1e8, 1.0, -1e8, 0.0], dtype=torch.float64),
+        overwrite=True,
     )
     torchfits.write(
-        str(path_b), torch.tensor([1e8, 0.0, -1e8, 0.0], dtype=torch.float64), overwrite=True
+        str(path_b),
+        torch.tensor([1e8, 0.0, -1e8, 0.0], dtype=torch.float64),
+        overwrite=True,
     )
     result = _run_cli("diff", str(path_a), str(path_b))
     assert result.returncode == 1, result.stdout + result.stderr
@@ -104,7 +108,9 @@ def test_copy_is_byte_identical(tmp_path):
 def test_cutout_inverted_box_is_usage_error(tmp_path):
     src = tmp_path / "img.fits"
     out = tmp_path / "cut.fits"
-    torchfits.write(str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True)
+    torchfits.write(
+        str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True
+    )
     result = _run_cli("cutout", str(src), "-o", str(out), "--box", "3,3,1,1")
     assert result.returncode == 2, result.stdout + result.stderr
     assert not out.exists()
@@ -113,7 +119,9 @@ def test_cutout_inverted_box_is_usage_error(tmp_path):
 def test_cutout_empty_box_is_usage_error(tmp_path):
     src = tmp_path / "img.fits"
     out = tmp_path / "cut.fits"
-    torchfits.write(str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True)
+    torchfits.write(
+        str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True
+    )
     result = _run_cli("cutout", str(src), "-o", str(out), "--box", "2,2,2,2")
     assert result.returncode == 2, result.stdout + result.stderr
     assert not out.exists()
@@ -122,7 +130,9 @@ def test_cutout_empty_box_is_usage_error(tmp_path):
 def test_cutout_negative_origin_is_usage_error(tmp_path):
     src = tmp_path / "img.fits"
     out = tmp_path / "cut.fits"
-    torchfits.write(str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True)
+    torchfits.write(
+        str(src), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True
+    )
     result = _run_cli("cutout", str(src), "-o", str(out), "--box=-2,-2,2,2")
     assert result.returncode == 2, result.stdout + result.stderr
     assert not out.exists()

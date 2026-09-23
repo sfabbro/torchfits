@@ -147,7 +147,12 @@ def _prepare_edits(
             raise UsageError(f"--rename {old_raw}={new_raw} names the same keyword")
         rename_pair = (old_key, new_key)
     set_key = _normalize_keyword(key) if key is not None else None
-    set_value = _parse_value(value) if key is not None else None
+    if key is None:
+        set_value = None
+    elif value is None:  # unreachable: run() validates --key/--value pairing
+        raise UsageError("--key requires --value")
+    else:
+        set_value = _parse_value(value)
     return set_key, set_value, rename_pair, del_keys
 
 

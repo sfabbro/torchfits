@@ -123,7 +123,9 @@ def test_setkey_out_dir_resolving_to_input_edits_in_place(tmp_path):
     torchfits.write(str(img), torch.zeros(2, 2), header={"AKEY": 1}, overwrite=True)
     link = tmp_path / "link"
     link.symlink_to(tmp_path)
-    result = _run_cli("setkey", str(img), "--out-dir", str(link), "-k", "ZKEY", "--value", "7")
+    result = _run_cli(
+        "setkey", str(img), "--out-dir", str(link), "-k", "ZKEY", "--value", "7"
+    )
     assert result.returncode == 0, result.stderr
     header = torchfits.read_header(str(img), 0)
     assert header.get("ZKEY") == 7

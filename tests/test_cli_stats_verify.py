@@ -73,9 +73,7 @@ def test_stats_nonfinite_floats_serialize_as_null(tmp_path):
 def test_table_json_preview_nonfinite_null(tmp_path):
     """table -f json/jsonl previews serialize non-finite floats as null."""
     path = tmp_path / "tbl.fits"
-    tf_table.write(
-        str(path), {"A": np.array([1.0, np.nan, np.inf])}, overwrite=True
-    )
+    tf_table.write(str(path), {"A": np.array([1.0, np.nan, np.inf])}, overwrite=True)
     result = _run_cli("table", str(path), "-n", "3", "-f", "json")
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -105,9 +103,7 @@ def test_table_empty_preview_ok(tmp_path):
 def test_table_text_preview_is_valid_json(tmp_path):
     """The text-mode preview block is json.dumps output and must be valid JSON."""
     path = tmp_path / "tbl.fits"
-    tf_table.write(
-        str(path), {"A": np.array([1.0, np.nan, np.inf])}, overwrite=True
-    )
+    tf_table.write(str(path), {"A": np.array([1.0, np.nan, np.inf])}, overwrite=True)
     result = _run_cli("table", str(path), "-n", "3")
     assert result.returncode == 0, result.stderr
     marker = "preview:\n"
@@ -146,7 +142,9 @@ def test_stats_truncated_image_is_io_error(tmp_path):
     """Unreadable image data maps to exit 3 (invalid FITS structure), not a crash."""
     path = tmp_path / "trunc.fits"
     full = tmp_path / "full.fits"
-    torchfits.write(str(full), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True)
+    torchfits.write(
+        str(full), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True
+    )
     raw = full.read_bytes()
     assert len(raw) > 2880
     path.write_bytes(raw[:-2880])
@@ -157,7 +155,9 @@ def test_stats_truncated_image_is_io_error(tmp_path):
 
 def test_verify_truncated_checksummed_is_io_error(tmp_path):
     full = tmp_path / "full.fits"
-    torchfits.write(str(full), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True)
+    torchfits.write(
+        str(full), torch.arange(16, dtype=torch.float32).reshape(4, 4), overwrite=True
+    )
     torchfits.write_checksums(str(full), hdu=0)
     raw = full.read_bytes()
     path = tmp_path / "trunc.fits"

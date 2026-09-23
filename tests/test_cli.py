@@ -1229,9 +1229,7 @@ def test_probe_rejects_header_bytes_below_one_block(monkeypatch):
 
     monkeypatch.setattr(cmds_probe, "_probe_http", _fake_probe_http)
     for bad in ("0", "100", "-1"):
-        rc = cli_main(
-            ["probe", "http://example.com/x.fits", "--header-bytes", bad]
-        )
+        rc = cli_main(["probe", "http://example.com/x.fits", "--header-bytes", bad])
         assert rc == 2, bad
     assert calls == []
 
