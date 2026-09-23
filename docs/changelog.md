@@ -139,6 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cli: Internal errors exit 5 with traceback; exit matrix pinned
 - cpp: Reader-cache eviction, BIT append, and table-type validation
 - cpp: Table reader scale, TNULL, and moved-from correctness
+- cpp: Hostile-NAXIS bounds, handle serialization, IEEE compressed reads
+- cpp: NAXIS=0 empty-contract, batch attribution, and HDU-scan errors
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
