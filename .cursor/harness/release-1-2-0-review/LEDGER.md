@@ -478,3 +478,36 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `packaging/conda/recipe.yaml` | R16 | full | — | clean |
 | `pyproject.toml` | R16 | full | — | clean |
 | `zensical.toml` | R16 | scan | — | clean |
+| `.cursor/docs-review-progress.md` | R17 | scan | — | clean |
+| `.cursor/harness/.gitignore` | R17 | scan | — | clean |
+| `.cursor/harness/config.json` | R17 | scan | — | clean |
+| `.cursor/harness/deep-review-1-faithfulness.md` | R17 | scan | — | clean |
+| `.cursor/harness/docs-audit-1.1.0.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/LEDGER.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/REPORT.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-cpp.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-io.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-packaging.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-py-surface.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-table.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/agent-tests-docs.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-26/tracked-files.txt` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-27/LEDGER.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-27/REPORT.md` | R17 | scan | — | clean |
+| `.cursor/harness/major-release-audit-2026-08-27/tracked-files.txt` | R17 | scan | — | clean |
+| `.cursor/harness/matrix-grid-20260804.md` | R17 | scan | — | clean |
+| `.cursor/harness/plans/perf-parity-backlog-1-10.md` | R17 | scan | — | clean |
+| `.cursor/harness/playbook.md` | R17 | scan | — | clean |
+| `.cursor/hooks.json` | R17 | scan | — | clean |
+| `.cursor/hooks/harness-session-start.sh` | R17 | scan | — | clean |
+| `.cursor/hooks/harness-stop.sh` | R17 | scan | — | clean |
+| `.cursor/jules-ledger.md` | R17 | scan | — | clean |
+| `.cursor/jules.md` | R17 | scan | — | clean |
+| `.cursor/post-1.0-backlog.md` | R17 | full | — | fixed (1.2 deferrals + closed strikes) |
+| `.cursor/skills/docs-authoring-review/SKILL.md` | R17 | scan | — | clean |
+| `.cursor/skills/release-api-freeze-review/SKILL.md` | R17 | full | — | clean (script path resolves) |
+| `.cursor/skills/release-api-freeze-review/scripts/inventory_public_api.py` | R17 | full | — | clean (ran; parents[4] is the repo root) |
+| `.dsh/README.md` | R17 | scan | — | clean |
+| `.dsh/cordis.patch.yml` | R17 | scan | — | clean |
+| `.dsh/skills/science-core/SKILL.md` | R17 | scan | — | clean |
+| `.dsh/skills/torchfits-dev/SKILL.md` | R17 | scan | — | clean |

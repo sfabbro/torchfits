@@ -40,19 +40,11 @@ Ordered roughly by value; each names the site so a future fix can start fast.
 
 ### C++ robustness / perf
 
-- GIL held through long IO in `read_full_numpy` (incl. network opens),
-  `get_header`, `get_num_hdus` (`fits_bindings.cpp` ~1482–1491, 1556+).
-- mmap table paths skip the truncation bounds check the image layer has →
-  SIGBUS instead of exception on truncated files (`table_reader.h`
-  read_columns_mmap / _filtered / update_rows_mmap; contrast
-  `fits_detail.h:513`).
-- Strided DLPack numeric payloads silently miswritten in
-  `update_rows_mmap` (bool/uint8/string honor strides; numerics index flat).
-- Column repeat int32 truncation unguarded for non-string typecodes
-  (hostile headers; `table_reader.h:167ff`) + duplicate-TTYPE moved-from UB
-  (`:551/:599`).
-- `read_full_numpy` float-promotes scaled images (no unsigned convention)
-  while tensor paths return uint16/uint32 — decide and document.
+- ~~GIL held through long IO in `read_full_numpy`, `get_header`, `get_num_hdus`~~ — released (`gil_scoped_release`); confirmed at R9.
+- ~~mmap table paths skip the truncation bounds check~~ — `ensure_extent_within_file` is on those paths; confirmed at R8.
+- ~~Strided DLPack numeric payloads silently miswritten in `update_rows_mmap`~~ — numerics honor strides; re-derived already fixed at R8.
+- ~~Column repeat int32 truncation and duplicate-TTYPE moved-from UB~~ — repeat guard and r8a-04 dedup landed.
+- ~~`read_full_numpy` skips the unsigned convention~~ — bitwise match of `read_tensor(...).numpy()` since R9. Image BSCALE accumulation stays float32 until 2.0 (see 1.2 audit deferrals).
 
 ### Performance: narrow-table buffered full-read — RESIDUAL QUANTIFIED (2026-08-22 late)
 
@@ -108,14 +100,12 @@ CPU rerun pending. Deeper findings from today's fan-out experiment:
 - `schema()` reports complex columns (`C`/`M`) as float64 scalars;
   unnamed-column capability checks skip validation; empty-result reads
   silently drop requested unknown columns (`_read_schema.py`).
-- `TableHDURef.head(n)` replaces the existing row window instead of
-  composing; in-memory `TableHDU.head(-n)` truncates tail rows instead of
-  raising; caches keyed on `id(self.header)` are GC-reusable.
+- ~~`TableHDURef.head` replaces the window; `TableHDU.head(-n)` truncates~~ — R6 composes the window and raises `ValueError` for `n < 0`.
 - Arrow width-1 chunk route can surface `FixedSizeList<T>[1]` where the
   schema maps repeat==1 to scalar (main decode path verified scalar-only).
 - `to_astropy`: TNULL null columns become object dtype; TUNIT not mapped to
   `.unit`. `TableHDURef.to_arrow(columns=...)` kwarg collision.
-- `table.write(quantize=)` silently no-ops when no column qualifies.
+- ~~`table.write(quantize=)` silently no-ops when no column qualifies~~ — raises `QuantizeError` (R5).
 - Error-type inconsistency across mutation API (KeyError vs ValueError for
   unknown column); broad `except Exception` fallback swallows mask real IO
   errors (`table_api.py`, `_read_scan.py`).
@@ -129,27 +119,16 @@ CPU rerun pending. Deeper findings from today's fan-out experiment:
 
 ### CLI / http
 
-- Unhandled non-CliError exceptions exit 1 (= documented diff-discrepancy
-  code) in `verify`/`stats`; `stats --json` emits bare NaN/Infinity;
-  copy/compress/convert accept OUTPUT == INPUT with lossy card round-trip;
-  KeyboardInterrupt returns usage-code 2; `-J` shares one stateful
-  transform instance across threads.
-- DNS-rebinding TOCTOU contradicts `http_util` docstring (guard resolves
-  once; CFITSIO/urllib re-resolve at connect).
+- ~~CLI exit 1 / bare JSON NaN / same-path copy / Ctrl-C exit 2 / shared `-J` transform~~ — R7: exit 5, JSON `null`, same-path refusal, exit 130, per-file instances.
+- ~~DNS-rebinding TOCTOU contradicts `http_util` docstring~~ — Python `http`/`https`/`ftp` fetches are pinned; the CFITSIO residual is documented in `docs/compatibility.md` (R10/R15).
 
 ### Hygiene / tests
 
-- `[test]` extra cannot run the suite (astropy/fitsio/psutil undeclared);
-  declared `performance` marker unused so wall-clock/RSS tests always run;
-  GHA release gate omits 4 suites present in local release-gate;
-  security.h bracket test manual-only (wire into build); sleep-based race
-  in `test_data_datasets.py` prefetch dedupe test; several suites write
-  fixtures into process CWD.
+- ~~`[test]` extra, unused `performance` marker, release-gate list gap, manual bracket test, sleep-based prefetch race~~ — closed in R10/R11. Release-gate file lists match (20 files). A few suites may still write into the process cwd; that residue was not re-swept here.
 - Dead/duplicated code sweep: `read_scaled_cpu_fast`,
   `clear_file_cache(handles=)` unread flag, `_normalize_cpp_chunk` no-op,
   unused header_parser regexes, unreachable inf-guard in `clip.py`,
-  worker-split block duplicated ×3 in datasets.py, `_normalize_row_slice`
-  ×2, fallback-table double-open per call, negative meta lookups uncached,
+  worker-split block duplicated ×3 in datasets.py, ~~`_normalize_row_slice` ×2~~ (one copy since r6b-02), fallback-table double-open per call, negative meta lookups uncached,
   HTTP cutout walks HDU headers twice.
 
 ## Round 7 deferrals (safe post-1.0)
@@ -180,10 +159,76 @@ CPU rerun pending. Deeper findings from today's fan-out experiment:
 - Broader `except Exception: pass` audit (soft fallthroughs in strategy probes;
   Round-2 glm notes: batch `read_images_batch` silent fallthrough, NAXIS2→0,
   tnull fill swallow, `update_rows` mmap=auto swallow)
-- Install: consider a **2.11+ / 2.13** wheel ABI lane only after scorecard re-soak
-  (today: wheels + pixi stay on **PyTorch 2.10**; source builds allow ≥2.10)
+- ~~Wheels and pixi stay on PyTorch 2.10~~ — the wheel lane is PyTorch 2.13 (`scripts/torch_lanes.json`). Source builds still allow ≥2.10.
 
 ## Spectroscopy / continuum (not in torchfits)
 
 Continuum and spectral `FITSTransform`s were **deleted** from torchfits (no
 deprecation). Absorb-vs-new design belongs in the sibling astronomy stack repo.
+
+
+## 1.2 audit deferrals
+
+Open after the R1–R16 directory pass. Do not re-fix these in silence: each one was recorded with a reason. A later round closed the struck ids below.
+
+### Still open
+
+- r1b-08 — `docs/api-core-io.md` shows `read_extname(path, hdu=1)`; `io.read_extname` defaults `hdu=0`.
+- r1b-09 — `io._READ_EXC_TYPES` includes `TypeError`, `AttributeError`, and `MemoryError`, so `read_batch(strict=False)` skips those as failed paths.
+- r1c-11 — `docs/api-tables.md` predicate helpers omit `where_identifier_re` (it is in `where.__all__`).
+- r1c-13 — `decode_byte_tensor(..., errors="ignore")` drops undecodable bytes. Raising would change string-column reads.
+- r2a-12 — `docs/api-transforms.md` import list omits names the package exports (`FITSTransform` and peers). Doc-only.
+- r2a-16 — `FITSHeaderScale.forward` runs `check_state` twice (the call plus `view()`). Count is 2→1; no wall-clock evidence.
+- r2a-17 / r2b-12 — inverse stats live on the transform instance. Moving them into `Payload` breaks pinned dict-payload tests.
+- r3a-16 — `FitsSpectrumDataset` accepts `mmap=` and does not pass it to `read_torch`.
+- r3a-17 — `read_images_batch` still has a per-file fallback; table `num_rows` probes swallow errors.
+- r3b-09 — `data._eager_table_columns` falls back to pyarrow on any `read_fits_table` exception, including I/O errors.
+- r4a-12 — a negative image-meta lookup is not cached (`signature_cached_get` cannot tell a miss from a stored `None`).
+- r4a-14 — `image_meta._cache_get` / `_cache_set` and `subset.read_subset` have no callers.
+- r4c-14 — `update_rows(mmap="auto")` and the tnull-fill path still swallow non-decode errors.
+- r5a-13 — `docs/api-tables.md` backend wording drifts from `_table_engine/read_policy.py`.
+- r5a-14 — `stream_table` re-reads the header for its XTENSION probe even when `total_rows=` is set.
+- r5a-16 — `fits_schema._iter_tfields_indexed` skips TTYPE-less columns, so every consumer misses them.
+- r5b-06 — ASCII string width still truncates to the TFORM width (astropy does too). No typed error.
+- r5b-08 — `os.unlink` of the rewrite temp file and `_parse_tform` use `except Exception`.
+- r5c-12 — `table.write_csv` / `table.write_ipc` are in `table.__all__` and have no docs section.
+- r5c-13 — width-1 `FixedSizeList` can still surface off the main decode path.
+- r6a-06 — orphan CONTINUE fusion is fixed (`d424c05`, typed-target gate). What remains: `HDUList` header values stay raw batch-triple strings (`NAXIS` is `"0"`) while `read_header` types them (`NAXIS` is `0`). That split exists on files with no long strings.
+- r6a-07 — `read_header_fast`'s slow fallback and `_read_pipeline_fallback.py` still build headers from raw triples.
+- r7a-08 — truncated-file HDU scan errors are still the engine's CFITSIO status, not a typed CLI code.
+- r7a-09 — `cmds_probe._probe_vos` swallows `handle.close()` failures.
+- r7b-12 — table JSON preview stringifies bytes and complex values with `str(value)`.
+- r7b-13 — a failed remote `copy` leaves a partial output file (exit 3).
+- r7c-15 — `arith -o <same path>` is allowed. The read finishes before the write, so it is in-place rather than corrupt.
+- r7c-16 — `compress` / `convert` / `transform` / `arith` leave a partial output if the write fails mid-way.
+- r7c-17 — `compress` then `decompress` of a single-image file yields an empty primary plus an image extension.
+- r7c-18 — image–image `arith` does not look at `BUNIT`.
+- r7c-19 — `BITPIX=64` multiply stays in int64 and can wrap at 2^63.
+- r7c-21 — a header dict whose commentary value is a list (`{"HISTORY": ["h1", "h2"]}`) hits `std::bad_cast` in card replay.
+- r7c-22 — replaying commentary cards appends `HISTORY`/`COMMENT` instead of replacing them.
+- r7c-23 — `write_parquet` / `write_csv` / `write_ipc` reject a column dict that `table.write` accepts.
+- r7c-24 — `docs/cli.md` shows `setkey --comment`. `cmds_setkey.py` has no such flag.
+- r7c-25 — non-finite pixels cast to an integer output are platform-dependent.
+- r8b-08 — table write bindings and `TableReader` construction hold the GIL across CFITSIO calls.
+- r8b-09 — after a failed `fits_write_col`, the column loop keeps going with a poisoned status.
+- r8b-10 — filtered table reads reject `np.int64` / `np.int32` filter values (`np.float64` works).
+- r9b-06 — `open_fits_for_write` does not clean up a partial handle. A 200-iteration fd probe found no leak.
+- r11a-07 — `tests/test_bench_suites.py` pins source text with `inspect.getsource`.
+- r11a-08 — `TestCaching.test_cache_clearing` calls `get_cache_performance()` and asserts nothing.
+- r11a-09 — `test_clear_cache_disk_true_parameter` calls `clear_cache(disk=False)`.
+- r11a-10 — `tests/test_api.py` repeats the `mode="invalid"` block.
+- r12a-05 — full-image MB/s uses on-disk file bytes, so a compressed image does not report decoded payload throughput. GPU `read_full` throughput stays blank.
+- Image BSCALE/BZERO accumulation is float32 for 1.2 (`read_full_scaled_cpu`). The float64 image path is 2.0.
+- Arena decode and the `table_reader.h` / `write_api.py` splits stay out of 1.2 (API-visible or megafile work).
+- `tests/test_remote_resume.py` `_FakeVosClient.copy` sleeps 0.2s after a `threading.Barrier(2)` so both writers stay inside `copy()`. Not a race.
+
+### Struck (closed after the deferral)
+
+- r1c-12 — blocked-prefix split documented and tested on both layers (R10).
+- r1c-14 — CFITSIO residual TOCTOU is stated in `docs/compatibility.md` (R15). Python fetches stay pinned.
+- r1b-10 — `to_astropy` accepts `os.PathLike`.
+- r4a-15 — `read_batch(..., strict=False)` docs match the warn-and-skip default.
+- r4b-13 — LONGSTRN chains reassembled at `HDUList.fromfile` (r6a-01).
+- r5c-09 — `TableHDURef.to_arrow(columns=)` raises a typed duplicate-argument error (r6b-01).
+- r5a-12 / r5b-07 / r5c-15 — one `_normalize_row_slice` (r6b-02).
+- r5b-05 — "preprocess every column" was refuted; not a defect.
