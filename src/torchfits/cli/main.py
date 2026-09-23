@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 from typing import Callable
 
 from .cmds_arith import add_parser as add_arith
@@ -21,7 +22,7 @@ from .cmds_stats import add_parser as add_stats
 from .cmds_table import add_parser as add_table
 from .cmds_transform import add_parser as add_transform
 from .cmds_verify import add_parser as add_verify
-from .common import CliError, EXIT_INTERRUPT, EXIT_IO, EXIT_OK
+from .common import CliError, EXIT_INTERNAL, EXIT_INTERRUPT, EXIT_IO, EXIT_OK
 
 _SUBCOMMANDS: tuple[tuple[str, Callable[..., None], str], ...] = (
     ("info", add_info, "HDU inventory"),
@@ -51,8 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
     try:
+        parser = build_parser()
         args = parser.parse_args(argv)
         return int(args.func(args))
     except CliError as exc:
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(exc, file=sys.stderr)
         return EXIT_IO
+    except Exception:
+        traceback.print_exc()
+        return EXIT_INTERNAL
 
 
 if __name__ == "__main__":

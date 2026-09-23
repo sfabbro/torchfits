@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import math
 from typing import Any
 
 from ..header_parser import fast_parse_header_cards
@@ -147,14 +148,20 @@ def _probe_http(url: str, *, header_bytes: int, timeout: float) -> dict[str, Any
 
 def run(args: argparse.Namespace) -> int:
     paths = resolve_paths(args.paths, use_stdin=args.stdin)
-    header_bytes = max(2880, int(args.header_bytes))
+    header_bytes = int(args.header_bytes)
+    if header_bytes < 2880:
+        raise UsageError("--header-bytes must be >= 2880 (one FITS block)")
     timeout = float(args.timeout)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise UsageError("--timeout must be a positive finite number of seconds")
+
+    remote_paths = [path for path in paths if is_remote_path(path)]
+    local_paths = [path for path in paths if not is_remote_path(path)]
+    if remote_paths and local_paths:
+        raise UsageError("mixing local paths and remote URLs is not supported")
+
     remote_records: list[dict[str, Any]] = []
-    local_paths: list[str] = []
-    for path in paths:
-        if not is_remote_path(path):
-            local_paths.append(path)
-            continue
+    for path in remote_paths:
         if is_vos_path(path):
             remote_records.append(_probe_vos(path, header_bytes=header_bytes))
             continue
@@ -165,10 +172,7 @@ def run(args: argparse.Namespace) -> int:
             continue
         raise IoError(f"remote paths are not supported: {path}")
 
-    if remote_records and local_paths:
-        raise UsageError("mixing local paths and remote URLs is not supported")
-
-    if remote_records:
+    if remote_paths:
         emit_records(remote_records, format=resolve_emit_format(args))
         return EXIT_OK
 

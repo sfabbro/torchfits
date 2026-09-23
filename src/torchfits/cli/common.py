@@ -19,6 +19,7 @@ EXIT_DIFF = 1
 EXIT_USAGE = 2
 EXIT_IO = 3
 EXIT_VERIFY_FAIL = 4
+EXIT_INTERNAL = 5
 EXIT_INTERRUPT = 130
 
 _REMOTE_PREFIXES = ("http://", "https://", "ftp://", "vos://", "vos:", "vault:")
@@ -148,8 +149,15 @@ def json_default(value: Any) -> Any:
 
 
 def _json_safe(value: Any) -> Any:
-    """Replace NaN/Inf with None so dumps(..., allow_nan=False) is valid JSON."""
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+    """Replace NaN/Inf with None so dumps(..., allow_nan=False) is valid JSON.
+
+    NumPy scalars/arrays normalize via ``tolist()`` first, so numpy-typed
+    non-finite values (e.g. ``np.float32("nan")``) also become ``null``
+    instead of tripping ``allow_nan=False``.
+    """
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
@@ -180,29 +188,6 @@ def add_hdu_arg(
     if type is not None:
         kwargs["type"] = type
     parser.add_argument("-e", "--hdu", **kwargs)
-
-
-def add_out_arg(parser: Any, *, help: str = "output path") -> None:
-    """Add ``-o`` / ``--out`` plus optional positional ``output`` alias."""
-    parser.add_argument("-o", "--out", default=None, help=help)
-    parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-        help=f"{help} (positional alias of -o/--out)",
-    )
-
-
-def resolve_out_path(args: Any) -> str:
-    """Resolve ``-o`` / ``--out`` vs positional ``output`` (same path required)."""
-    flag = getattr(args, "out", None)
-    positional = getattr(args, "output", None)
-    if flag and positional and flag != positional:
-        raise UsageError("conflicting output paths: use either -o/--out or positional")
-    out = flag or positional
-    if not out:
-        raise UsageError("output path required (-o/--out or positional)")
-    return str(out)
 
 
 def add_keyword_arg(parser: Any, **kwargs: Any) -> None:

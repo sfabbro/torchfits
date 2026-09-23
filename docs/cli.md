@@ -49,17 +49,17 @@ torchfits probe https://example.edu/survey/image.fits --header-bytes 5760
 
 ## Global Options & Flags
 
-Flags available on the emit-style subcommands (`info`, `header`, `verify`, `stats`, `table`, `probe`):
+Shared flags (availability varies by subcommand):
 
-| Flag | Name | Purpose | Default |
-|---|---|---|---|
-| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`) | All HDUs or 0/1 depending on command |
-| `-f` | `--format` | Output format: `text`, `json`, or `jsonl` | `text` |
-| `-o` | `--out` | Output file path | Positional argument or stdout |
-| `--out-dir` | `--out-dir` | Output directory for batch file processing | Current directory |
-| `--stdin` | `--stdin` | Read input file paths from standard input | `False` |
-| `-j` | `--jobs` | PyTorch intra-op CPU threads (`torch.set_num_threads`) | `0` (all CPU cores) |
-| `-J` | `--file-jobs` | Parallel worker thread pool across multiple files | `0` (all CPU cores if $\ge 2$ files, else 1) |
+| Flag | Name | Purpose | Default | Available on |
+|---|---|---|---|---|
+| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`) | All HDUs or 0/1 depending on command | every subcommand except `copy`, `diff` |
+| `-f` | `--format` | Output format: `text`, `json`, or `jsonl` (aliases `--json`, `--jsonl`) | `text` | `info`, `header`, `verify`, `stats`, `table`, `probe` |
+| `-o` | `--out` | Output path (alias of the positional `OUTPUT`) | positional `OUTPUT` | `convert`, `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
+| `--out-dir` | `--out-dir` | Output directory for batch file processing | unset (required for multi-input batches) | `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
+| `--stdin` | `--stdin` | Read input file paths from standard input (stdin is also read implicitly when no paths are given and stdin is not a terminal) | `False` | `info`, `header`, `verify`, `stats`, `table`, `probe`, `setkey` |
+| `-j` | `--jobs` | PyTorch intra-op CPU threads (`torch.set_num_threads`) | `0` (all CPU cores) | `stats`, `arith`, `compress`, `decompress`, `transform` |
+| `-J` | `--file-jobs` | Parallel worker thread pool across multiple files | `0` (all CPU cores if $\ge 2$ files, else 1) | `verify`, `stats`, `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
 
 ### Parallelism & Multi-Core Execution
 
@@ -83,6 +83,7 @@ Each command invocation starts the Python interpreter and loads the PyTorch runt
 | `2` | Usage error | Missing arguments, invalid flags, or unknown syntax |
 | `3` | I/O error | File not found, permission denied, or invalid FITS structure |
 | `4` | Checksum verification failure | `torchfits verify` detected invalid `DATASUM` or `CHECKSUM` |
+| `5` | Internal error | Unexpected exception; traceback printed to stderr |
 | `130` | Interrupted | `KeyboardInterrupt` / Ctrl-C |
 
 ---
@@ -195,6 +196,8 @@ torchfits stats science.fits -e 0 -f json
 torchfits stats *.fits -e 0 -J 0 -f jsonl
 ```
 
+Non-finite values in JSON output: `stats` and `table` serialize `NaN`/`±Infinity` floats as `null` in `-f json` / `-f jsonl` (`--json` / `--jsonl`) — JSON has no NaN or Infinity literals. An empty image region therefore reports `null` for `min`, `max`, `mean`, `std`, and `median`.
+
 ---
 
 ### `table`
@@ -204,9 +207,6 @@ Inspects binary or ASCII table extensions, displaying the PyArrow schema, column
 ```bash
 # Preview table schema and first 5 rows
 torchfits table catalog.fits -e 1 -n 5
-
-# Select specific columns
-torchfits table catalog.fits -e 1 -c RA,DEC,FLUX -n 10
 
 # Output rows in JSON format
 torchfits table catalog.fits -e 1 -n 5 -f json
@@ -228,6 +228,8 @@ Supports two coordinate formats:
    ```bash
    torchfits cutout science.fits -o cutout.fits -e 0 --box 100,100,256,256
    ```
+
+`--box` values must be integers with non-negative `x1,y1` and `x1 < x2`, `y1 < y2` (0-based, half-open); an empty, inverted, or negative-origin box is a usage error (exit 2). A box that extends past the image edge is clamped to the image, so the output region is the box intersected with the image.
 
 ```bash
 # Batch extract cutouts across multiple files

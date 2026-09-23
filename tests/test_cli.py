@@ -1168,3 +1168,108 @@ def test_cli_compress_out_dir_strips_cfitsio_section(tmp_path) -> None:
     assert proc.returncode == 0, proc.stderr
     names = sorted(p.name for p in out_dir.iterdir())
     assert names == ["img.fits"]
+
+
+def test_emit_records_nulls_nonfinite_values():
+    """-f json/jsonl must serialize NaN/±Inf as null (JSON has no NaN literal).
+
+    Non-finite floats arrive from tensor reductions (e.g. empty-region stats)
+    and may be numpy-typed; every one of them must emit ``null`` — never a
+    crash from ``allow_nan=False``.
+    """
+    import io
+
+    import numpy as np
+
+    from torchfits.cli.common import emit_records
+
+    record = {
+        "py_nan": float("nan"),
+        "py_inf": float("inf"),
+        "py_neg_inf": float("-inf"),
+        "np64_nan": np.float64("nan"),
+        "np32_nan": np.float32("nan"),
+        "np32_inf": np.float32("inf"),
+        "np_int": np.int64(7),
+        "arr_nan": np.array([1.0, float("nan")]),
+        "nested_nan": [float("nan"), {"deep": np.float32("nan")}],
+    }
+    for fmt in ("json", "jsonl"):
+        buf = io.StringIO()
+        emit_records([record], format=fmt, stream=buf)
+        if fmt == "json":
+            rows = json.loads(buf.getvalue())
+        else:
+            rows = [json.loads(line) for line in buf.getvalue().splitlines()]
+        row = rows[0]
+        for key in (
+            "py_nan",
+            "py_inf",
+            "py_neg_inf",
+            "np64_nan",
+            "np32_nan",
+            "np32_inf",
+        ):
+            assert row[key] is None, (fmt, key)
+        assert row["np_int"] == 7
+        assert row["arr_nan"] == [1.0, None]
+        assert row["nested_nan"] == [None, {"deep": None}]
+
+
+def test_probe_rejects_header_bytes_below_one_block(monkeypatch):
+    """--header-bytes below one FITS block (2880) is a usage error, not a silent clamp."""
+    from torchfits.cli import cmds_probe
+    from torchfits.cli.main import main as cli_main
+
+    calls = []
+
+    def _fake_probe_http(url, *, header_bytes, timeout):
+        calls.append(header_bytes)
+        return {"file": url, "hdu": 0}
+
+    monkeypatch.setattr(cmds_probe, "_probe_http", _fake_probe_http)
+    for bad in ("0", "100", "-1"):
+        rc = cli_main(
+            ["probe", "http://example.com/x.fits", "--header-bytes", bad]
+        )
+        assert rc == 2, bad
+    assert calls == []
+
+
+def test_probe_rejects_nonpositive_timeout(monkeypatch):
+    from torchfits.cli import cmds_probe
+    from torchfits.cli.main import main as cli_main
+
+    calls = []
+
+    def _fake_probe_http(url, *, header_bytes, timeout):
+        calls.append(timeout)
+        return {"file": url, "hdu": 0}
+
+    monkeypatch.setattr(cmds_probe, "_probe_http", _fake_probe_http)
+    for bad in ("0", "-2.5", "nan", "inf"):
+        rc = cli_main(["probe", "http://example.com/x.fits", "--timeout", bad])
+        assert rc == 2, bad
+    assert calls == []
+
+
+def test_probe_mixed_local_remote_rejected_before_fetch(monkeypatch, tmp_path):
+    """Mixing local and remote paths is a usage error validated before any fetch."""
+    import torch
+
+    from torchfits.cli import cmds_probe
+    from torchfits.cli.main import main as cli_main
+
+    img = tmp_path / "image.fits"
+    torchfits.write(str(img), torch.zeros(2, 2), overwrite=True)
+
+    calls = []
+
+    def _fake_probe_http(url, *, header_bytes, timeout):
+        calls.append(url)
+        return {"file": url, "hdu": 0}
+
+    monkeypatch.setattr(cmds_probe, "_probe_http", _fake_probe_http)
+    rc = cli_main(["probe", str(img), "http://example.com/x.fits"])
+    assert rc == 2
+    assert calls == []
