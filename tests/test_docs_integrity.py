@@ -662,6 +662,8 @@ def test_owed_behavior_notes_match_the_implementation() -> None:
 
     cutout = cli.split("### `cutout`", 1)[1].split("### `", 1)[0]
     assert "not shifted" in cutout
+    setkey = cli.split("### `setkey`", 1)[1].split("### `", 1)[0]
+    assert "--comment" not in setkey
 
     import json
 

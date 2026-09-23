@@ -375,9 +375,6 @@ Inserts, updates, renames, or deletes header keywords in place via CFITSIO card 
 # Set or update keyword
 torchfits setkey science.fits -k OBJECT --value "NGC 1234"
 
-# Set keyword with comment
-torchfits setkey science.fits -k FILTER --value "g" --comment "SDSS g-band filter"
-
 # Set HIERARCH / long keyword
 torchfits setkey science.fits -k "ESO DET CHIP1 ID" --value "42"
 
