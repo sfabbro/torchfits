@@ -195,7 +195,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_quantize_int16.py` | R11 | full | — | clean |
 | `tests/test_read_header.py` | R11 | full | r11d-03 | fixed (r11d-03) |
 | `tests/test_read_policy.py` | R11 | full | — | clean |
-| `tests/test_release_lane.py` | R11 | full | — | clean |
+| `tests/test_release_lane.py` | R16 | full | r16a-01, r16a-02 | fixed |
 | `tests/test_release_smoke.py` | R11 | full | — | clean |
 | `tests/test_remote_http_range.py` | R11 | full | — | clean |
 | `tests/test_rgb.py` | R11 | full | — | clean |
@@ -210,8 +210,8 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_table_docs_smoke.py` | R11 | full | — | clean |
 | `tests/test_table_file_ops.py` | R11 | full | — | clean |
 | `tests/test_table_filter_grammar.py` | R11 | full | — | clean |
-| `pixi.toml` | R11 | full | r11d-01 | fixed (r11d-01) |
-| `.github/workflows/ci.yml` | R11 | full | r11d-01 | fixed (r11d-01) |
+| `pixi.toml` | R16 | full | r11d-01, r16a-02 | fixed |
+| `.github/workflows/ci.yml` | R16 | full | r11d-01 | fixed (r11d-01); release-gate list matches pixi |
 | `tests/test_table_filtering.py` | R11 | full | — | clean |
 | `tests/test_table_head.py` | R11 | full | — | clean |
 | `tests/test_table_squeeze_and_ref_cache.py` | R11 | full | — | clean |
@@ -329,7 +329,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `scripts/patch_canfar_exhaustive_docs.sh` | R13 | scan | — | clean (scan) |
 | `scripts/publish_canfar_bench_vos.sh` | R13 | scan | — | clean (scan) |
 | `scripts/publish_canfar_wheel_bundle.sh` | R13 | scan | — | clean (scan) |
-| `scripts/release_lane.py` | R13 | full | — | clean |
+| `scripts/release_lane.py` | R16 | full | r16a-01 | fixed (r16a-01) |
 | `scripts/release_notes.py` | R13 | scan | — | clean (scan) |
 | `scripts/render_bench_deficits.py` | R13 | full | — | clean |
 | `scripts/render_bench_highlights.py` | R13 | full | r13a-01 | fixed (r13a-01) |
@@ -452,3 +452,29 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `docs/torchfits-logo-hero.png` | R15 | scan | — | clean |
 | `docs/torchfits-logo-mark.png` | R15 | scan | — | clean |
 | `docs/torchfits-logo.png` | R15 | scan | — | clean |
+| `.gitattributes` | R16 | scan | — | clean |
+| `.github/dependabot.yml` | R16 | scan | — | clean |
+| `.github/workflows/bench-report.yml` | R16 | scan | — | clean |
+| `.github/workflows/build_wheels.yml` | R16 | full | — | clean |
+| `.github/workflows/docs.yml` | R16 | scan | — | clean |
+| `.github/workflows/sanitizer.yml` | R16 | full | — | clean |
+| `.gitignore` | R16 | scan | — | clean |
+| `.pre-commit-config.yaml` | R16 | full | — | clean |
+| `AGENTS.md` | R16 | scan | — | clean |
+| `CLAUDE.md` | R16 | scan | — | clean |
+| `CMakeLists.txt` | R16 | scan | — | clean |
+| `LICENSE` | R16 | scan | — | clean |
+| `README.md` | R16 | full | — | clean |
+| `SDIST-README.txt` | R16 | scan | — | clean |
+| `constraints-wheel.txt` | R16 | full | — | clean |
+| `extern/VERSIONS.txt` | R16 | full | — | clean |
+| `extern/licenses/CFITSIO-LICENSE.txt` | R16 | scan | — | clean |
+| `extern/patches/cfitsio-4.7.0-bzip2.patch` | R16 | full | — | clean |
+| `extern/patches/cfitsio-4.7.0-plio-cbuf.patch` | R16 | full | — | clean |
+| `extern/vendor.sh` | R16 | full | — | clean |
+| `overrides/home.html` | R16 | scan | — | clean |
+| `overrides/main.html` | R16 | scan | — | clean |
+| `overrides/partials/actions.html` | R16 | scan | — | clean |
+| `packaging/conda/recipe.yaml` | R16 | full | — | clean |
+| `pyproject.toml` | R16 | full | — | clean |
+| `zensical.toml` | R16 | scan | — | clean |
