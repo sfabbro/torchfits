@@ -90,3 +90,22 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_hdu/tensor_hdu.py` | R6-B | deep | r6b-04, r6b-08 | fixed |
 | `src/torchfits/_hdu/dataview.py` | R6-B | full (verify) | r6b-11 (A-08 verified fixed at HEAD; boundary pins) | clean |
 | `src/torchfits/_io_engine/hdu_api.py` | R4-C; r6a-06 | full | r4c-08, r4c-09, r4c-12, r4c-15, r6a-06 | fixed (fusion half at integration; typing-convention residual deferred) |
+| `src/torchfits/cli/main.py` | R7-A | full | r7a-01, r7a-02 | fixed |
+| `src/torchfits/cli/common.py` | R7-A | full | r7a-03, r7a-07 | fixed |
+| `src/torchfits/cli/__init__.py` | R7-A | surface | — | clean |
+| `src/torchfits/cli/__main__.py` | R7-A | surface | — | clean |
+| `src/torchfits/cli/cmds_header.py` | R7-A | full | — | clean |
+| `src/torchfits/cli/cmds_info.py` | R7-A | full | — | clean |
+| `src/torchfits/cli/cmds_probe.py` | R7-A | full | r7a-04, r7a-05 | fixed |
+| `src/torchfits/cli/cmds_stats.py` | R7-B | deep | r7b-02, r7b-05, r7b-06 | fixed |
+| `src/torchfits/cli/cmds_verify.py` | R7-B | deep | r7b-05, r7b-06, r7b-10 | fixed |
+| `src/torchfits/cli/cmds_diff.py` | R7-B | deep | r7b-01, r7b-03, r7b-04 | fixed |
+| `src/torchfits/cli/cmds_table.py` | R7-B | deep | r7b-05, r7b-07 | fixed |
+| `src/torchfits/cli/cmds_copy.py` | R7-B | full (reference) | r7b-13 | clean (same-path refusal reference; r7b-13 deferred) |
+| `src/torchfits/cli/cmds_cutout.py` | R7-B | deep | r7b-08 | fixed |
+| `src/torchfits/cli/cmds_arith.py` | R7-C | deep | r7c-02, r7c-08, r7c-11, r7c-15 | fixed (r7c-15 deferred: in-place policy) |
+| `src/torchfits/cli/cmds_compress.py` | R7-C | deep | r7c-08, r7c-13 | fixed (r7c-13 verified+pinned; r7c-16/17 deferred) |
+| `src/torchfits/cli/cmds_convert.py` | R7-C | deep | r7c-01, r7c-09 | fixed |
+| `src/torchfits/cli/cmds_setkey.py` | R7-C | deep | r7c-03..r7c-07, r7c-10 | fixed |
+| `src/torchfits/cli/cmds_transform.py` | R7-C | deep | r7c-14 | clean (decision-5 verified+pinned) |
+| `docs/cli.md` | R7-A (sole editor) | n/a | r7a-06, r7a-10, r7b-09 + decision rows 1/3 | fixed |
