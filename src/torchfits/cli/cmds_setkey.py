@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,10 @@ def _parse_hdus(spec: str, n_hdus: int) -> list[int]:
         part = part.strip()
         if not part:
             continue
-        idx = int(part)
+        try:
+            idx = int(part)
+        except ValueError as exc:
+            raise UsageError(f"invalid HDU index: {part!r}") from exc
         if idx < 0 or idx >= n_hdus:
             raise UsageError(f"HDU index out of range: {idx} (file has {n_hdus})")
         out.append(idx)
@@ -123,59 +127,107 @@ def _parse_hdus(spec: str, n_hdus: int) -> list[int]:
     return out
 
 
-def _apply_edits(
-    path: str,
+def _prepare_edits(
     *,
-    hdu_spec: str,
     key: str | None,
     value: str | None,
     rename: str | None,
     delete_keys: list[str],
+) -> tuple[str | None, Any, tuple[str, str] | None, list[str]]:
+    """Normalize and validate the file-independent parts of an edit request."""
+    del_keys = [_normalize_keyword(raw) for raw in delete_keys]
+    rename_pair: tuple[str, str] | None = None
+    if rename is not None:
+        if "=" not in rename:
+            raise UsageError("--rename must be OLD=NEW")
+        old_raw, _, new_raw = rename.partition("=")
+        old_key = _normalize_keyword(old_raw)
+        new_key = _normalize_keyword(new_raw)
+        if old_key == new_key:
+            raise UsageError(f"--rename {old_raw}={new_raw} names the same keyword")
+        rename_pair = (old_key, new_key)
+    set_key = _normalize_keyword(key) if key is not None else None
+    set_value = _parse_value(value) if key is not None else None
+    return set_key, set_value, rename_pair, del_keys
+
+
+def _apply_edits(
+    path: str,
+    *,
+    hdu_spec: str,
+    set_key: str | None,
+    set_value: Any,
+    rename_pair: tuple[str, str] | None,
+    del_keys: list[str],
 ) -> None:
     with torchfits.open(path) as hdul:
         n_hdus = len(hdul)
-    for hdu in _parse_hdus(hdu_spec, n_hdus):
+    hdus = _parse_hdus(hdu_spec, n_hdus)
+
+    # Phase 1: validate every requested edit against the file's current
+    # headers and resolve the exact card updates. Nothing is written until the
+    # whole batch is known to succeed, so a failed run leaves the file
+    # untouched.
+    plans: list[list[tuple[Any, ...]]] = []
+    for hdu in hdus:
         header = Header(torchfits.read_header(path, hdu))
-        for raw in delete_keys:
-            del_key = _normalize_keyword(raw)
+        ops: list[tuple[Any, ...]] = []
+        for del_key in del_keys:
             if del_key not in header:
-                raise IoError(f"{path}[{hdu}]: missing keyword {del_key}")
-            torchfits.io._delete_header_key_if_supported(path, hdu, del_key)
+                raise UsageError(f"{path}[{hdu}]: missing keyword {del_key}")
+            ops.append(("delete", del_key))
             del header[del_key]
-        if rename:
-            if "=" not in rename:
-                raise UsageError("--rename must be OLD=NEW")
-            old_raw, _, new_raw = rename.partition("=")
-            old_key = _normalize_keyword(old_raw)
-            new_key = _normalize_keyword(new_raw)
+        if rename_pair is not None:
+            old_key, new_key = rename_pair
             if old_key not in header:
-                raise IoError(f"{path}[{hdu}]: missing keyword {old_key}")
-            header[new_key] = header[old_key]
-            torchfits.io._write_header_cards_if_supported(path, hdu, header)
-            torchfits.io._delete_header_key_if_supported(path, hdu, old_key)
+                raise UsageError(f"{path}[{hdu}]: missing keyword {old_key}")
+            if new_key in header:
+                raise UsageError(
+                    f"{path}[{hdu}]: cannot rename {old_key} to {new_key}: "
+                    f"{new_key} already exists"
+                )
+            card = next(c for c in header.cards if c.key == old_key)
+            ops.append(("set", new_key, card.value, card.comment))
+            ops.append(("delete", old_key))
+            header[new_key] = card.value
             del header[old_key]
-        if key is not None:
-            if value is None:
-                raise UsageError("--value is required with --key")
-            header[_normalize_keyword(key)] = _parse_value(value)
-            torchfits.io._write_header_cards_if_supported(path, hdu, header)
+        if set_key is not None:
+            ops.append(("set", set_key, set_value, ""))
+            header[set_key] = set_value
+        plans.append(ops)
+
+    # Phase 2: apply via CFITSIO card update/delete only (never an HDUList
+    # rewrite) and only for the edited cards -- replaying a full header would
+    # append a second copy of the file's HISTORY/COMMENT cards.
+    for hdu, ops in zip(hdus, plans):
+        for op in ops:
+            if op[0] == "delete":
+                torchfits.io._delete_header_key_if_supported(path, hdu, op[1])
+            else:
+                _, card_key, card_value, comment = op
+                write_value = (card_value, comment) if comment else card_value
+                torchfits.io._write_header_cards_if_supported(
+                    path, hdu, {card_key: write_value}
+                )
 
 
-def _edit_one(job: tuple[str, str, argparse.Namespace, list[str]]) -> None:
-    src, dest, args, delete_keys = job
+def _edit_one(job: tuple[str, str, str, tuple[Any, ...]]) -> None:
+    src, dest, hdu_spec, (set_key, set_value, rename_pair, del_keys) = job
     try:
-        if dest != src:
+        if os.path.realpath(src) != os.path.realpath(dest):
             shutil.copy2(src, dest)
             target = dest
         else:
+            # dest resolves to src (e.g. --out-dir reaching the input's
+            # directory through a symlink): edit in place, as with dest == src.
             target = src
         _apply_edits(
             target,
-            hdu_spec=args.hdu,
-            key=args.key,
-            value=args.value,
-            rename=args.rename,
-            delete_keys=delete_keys,
+            hdu_spec=hdu_spec,
+            set_key=set_key,
+            set_value=set_value,
+            rename_pair=rename_pair,
+            del_keys=del_keys,
         )
     except UsageError:
         raise
@@ -189,8 +241,16 @@ def run(args: argparse.Namespace) -> int:
     delete_keys = list(args.delete or [])
     if not args.key and not args.rename and not delete_keys:
         raise UsageError("provide --key/--value, --rename OLD=NEW, and/or --delete KEY")
-    if args.key and args.value is None and not args.rename and not delete_keys:
+    if args.key and args.value is None:
         raise UsageError("--value is required with --key")
+    if args.value is not None and not args.key:
+        raise UsageError("--value requires --key")
+    edits = _prepare_edits(
+        key=args.key,
+        value=args.value,
+        rename=args.rename,
+        delete_keys=delete_keys,
+    )
 
     paths = expand_at_list_paths(resolve_paths(args.inputs, use_stdin=args.stdin))
     if args.out and len(paths) != 1:
@@ -215,7 +275,7 @@ def run(args: argparse.Namespace) -> int:
         ensure_unique_basenames(paths)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    jobs: list[tuple[str, str, argparse.Namespace, list[str]]] = []
+    jobs: list[tuple[str, str, str, tuple[Any, ...]]] = []
     for src in paths:
         if out_dir is not None:
             dest = str(out_dir / Path(src).name)
@@ -223,7 +283,7 @@ def run(args: argparse.Namespace) -> int:
             dest = str(args.out)
         else:
             dest = src
-        jobs.append((src, dest, args, delete_keys))
+        jobs.append((src, dest, args.hdu, edits))
 
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(jobs))
     run_file_jobs(jobs, _edit_one, file_jobs)

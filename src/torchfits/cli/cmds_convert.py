@@ -11,7 +11,7 @@ import torchfits
 from torchfits import table as tf_table
 from torchfits.transforms.rgb import lupton_rgb, rgb as auto_rgb, write_rgb_image
 
-from .common import EXIT_OK, IoError, UsageError, add_hdu_arg
+from .common import EXIT_OK, IoError, UsageError, add_hdu_arg, reject_same_path
 
 _TABLE_FORMATS = ("parquet", "csv", "tsv", "arrow", "fits")
 _ALL_FORMATS = (*_TABLE_FORMATS, "png")
@@ -75,13 +75,13 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument(
         "--brightness",
         type=float,
-        default=0.15,
+        default=None,
         help="auto rgb sky+noise display value (default: 0.15)",
     )
     parser.add_argument(
         "--saturation",
         type=float,
-        default=2.0,
+        default=None,
         help="auto rgb chroma boost (default: 2; 1 = photometric)",
     )
     parser.add_argument(
@@ -97,11 +97,14 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument(
         "--q",
         type=float,
-        default=8.0,
-        help="Lupton Q (--recipe lupton)",
+        default=None,
+        help="Lupton Q (--recipe lupton; default: 8)",
     )
     parser.add_argument(
-        "--stretch", type=float, default=0.5, help="Lupton stretch (--recipe lupton)"
+        "--stretch",
+        type=float,
+        default=None,
+        help="Lupton stretch (--recipe lupton; default: 0.5)",
     )
     parser.set_defaults(func=run)
 
@@ -164,12 +167,10 @@ def _auto_band_indices(
     if raw is None:
         if num_inputs == 1:
             # Keep the historical convenience: a single multi-HDU file
-            # defaults to RGB from HDUs 0,1,2; grey otherwise.
-            try:
-                first = (inputs or [""])[0]
-                n_hdus = torchfits.read_num_hdus(first) if first else 1
-            except Exception:
-                n_hdus = 1
+            # defaults to RGB from HDUs 0,1,2; grey otherwise. A failure to
+            # read the source must not silently render a wrong-band PNG.
+            first = (inputs or [""])[0]
+            n_hdus = torchfits.read_num_hdus(first) if first else 1
             return [0, 1, 2][: min(3, n_hdus)] or [0]
         return [0] * num_inputs
     indices = _parse_hdu_list(raw, flag="--bands")
@@ -287,12 +288,26 @@ def _convert_png(args: argparse.Namespace) -> int:
     if args.where or args.columns:
         raise UsageError("--where / --columns apply only to table convert")
     if args.recipe == "lupton":
+        for flag, given in (
+            ("--zeropoints", args.zeropoints is not None),
+            ("--calibrated", args.calibrated),
+            ("--brightness", args.brightness is not None),
+            ("--saturation", args.saturation is not None),
+        ):
+            if given:
+                raise UsageError(f"{flag} applies only to --recipe auto")
         hdus = _lupton_band_indices(args.bands, len(args.inputs))
         bands = _load_png_bands(args.inputs, hdus)
-        image = lupton_rgb(*bands, Q=args.q, stretch=args.stretch)
+        image = lupton_rgb(
+            *bands,
+            Q=8.0 if args.q is None else args.q,
+            stretch=0.5 if args.stretch is None else args.stretch,
+        )
         write_rgb_image(args.output, image)
         return EXIT_OK
 
+    if args.q is not None or args.stretch is not None:
+        raise UsageError("--q / --stretch apply only to --recipe lupton")
     hdus = _auto_band_indices(args.bands, len(args.inputs), args.inputs)
     bands = _load_png_bands(args.inputs, hdus)
     rgb_args: tuple[Any, ...]
@@ -311,8 +326,8 @@ def _convert_png(args: argparse.Namespace) -> int:
             ]
     image = auto_rgb(
         *rgb_args,
-        brightness=args.brightness,
-        saturation=args.saturation,
+        brightness=0.15 if args.brightness is None else args.brightness,
+        saturation=2.0 if args.saturation is None else args.saturation,
         zeropoints=zps,
     )
     write_rgb_image(args.output, image)
@@ -331,6 +346,8 @@ def run(args: argparse.Namespace) -> int:
                 )
             args.inputs = list(args.paths[:-1])
             args.output = args.paths[-1]
+        for src in args.inputs:
+            reject_same_path(src, args.output)
         fmt = _infer_format(args.output, args.to)
         if fmt in _TABLE_FORMATS:
             return _convert_table(args, fmt)

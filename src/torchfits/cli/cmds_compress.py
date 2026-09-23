@@ -22,6 +22,7 @@ from .common import (
     _hdu_width,
     ensure_unique_split_stems,
     hdu_type_name,
+    reject_same_path,
     resolve_batch_io_pairs,
     resolve_file_jobs,
     run_file_jobs,
@@ -130,6 +131,7 @@ def _rewrite_one_input_split_hdu(
     hdu: str | None,
     *,
     compress: bool | str,
+    batch_inputs: tuple[str, ...] = (),
 ) -> int:
     """Compress/decompress image HDUs from one input; return count written."""
     try:
@@ -156,6 +158,11 @@ def _rewrite_one_input_split_hdu(
                 )
             header = torchfits.read_header(input_path, index)
             output_path = _hdu_output_path(out_dir, input_path, index, width=width)
+            # A generated split name may coincide with another input of the
+            # batch (re-splitting into the same directory): refuse instead of
+            # silently clobbering an unrelated input.
+            for other in batch_inputs:
+                reject_same_path(other, output_path)
             torchfits.write(
                 output_path,
                 tensor,
@@ -190,7 +197,7 @@ def _rewrite_split_hdu(args: argparse.Namespace, *, compress: bool | str) -> Non
     counts = run_file_jobs(
         inputs,
         lambda path: _rewrite_one_input_split_hdu(
-            path, out_dir, args.hdu, compress=compress
+            path, out_dir, args.hdu, compress=compress, batch_inputs=tuple(inputs)
         ),
         file_jobs,
     )

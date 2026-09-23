@@ -25,6 +25,7 @@ from .common import (
     _hdu_width,
     ensure_unique_split_stems,
     hdu_type_name,
+    reject_same_path,
     resolve_file_jobs,
     run_file_jobs,
     selected_hdu_indices,
@@ -60,10 +61,21 @@ def _saturate_to(t: torch.Tensor, dtype: torch.dtype) -> tuple[torch.Tensor, int
     info = torch.iinfo(dtype)
     clipped = torch.clamp(t, info.min, info.max)
     n_clipped = int((clipped != t).sum())
-    return clipped.to(dtype), n_clipped
+    out = clipped.to(dtype)
+    if t.dtype.is_floating_point:
+        n_frac = int((out.to(t.dtype) != clipped).sum())
+        if n_frac:
+            warnings.warn(
+                f"arith: {n_frac} pixel value(s) lost fractional parts casting "
+                f"to {dtype} (use --dtype float32/float64 to keep full precision)",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+    return out, n_clipped
 
 
 def _compute(
+    op: str,
     op_fn: Callable[[torch.Tensor, torch.Tensor | float], torch.Tensor],
     left: torch.Tensor,
     right: torch.Tensor | float,
@@ -89,6 +101,15 @@ def _compute(
         right_t = right if isinstance(right, torch.Tensor) else None
         if right_t is not None and right_t.dtype.is_floating_point:
             result = op_fn(left.to(torch.float64), right_t.to(torch.float64))
+        elif op == "mul" and out_dtype != torch.int64:
+            # Integer mul can overflow even the int64 accumulator (e.g. a
+            # uint32 image squared reaches 2**64) and wrap to garbage.
+            # float64 is exact for every product that survives saturation into
+            # any <= 32-bit FITS integer dtype and saturates cleanly beyond it.
+            result = op_fn(
+                left.to(torch.float64),
+                right_t.to(torch.float64) if right_t is not None else float(right),
+            )
         else:
             acc = left.to(torch.int64)
             acc_r = right_t.to(torch.int64) if right_t is not None else right
@@ -136,8 +157,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         choices=_DTYPE_CHOICES,
         default="auto",
         help=(
-            "output/compute dtype: 'auto' keeps the input dtype with "
-            "saturation warnings on overflow; float32/float64 compute and "
+            "output/compute dtype: 'auto' keeps the input dtype, warning on "
+            "saturation or fractional truncation; float32/float64 compute and "
             "store in that dtype"
         ),
     )
@@ -270,7 +291,7 @@ def _apply_op(
         # Fractional quotients must survive: integral inputs compute in
         # float64 rather than truncating through an integer output dtype.
         out_dtype = left.dtype if left.dtype.is_floating_point else torch.float64
-    return _compute(_OPS[op], left, right, out_dtype)
+    return _compute(op, _OPS[op], left, right, out_dtype)
 
 
 def _arith_one_file(
@@ -285,6 +306,7 @@ def _arith_one_file(
     out_path: str | None,
     out_dir: Path | None,
     split: str,
+    batch_inputs: tuple[str, ...] = (),
 ) -> None:
     indices = _image_indices(path_a, hdu)
     if not indices:
@@ -355,6 +377,11 @@ def _arith_one_file(
         stem = Path(cfitsio_base_path(path_a)).stem
         for index, result, header in zip(indices, results, headers, strict=True):
             dest = out_dir / f"{stem}_hdu{index:0{width}d}.fits"
+            # A generated split name may coincide with another input of the
+            # batch (re-splitting into the same directory): refuse instead of
+            # silently clobbering an unrelated input.
+            for other in batch_inputs:
+                reject_same_path(other, str(dest))
             torchfits.write_tensor(str(dest), result, header=header, overwrite=True)
         return
 
@@ -413,6 +440,7 @@ def run(args: argparse.Namespace) -> int:
             out_path=out_path,
             out_dir=out_dir,
             split=args.split,
+            batch_inputs=tuple(a_paths),
         )
 
     try:
