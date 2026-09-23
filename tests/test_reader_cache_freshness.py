@@ -64,20 +64,26 @@ def build_format_swap_pair(directory) -> tuple[str, bytes]:
             fits.Column(name="B", format=b_fmt, array=b_arr),
         ]
         buf = io.BytesIO()
-        fits.HDUList(
-            [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]
-        ).writeto(buf)
+        fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(
+            buf
+        )
         return buf.getvalue()
 
     a_bytes = _bytes(
-        "J", np.array([1, 2, 3], dtype=np.int32),
-        "E", np.array([0.5, 1.5, 2.5], dtype=np.float32),
+        "J",
+        np.array([1, 2, 3], dtype=np.int32),
+        "E",
+        np.array([0.5, 1.5, 2.5], dtype=np.float32),
     )
     b_bytes = _bytes(
-        "E", np.array([7.5, 8.5, 9.5], dtype=np.float32),
-        "J", np.array([4, 5, 6], dtype=np.int32),
+        "E",
+        np.array([7.5, 8.5, 9.5], dtype=np.float32),
+        "J",
+        np.array([4, 5, 6], dtype=np.int32),
     )
-    assert len(a_bytes) == len(b_bytes, ), "pair must be byte-length identical"
+    assert len(a_bytes) == len(
+        b_bytes,
+    ), "pair must be byte-length identical"
     with open(path, "wb") as f:
         f.write(a_bytes)
     return path, b_bytes

@@ -28,12 +28,20 @@ def _write_table(path, nrows=10):
         afits.Column(name="I32", format="J", array=np.arange(nrows, dtype="<i4") + 100),
         afits.Column(name="I16", format="I", array=np.arange(nrows, dtype="<i2") + 7),
         afits.Column(name="I64", format="K", array=np.arange(nrows, dtype="<i8") + 9),
-        afits.Column(name="F32", format="E", array=np.arange(nrows, dtype="<f4") + 0.25),
+        afits.Column(
+            name="F32", format="E", array=np.arange(nrows, dtype="<f4") + 0.25
+        ),
         afits.Column(name="F64", format="D", array=np.arange(nrows, dtype="<f8") + 0.5),
         afits.Column(name="U8", format="B", array=np.arange(nrows, dtype="u1") + 3),
         afits.Column(name="LOG", format="L", array=np.arange(nrows) % 2 == 0),
-        afits.Column(name="S5", format="5A", array=np.array([f"s{i:04d}" for i in range(nrows)])),
-        afits.Column(name="V2", format="2J", array=np.arange(nrows * 2, dtype="<i4").reshape(nrows, 2)),
+        afits.Column(
+            name="S5", format="5A", array=np.array([f"s{i:04d}" for i in range(nrows)])
+        ),
+        afits.Column(
+            name="V2",
+            format="2J",
+            array=np.arange(nrows * 2, dtype="<i4").reshape(nrows, 2),
+        ),
     ]
     afits.BinTableHDU.from_columns(cols).writeto(str(path), overwrite=True)
     return str(path)
@@ -55,7 +63,9 @@ def test_strided_1d_payloads_roundtrip_exact(tmp_path):
         "F64": np.arange(2 * nrows, dtype="<f8") + 2.25,
         "U8": np.arange(2 * nrows, dtype="u1") + 66,
         "LOG": (np.arange(2 * nrows) % 3 == 0),
-        "S5": np.array([[0x61 + (i % 26)] * 5 for i in range(2 * nrows)], dtype=np.uint8),
+        "S5": np.array(
+            [[0x61 + (i % 26)] * 5 for i in range(2 * nrows)], dtype=np.uint8
+        ),
     }
     payload = {k: v[::2] for k, v in full.items()}
     # Views into a larger base: flat (unstrided) indexing would write the
@@ -79,7 +89,9 @@ def test_strided_2d_views_roundtrip_exact(tmp_path):
     base = (np.arange(4 * nrows, dtype="<i4") + 700).reshape(2 * nrows, 2)
     row_strided = base[::2]  # element strides (4, 1)
     assert row_strided.strides == (16, 4)
-    wide = np.asfortranarray((np.arange(4 * nrows, dtype="<i4") + 900).reshape(nrows, 4))
+    wide = np.asfortranarray(
+        (np.arange(4 * nrows, dtype="<i4") + 900).reshape(nrows, 4)
+    )
     col_strided = wide[:, :2]  # element strides (1, 4)
     assert col_strided.strides == (4, 40)
 
@@ -127,7 +139,9 @@ def test_zero_dim_payload_single_row_update(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
     )
-    assert proc.returncode == 0, f"0-dim payload crashed: rc={proc.returncode} {proc.stderr}"
+    assert proc.returncode == 0, (
+        f"0-dim payload crashed: rc={proc.returncode} {proc.stderr}"
+    )
     assert proc.stdout.strip().splitlines()[-1] == "42"
 
 

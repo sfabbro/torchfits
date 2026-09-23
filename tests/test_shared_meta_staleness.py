@@ -124,7 +124,6 @@ def test_reader_cache_generation_rotates_on_shared_meta_invalidation(tmp_path):
     layout (silently wrong values) even after the documented clear.
     """
     import importlib
-    import os
 
     from test_reader_cache_freshness import (
         build_format_swap_pair,

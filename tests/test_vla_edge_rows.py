@@ -34,7 +34,13 @@ def _write(path, cols):
 
 def test_vla_zero_length_rows_roundtrip_exact(tmp_path):
     rows = [[0, 1, 2], [], [10, 11, 12, 13, 14], [], [99]]
-    path = _write(tmp_path / "vla.fits", [_vla_col("V", rows), afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4"))])
+    path = _write(
+        tmp_path / "vla.fits",
+        [
+            _vla_col("V", rows),
+            afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4")),
+        ],
+    )
     out = torchfits.read(path, hdu=1)
     got = [list(np.asarray(v)) for v in out["V"]]
     assert got == [[0, 1, 2], [], [10, 11, 12, 13, 14], [], [99]]
@@ -45,7 +51,13 @@ def test_vla_zero_length_rows_roundtrip_exact(tmp_path):
 
 def test_vla_all_rows_zero_length(tmp_path):
     rows = [[], [], [], [], []]
-    path = _write(tmp_path / "vla0.fits", [_vla_col("V", rows), afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4"))])
+    path = _write(
+        tmp_path / "vla0.fits",
+        [
+            _vla_col("V", rows),
+            afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4")),
+        ],
+    )
     out = torchfits.read(path, hdu=1)
     assert len(out["V"]) == 5
     assert all(len(np.asarray(v)) == 0 for v in out["V"])
@@ -54,10 +66,18 @@ def test_vla_all_rows_zero_length(tmp_path):
 
 def test_vla_flat_offsets_with_zero_length(tmp_path):
     rows = [[], [5, 6], [], [50, 51, 52, 53], []]
-    path = _write(tmp_path / "vlaf.fits", [_vla_col("V", rows), afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4"))])
+    path = _write(
+        tmp_path / "vlaf.fits",
+        [
+            _vla_col("V", rows),
+            afits.Column(name="N", format="J", array=np.arange(5, dtype="<i4")),
+        ],
+    )
     out = cpp.read_fits_table_rows_numpy(path, 1, ["V", "N"], 1, -1, False)
     values, offsets = out["V"]
-    assert np.array_equal(np.asarray(values), np.array([5, 6, 50, 51, 52, 53], dtype="<i4"))
+    assert np.array_equal(
+        np.asarray(values), np.array([5, 6, 50, 51, 52, 53], dtype="<i4")
+    )
     assert np.array_equal(np.asarray(offsets), np.array([0, 0, 2, 2, 6, 6]))
 
 
@@ -115,7 +135,10 @@ def test_vla_raw_tnull_sentinel_stays(tmp_path):
     arr = np.empty(2, dtype=object)
     arr[0] = np.array([3, -999, 4], dtype="<i4")
     arr[1] = np.arange(0, dtype="<i4")
-    path = _write(tmp_path / "vraw.fits", [afits.Column(name="V", format="PJ()", array=arr, null=-999)])
+    path = _write(
+        tmp_path / "vraw.fits",
+        [afits.Column(name="V", format="PJ()", array=arr, null=-999)],
+    )
     out = torchfits.read(path, hdu=1)
     got = np.asarray(out["V"][0])
     assert got.dtype == np.int32
@@ -124,7 +147,10 @@ def test_vla_raw_tnull_sentinel_stays(tmp_path):
 
 def test_repeat_zero_fixed_column_clean_error(tmp_path):
     """An absurd TFORM (repeat 0) fails loudly at open — never garbage rows."""
-    path = _write(tmp_path / "rep0.fits", [afits.Column(name="A", format="J", array=np.arange(4, dtype="<i4"))])
+    path = _write(
+        tmp_path / "rep0.fits",
+        [afits.Column(name="A", format="J", array=np.arange(4, dtype="<i4"))],
+    )
     with afits.open(path, mode="update") as hdul:
         hdul[1].header["TFORM1"] = "0J"
     with pytest.raises(RuntimeError):
@@ -135,8 +161,12 @@ def _simple_table(path, nrows=6):
     path = _write(
         path,
         [
-            afits.Column(name="I32", format="J", array=np.arange(nrows, dtype="<i4") + 100),
-            afits.Column(name="I16", format="I", array=np.arange(nrows, dtype="<i2") + 7),
+            afits.Column(
+                name="I32", format="J", array=np.arange(nrows, dtype="<i4") + 100
+            ),
+            afits.Column(
+                name="I16", format="I", array=np.arange(nrows, dtype="<i2") + 7
+            ),
         ],
     )
     return path
@@ -155,7 +185,10 @@ def test_duplicate_column_request_returns_data(tmp_path):
     ):
         out = call()
         assert out["I32"] is not None
-        assert np.array_equal(np.asarray(out["I32"])[: len(expected)], expected[: len(np.asarray(out["I32"]))])
+        assert np.array_equal(
+            np.asarray(out["I32"])[: len(expected)],
+            expected[: len(np.asarray(out["I32"]))],
+        )
     out = cpp.read_fits_table_rows(path, 1, ["I16", "I32", "I16"], 1, -1, False)
     assert out["I16"] is not None
     assert out["I32"] is not None
@@ -185,7 +218,10 @@ def test_error_messages_include_details(tmp_path):
 
 def test_empty_table_unknown_column_raises(tmp_path):
     """Empty tables must not silently drop requested unknown columns."""
-    path = _write(tmp_path / "empty.fits", [afits.Column(name="A", format="J", array=np.arange(0, dtype="<i4"))])
+    path = _write(
+        tmp_path / "empty.fits",
+        [afits.Column(name="A", format="J", array=np.arange(0, dtype="<i4"))],
+    )
     for call in (
         lambda: cpp.read_fits_table(path, 1, ["nope"], False),
         lambda: cpp.read_fits_table(path, 1, ["nope"], True),
@@ -196,6 +232,9 @@ def test_empty_table_unknown_column_raises(tmp_path):
 
 
 def test_empty_table_valid_columns_still_empty(tmp_path):
-    path = _write(tmp_path / "empty2.fits", [afits.Column(name="A", format="J", array=np.arange(0, dtype="<i4"))])
+    path = _write(
+        tmp_path / "empty2.fits",
+        [afits.Column(name="A", format="J", array=np.arange(0, dtype="<i4"))],
+    )
     assert dict(cpp.read_fits_table(path, 1, ["A"], False)) == {}
     assert dict(cpp.read_fits_table(path, 1, [], True)) == {}

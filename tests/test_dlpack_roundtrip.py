@@ -104,7 +104,10 @@ def test_append_rows_unaligned_bit_repeat_roundtrip(tmp_path):
     # carry the pattern too, so any corruption of existing OR appended rows is
     # visible and the comparison below is exact.
     want = np.array(
-        [[(r * repeat + b) % 3 == 0 for b in range(repeat)] for r in range(n_existing + n_extra)],
+        [
+            [(r * repeat + b) % 3 == 0 for b in range(repeat)]
+            for r in range(n_existing + n_extra)
+        ],
         dtype=bool,
     )
     path = str(tmp_path / "bit12x.fits")
@@ -194,9 +197,7 @@ def test_zero_length_vla_rows_roundtrip(tmp_path):
     ).writeto(path, overwrite=True)
 
     _m().append_fits_table_rows(path, 1, {"VLA": [np.array([], dtype=np.int16)]})
-    _m().update_fits_table_rows(
-        path, 1, {"VLA": [np.array([], dtype=np.int16)]}, 2, 1
-    )
+    _m().update_fits_table_rows(path, 1, {"VLA": [np.array([], dtype=np.int16)]}, 2, 1)
 
     with fits.open(path, mode="readonly") as hdul:
         got = [np.asarray(r).tolist() for r in hdul[1].data["VLA"]]
