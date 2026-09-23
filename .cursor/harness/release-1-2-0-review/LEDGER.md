@@ -263,3 +263,32 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_vla_edge_rows.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_where_matrix.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_where_semantics.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `benchmarks/__init__.py` | R12 | full | — | clean |
+| `benchmarks/bench_all.py` | R12 | full | — | clean |
+| `benchmarks/bench_arrow_tables.py` | R12 | full | r12a-03 | fixed (r12a-03) |
+| `benchmarks/bench_cache.py` | R12 | full | — | clean |
+| `benchmarks/bench_contract.py` | R12 | full | — | clean |
+| `benchmarks/bench_cpp_backend.py` | R12 | full | — | clean |
+| `benchmarks/bench_denoise.py` | R12 | full | — | clean |
+| `benchmarks/bench_fits_io.py` | R12 | full | r12a-01, r12a-02, r12a-05 | fixed (r12a-01, r12a-02); r12a-05 deferred |
+| `benchmarks/bench_fits_write.py` | R12 | full | — | clean |
+| `benchmarks/bench_fitstable_io.py` | R12 | full | — | clean |
+| `benchmarks/bench_fixtures.py` | R12 | full | — | clean |
+| `benchmarks/bench_gpu_memory.py` | R12 | full | — | clean |
+| `benchmarks/bench_gpu_transports.py` | R12 | full | r12a-04, r12a-05 | fixed (r12a-04); r12a-05 deferred |
+| `benchmarks/bench_http_stream.py` | R12 | full | — | clean |
+| `benchmarks/bench_import_boundary.py` | R12 | full | — | clean |
+| `benchmarks/bench_median_stack.py` | R12 | full | — | clean |
+| `benchmarks/bench_megacam_cutouts.py` | R12 | full | — | clean |
+| `benchmarks/bench_metadata.py` | R12 | full | — | clean |
+| `benchmarks/bench_ml_loader.py` | R12 | full | — | clean |
+| `benchmarks/bench_science_pipeline.py` | R12 | full | — | clean |
+| `benchmarks/bench_table.py` | R12 | full | — | clean |
+| `benchmarks/bench_timing.py` | R12 | full | — | clean |
+| `benchmarks/cfitsio_direct/CMakeLists.txt` | R12 | full | — | clean |
+| `benchmarks/cfitsio_direct/bench_cfitsio_direct.c` | R12 | full | — | clean |
+| `benchmarks/config.py` | R12 | full | — | clean |
+| `benchmarks/mpl_config.py` | R12 | full | — | clean |
+| `benchmarks/replays/upstream_sources.json` | R12 | full | — | clean |
+| `benchmarks/run_cfitsio_direct_bench.py` | R12 | full | — | clean |
+| `benchmarks/suites.py` | R12 | full | — | clean |

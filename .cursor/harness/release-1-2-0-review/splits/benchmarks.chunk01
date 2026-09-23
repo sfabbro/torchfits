@@ -1,0 +1,14 @@
+benchmarks/bench_median_stack.py
+benchmarks/bench_megacam_cutouts.py
+benchmarks/bench_metadata.py
+benchmarks/bench_ml_loader.py
+benchmarks/bench_science_pipeline.py
+benchmarks/bench_table.py
+benchmarks/bench_timing.py
+benchmarks/cfitsio_direct/CMakeLists.txt
+benchmarks/cfitsio_direct/bench_cfitsio_direct.c
+benchmarks/config.py
+benchmarks/mpl_config.py
+benchmarks/replays/upstream_sources.json
+benchmarks/run_cfitsio_direct_bench.py
+benchmarks/suites.py
