@@ -38,6 +38,10 @@ class TensorHDU:
 
     @property
     def data(self) -> DataView:
+        if self._closed:
+            raise RuntimeError(
+                "TensorHDU file handle is closed; cannot read image data"
+            )
         if self._data_view is None:
             raise ValueError("No file handle available")
         return self._data_view
@@ -70,6 +74,12 @@ class TensorHDU:
             # was constructed without a source path.
             source = self._source_path
             if isinstance(source, str) and source:
+                # Re-validate immediately before the CFITSIO reopen: the URL
+                # was guarded at HDUList open, but this connection re-resolves
+                # (cfitsio-http-ssrf / residual DNS rebinding).
+                from .._io_engine.paths import guard_fits_path
+
+                guard_fits_path(source)
                 handle = cpp.open_fits_file(source, "r")
                 try:
                     return to_device(cpp.read_full(handle, self._hdu_index), device)
@@ -88,6 +98,16 @@ class TensorHDU:
         accepted but always read in full. Each yielded tensor equals the
         corresponding slice of :meth:`to_tensor`.
         """
+        source = self._source_path
+        if self._data is None and isinstance(source, str) and source:
+            # Guard eagerly, outside the generator body (cfitsio-http-ssrf),
+            # and re-validate immediately before the CFITSIO reopen below.
+            from .._io_engine.paths import guard_fits_path
+
+            guard_fits_path(source)
+        return self._chunks_iter(chunk_size)
+
+    def _chunks_iter(self, chunk_size: Tuple[int, ...]) -> Iterator[Tensor]:
         if self._data is not None:
             step = max(1, int(chunk_size[0])) if chunk_size else 64
             data = self._data

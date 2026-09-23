@@ -82,6 +82,40 @@ def test_mutation_barrier_does_not_clear_global_cache():
     clear.assert_not_called()
 
 
+def test_tensor_hdu_data_after_close_raises_typed_error():
+    """The .data property must report closure like to_tensor does (r6b)."""
+    handle = mock.Mock()
+    hdu = TensorHDU(file_handle=handle, hdu_index=0)
+    _ = hdu.data
+    hdu.mark_closed()
+    with pytest.raises(RuntimeError, match="closed"):
+        hdu.data
+    # In-memory HDUs never had a handle: that stays a ValueError.
+    inmem = TensorHDU(data=torch.zeros(2))
+    with pytest.raises(ValueError, match="No file handle"):
+        inmem.data
+
+
+def test_tensor_hdu_reopens_revalidate_source_path():
+    """to_tensor()/chunks() re-open source_path; the SSRF guard must run
+    before CFITSIO sees the URL (r6b; cfitsio-http-ssrf re-validate-before-open)."""
+    from torchfits.http_util import HttpBlockedError
+
+    handle = mock.Mock()
+    hdu = TensorHDU(
+        data=None,
+        header=None,
+        file_handle=handle,
+        hdu_index=0,
+        source_path="http://127.0.0.1:1/x.fits",
+    )
+    with pytest.raises(HttpBlockedError):
+        hdu.to_tensor()
+    with pytest.raises(HttpBlockedError):
+        list(hdu.chunks((2,)))
+    handle.read_subset.assert_not_called()
+
+
 def test_table_data_accessor_preserves_rank():
     from torchfits._hdu.table_hdu import TableDataAccessor, TableHDU
 

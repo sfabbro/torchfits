@@ -8,6 +8,7 @@ import torch
 from torch import Tensor
 
 from ._repr import render_html_table
+from .card import _reassemble_longstr_cards
 from .header import Header
 from .table_hdu import TableHDU
 
@@ -26,6 +27,19 @@ class _TableHDURefDataWrapper:
         return self._parent.columns
 
 
+_FORWARDED_KWARGS = ("hdu", "columns", "row_slice")
+
+
+def _reject_forwarded_kwargs(method: str, kwargs: Dict[str, Any]) -> None:
+    for name in _FORWARDED_KWARGS:
+        if name in kwargs:
+            raise TypeError(
+                f"{method}() got a duplicate argument {name!r}: {name} is "
+                f"forwarded from this TableHDURef's projection; use select()/"
+                f"head() to change the projection instead"
+            )
+
+
 class TableHDURef:
     def __init__(
         self,
@@ -41,8 +55,6 @@ class TableHDURef:
         self._source_hdu = source_hdu
         self._columns: Optional[tuple[str, ...]] = tuple(columns) if columns else None
         self._row_slice = row_slice
-        self._all_columns_cache: tuple[str, ...] | None = None
-        self._all_columns_cache_version: tuple[Any, int] | None = None
 
     def _require_source(self) -> tuple[str, int]:
         if not self._source_path or self._source_hdu is None:
@@ -81,13 +93,12 @@ class TableHDURef:
         if self._columns is not None:
             return list(self._columns)
 
-        if self._all_columns_cache is not None and (
-            self._all_columns_cache_version == (id(self.header), self.header._version)
-        ):
-            return list(self._all_columns_cache)
+        # Deliberately uncached: this is a metadata walk, and the old
+        # id()-keyed cache aliased stale names whenever a fresh Header landed
+        # on a replaced header's id (fresh Headers share _version == 0) (r6b).
         try:
             n = int(self.header.get("TFIELDS", 0))
-        except Exception:
+        except (TypeError, ValueError):
             n = 0
         out: list[str] = []
         for i in range(1, n + 1):
@@ -96,8 +107,6 @@ class TableHDURef:
                 out.append(name)
             else:
                 out.append(f"COL{i}")
-        self._all_columns_cache = tuple(out)
-        self._all_columns_cache_version = (id(self.header), self.header._version)
         return out
 
     @property
@@ -155,30 +164,6 @@ class TableHDURef:
     def filter(self, condition: str) -> "TableHDU":
         return self.materialize().filter(condition)
 
-    def _normalize_row_slice(
-        self, row_slice: Optional[slice | tuple[int, int]]
-    ) -> tuple[int, int]:
-        if row_slice is None:
-            return 1, -1
-        if isinstance(row_slice, tuple):
-            if len(row_slice) != 2:
-                raise ValueError("row_slice tuple must be (start, stop)")
-            start, stop = row_slice
-        else:
-            start = 0 if row_slice.start is None else row_slice.start
-            stop = row_slice.stop
-            if row_slice.step not in (None, 1):
-                raise ValueError("row_slice step is not supported")
-        start = int(start)
-        if start < 0:
-            raise ValueError("row_slice start must be >= 0")
-        if stop is None:
-            return start + 1, -1
-        stop = int(stop)
-        if stop < start:
-            return start + 1, 0
-        return start + 1, stop - start
-
     def _is_ascii_table(self) -> bool:
         try:
             return str(self.header.get("XTENSION", "")).strip().upper() == "TABLE"
@@ -200,7 +185,11 @@ class TableHDURef:
             columns = list(self._columns) if self._columns is not None else None
         if row_slice is None:
             row_slice = self._row_slice
-        start_row, num_rows = self._normalize_row_slice(row_slice)
+        # Shared row-window normalization (r5c-15 dedupe); lazy import —
+        # _table.utils pulls in the table I/O package at module import time.
+        from .._table.utils import _normalize_row_slice
+
+        start_row, num_rows = _normalize_row_slice(row_slice)
         effective_mmap = bool(mmap)
         if effective_mmap and self._is_ascii_table():
             effective_mmap = False
@@ -231,7 +220,11 @@ class TableHDURef:
         import torchfits
 
         path, hdu = self._require_source()
-        start_row, num_rows = self._normalize_row_slice(self._row_slice)
+        # Shared row-window normalization (r5c-15 dedupe); lazy import as in
+        # read() (see note there).
+        from .._table.utils import _normalize_row_slice
+
+        start_row, num_rows = _normalize_row_slice(self._row_slice)
         effective_mmap = bool(mmap)
         if effective_mmap and self._is_ascii_table():
             effective_mmap = False
@@ -295,7 +288,9 @@ class TableHDURef:
         for col in self.schema.get("vla_columns", []):
             try:
                 out[col] = self.get_vla_lengths(col)
-            except Exception:
+            except KeyError:
+                # schema/data disagreement skips the column; IO errors from
+                # the column read must propagate (r6b).
                 continue
         return out
 
@@ -304,6 +299,14 @@ class TableHDURef:
         return _TableHDURefDataWrapper(self)
 
     def to_arrow(self, **kwargs: Any) -> Any:
+        """Return this projection as a pyarrow Table via ``torchfits.table.read``.
+
+        ``hdu``, ``columns``, and ``row_slice`` are forwarded from this
+        TableHDURef and MUST NOT be passed here — a duplicate raises
+        ``TypeError`` naming it. Narrow the projection with :meth:`select` or
+        :meth:`head`; every other keyword is forwarded verbatim.
+        """
+        _reject_forwarded_kwargs("to_arrow", kwargs)
         import torchfits
 
         path, hdu = self._require_source()
@@ -316,6 +319,14 @@ class TableHDURef:
         )
 
     def scan_arrow(self, **kwargs: Any) -> Any:
+        """Yield this projection as Arrow batches via ``torchfits.table.scan``.
+
+        ``hdu``, ``columns``, and ``row_slice`` are forwarded from this
+        TableHDURef and MUST NOT be passed here — a duplicate raises
+        ``TypeError`` naming it. Narrow the projection with :meth:`select` or
+        :meth:`head`; every other keyword is forwarded verbatim.
+        """
+        _reject_forwarded_kwargs("scan_arrow", kwargs)
         import torchfits
 
         path, hdu = self._require_source()
@@ -328,6 +339,14 @@ class TableHDURef:
         )
 
     def reader_arrow(self, **kwargs: Any) -> Any:
+        """Return this projection as a batch reader via ``torchfits.table.reader``.
+
+        ``hdu``, ``columns``, and ``row_slice`` are forwarded from this
+        TableHDURef and MUST NOT be passed here — a duplicate raises
+        ``TypeError`` naming it. Narrow the projection with :meth:`select` or
+        :meth:`head`; every other keyword is forwarded verbatim.
+        """
+        _reject_forwarded_kwargs("reader_arrow", kwargs)
         import torchfits
 
         path, hdu = self._require_source()
@@ -354,7 +373,9 @@ class TableHDURef:
             clear_meta()
         handle = cpp.open_fits_file(path, "r")
         try:
-            header = Header(cpp.read_header(handle, hdu))
+            # cpp.read_header returns raw (key, value, comment) triples with
+            # LONGSTRN '&' + CONTINUE chains un-reassembled (r4b-13).
+            header = Header(_reassemble_longstr_cards(cpp.read_header(handle, hdu)))
         finally:
             try:
                 handle.close()

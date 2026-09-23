@@ -201,7 +201,10 @@ def test_stream_scaled_table_with_mmap_succeeds(tmp_path):
 
 def test_quantize_nan_becomes_blank_not_lo(tmp_path):
     """Non-finite pixels encode as the reserved BLANK sentinel."""
-    x = torch.randn(16, 16) * 10 + 100
+    # Deterministic tail-free data: unseeded randn occasionally draws a >3σ
+    # pixel that robust quantization clips by design, which tripped the
+    # round-trip tolerance on the clipped value alone (r6b flake).
+    x = torch.arange(256, dtype=torch.float32).reshape(16, 16) * 0.05 + 100.0
     x[0, 0] = float("nan")
     path = tmp_path / "nanq.fits"
     torchfits.write(str(path), x, quantize="robust", overwrite=True)
@@ -229,3 +232,55 @@ def test_quantize_table_nan_writes_tnull(tmp_path):
     torchfits.write(str(path), v, quantize="robust", overwrite=True)
     th = torchfits.read_header(str(path), 1)
     assert int(th["TNULL1"]) == -32767
+
+
+def test_tablehdu_vla_lengths_propagates_item_errors():
+    """vla_lengths must not swallow real errors silently (r6b)."""
+    from torchfits.hdu import Header, TableHDU
+
+    class BrokenLen:
+        def __len__(self):
+            raise RuntimeError("boom")
+
+    header = Header()
+    header["TFIELDS"] = 1
+    header["TTYPE1"] = "V"
+    header["TFORM1"] = "PJ()"
+    header["NAXIS2"] = 2
+    hdu = TableHDU({"V": [torch.tensor([1, 2]), BrokenLen()]}, header=header)
+    assert hdu.schema.get("vla_columns") == ["V"]
+    with pytest.raises(RuntimeError, match="boom"):
+        _ = hdu.vla_lengths
+
+
+def test_tablehduref_vla_lengths_propagates_read_errors(tmp_path):
+    """File-backed vla_lengths must not swallow IO errors silently (r6b)."""
+    from torchfits.hdu import Header, TableHDURef
+
+    header = Header()
+    header["TFIELDS"] = 1
+    header["TTYPE1"] = "V"
+    header["TFORM1"] = "PJ()"
+    header["NAXIS2"] = 4
+    ref = TableHDURef(
+        header=header,
+        source_path=str(tmp_path / "missing_vla.fits"),
+        source_hdu=1,
+    )
+    assert ref.schema.get("vla_columns") == ["V"]
+    with pytest.raises(RuntimeError):
+        _ = ref.vla_lengths
+
+
+def test_tablehdu_isolated_from_caller_dict_mutation():
+    """The constructor dict is snapshotted: later mutations cannot corrupt the
+    table or make columns and num_rows disagree (r6b)."""
+    from torchfits.hdu import TableHDU
+
+    data = {"x": torch.zeros(10)}
+    hdu = TableHDU(data)
+    data["x"] = torch.zeros(3)
+    data["y"] = torch.zeros(3)
+    assert hdu.num_rows == 10
+    assert hdu["x"].shape[0] == 10
+    assert hdu.columns == ["x"]

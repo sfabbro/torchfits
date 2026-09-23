@@ -29,10 +29,7 @@ class TableDataAccessor:
             ):
                 return value.squeeze(1)
             if hasattr(value, "ndim") and value.ndim == 2 and value.shape[1] == 1:
-                try:
-                    return value.squeeze(1)
-                except Exception:
-                    pass
+                return value.squeeze(1)
             return value
         raise KeyError(f"Column '{key}' not found")
 
@@ -85,7 +82,9 @@ class TableHDU:
             detail = ", ".join(f"{name}={count}" for name, count in row_counts.items())
             raise ValueError(f"table columns must have equal row counts; {detail}")
 
-        self._raw_data = tensor_dict or {}
+        # Snapshot the caller's dict: a live alias makes num_rows/columns
+        # disagree after post-construction mutation (r6b).
+        self._raw_data = dict(tensor_dict) if tensor_dict else {}
         self._source_path = source_path
         self._source_hdu = source_hdu
         self.header = header or Header()
@@ -165,7 +164,9 @@ class TableHDU:
         for col in self.schema.get("vla_columns", []):
             try:
                 out[col] = self.get_vla_lengths(col)
-            except Exception:
+            except KeyError:
+                # schema/data disagreement skips the column; real errors from
+                # the column read must propagate (r6b).
                 continue
         return out
 
@@ -338,9 +339,15 @@ class TableHDU:
         )
 
     def head(self, n: int) -> "TableHDU":
+        """Return the first ``n`` rows as a new in-memory TableHDU.
+
+        ``n`` must be >= 0; successive calls narrow monotonically because the
+        data is already truncated.
+        """
+        if n < 0:
+            raise ValueError("head(n) requires n >= 0")
         current_rows = self.num_rows
-        keep = current_rows + n if n < 0 else min(current_rows, n)
-        keep = max(0, keep)
+        keep = max(0, min(current_rows, n))
 
         if self._raw_data:
             import numpy as np
