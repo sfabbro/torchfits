@@ -109,3 +109,8 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cli/cmds_setkey.py` | R7-C | deep | r7c-03..r7c-07, r7c-10 | fixed |
 | `src/torchfits/cli/cmds_transform.py` | R7-C | deep | r7c-14 | clean (decision-5 verified+pinned) |
 | `docs/cli.md` | R7-A (sole editor) | n/a | r7a-06, r7a-10, r7b-09 + decision rows 1/3 | fixed |
+| `src/torchfits/cpp_src/table_reader.h` | R8-A | deep (2948 ln) | r8a-01..r8a-08, r8a-10, r8a-11 | fixed (r8a-10/11 verified+pinned) |
+| `src/torchfits/cpp_src/table_types.h` | R8-B | full | — | clean |
+| `src/torchfits/cpp_src/table_ops.h` | R8-B | full | — | clean |
+| `src/torchfits/cpp_src/table_ops.cpp` | R8-B | full (1094 ln) | r8b-01, r8b-04, r8b-07, r8b-09 | fixed (r8b-07 pinned; r8b-09 deferred) |
+| `src/torchfits/cpp_src/table_bindings.cpp` | R8-B | full (511 ln) | r8b-02, r8b-03, r8b-05, r8b-06, r8b-08 | fixed (r8b-05/06 pinned; r8b-08 deferred) |
