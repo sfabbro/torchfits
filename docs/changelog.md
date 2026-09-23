@@ -131,6 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - table: Faithful interop — masked TNULL, width-1 scalars, byte vectors
 - table: QuantizeError and KeyError contracts; mutation swallows narrowed
 - table: Row selections honored and read dtype contracts pinned
+- io: Orphan CONTINUE cards never fuse into unrelated keywords
+- hdu: View contracts, SSRF-guarded reopens, refresh long strings
+- hdu: LONGSTRN chains reassembled at HDUList.fromfile construction
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
