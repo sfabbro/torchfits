@@ -81,3 +81,12 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_table/arrow_convert.py` | R5-C | deep | r5c-03, r5c-07, r5c-14 | fixed |
 | `src/torchfits/_table/cache.py` | R5-C | deep | r5c-10 | clean (live acquisition seam — residue candidate RE-DERIVED, zero-change) |
 | `src/torchfits/_table/__init__.py` | R5-C | surface | r5c-12 (docs) | clean |
+| `src/torchfits/_hdu/header.py` | R6-A | deep | r6a-01 (helper wiring), r6a-02 | fixed |
+| `src/torchfits/_hdu/card.py` | R6-A | deep | r6a-01, r6a-06 (shared helper + `_is_string_typed`) | fixed |
+| `src/torchfits/_hdu/hdu_list.py` | R6-A (whole-file; R4 rows above cover r4c-01 block) | deep | r6a-01, r6a-03, r6a-04, r6a-05 | fixed (r4c-01 block + r4b-13 root resolved) |
+| `src/torchfits/_hdu/_repr.py` | R6-A | full | — | clean |
+| `src/torchfits/_hdu/table_hdu.py` | R6-B | deep | r6b-06, r6b-07 | fixed |
+| `src/torchfits/_hdu/table_hdu_ref.py` | R6-B | deep | r6b-01 (r5c-09), r6b-02 (r5c-15), r6b-05, r6b-13 | fixed |
+| `src/torchfits/_hdu/tensor_hdu.py` | R6-B | deep | r6b-04, r6b-08 | fixed |
+| `src/torchfits/_hdu/dataview.py` | R6-B | full (verify) | r6b-11 (A-08 verified fixed at HEAD; boundary pins) | clean |
+| `src/torchfits/_io_engine/hdu_api.py` | R4-C; r6a-06 | full | r4c-08, r4c-09, r4c-12, r4c-15, r6a-06 | fixed (fusion half at integration; typing-convention residual deferred) |
