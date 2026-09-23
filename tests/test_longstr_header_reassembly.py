@@ -52,6 +52,23 @@ def _fromfile_header(path):
         hdul.close()
 
 
+def test_read_fast_header_false_rejoins_longstr(tmp_path):
+    """fast_header=False used to return the raw CFITSIO triples, so a value
+    longer than 68 characters kept the '&' marker and a detached CONTINUE."""
+    value = "A" * 80
+    path = tmp_path / "slow_header.fits"
+    image = np.arange(4, dtype=np.float32).reshape(2, 2)
+    primary = fits.PrimaryHDU(image)
+    primary.header["LONGSTR"] = value
+    primary.writeto(path, overwrite=True)
+
+    _tensor, header = torchfits.read(
+        path, return_header=True, fast_header=False, use_cache=False
+    )
+    assert header["LONGSTR"] == value
+    assert all(card.key != "CONTINUE" for card in header.cards)
+
+
 def test_open_header_reassembles_longstr_chain(tmp_path):
     """torchfits.open must agree with read_header on LONGSTRN values."""
     value = "A" * 80

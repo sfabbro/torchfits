@@ -42,7 +42,11 @@ def read_header_fast(file_handle: Any, hdu_index: int, fast_header: bool = True)
         except (AttributeError, RuntimeError, OSError):
             pass
 
-    return cpp.read_header(file_handle, hdu_index)
+    # cpp.read_header keeps LONGSTRN '&' markers and detached CONTINUE cards.
+    # The fast parser joins them; this fallback has to as well (r6a-07).
+    from .._hdu.card import _reassemble_longstr_cards
+
+    return _reassemble_longstr_cards(cpp.read_header(file_handle, hdu_index))
 
 
 def _header_truthy(value: Any) -> bool:
