@@ -89,7 +89,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/_hdu/table_hdu_ref.py` | R6-B | deep | r6b-01 (r5c-09), r6b-02 (r5c-15), r6b-05, r6b-13 | fixed |
 | `src/torchfits/_hdu/tensor_hdu.py` | R6-B | deep | r6b-04, r6b-08 | fixed |
 | `src/torchfits/_hdu/dataview.py` | R6-B | full (verify) | r6b-11 (A-08 verified fixed at HEAD; boundary pins) | clean |
-| `src/torchfits/_io_engine/hdu_api.py` | R4-C; r6a-06 | full | r4c-08, r4c-09, r4c-12, r4c-15, r6a-06 | fixed (fusion half at integration; typing-convention residual deferred) |
+| `src/torchfits/_io_engine/hdu_api.py` | R19 | full | r4c-15, r6a-06, r6a-07 | fixed (slow path joins chains; typing residual still deferred) |
 | `src/torchfits/cli/main.py` | R7-A | full | r7a-01, r7a-02 | fixed |
 | `src/torchfits/cli/common.py` | R7-A | full | r7a-03, r7a-07 | fixed |
 | `src/torchfits/cli/__init__.py` | R7-A | surface | — | clean |
@@ -108,7 +108,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cli/cmds_convert.py` | R7-C | deep | r7c-01, r7c-09 | fixed |
 | `src/torchfits/cli/cmds_setkey.py` | R7-C | deep | r7c-03..r7c-07, r7c-10 | fixed |
 | `src/torchfits/cli/cmds_transform.py` | R7-C | deep | r7c-14 | clean (decision-5 verified+pinned) |
-| `docs/cli.md` | R15 | full | r7a-06, r7a-10, r7b-09, r15a-04 | fixed |
+| `docs/cli.md` | R19 | full | r7a-06, r7a-10, r7b-09, r15a-04, r7c-24 | fixed (r7c-24) |
 | `src/torchfits/cpp_src/table_reader.h` | R8-A | deep (2948 ln) | r8a-01..r8a-08, r8a-10, r8a-11 | fixed (r8a-10/11 verified+pinned) |
 | `src/torchfits/cpp_src/table_types.h` | R8-B | full | — | clean |
 | `src/torchfits/cpp_src/table_ops.h` | R8-B | full | — | clean |
@@ -159,7 +159,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_differential_astropy.py` | R11 | full | — | clean |
 | `tests/test_dlpack_roundtrip.py` | R11 | full | — | clean |
 | `tests/test_docs_code_snippets.py` | R11 | full | — | clean |
-| `tests/test_docs_integrity.py` | R11 | full | — | clean |
+| `tests/test_docs_integrity.py` | R19 | full | r7c-24 | fixed |
 | `tests/test_examples_runner.py` | R11 | full | — | clean |
 | `tests/test_fits_schema.py` | R11 | full | — | clean |
 | `tests/test_fitsio_upstream_smoke.py` | R11 | full | — | clean |
@@ -245,7 +245,7 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `tests/test_hdu_count_scan.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_hdulist_registry_race.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_http_guard.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
-| `tests/test_longstr_header_reassembly.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_longstr_header_reassembly.py` | R19 | full | r6a-07 | fixed |
 | `tests/test_maskrgb_masking.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_maskrgb_stretch.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
 | `tests/test_meta_cache_freshness.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |

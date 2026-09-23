@@ -194,7 +194,6 @@ Open after the R1–R16 directory pass. Do not re-fix these in silence: each one
 - r5c-12 — `table.write_csv` / `table.write_ipc` are in `table.__all__` and have no docs section.
 - r5c-13 — width-1 `FixedSizeList` can still surface off the main decode path.
 - r6a-06 — orphan CONTINUE fusion is fixed (`d424c05`, typed-target gate). What remains: `HDUList` header values stay raw batch-triple strings (`NAXIS` is `"0"`) while `read_header` types them (`NAXIS` is `0`). That split exists on files with no long strings.
-- r6a-07 — `read_header_fast`'s slow fallback and `_read_pipeline_fallback.py` still build headers from raw triples.
 - r7a-08 — truncated-file HDU scan errors are still the engine's CFITSIO status, not a typed CLI code.
 - r7a-09 — `cmds_probe._probe_vos` swallows `handle.close()` failures.
 - r7b-12 — table JSON preview stringifies bytes and complex values with `str(value)`.
@@ -207,7 +206,6 @@ Open after the R1–R16 directory pass. Do not re-fix these in silence: each one
 - r7c-21 — a header dict whose commentary value is a list (`{"HISTORY": ["h1", "h2"]}`) hits `std::bad_cast` in card replay.
 - r7c-22 — replaying commentary cards appends `HISTORY`/`COMMENT` instead of replacing them.
 - r7c-23 — `write_parquet` / `write_csv` / `write_ipc` reject a column dict that `table.write` accepts.
-- r7c-24 — `docs/cli.md` shows `setkey --comment`. `cmds_setkey.py` has no such flag.
 - r7c-25 — non-finite pixels cast to an integer output are platform-dependent.
 - r8b-08 — table write bindings and `TableReader` construction hold the GIL across CFITSIO calls.
 - r8b-09 — after a failed `fits_write_col`, the column loop keeps going with a poisoned status.
@@ -232,3 +230,5 @@ Open after the R1–R16 directory pass. Do not re-fix these in silence: each one
 - r5c-09 — `TableHDURef.to_arrow(columns=)` raises a typed duplicate-argument error (r6b-01).
 - r5a-12 / r5b-07 / r5c-15 — one `_normalize_row_slice` (r6b-02).
 - r5b-05 — "preprocess every column" was refuted; not a defect.
+- r6a-07 — `read_header_fast`'s slow fallback now joins LONGSTRN chains (R19).
+- r7c-24 — `docs/cli.md` no longer shows `setkey --comment` (R19).
