@@ -78,165 +78,235 @@ inline uint16_t bswap_16(uint16_t x) { return __builtin_bswap16(x); }
 inline uint32_t bswap_32(uint32_t x) { return __builtin_bswap32(x); }
 inline uint64_t bswap_64(uint64_t x) { return __builtin_bswap64(x); }
 
+template <typename T>
+inline T load_unaligned(const uint8_t* src) {
+    T value;
+    std::memcpy(&value, src, sizeof(T));
+    return value;
+}
+
+template <typename T>
+inline void store_unaligned(uint8_t* dst, T value) {
+    std::memcpy(dst, &value, sizeof(T));
+}
+
 /// Scalar single-value helpers are spelled `bswap_XX`; no undecorated aliases
 /// (they duplicated the canonical names and had zero call sites).
 
 /// Vectorized big-endian → host endian copies for image mmap paths.
-inline void bswap16_copy(const uint16_t* src, uint16_t* dst, size_t n) {
+inline void bswap16_copy(const void* src, void* dst, size_t n) {
+    const auto* src_bytes = static_cast<const uint8_t*>(src);
+    auto* dst_bytes = static_cast<uint8_t*>(dst);
     size_t i = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    for (; i + 8 <= n; i += 8) {
-        uint16x8_t v = vld1q_u16(src + i);
-        uint8x16_t b = vrev16q_u8(vreinterpretq_u8_u16(v));
-        vst1q_u16(dst + i, vreinterpretq_u16_u8(b));
+    for (; n - i >= 8; i += 8) {
+        uint8x16_t v = vld1q_u8(src_bytes + i * sizeof(uint16_t));
+        uint8x16_t b = vrev16q_u8(v);
+        vst1q_u8(dst_bytes + i * sizeof(uint16_t), b);
     }
 #elif defined(__AVX2__)
     const __m256i shuffle = _mm256_set_epi8(
         30, 31, 28, 29, 26, 27, 24, 25, 22, 23, 20, 21, 18, 19, 16, 17,
         14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1);
-    for (; i + 16 <= n; i += 16) {
-        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i),
-                            _mm256_shuffle_epi8(v, shuffle));
+    for (; n - i >= 16; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(src_bytes + i * sizeof(uint16_t)));
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(dst_bytes + i * sizeof(uint16_t)),
+            _mm256_shuffle_epi8(v, shuffle));
     }
 #elif defined(__SSSE3__)
     const __m128i shuffle = _mm_set_epi8(
         14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1);
-    for (; i + 8 <= n; i += 8) {
-        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i),
-                         _mm_shuffle_epi8(v, shuffle));
+    for (; n - i >= 8; i += 8) {
+        __m128i v = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src_bytes + i * sizeof(uint16_t)));
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(dst_bytes + i * sizeof(uint16_t)),
+            _mm_shuffle_epi8(v, shuffle));
     }
 #endif
-    for (; i < n; ++i) dst[i] = bswap_16(src[i]);
+    for (; i < n; ++i) {
+        const size_t byte_offset = i * sizeof(uint16_t);
+        store_unaligned<uint16_t>(
+            dst_bytes + byte_offset,
+            bswap_16(load_unaligned<uint16_t>(src_bytes + byte_offset)));
+    }
 }
 
-inline void bswap16_copy_u16_offset(const uint16_t* src, uint16_t* dst, size_t n,
+inline void bswap16_copy_u16_offset(const void* src, void* dst, size_t n,
                                     uint16_t offset) {
+    const auto* src_bytes = static_cast<const uint8_t*>(src);
+    auto* dst_bytes = static_cast<uint8_t*>(dst);
     size_t i = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
     const uint16x8_t off = vdupq_n_u16(offset);
-    for (; i + 8 <= n; i += 8) {
-        uint16x8_t v = vld1q_u16(src + i);
-        uint8x16_t b = vrev16q_u8(vreinterpretq_u8_u16(v));
-        vst1q_u16(dst + i, vaddq_u16(vreinterpretq_u16_u8(b), off));
+    for (; n - i >= 8; i += 8) {
+        uint8x16_t v = vld1q_u8(src_bytes + i * sizeof(uint16_t));
+        uint8x16_t b = vrev16q_u8(v);
+        vst1q_u8(dst_bytes + i * sizeof(uint16_t),
+                 vreinterpretq_u8_u16(vaddq_u16(vreinterpretq_u16_u8(b), off)));
     }
 #elif defined(__AVX2__)
     const __m256i shuffle = _mm256_set_epi8(
         30, 31, 28, 29, 26, 27, 24, 25, 22, 23, 20, 21, 18, 19, 16, 17,
         14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1);
     const __m256i off = _mm256_set1_epi16(static_cast<int16_t>(offset));
-    for (; i + 16 <= n; i += 16) {
-        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
+    for (; n - i >= 16; i += 16) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(src_bytes + i * sizeof(uint16_t)));
         v = _mm256_shuffle_epi8(v, shuffle);
         v = _mm256_add_epi16(v, off);
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i), v);
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(dst_bytes + i * sizeof(uint16_t)), v);
     }
 #elif defined(__SSSE3__)
     const __m128i shuffle = _mm_set_epi8(
         14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1);
     const __m128i off = _mm_set1_epi16(static_cast<int16_t>(offset));
-    for (; i + 8 <= n; i += 8) {
-        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+    for (; n - i >= 8; i += 8) {
+        __m128i v = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src_bytes + i * sizeof(uint16_t)));
         v = _mm_shuffle_epi8(v, shuffle);
         v = _mm_add_epi16(v, off);
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i), v);
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(dst_bytes + i * sizeof(uint16_t)), v);
     }
 #endif
-    for (; i < n; ++i) dst[i] = static_cast<uint16_t>(bswap_16(src[i]) + offset);
+    for (; i < n; ++i) {
+        const size_t byte_offset = i * sizeof(uint16_t);
+        const uint16_t value =
+            bswap_16(load_unaligned<uint16_t>(src_bytes + byte_offset));
+        store_unaligned<uint16_t>(
+            dst_bytes + byte_offset, static_cast<uint16_t>(value + offset));
+    }
 }
 
-inline void bswap32_copy(const uint32_t* src, uint32_t* dst, size_t n) {
+inline void bswap32_copy(const void* src, void* dst, size_t n) {
+    const auto* src_bytes = static_cast<const uint8_t*>(src);
+    auto* dst_bytes = static_cast<uint8_t*>(dst);
     size_t i = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    for (; i + 4 <= n; i += 4) {
-        uint32x4_t v = vld1q_u32(src + i);
-        uint8x16_t b = vrev32q_u8(vreinterpretq_u8_u32(v));
-        vst1q_u32(dst + i, vreinterpretq_u32_u8(b));
+    for (; n - i >= 4; i += 4) {
+        uint8x16_t v = vld1q_u8(src_bytes + i * sizeof(uint32_t));
+        uint8x16_t b = vrev32q_u8(v);
+        vst1q_u8(dst_bytes + i * sizeof(uint32_t), b);
     }
 #elif defined(__AVX2__)
     const __m256i shuffle = _mm256_set_epi8(
         28, 29, 30, 31, 24, 25, 26, 27, 20, 21, 22, 23, 16, 17, 18, 19,
         12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
-    for (; i + 8 <= n; i += 8) {
-        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i),
-                            _mm256_shuffle_epi8(v, shuffle));
+    for (; n - i >= 8; i += 8) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(src_bytes + i * sizeof(uint32_t)));
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(dst_bytes + i * sizeof(uint32_t)),
+            _mm256_shuffle_epi8(v, shuffle));
     }
 #elif defined(__SSSE3__)
     const __m128i shuffle = _mm_set_epi8(
         12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
-    for (; i + 4 <= n; i += 4) {
-        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i),
-                         _mm_shuffle_epi8(v, shuffle));
+    for (; n - i >= 4; i += 4) {
+        __m128i v = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src_bytes + i * sizeof(uint32_t)));
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(dst_bytes + i * sizeof(uint32_t)),
+            _mm_shuffle_epi8(v, shuffle));
     }
 #endif
-    for (; i < n; ++i) dst[i] = bswap_32(src[i]);
+    for (; i < n; ++i) {
+        const size_t byte_offset = i * sizeof(uint32_t);
+        store_unaligned<uint32_t>(
+            dst_bytes + byte_offset,
+            bswap_32(load_unaligned<uint32_t>(src_bytes + byte_offset)));
+    }
 }
 
-inline void bswap32_copy_u32_offset(const uint32_t* src, uint32_t* dst, size_t n,
+inline void bswap32_copy_u32_offset(const void* src, void* dst, size_t n,
                                     uint32_t offset) {
+    const auto* src_bytes = static_cast<const uint8_t*>(src);
+    auto* dst_bytes = static_cast<uint8_t*>(dst);
     size_t i = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
     const uint32x4_t off = vdupq_n_u32(offset);
-    for (; i + 4 <= n; i += 4) {
-        uint32x4_t v = vld1q_u32(src + i);
-        uint8x16_t b = vrev32q_u8(vreinterpretq_u8_u32(v));
-        vst1q_u32(dst + i, vaddq_u32(vreinterpretq_u32_u8(b), off));
+    for (; n - i >= 4; i += 4) {
+        uint8x16_t v = vld1q_u8(src_bytes + i * sizeof(uint32_t));
+        uint8x16_t b = vrev32q_u8(v);
+        vst1q_u8(dst_bytes + i * sizeof(uint32_t),
+                 vreinterpretq_u8_u32(vaddq_u32(vreinterpretq_u32_u8(b), off)));
     }
 #elif defined(__AVX2__)
     const __m256i shuffle = _mm256_set_epi8(
         28, 29, 30, 31, 24, 25, 26, 27, 20, 21, 22, 23, 16, 17, 18, 19,
         12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
     const __m256i off = _mm256_set1_epi32(static_cast<int32_t>(offset));
-    for (; i + 8 <= n; i += 8) {
-        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
+    for (; n - i >= 8; i += 8) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(src_bytes + i * sizeof(uint32_t)));
         v = _mm256_shuffle_epi8(v, shuffle);
         v = _mm256_add_epi32(v, off);
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i), v);
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(dst_bytes + i * sizeof(uint32_t)), v);
     }
 #elif defined(__SSSE3__)
     const __m128i shuffle = _mm_set_epi8(
         12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3);
     const __m128i off = _mm_set1_epi32(static_cast<int32_t>(offset));
-    for (; i + 4 <= n; i += 4) {
-        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+    for (; n - i >= 4; i += 4) {
+        __m128i v = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src_bytes + i * sizeof(uint32_t)));
         v = _mm_shuffle_epi8(v, shuffle);
         v = _mm_add_epi32(v, off);
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i), v);
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(dst_bytes + i * sizeof(uint32_t)), v);
     }
 #endif
-    for (; i < n; ++i) dst[i] = bswap_32(src[i]) + offset;
+    for (; i < n; ++i) {
+        const size_t byte_offset = i * sizeof(uint32_t);
+        const uint32_t value =
+            bswap_32(load_unaligned<uint32_t>(src_bytes + byte_offset));
+        store_unaligned<uint32_t>(dst_bytes + byte_offset, value + offset);
+    }
 }
 
-inline void bswap64_copy(const uint64_t* src, uint64_t* dst, size_t n) {
+inline void bswap64_copy(const void* src, void* dst, size_t n) {
+    const auto* src_bytes = static_cast<const uint8_t*>(src);
+    auto* dst_bytes = static_cast<uint8_t*>(dst);
     size_t i = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    for (; i + 2 <= n; i += 2) {
-        uint64x2_t v = vld1q_u64(src + i);
-        uint8x16_t b = vrev64q_u8(vreinterpretq_u8_u64(v));
-        vst1q_u64(dst + i, vreinterpretq_u64_u8(b));
+    for (; n - i >= 2; i += 2) {
+        uint8x16_t v = vld1q_u8(src_bytes + i * sizeof(uint64_t));
+        uint8x16_t b = vrev64q_u8(v);
+        vst1q_u8(dst_bytes + i * sizeof(uint64_t), b);
     }
 #elif defined(__AVX2__)
     const __m256i shuffle = _mm256_set_epi8(
         24, 25, 26, 27, 28, 29, 30, 31, 16, 17, 18, 19, 20, 21, 22, 23,
         8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7);
-    for (; i + 4 <= n; i += 4) {
-        __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i),
-                            _mm256_shuffle_epi8(v, shuffle));
+    for (; n - i >= 4; i += 4) {
+        __m256i v = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(src_bytes + i * sizeof(uint64_t)));
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i*>(dst_bytes + i * sizeof(uint64_t)),
+            _mm256_shuffle_epi8(v, shuffle));
     }
 #elif defined(__SSSE3__)
     const __m128i shuffle = _mm_set_epi8(
         8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7);
-    for (; i + 2 <= n; i += 2) {
-        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i),
-                         _mm_shuffle_epi8(v, shuffle));
+    for (; n - i >= 2; i += 2) {
+        __m128i v = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src_bytes + i * sizeof(uint64_t)));
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i*>(dst_bytes + i * sizeof(uint64_t)),
+            _mm_shuffle_epi8(v, shuffle));
     }
 #endif
-    for (; i < n; ++i) dst[i] = bswap_64(src[i]);
+    for (; i < n; ++i) {
+        const size_t byte_offset = i * sizeof(uint64_t);
+        store_unaligned<uint64_t>(
+            dst_bytes + byte_offset,
+            bswap_64(load_unaligned<uint64_t>(src_bytes + byte_offset)));
+    }
 }
 
 // ---------------------------------------------------------------------------

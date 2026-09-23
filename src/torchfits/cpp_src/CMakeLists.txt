@@ -9,10 +9,31 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Global optimizations (Release mode)
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    # Using only -O3 (avoid -funroll-loops as it may conflict with manual SIMD unrolling)
-    add_compile_options(-O3)
+# Detect sanitizer instrumentation requested through any configured C/CXX flag
+# set. The Python extension already receives CMAKE_CXX_FLAGS; vendored CFITSIO
+# is C and must receive the same instrumentation explicitly.
+set(_TORCHFITS_SANITIZER_COMPILE_OPTIONS "")
+set(_TORCHFITS_SANITIZER_FLAG_VARS
+    CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+if(CMAKE_BUILD_TYPE)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _TORCHFITS_BUILD_TYPE_UPPER)
+    list(APPEND _TORCHFITS_SANITIZER_FLAG_VARS
+         "CMAKE_C_FLAGS_${_TORCHFITS_BUILD_TYPE_UPPER}"
+         "CMAKE_CXX_FLAGS_${_TORCHFITS_BUILD_TYPE_UPPER}")
+endif()
+foreach(_flag_var IN LISTS _TORCHFITS_SANITIZER_FLAG_VARS)
+    separate_arguments(_configured_flags NATIVE_COMMAND "${${_flag_var}}")
+    foreach(_configured_flag IN LISTS _configured_flags)
+        if(_configured_flag MATCHES "^-fsanitize=")
+            list(APPEND _TORCHFITS_SANITIZER_COMPILE_OPTIONS "${_configured_flag}")
+        endif()
+    endforeach()
+endforeach()
+list(REMOVE_DUPLICATES _TORCHFITS_SANITIZER_COMPILE_OPTIONS)
+if(_TORCHFITS_SANITIZER_COMPILE_OPTIONS)
+    message(STATUS
+        "Applying sanitizer instrumentation to vendored CFITSIO: "
+        "${_TORCHFITS_SANITIZER_COMPILE_OPTIONS}")
 endif()
 
 # Enable IPO/LTO when available (portable opt-in)
@@ -492,6 +513,10 @@ else()
             # (fitsio/astropy). Pin contraction off for vendored CFITSIO.
             target_compile_options(cfitsio PRIVATE -ffp-contract=off)
         endif()
+        if(_TORCHFITS_SANITIZER_COMPILE_OPTIONS)
+            target_compile_options(
+                cfitsio PRIVATE ${_TORCHFITS_SANITIZER_COMPILE_OPTIONS})
+        endif()
         if(TORCHFITS_NIOBUF)
             # CFITSIO reads this compile-time macro directly from fitsio.h.
             target_compile_definitions(cfitsio PRIVATE NIOBUF=${TORCHFITS_NIOBUF})
@@ -537,7 +562,9 @@ nanobind_add_module(_C ${SOURCES})
 # These optimize and isolate the Python extension. They must not propagate to
 # vendored CFITSIO, whose C ABI relies on its own visibility/interposition rules.
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-    target_compile_options(_C PRIVATE -fno-semantic-interposition -fvisibility=hidden)
+    # nanobind defaults its module sources to -Os. Keep these options after
+    # nanobind_add_module so the final effective _C optimization remains -O3.
+    target_compile_options(_C PRIVATE -O3 -fno-semantic-interposition -fvisibility=hidden)
 endif()
 
 # Link libraries

@@ -1,4 +1,8 @@
+import os
+from pathlib import Path
+import shlex
 import shutil
+import subprocess
 
 import numpy as np
 import pytest
@@ -40,13 +44,9 @@ def test_read_path_with_literal_bracket_in_directory(tmp_path):
     assert hdr["NAXIS"] == 2
 
 
-def test_security_cve_cfitsio_command_injection():
-    """
-    Test that filenames starting or ending with '|' are rejected to prevent
-    CFITSIO command injection vulnerabilities.
-    """
-    # Filenames that should be rejected
-    dangerous_filenames = [
+@pytest.mark.parametrize(
+    "filename",
+    [
         "| echo 'pwned'",
         " | ls",
         "valid.fits |",
@@ -58,12 +58,50 @@ def test_security_cve_cfitsio_command_injection():
         "sh://echo 'pwned'",
         " !sh://ls",
         "! ! sh://id",
-        "sh://touch /tmp/pwned",
-    ]
+        "SH://touch /tmp/pwned",
+        "! \tSh://id",
+    ],
+)
+def test_security_cve_cfitsio_command_injection(filename):
+    """Every CFITSIO open rejects native command-injection syntax.
 
-    for filename in dangerous_filenames:
-        with pytest.raises(RuntimeError, match="Security Error"):
-            torchfits.read(filename)
+    Exercise the raw extension as well as the Python façade: pipe and
+    ``sh://`` rejection belongs to the native CFITSIO boundary, while the
+    Python guard owns network address classification.
+    """
+    with pytest.raises(RuntimeError, match="Security Error"):
+        torchfits.read(filename)
+
+    import torchfits._C as native
+
+    with pytest.raises(RuntimeError, match="Security Error"):
+        native.open_fits_file(filename, "r")
+
+
+def test_native_cfitsio_bracket_detector_probe_runs(tmp_path: Path):
+    """Compile and run the direct C++ detector regression in CI."""
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    repo_root = Path(__file__).resolve().parents[1]
+    source = repo_root / "tests" / "cpp" / "test_bracket_detection.cpp"
+    executable = tmp_path / "test_bracket_detection"
+    subprocess.run(
+        [
+            *compiler,
+            "-std=c++17",
+            "-I",
+            str(repo_root / "src" / "torchfits" / "cpp_src"),
+            str(source),
+            "-o",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [str(executable)], check=True, capture_output=True, text=True
+    )
+    assert "all checks passed" in result.stdout
 
 
 def test_forced_overwrite_prefix_allowed():
@@ -156,8 +194,3 @@ def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):
     )
 
 
-def test_security_rejects_uppercase_sh_scheme():
-    with pytest.raises(RuntimeError, match="Security Error"):
-        torchfits.read("SH://echo pwned")
-    with pytest.raises(RuntimeError, match="Security Error"):
-        torchfits.read("! Sh://id")
