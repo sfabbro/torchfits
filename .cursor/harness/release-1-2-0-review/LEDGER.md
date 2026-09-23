@@ -345,3 +345,42 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `scripts/verify_wheel_cuda_canfar.sh` | R13 | scan | — | clean (scan) |
 | `scripts/verify_wheel_cuda_canfar_incontainer.sh` | R13 | scan | — | clean (scan) |
 | `scripts/verify_wheel_matrix.sh` | R13 | scan | — | clean (scan) |
+| `examples/_plotting.py` | R14 | full | — | clean |
+| `examples/_sample_data.py` | R14 | full | — | clean |
+| `examples/cli/imstat_imarith.sh` | R14 | full | — | clean |
+| `examples/cli/make_rgb_demo.py` | R14 | full | r14a-01 | fixed (r14a-01) |
+| `examples/desi_shaped_spectrum.py` | R14 | full | r14a-04 | fixed (r14a-04) |
+| `examples/example_ccfits_cookbook.py` | R14 | full | r14a-05 | fixed (r14a-05) |
+| `examples/example_cfitsio_cookbook.py` | R14 | full | r14a-02 | fixed (r14a-02) |
+| `examples/example_custom_transform.py` | R14 | scan | — | clean |
+| `examples/example_cutout_wcs_write.py` | R14 | full | — | clean |
+| `examples/example_data_catalogs.py` | R14 | full | — | clean |
+| `examples/example_identity_stress.py` | R14 | full | r14a-03 | fixed (r14a-03) |
+| `examples/example_image.py` | R14 | full | — | clean |
+| `examples/example_image_cube.py` | R14 | full | — | clean |
+| `examples/example_image_cutouts.py` | R14 | scan | — | clean |
+| `examples/example_image_dataset.py` | R14 | scan | — | clean |
+| `examples/example_image_mef.py` | R14 | scan | — | clean |
+| `examples/example_lupton_rgb_sdss.py` | R14 | full | — | clean |
+| `examples/example_m13_stack.py` | R14 | scan | — | clean |
+| `examples/example_make_loader_vs_dataloader.py` | R14 | scan | — | clean |
+| `examples/example_manga_logcube.py` | R14 | full | — | clean |
+| `examples/example_mef_header.py` | R14 | scan | — | clean |
+| `examples/example_megacam_cr_denoise.py` | R14 | full | — | clean |
+| `examples/example_megacam_mef_cutouts.py` | R14 | scan | — | clean |
+| `examples/example_megapipe_cutout_collage.py` | R14 | full | — | clean |
+| `examples/example_ml_galaxyzoo_legacy.py` | R14 | full | — | clean |
+| `examples/example_ml_training_loop.py` | R14 | full | r14a-06 | fixed (r14a-06) |
+| `examples/example_polars.py` | R14 | scan | — | clean |
+| `examples/example_quantize_int16.py` | R14 | full | — | clean |
+| `examples/example_rgb_sky.py` | R14 | full | r14a-01 | fixed (r14a-01) |
+| `examples/example_staged_cutouts.py` | R14 | scan | — | clean |
+| `examples/example_streaming_cubes_spectra.py` | R14 | scan | — | clean |
+| `examples/example_table.py` | R14 | full | — | clean |
+| `examples/example_table_interop.py` | R14 | scan | — | clean |
+| `examples/example_table_recipes.py` | R14 | scan | — | clean |
+| `examples/example_time_series.py` | R14 | scan | — | clean |
+| `examples/example_transforms.py` | R14 | scan | — | clean |
+| `examples/gallery_images.py` | R14 | scan | — | clean |
+| `examples/gallery_tables_lc.py` | R14 | scan | — | clean |
+| `examples/test_examples.py` | R14 | full | r14a-04 | fixed (r14a-04) |
