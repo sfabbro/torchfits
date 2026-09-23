@@ -79,6 +79,38 @@ def test_merge_generated_groups_and_dedupes() -> None:
     assert merged.endswith("## [1.0.0] — 2026-08-09\n")
 
 
+def test_merge_generated_does_not_copy_a_stamped_release_back() -> None:
+    """A bullet already under the stamped version stays there.
+
+    ``--check`` diffs against the newest tag, which still points at the
+    previous release until the new tag exists. Re-listing those notes under
+    the empty Unreleased section would make the stamp fail its own check.
+    """
+    text = (
+        "# Changelog\n"
+        "\n"
+        "## Unreleased\n"
+        "\n"
+        "## [1.2.0] — 2026-09-23\n"
+        "\n"
+        "### Fixed\n"
+        "\n"
+        "- table: Exclude NaN rows from where comparisons\n"
+        "\n"
+        "## [1.1.3] — 2026-09-09\n"
+    )
+    bullet = "- table: Exclude NaN rows from where comparisons"
+    merged = changelog.merge_generated(text, [("Fixed", bullet)])
+    unreleased = merged.split("## Unreleased\n", 1)[1].split("\n## [1.2.0]", 1)[0]
+    assert bullet not in unreleased
+    assert merged.count(bullet) == 1
+
+    fresh = "- table: Keep a note that was not already released"
+    with_new = changelog.merge_generated(text, [("Fixed", fresh)])
+    unreleased_new = with_new.split("## Unreleased\n", 1)[1].split("\n## [1.2.0]", 1)[0]
+    assert fresh in unreleased_new
+
+
 def test_stamp_release_renames_and_reopens_unreleased() -> None:
     text = (
         "# Changelog\n"

@@ -141,9 +141,15 @@ def merge_generated(text: str, bullets: list[tuple[str, str]]) -> str:
         pending.setdefault(section, []).append(bullet)
 
     def _seen(section: str) -> set[str]:
+        # Whole file, not just Unreleased. After --release the notes sit under
+        # the stamped heading while git still diffs from the previous tag, so
+        # a check would otherwise copy every released bullet back.
         keys: set[str] = set()
         in_section = False
-        for line in block:
+        for line in lines:
+            if line.startswith("## "):
+                in_section = False
+                continue
             if line.startswith("### "):
                 in_section = line[4:].strip() == section
                 continue
