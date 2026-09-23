@@ -144,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cpp: Byteswap tail UB, Release -O3, sanitizer propagation, CI bracket test
 - tests: Isolate fixtures, mark wall-clock tests, pin saturation and signed zero
 - bench: Report cutout throughput in payload bytes
+- bench: Join highlight and cfitsio rows on the real case id
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
