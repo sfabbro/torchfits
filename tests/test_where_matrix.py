@@ -154,3 +154,38 @@ def test_matrix_empty_projection_is_all_strategies(matrix_fits):
         "F32",
         "SCLR",
     ]
+
+
+def test_float_neq_and_not_exclude_nan_on_every_strategy(tmp_path):
+    """NaN is unknown under SQL three-valued logic, on every where engine.
+
+    ``X != v`` and ``NOT (X == v)`` must select the same rows and leave NaN
+    out. The mmap scan used to treat IEEE ``NaN != v`` as a match, and the
+    Arrow ``NOT`` path inverted a null that had already been filled to False.
+    """
+    path = str(tmp_path / "nan_where.fits")
+    fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="ID", format="J", array=np.arange(5, dtype=np.int32)),
+            fits.Column(
+                name="X",
+                format="D",
+                array=np.array([1.0, np.nan, 3.0, np.nan, 5.0]),
+            ),
+        ]
+    ).writeto(path)
+
+    expected = {
+        "X != 1": [2, 4],
+        "NOT (X == 1)": [2, 4],
+        "X > 0": [0, 2, 4],
+        "NOT (X > 10)": [0, 2, 4],
+        "NOT (X == 1 OR X == 3)": [4],
+    }
+    for pred, rows in expected.items():
+        assert _read_ids(path, pred, mmap=True) == rows
+        assert _read_ids(path, pred, mmap=False) == rows
+        assert _read_ids(path, pred, backend="cpp") == rows
+        assert _read_ids(path, pred, backend="torch") == rows
+        assert _scan_ids(path, pred, mmap=True) == rows
+        assert _scan_ids(path, pred, mmap=False) == rows

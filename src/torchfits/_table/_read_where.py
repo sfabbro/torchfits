@@ -364,6 +364,13 @@ def _where_mask_for_table(
             )
         return column
 
+    def _exclude_float_nan(column: Any, mask: Any) -> Any:
+        # Arrow comparison kernels follow IEEE: NaN != x is true. SQL
+        # three-valued logic makes every comparison with NaN unknown.
+        if not pa.types.is_floating(column.type):
+            return mask
+        return pc.and_(mask, pc.invert(pc.is_nan(column)))
+
     def _cmp_mask(column_name: str, op: str, literal: Any) -> Any:
         column = _get_predicate_column(column_name)
 
@@ -377,17 +384,19 @@ def _where_mask_for_table(
         scalar = _aligned_scalar(pa, column, literal, column_name)
         try:
             if op == "==":
-                return pc.equal(column, scalar)
-            if op == "!=":
-                return pc.not_equal(column, scalar)
-            if op == ">":
-                return pc.greater(column, scalar)
-            if op == ">=":
-                return pc.greater_equal(column, scalar)
-            if op == "<":
-                return pc.less(column, scalar)
-            if op == "<=":
-                return pc.less_equal(column, scalar)
+                mask = pc.equal(column, scalar)
+            elif op == "!=":
+                mask = pc.not_equal(column, scalar)
+            elif op == ">":
+                mask = pc.greater(column, scalar)
+            elif op == ">=":
+                mask = pc.greater_equal(column, scalar)
+            elif op == "<":
+                mask = pc.less(column, scalar)
+            elif op == "<=":
+                mask = pc.less_equal(column, scalar)
+            else:
+                raise ValueError(f"Unsupported where operator '{op}'")
         except pa.ArrowNotImplementedError as exc:
             # Never let a third-party error type escape: name the column and
             # operator so the caller can see what could not be compared.
@@ -395,7 +404,7 @@ def _where_mask_for_table(
                 f"where cannot compare column '{column_name}' ({column.type}) "
                 f"with {literal!r} using '{op}': {exc}"
             ) from exc
-        raise ValueError(f"Unsupported where operator '{op}'")
+        return _exclude_float_nan(column, mask)
 
     def _in_mask(column_name: str, literals: list[Any], negate: bool) -> Any:
         column = _get_predicate_column(column_name)
@@ -421,7 +430,9 @@ def _where_mask_for_table(
         if negate:
             # Invert BEFORE null-fill so NULL rows stay excluded on negation
             # (SQL three-valued logic): NOT IN must not resurrect NULLs.
-            return pc.invert(mask)
+            # IEEE makes NaN "not in" every finite set; that match is unknown.
+            mask = pc.invert(mask)
+            return _exclude_float_nan(column, mask)
         return pc.fill_null(mask, False)
 
     def _between_mask(column_name: str, low: Any, high: Any, negate: bool) -> Any:
@@ -435,7 +446,9 @@ def _where_mask_for_table(
         mask = pc.and_(ge, le)
         if negate:
             # Null-propagating inversion: NOT BETWEEN excludes NULLs.
-            return pc.invert(mask)
+            # A NaN is not inside the interval under IEEE; that is unknown.
+            mask = pc.invert(mask)
+            return _exclude_float_nan(column, mask)
         return pc.fill_null(mask, False)
 
     def _isnull_mask(column_name: str, negate: bool) -> Any:
@@ -445,6 +458,16 @@ def _where_mask_for_table(
         if negate:
             return pc.invert(mask)
         return mask
+
+    def _subtree_has_comparison(node: Any) -> bool:
+        kind = node[0]
+        if kind in {"cmp", "in", "between"}:
+            return True
+        if kind in {"and", "or"}:
+            return _subtree_has_comparison(node[1]) or _subtree_has_comparison(node[2])
+        if kind == "not":
+            return _subtree_has_comparison(node[1])
+        return False
 
     def _eval(node: Any) -> Any:
         kind = node[0]
@@ -467,10 +490,21 @@ def _where_mask_for_table(
             right = pc.fill_null(_eval(node[2]), False)
             return pc.or_(left, right)
         if kind == "not":
-            child = _eval(node[1])
-            # Invert before the null-fill: NOT must keep NULL rows excluded
-            # (NOT (X == 5) ≡ X != 5 under SQL three-valued logic).
-            return pc.fill_null(pc.invert(child), False)
+            # Comparisons already fill unknown to False, so a bare invert would
+            # select the NaN rows (NOT false). Drop rows whose referenced
+            # columns are null or NaN, matching NOT (X == v) ≡ X != v.
+            inverted = pc.invert(pc.fill_null(_eval(node[1]), False))
+            if _subtree_has_comparison(node[1]):
+                for name in where_columns_from_ast(node[1]):
+                    if name not in table.column_names:
+                        continue
+                    column = table[name]
+                    valid = pc.is_valid(column)
+                    if pa.types.is_floating(column.type):
+                        not_nan = pc.fill_null(pc.invert(pc.is_nan(column)), True)
+                        valid = pc.and_(valid, not_nan)
+                    inverted = pc.and_(inverted, pc.fill_null(valid, False))
+            return pc.fill_null(inverted, False)
         raise ValueError("Invalid where AST")
 
     return pc.fill_null(_eval(ast), False)  # type: ignore[no-any-return]

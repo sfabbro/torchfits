@@ -1580,7 +1580,8 @@ public:
                         bool match = false;
                         switch (op) {
                             case FilterOp::EQ: match = (val == target); break;
-                            case FilterOp::NE: match = (val != target); break;
+                            // IEEE NaN != x is true; SQL leaves that comparison unknown.
+                            case FilterOp::NE: match = (val != target) && (val == val); break;
                             case FilterOp::GT: match = (val > target); break;
                             case FilterOp::LT: match = (val < target); break;
                             case FilterOp::GE: match = (val >= target); break;
@@ -1598,7 +1599,7 @@ public:
                         bool match = false;
                         switch (op) {
                             case FilterOp::EQ: match = (val == target); break;
-                            case FilterOp::NE: match = (val != target); break;
+                            case FilterOp::NE: match = (val != target) && (val == val); break;
                             case FilterOp::GT: match = (val > target); break;
                             case FilterOp::LT: match = (val < target); break;
                             case FilterOp::GE: match = (val >= target); break;
@@ -1648,7 +1649,7 @@ public:
                         double target = ctx.filter->val_d;
                         switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
-                           case FilterOp::NE: match = (val != target); break;
+                           case FilterOp::NE: match = (val != target) && (val == val); break;
                            case FilterOp::GT: match = (val > target); break;
                            case FilterOp::LT: match = (val < target); break;
                            case FilterOp::GE: match = (val >= target); break;
@@ -1660,7 +1661,7 @@ public:
                         float target = (float)ctx.filter->val_d;
                         switch (ctx.filter->op) {
                            case FilterOp::EQ: match = (val == target); break;
-                           case FilterOp::NE: match = (val != target); break;
+                           case FilterOp::NE: match = (val != target) && (val == val); break;
                            case FilterOp::GT: match = (val > target); break;
                            case FilterOp::LT: match = (val < target); break;
                            case FilterOp::GE: match = (val >= target); break;
