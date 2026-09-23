@@ -192,5 +192,3 @@ def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):
         guard_fits_path("http://example.com/public.fits[1:10,1:10]")
         == "http://example.com/public.fits[1:10,1:10]"
     )
-
-

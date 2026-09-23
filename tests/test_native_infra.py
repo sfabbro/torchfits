@@ -78,9 +78,9 @@ def test_mmap_float_byteswap_preserves_ieee_bits_at_odd_offsets(
                 ]
             ).writeto(path, overwrite=True)
 
-            result = torchfits.table.read_torch(
-                path.as_posix(), hdu=1, mmap=True
-            )["VALUE"]
+            result = torchfits.table.read_torch(path.as_posix(), hdu=1, mmap=True)[
+                "VALUE"
+            ]
             expected = values.view(bits)
             actual = result.numpy().view(bits)
             np.testing.assert_array_equal(
@@ -107,7 +107,5 @@ def test_mmap_unsigned_byteswap_preserves_all_offset_values(
             {"VALUE": torch.from_numpy(values[:count].copy())},
             overwrite=True,
         )
-        result = torchfits.table.read_torch(path.as_posix(), hdu=1, mmap=True)[
-            "VALUE"
-        ]
+        result = torchfits.table.read_torch(path.as_posix(), hdu=1, mmap=True)["VALUE"]
         np.testing.assert_array_equal(result.numpy(), values[:count])
