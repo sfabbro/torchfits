@@ -156,6 +156,8 @@ def _reassemble_longstr_cards(cards: Any) -> list[Any] | None:
     """
     from ..header_parser import FastHeaderParser
 
+    from .._hdu.card import _is_string_typed
+
     out: list[Any] = []
     target: int | None = None  # index of the string card CONTINUE extends
     marker: int | None = None  # index of the card with a pending trailing '&'
@@ -174,7 +176,7 @@ def _reassemble_longstr_cards(cards: Any) -> list[Any] | None:
             # Any non-CONTINUE card ends the chain: the '&' is content again.
             restore_marker()
             out.append(card)
-            if isinstance(card.value, str):
+            if isinstance(card.value, str) and _is_string_typed(card.key, card.value):
                 if card.value.endswith("&"):
                     out[-1] = card._replace(value=card.value[:-1])
                     marker = len(out) - 1
