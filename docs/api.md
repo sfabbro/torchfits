@@ -175,6 +175,10 @@ Each entry has a quick-path row and a reference page above.
 | `Header` | Dict-like FITS header preserving card order and semantics |
 | `Card` | Single FITS header card: `Card(key, value, comment)` |
 
+`TableHDU.head(n)` requires `n >= 0` and raises `ValueError` otherwise.
+`TableHDURef.head(n)` treats a negative `n` as a count from the end of the
+current row window.
+
 ---
 
 ## Limitations

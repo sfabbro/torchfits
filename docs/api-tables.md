@@ -255,6 +255,10 @@ torchfits.table.write(path, data, *, schema=None, header=None,
 | `table_type` | `str` | `"binary"` | `"binary"` or `"ascii"` |
 | `quantize` | `None` or `str` or `dict` | `None` | Opt-in robust `TFORM=I` + `TSCAL`/`TZERO` for float columns (`"robust"` for all floats, `{"FLUX": "robust"}` per column, or options `{"lo_q","hi_q","keep_zero"}`). Integer columns are left alone. Default keeps native float `TFORM`. |
 
+`quantize` applies to binary tables only (`ValueError` when `table_type="ascii"`).
+If it is set and no floating-point column qualifies, `QuantizeError` is raised
+instead of writing those columns unpacked.
+
 ```python
 torchfits.table.write("out.fits", {"RA": ra, "DEC": dec}, overwrite=True)
 torchfits.table.write(
@@ -294,6 +298,11 @@ Root `torchfits.read()` has no `where=` parameter.
 !!! note "Use `==` for equality"
     The WHERE dialect is Python-expression based — single `=` is not an
     operator; write `==` (also accepts `&&` / `||` / `~` C-style forms).
+
+Null-like values (NaN on float columns, `None` on object columns) follow
+SQL three-valued logic: a comparison is unknown, so the row is excluded.
+`NOT (X == v)` therefore matches `X != v`, and both leave NaN rows out.
+Test nulls with `IS NULL` / `IS NOT NULL`. `== NULL` is rejected.
 
 ### `backend=` on `table.read` / `table.scan`
 

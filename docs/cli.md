@@ -216,7 +216,7 @@ torchfits table catalog.fits -e 1 -n 5 -f json
 
 ### `cutout`
 
-Extracts a sub-region from an image HDU and writes it directly to a new FITS file, preserving header metadata and WCS reference pixels.
+Extracts a sub-region from an image HDU and writes it to a new FITS file. The output header is a copy of the source header: `CRPIX*` is not shifted to the cutout origin. Shift those cards yourself when the stamp must stay on the sky (see the WCS cutout example).
 
 Supports two coordinate formats:
 

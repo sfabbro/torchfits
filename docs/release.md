@@ -65,7 +65,7 @@ edge docs must never name an unreleased version.
   the `[Unreleased]` / compare link refs at the bottom of the file and opens a
   fresh empty `## Unreleased`):
   ```bash
-  pixi run changelog-release -- 1.1.0
+  pixi run changelog-release -- <version>
   ```
   Run it before `git tag`, so the tag points at the finalized changelog.
 

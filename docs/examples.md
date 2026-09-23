@@ -54,7 +54,7 @@ with torchfits.open_subset_reader("megacam_exposure.fits.fz", hdu="CCD01") as re
 
 ### Cutouts with World Coordinate System (WCS) Updates
 
-When extracting a sub-region from an image, the reference pixel coordinates (`CRPIX1`, `CRPIX2`) in the FITS header must be translated to preserve astrometric calibration:
+When extracting a sub-region from an image, the reference pixel coordinates (`CRPIX1`, `CRPIX2`) in the FITS header must be translated by the caller to preserve astrometric calibration. `torchfits` does not own a WCS engine, and `torchfits cutout` copies `CRPIX*` unchanged:
 
 ```python
 import torchfits

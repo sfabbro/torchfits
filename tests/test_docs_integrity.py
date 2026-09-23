@@ -624,3 +624,41 @@ def test_cli_docs_subcommands_match_parser() -> None:
     assert not undocumented, (
         f"CLI subcommands missing from docs: {sorted(undocumented)}"
     )
+
+
+def test_owed_behavior_notes_match_the_implementation() -> None:
+    """Compatibility, architecture, tables, and cutout docs state the 1.2 contracts."""
+    compat = (ROOT / "docs" / "compatibility.md").read_text(encoding="utf-8")
+    arch = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    tables = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
+    cli = (ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+
+    assert "No warning is emitted" not in compat
+    assert "undocumented env knobs" not in compat
+    assert (
+        "MPS does not support float64; downcasting to float32 (precision loss)"
+        in compat
+    )
+    assert (
+        "MPS does not support complex128; downcasting to complex64 (precision loss)"
+        in compat
+    )
+    assert "KMP_DUPLICATE_LIB_OK" in compat
+    assert "residual TOCTOU" in compat
+    assert "float32" in compat and "float64" in compat
+
+    numpy_at = arch.find("`read_full_numpy`")
+    assert numpy_at != -1
+    assert "bitwise" in arch[numpy_at : numpy_at + 600]
+
+    assert "three-valued" in tables
+    assert "NaN" in tables
+    assert "QuantizeError" in tables
+
+    api = (ROOT / "docs" / "api.md").read_text(encoding="utf-8")
+    assert "TableHDU.head(n)" in api
+    assert "n >= 0" in api
+    assert "TableHDURef.head(n)" in api
+
+    cutout = cli.split("### `cutout`", 1)[1].split("### `", 1)[0]
+    assert "not shifted" in cutout

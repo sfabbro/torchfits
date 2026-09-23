@@ -34,13 +34,15 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 - **Universal CUDA / CPU Wheels:** A single `torchfits` wheel functions across all CUDA flavors of its PyTorch minor version (`cu126`, `cu129`, `cu130`) as well as CPU-only (`+cpu`) installations.
 - **Apple Silicon (MPS):** Native `arm64` wheels for macOS leverage Metal Performance Shaders (`device="mps"`).
 - **Graceful Fallback:** CUDA-built environments run seamlessly on CPU-only machines via automatic CPU fallback.
-- **MPS dtype handling:** `device="mps"` (and `mps:N`) silently downcasts `float64 → float32` and `complex128 → complex64` before the host-to-device transfer because MPS has no native 64-bit float/complex. The downcast preserves shape and device but loses precision; CPU and CUDA paths keep 64-bit. No warning is emitted.
+- **MPS dtype handling:** `device="mps"` (and `mps:N`) downcasts `float64 → float32` and `complex128 → complex64` before the host-to-device transfer because MPS has no native 64-bit float/complex. Each downcast emits a `UserWarning` (Python's default filter shows it once per call site): `MPS does not support float64; downcasting to float32 (precision loss)` and `MPS does not support complex128; downcasting to complex64 (precision loss)`. The result keeps its shape and lands on the requested device; CPU and CUDA paths keep 64-bit.
 - **Scale precision note:** Image BSCALE/BZERO scaling is applied in `float32` (`read_full_scaled_cpu`), while table `TSCAL/TZERO` scaling uses `float64`. No divergence vs astropy has been observed for integer storage, but fractional-scaled `LONGLONG` (`BITPIX=64`) images lose precision relative to the table path. A `float64` accumulation for images is planned for 2.0.
 
 ### Known limitations
 
 - **No Windows support:** Prebuilt wheels and CI are Linux and macOS only; Windows is documented as unsupported.
-- **Debug knobs:** `TORCHFITS_DEBUG_SCALE`, `TORCHFITS_COLD_NOMMAP`, `TORCHFITS_COLD_NOCACHE`, `TORCHFITS_TABLE_BUFFERED`, `TORCHFITS_SHARED_META_VALIDATE` are undocumented env knobs for benchmarking and testing; they are not part of the public API and may change without notice.
+- **Runtime env knobs:** every `TORCHFITS_*` variable the library reads, with its default and effect, is listed under [Environment variables](architecture.md#environment-variables). Those knobs are not a stable public API and may change without notice.
+- **`KMP_DUPLICATE_LIB_OK`:** importing `torchfits` runs `os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")` before PyTorch loads. macOS otherwise aborts when PyTorch's `libomp` and a second OpenMP runtime (Homebrew or conda) are both mapped. An existing value is left alone. See [Install](install.md) if you import `torch` first.
+- **CFITSIO DNS:** `http`/`https`/`ftp` paths are classified at guard time. Python fetches (`http_open`) dial the addresses from that lookup. A URL that CFITSIO opens itself is only checked then; the driver re-resolves the host afterwards (residual TOCTOU). Pinning those connections would need a custom CFITSIO driver and is not implemented.
 - **Legacy knobs:** `ReadOptions.handle_cache_capacity` and `clear_file_cache(handles=)` are deprecated no-ops retained for compatibility; the unified `SharedReadMeta` cache is the live shared cache. They will be removed in 2.0 (deprecation warning now).
 
 ---
