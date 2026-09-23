@@ -284,6 +284,14 @@ public:
                         col.torch_type = torch::kUInt8;
                         if (is_ascii_) {
                              col.repeat = 1; // One string per row
+                             // width_long derives from the TFORM/field width and
+                             // must fit int: truncation would corrupt cell sizes
+                             // and offsets for absurd TFORM widths (same class as
+                             // the repeat guard below).
+                             if (width_long < 0 || width_long > 0x7fffffffL) {
+                                 throw std::runtime_error(
+                                     "Column width exceeds supported range for column " + std::string(ttype));
+                             }
                              col.width = (int)width_long;
                         } else {
                              // Binary table
@@ -299,6 +307,10 @@ public:
             }
             col.repeat = (int)repeat_long;
                              } else if (width_long > 0) {
+                                 if (width_long > 0x7fffffffL) {
+                                     throw std::runtime_error(
+                                         "Column width exceeds supported range for column " + std::string(ttype));
+                                 }
                                  col.repeat = (int)width_long;
                              }
                         }
@@ -471,6 +483,64 @@ public:
         }
     }
 
+    // FITS TSCAL/TZERO applied in-memory (float64) with TNULL mapped to NaN
+    // after the linear map. Shared by the fixed-width post-process and the VLA
+    // decode so both obey one convention: raw integer TNULL without
+    // TSCAL/TZERO stays a sentinel (tnull-read-torch).
+    torch::Tensor apply_scale_and_nulls(const ColumnInfo& col, torch::Tensor raw) {
+        torch::Tensor null_mask;
+        if (col.has_tnull && at::isIntegralType(raw.scalar_type(), /*includeBool=*/false)) {
+            const long long null_ll = col.tnull;
+            bool compared = false;
+            switch (raw.scalar_type()) {
+                case torch::kInt8:
+                    if (null_ll >= std::numeric_limits<int8_t>::min() &&
+                        null_ll <= std::numeric_limits<int8_t>::max()) {
+                        null_mask = raw.eq(static_cast<int8_t>(null_ll));
+                        compared = true;
+                    }
+                    break;
+                case torch::kUInt8:
+                    if (null_ll >= 0 &&
+                        null_ll <= static_cast<long long>(std::numeric_limits<uint8_t>::max())) {
+                        null_mask = raw.eq(static_cast<uint8_t>(null_ll));
+                        compared = true;
+                    }
+                    break;
+                case torch::kInt16:
+                    if (null_ll >= std::numeric_limits<int16_t>::min() &&
+                        null_ll <= std::numeric_limits<int16_t>::max()) {
+                        null_mask = raw.eq(static_cast<int16_t>(null_ll));
+                        compared = true;
+                    }
+                    break;
+                case torch::kInt32:
+                    if (null_ll >= std::numeric_limits<int32_t>::min() &&
+                        null_ll <= std::numeric_limits<int32_t>::max()) {
+                        null_mask = raw.eq(static_cast<int32_t>(null_ll));
+                        compared = true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            if (!compared) {
+                null_mask = raw.to(torch::kInt64).eq(static_cast<int64_t>(null_ll));
+            }
+        }
+        torch::Tensor scaled = raw.to(torch::kFloat64);
+        if (col.tscale != 1.0) {
+            scaled.mul_(col.tscale);
+        }
+        if (col.tzero != 0.0) {
+            scaled.add_(col.tzero);
+        }
+        if (null_mask.defined()) {
+            scaled.masked_fill_(null_mask, std::numeric_limits<double>::quiet_NaN());
+        }
+        return scaled;
+    }
+
     // Read columns from the table
     // Returns column data in file order (request order when column_names is
     // given), so callers that pair columns against TFORM/TTYPE cards (e.g. the
@@ -484,22 +554,10 @@ public:
             num_rows = nrows_;
         }
 
-        // Handle empty table
-        if (nrows_ == 0) {
-            return {};
-        }
-
-        // Validate rows
-        if (start_row < 1 || start_row > nrows_) {
-            std::cerr << "Invalid start row: " << start_row << ", nrows: " << nrows_ << std::endl;
-            throw std::runtime_error("Invalid start row");
-        }
-        // Reordered comparison: start_row + num_rows - 1 can overflow long for
-        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
-        if (num_rows > nrows_ - start_row + 1) {
-            num_rows = nrows_ - start_row + 1;
-        }
-
+        // Resolve requested columns first so unknown names fail loudly even
+        // for empty tables (an early `{}` silently dropped them). A repeated
+        // name resolves once: the assembly loop moves each entry out, so a
+        // duplicated index would hand back a moved-from (null) tensor.
         std::vector<int> col_indices;
         if (column_names.empty()) {
             // Read all columns
@@ -512,18 +570,40 @@ public:
                 bool found = false;
                 for (int i = 0; i < ncols_; i++) {
                     if (columns_[i].name == name) {
-                        col_indices.push_back(i);
+                        if (std::find(col_indices.begin(), col_indices.end(), i) == col_indices.end()) {
+                            col_indices.push_back(i);
+                        }
                         found = true;
                         break;
                     }
                 }
                 if (!found) {
-                    std::cerr << "Column not found: " << name << ". Available columns: ";
-                    for(int k=0; k<ncols_; k++) std::cerr << columns_[k].name << ", ";
-                    std::cerr << std::endl;
-                    throw std::runtime_error("Column not found: " + name);
+                    std::string available;
+                    for (int k = 0; k < ncols_; k++) {
+                        if (k > 0) available += ", ";
+                        available += columns_[k].name;
+                    }
+                    throw std::runtime_error(
+                        "Column not found: " + name + ". Available columns: " + available);
                 }
             }
+        }
+
+        // Handle empty table
+        if (nrows_ == 0) {
+            return {};
+        }
+
+        // Validate rows
+        if (start_row < 1 || start_row > nrows_) {
+            throw std::runtime_error(
+                "Invalid start row: " + std::to_string(start_row) +
+                ", nrows: " + std::to_string(nrows_));
+        }
+        // Reordered comparison: start_row + num_rows - 1 can overflow long for
+        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
+        if (num_rows > nrows_ - start_row + 1) {
+            num_rows = nrows_ - start_row + 1;
         }
         for (int col_idx : col_indices) {
             ensure_column_scale(col_idx);
@@ -610,7 +690,10 @@ public:
             } else if (col.type == FITSColumnType::COMPLEX_FLOAT || col.type == FITSColumnType::COMPLEX_DOUBLE) {
                 has_complex = true;
             } else {
-                requested_bytes += col.width * col.repeat;
+                // long math: width/repeat are int and their product can
+                // overflow int for absurd TFORM repeats before it lands in
+                // this long accumulator.
+                requested_bytes += static_cast<long>(col.width) * static_cast<long>(col.repeat);
             }
         }
 
@@ -754,58 +837,7 @@ public:
                 col.type != FITSColumnType::STRING &&
                 col.type != FITSColumnType::LOGICAL &&
                 col.type != FITSColumnType::VARIABLE) {
-                torch::Tensor raw = it->second.fixed_data;
-                torch::Tensor null_mask;
-                if (col.has_tnull && at::isIntegralType(raw.scalar_type(), /*includeBool=*/false)) {
-                    const long long null_ll = col.tnull;
-                    bool compared = false;
-                    switch (raw.scalar_type()) {
-                        case torch::kInt8:
-                            if (null_ll >= std::numeric_limits<int8_t>::min() &&
-                                null_ll <= std::numeric_limits<int8_t>::max()) {
-                                null_mask = raw.eq(static_cast<int8_t>(null_ll));
-                                compared = true;
-                            }
-                            break;
-                        case torch::kUInt8:
-                            if (null_ll >= 0 &&
-                                null_ll <= static_cast<long long>(std::numeric_limits<uint8_t>::max())) {
-                                null_mask = raw.eq(static_cast<uint8_t>(null_ll));
-                                compared = true;
-                            }
-                            break;
-                        case torch::kInt16:
-                            if (null_ll >= std::numeric_limits<int16_t>::min() &&
-                                null_ll <= std::numeric_limits<int16_t>::max()) {
-                                null_mask = raw.eq(static_cast<int16_t>(null_ll));
-                                compared = true;
-                            }
-                            break;
-                        case torch::kInt32:
-                            if (null_ll >= std::numeric_limits<int32_t>::min() &&
-                                null_ll <= std::numeric_limits<int32_t>::max()) {
-                                null_mask = raw.eq(static_cast<int32_t>(null_ll));
-                                compared = true;
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    if (!compared) {
-                        null_mask = raw.to(torch::kInt64).eq(static_cast<int64_t>(null_ll));
-                    }
-                }
-                torch::Tensor scaled = raw.to(torch::kFloat64);
-                if (col.tscale != 1.0) {
-                    scaled.mul_(col.tscale);
-                }
-                if (col.tzero != 0.0) {
-                    scaled.add_(col.tzero);
-                }
-                if (null_mask.defined()) {
-                    scaled.masked_fill_(null_mask, std::numeric_limits<double>::quiet_NaN());
-                }
-                it->second.fixed_data = scaled;
+                it->second.fixed_data = apply_scale_and_nulls(col, it->second.fixed_data);
             }
             // (2) BIT->bool coercion.
             if (col.type == FITSColumnType::BIT) {
@@ -931,20 +963,10 @@ public:
             num_rows = nrows_;
         }
 
-        if (nrows_ == 0) {
-            return {};
-        }
-
-        // Validate rows
-        if (start_row < 1 || start_row > nrows_) {
-            throw std::runtime_error("Invalid start row");
-        }
-        // Reordered comparison: start_row + num_rows - 1 can overflow long for
-        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
-        if (num_rows > nrows_ - start_row + 1) {
-            num_rows = nrows_ - start_row + 1;
-        }
-
+        // Resolve requested columns first so unknown names fail loudly even
+        // for empty tables, and a repeated name resolves once (the result
+        // assembly moves each entry out; a duplicated index would hand back a
+        // moved-from tensor).
         std::vector<int> col_indices;
         if (column_names.empty()) {
             for (int i = 0; i < ncols_; i++) col_indices.push_back(i);
@@ -953,13 +975,31 @@ public:
                 bool found = false;
                 for (int i = 0; i < ncols_; i++) {
                     if (columns_[i].name == name) {
-                        col_indices.push_back(i);
+                        if (std::find(col_indices.begin(), col_indices.end(), i) == col_indices.end()) {
+                            col_indices.push_back(i);
+                        }
                         found = true;
                         break;
                     }
                 }
                 if (!found) throw std::runtime_error("Column not found: " + name);
             }
+        }
+
+        if (nrows_ == 0) {
+            return {};
+        }
+
+        // Validate rows
+        if (start_row < 1 || start_row > nrows_) {
+            throw std::runtime_error(
+                "Invalid start row: " + std::to_string(start_row) +
+                ", nrows: " + std::to_string(nrows_));
+        }
+        // Reordered comparison: start_row + num_rows - 1 can overflow long for
+        // adversarial inputs; nrows_ - start_row + 1 cannot (start_row in range).
+        if (num_rows > nrows_ - start_row + 1) {
+            num_rows = nrows_ - start_row + 1;
         }
 
         for (int col_idx : col_indices) {
@@ -1690,12 +1730,21 @@ public:
             for(int i=0; i<ncols_; ++i) out_col_indices.push_back(i);
         } else {
              for(const auto& name : column_names) {
+                 bool found = false;
                  for(int i=0; i<ncols_; ++i) {
                      if(columns_[i].name == name) {
-                         out_col_indices.push_back(i);
+                         // Repeats resolve once: the assembly loop moves each
+                         // entry out (moved-from tensor on a duplicated index).
+                         if (std::find(out_col_indices.begin(), out_col_indices.end(), i) == out_col_indices.end()) {
+                             out_col_indices.push_back(i);
+                         }
+                         found = true;
                          break;
                      }
                  }
+                 // Unknown output columns fail loudly here too — a silent
+                 // skip returns wrong-shaped data for a non-empty request.
+                 if (!found) throw std::runtime_error("Column not found: " + name);
              }
         }
 
@@ -1885,11 +1934,14 @@ public:
             throw std::runtime_error("Row range exceeds table length");
         }
 
-        // Build column index map
+        // Build column index map. Duplicate TTYPE cards resolve to the first
+        // match — the same resolution the read paths use for name lookups — so
+        // an update can never land on a different column than a read of the
+        // same name returns.
         std::unordered_map<std::string, const ColumnInfo*> column_map;
         column_map.reserve(columns_.size());
         for (const auto& col : columns_) {
-            column_map[col.name] = &col;
+            column_map.emplace(col.name, &col);
         }
 
         // Validate columns and types
@@ -1900,6 +1952,11 @@ public:
                 throw std::runtime_error("Column not found: " + name);
             }
             const ColumnInfo* col = it->second;
+            // Resolve TSCAL/TZERO first: on a fresh reader the scale flags are
+            // lazily populated, so the scaled guard below would be a no-op and
+            // let a scaled column take the raw-bit write path — silently
+            // storing physical values as raw cells.
+            ensure_column_scale(static_cast<int>(col - columns_.data()));
             if (col->type == FITSColumnType::VARIABLE) {
                 throw std::runtime_error("VLA columns not supported for mmap updates");
             }
@@ -2006,17 +2063,21 @@ public:
             const float* src_f32 = static_cast<const float*>(tensor.data());
             const double* src_f64 = static_cast<const double*>(tensor.data());
 
+            // Element offsets honoring DLPack strides (nanobind reports
+            // strides in elements), so non-contiguous / negative-stride
+            // views write the same values as the buffered
+            // (fits_write_col) path instead of reading out of order.
+            // A 0-dim payload carries no stride array at all (DLPack strides
+            // are NULL) — treat it as one element instead of reading
+            // stride(0) out of bounds.
+            const long stride0 = (ndim >= 1) ? tensor.stride(0) : 1;
+            const long stride1 = (ndim >= 2) ? tensor.stride(1) : 1;
+
             for (long i = 0; i < num_rows; i++) {
                 uint8_t* dest_row = base_ptr + row_start_offset + i * row_width_bytes_ + col->byte_offset;
                 for (long j = 0; j < repeat; j++) {
                     uint8_t* dest = dest_row + j * col->width;
-                    // Element offset honoring DLPack strides (nanobind reports
-                    // strides in elements), so non-contiguous / negative-stride
-                    // views write the same values as the buffered
-                    // (fits_write_col) path instead of reading out of order.
-                    long idx = (ndim == 2)
-                        ? i * tensor.stride(0) + j * tensor.stride(1)
-                        : i * tensor.stride(0) + j;
+                    const long idx = i * stride0 + j * stride1;
 
                     switch (col->type) {
                         case FITSColumnType::BYTE: {
@@ -2039,17 +2100,9 @@ public:
                         case FITSColumnType::LOGICAL: {
                             bool val = false;
                             if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                                // Read via tensor.stride() to handle DLPack strided views.
-                                long byte_offset = (ndim == 2)
-                                    ? i * tensor.stride(0) + j * tensor.stride(1)
-                                    : i * tensor.stride(0) + j;
-                                val = src_bool[byte_offset];
+                                val = src_bool[idx];
                             } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-                                // Read via tensor.stride() to handle DLPack strided views.
-                                long byte_offset = (ndim == 2)
-                                    ? i * tensor.stride(0) + j * tensor.stride(1)
-                                    : i * tensor.stride(0) + j;
-                                val = src_u8[byte_offset] != 0;
+                                val = src_u8[idx] != 0;
                             } else {
                                 munmap(map_ptr, sb.st_size);
                                 close(fd);
@@ -2122,17 +2175,9 @@ public:
                             // Extract a bool from a packed BIT column (MSB-first).
                             bool val = false;
                             if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                                // Read via tensor.stride() to handle DLPack strided views.
-                                long byte_offset = (ndim == 2)
-                                    ? i * tensor.stride(0) + j * tensor.stride(1)
-                                    : i * tensor.stride(0) + j;
-                                val = src_bool[byte_offset];
+                                val = src_bool[idx];
                             } else                            if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-                                // Read via tensor.stride() to handle DLPack strided views.
-                                long byte_offset = (ndim == 2)
-                                    ? i * tensor.stride(0) + j * tensor.stride(1)
-                                    : i * tensor.stride(0) + j;
-                                val = src_u8[byte_offset] != 0;
+                                val = src_u8[idx] != 0;
                             } else {
                                 munmap(map_ptr, sb.st_size);
                                 close(fd);
@@ -2162,13 +2207,10 @@ public:
                             // ASCII spaces when the user-provided width is shorter
                             // than the FITS column width.
                             if (j < user_repeat) {
-                                // Read src via tensor.stride() so nanobind DLPack
+                                // idx honors DLPack strides so nanobind
                                 // strided views (e.g. S8 over UCS-4 with stride(1)==4)
                                 // land the right byte instead of sweeping NUL padding.
-                                long byte_offset = (ndim == 2)
-                                    ? i * tensor.stride(0) + j * tensor.stride(1)
-                                    : i * tensor.stride(0) + j;
-                                dest[0] = src_u8[byte_offset];
+                                dest[0] = src_u8[idx];
                             } else {
                                 dest[0] = 0x20; // ASCII space; matches FITS CHAR convention
                             }
@@ -2303,6 +2345,18 @@ public:
             torch::TensorOptions().dtype(torch::kInt64)
         ).clone();
 
+        // TSCAL/TZERO/TNULL follow the fixed-width convention: raw cells in,
+        // float64 physical values (NaN at TNULL) out. Both heap paths read raw
+        // cells (the pread below copies heap bytes; the per-row fits_read_col
+        // path resets CFITSIO auto-scaling first), so the map is applied once
+        // here.
+        auto finish = [&]() {
+            if (col.scaled && !col.is_unsigned_int && values.scalar_type() != torch::kBool) {
+                values = apply_scale_and_nulls(col, values);
+            }
+            return std::make_pair(values, offs);
+        };
+
         int type_code = 0;
         switch (col.torch_type) {
             case torch::kFloat32: type_code = TFLOAT; break;
@@ -2435,10 +2489,18 @@ public:
                                 std::memcpy(dst + i * 8, &v, 8);
                             }
                         }
-                        return std::make_pair(values, offs);
+                        return finish();
                     }
                 }
             }
+        }
+
+        // Raw storage codes here as well: leaving CFITSIO auto-scaling on
+        // truncates scaled physical values into the raw integer destination
+        // (silent data loss), and the pread path above always reads raw.
+        {
+            int scale_status = 0;
+            fits_set_tscale(fptr_, col_idx + 1, 1.0, 0.0, &scale_status);
         }
 
         int64_t cursor = 0;
@@ -2493,7 +2555,7 @@ public:
             cursor += rep;
         }
 
-        return std::make_pair(values, offs);
+        return finish();
     }
 
     // Buffered reading implementation
