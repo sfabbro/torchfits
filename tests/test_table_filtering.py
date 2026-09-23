@@ -301,3 +301,316 @@ def test_filter_literal_out_of_range_int16(tmp_path):
         )
         assert pushdown == want, pred
         assert fallback == want, pred
+
+
+# ---------------------------------------------------------------------------
+# R5 review (r5a): row selection, empty-result schema, error contracts.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def numeric_fits(tmp_path):
+    """10-row numeric-only table (all columns scalar, no strings)."""
+    path = str(tmp_path / "numeric.fits")
+    ids = np.arange(10, dtype=np.int32)
+    fits.BinTableHDU.from_columns([fits.Column(name="ID", format="J", array=ids)]).writeto(
+        path
+    )
+    return path
+
+
+def test_rows_out_of_range_raises(numeric_fits):
+    """rows= must never silently fall back to the full table (r5a-01).
+
+    Regression: when the scattered row read failed (e.g. an out-of-range
+    index), the fallback ignored ``rows`` entirely and returned every row.
+    """
+    import torchfits.table as table
+
+    with pytest.raises(IndexError, match="999"):
+        table.read(numeric_fits, rows=[0, 999])
+    with pytest.raises(IndexError, match="999"):
+        table.read(numeric_fits, rows=[999])
+
+
+def test_rows_honored_with_torch_backend(numeric_fits):
+    """backend="torch" must select the same rows as the default engine (r5a-01)."""
+    import torchfits.table as table
+
+    t = table.read(numeric_fits, rows=[7, 2], backend="torch")
+    assert t["ID"].to_pylist() == [7, 2]
+
+
+def test_rows_honored_raw_decode_flags(numeric_fits):
+    """The whole-column fast path must not swallow a rows= selection (r5a-01)."""
+    import torchfits.table as table
+
+    t = table.read(
+        numeric_fits,
+        rows=[7, 2],
+        decode_bytes=False,
+        apply_fits_nulls=False,
+        include_fits_metadata=False,
+    )
+    assert t["ID"].to_pylist() == [7, 2]
+
+
+def test_rows_with_where_out_of_range_raises(numeric_fits):
+    """rows+where must filter within the requested rows only (r5a-01)."""
+    import torchfits.table as table
+
+    with pytest.raises(IndexError, match="999"):
+        table.read(numeric_fits, rows=[0, 5, 999], where="ID > 2")
+
+
+def test_rows_empty_list_preserves_schema(numeric_fits):
+    import torchfits.table as table
+
+    t = table.read(numeric_fits, rows=[])
+    assert t.column_names == ["ID"]
+    assert t.num_rows == 0
+    assert str(t.schema.field("ID").type) == "int32"
+
+
+def test_empty_result_dtype_matches_full_read(tmp_path):
+    """Empty results and schema() must report the data dtypes (r5a-02):
+    unsigned conventions stay integer (uint16), scaled columns read as
+    float64, fixed-width strings read as strings — not list types."""
+    import torchfits.table as table
+
+    path = str(tmp_path / "dtypes.fits")
+    stored = (np.array([100, 40000], dtype=np.int64) - 32768).astype(np.int16)
+    hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="U", format="I", array=stored),
+            fits.Column(name="S", format="I", array=np.arange(2, dtype=np.int16)),
+            fits.Column(name="STR", format="8A", array=np.array([b"ab", b"cd   e"])),
+        ]
+    )
+    hdu.header["TZERO1"] = 32768
+    hdu.header["TSCAL2"] = 0.5
+    hdu.header["TZERO2"] = 100.0
+    hdu.writeto(path)
+
+    full = table.read(path)
+    empty = table.read(path, row_slice=(0, 0))
+    schema = table.schema(path)
+    for name, want in [("U", "uint16"), ("S", "double"), ("STR", "string")]:
+        got_full = str(full.schema.field(name).type)
+        assert got_full == want, f"{name}: full read is {got_full}"
+        assert str(empty.schema.field(name).type) == want, name
+        assert str(schema.field(name).type) == want, name
+
+
+def test_unknown_column_raises_key_error_everywhere(numeric_fits):
+    """Unknown projected columns raise KeyError naming the column for empty
+    and non-empty results alike (r5a-03); silent schema drops are gone."""
+    import torchfits.table as table
+
+    for kw in (
+        {},
+        {"row_slice": (0, 0)},
+        {"where": "ID > 100"},
+        {"where": "ID > 100", "mmap": False},
+    ):
+        with pytest.raises(KeyError, match="NOPE"):
+            table.read(numeric_fits, columns=["ID", "NOPE"], **kw)
+    with pytest.raises(KeyError, match="NOPE"):
+        list(table.scan(numeric_fits, columns=["ID", "NOPE"]))
+    with pytest.raises(KeyError, match="NOPE"):
+        table.read_torch(numeric_fits, columns=["ID", "NOPE"])
+
+
+def test_empty_result_preserves_unnamed_columns(tmp_path):
+    """Auto-named (TTYPE-less) columns survive empty reads (r5a-04)."""
+    import torchfits.table as table
+
+    path = str(tmp_path / "unnamed.fits")
+    hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32)),
+            fits.Column(
+                name="VEC", format="5J", array=np.arange(20, dtype=np.int32).reshape(4, 5)
+            ),
+        ]
+    )
+    hdu.writeto(path)
+    with fits.open(path, mode="update") as hd:
+        del hd[1].header["TTYPE2"]
+
+    full = table.read(path)
+    assert full.column_names == ["ID", "COL2"]
+    empty = table.read(path, row_slice=(0, 0))
+    assert empty.column_names == ["ID", "COL2"]
+
+
+def test_capability_check_covers_unnamed_columns(tmp_path):
+    """Unnamed vector columns must disqualify the scalar-only fast paths
+    (r5a-04); the check used to skip every TTYPE-less column."""
+    from torchfits._table._read_schema import _can_use_mmap_row_path_for_full_read
+
+    path = str(tmp_path / "unnamed_vec.fits")
+    hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32)),
+            fits.Column(
+                name="VEC", format="5J", array=np.arange(20, dtype=np.int32).reshape(4, 5)
+            ),
+        ]
+    )
+    hdu.writeto(path)
+    with fits.open(path, mode="update") as hd:
+        del hd[1].header["TTYPE2"]
+
+    assert _can_use_mmap_row_path_for_full_read(path, 1, None) is False
+
+
+def test_io_errors_propagate_from_read_and_scan(numeric_fits, monkeypatch):
+    """A header-level OSError must surface instead of silently degrading the
+    read (r5a-05): the decode fallbacks only swallow decode errors."""
+    import torchfits
+    import torchfits.table as table
+
+    def boom(*args, **kwargs):
+        raise OSError("header IO failure")
+
+    monkeypatch.setattr(torchfits, "read_header", boom)
+    with pytest.raises(OSError, match="header IO failure"):
+        table.read(numeric_fits)
+    with pytest.raises(OSError, match="header IO failure"):
+        list(table.scan(numeric_fits))
+
+
+class _StubReader:
+    """Minimal TableReader stand-in returning canned per-range segments."""
+
+    def __init__(self, segs):
+        self._segs = list(segs)
+
+    def read_rows(self, cols, start, length):
+        return self._segs.pop(0)
+
+
+def test_read_ranges_short_segment_raises():
+    """A short segment must raise, never silently splice list buffers (r5a-06)."""
+    import torch
+    from torchfits._table.engine import _read_ranges_as_chunk
+
+    reader = _StubReader([{"T": torch.tensor([1, 2]), "L": [1, 2]}])
+    with pytest.raises(RuntimeError, match="segment"):
+        _read_ranges_as_chunk(reader, ["T", "L"], [(0, 3)])
+
+
+def test_read_ranges_empty_segment_raises():
+    """Rows of an empty segment must never surface as zeros/None (r5a-06)."""
+    import torch
+    from torchfits._table.engine import _read_ranges_as_chunk
+
+    reader = _StubReader([{"T": torch.tensor([1, 2]), "L": [1, 2]}, {}])
+    with pytest.raises(RuntimeError, match="segment"):
+        _read_ranges_as_chunk(reader, ["T", "L"], [(0, 2), (5, 1)])
+
+
+def test_read_ranges_zero_length_ranges_ok():
+    """Zero-length coalesced ranges are harmless (r5a-06 pin)."""
+    import torch
+    from torchfits._table.engine import _read_ranges_as_chunk
+
+    reader = _StubReader([{"T": torch.tensor([1, 2]), "L": [1, 2]}, {"T": torch.tensor([5]), "L": [5]}])
+    out = _read_ranges_as_chunk(reader, ["T", "L"], [(0, 2), (0, 0), (5, 1)])
+    assert out["T"].tolist() == [1, 2, 5]
+    assert out["L"] == [1, 2, 5]
+    assert _read_ranges_as_chunk(_StubReader([]), ["T"], []) == {}
+
+
+def test_complex_projection_columns_are_served(tmp_path):
+    """Projecting past complex columns must work; unprojectable complex
+    columns still raise a clear NotImplementedError (r5a-08)."""
+    import torchfits.table as table
+
+    path = str(tmp_path / "complex.fits")
+    hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(
+                name="CX", format="C", array=np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+            ),
+            fits.Column(name="ID", format="J", array=np.arange(2, dtype=np.int32)),
+        ]
+    )
+    hdu.writeto(path)
+
+    t = table.read(path, columns=["ID"])
+    assert t.column_names == ["ID"]
+    assert t["ID"].to_pylist() == [0, 1]
+    with pytest.raises(NotImplementedError, match="complex"):
+        table.read(path)
+    with pytest.raises(NotImplementedError, match="complex"):
+        table.read(path, columns=["ID"], where="CX > 1")
+
+
+def test_reader_empty_result_schema_matches_hdu(tmp_path):
+    """reader() must type an empty result from the requested HDU (r5a-15)."""
+    import torchfits.table as table
+
+    path = str(tmp_path / "two_hdus.fits")
+    primary = fits.PrimaryHDU()
+    one = fits.BinTableHDU.from_columns(
+        [fits.Column(name="A", format="J", array=np.arange(2, dtype=np.int32))]
+    )
+    one.name = "ONE"
+    two = fits.BinTableHDU.from_columns(
+        [fits.Column(name="B", format="E", array=np.arange(2, dtype=np.float32))]
+    )
+    two.name = "TWO"
+    fits.HDUList([primary, one, two]).writeto(path)
+
+    rdr = table.reader(path, hdu="TWO", row_slice=(0, 0))
+    result = rdr.read_all()
+    assert result.schema.names == ["B"]
+    assert str(result.schema.field("B").type) == "float"
+
+
+def test_fallback_table_opens_file_once_per_call(tmp_path):
+    """A table read must open the file exactly once per call (r5a-11).
+
+    Count proof: per cache-miss call the shared handle is the only open
+    (``open_fits_file`` == 1) and no path-based binding runs — those open the
+    file a second time inside the extension (the historical "fallback-table
+    double-open per call").
+    """
+    from unittest import mock
+
+    import torchfits
+    import torchfits._C as cpp
+
+    path = str(tmp_path / "count.fits")
+    fits.BinTableHDU.from_columns(
+        [fits.Column(name="ID", format="J", array=np.arange(64, dtype=np.int32))]
+    ).writeto(path)
+
+    counts = {"open": 0, "path": 0}
+    orig_open = cpp.open_fits_file
+    orig_rft = cpp.read_fits_table
+    orig_rftr = cpp.read_fits_table_rows
+
+    def c_open(*args, **kwargs):
+        counts["open"] += 1
+        return orig_open(*args, **kwargs)
+
+    def c_rft(*args, **kwargs):
+        counts["path"] += 1
+        return orig_rft(*args, **kwargs)
+
+    def c_rftr(*args, **kwargs):
+        counts["path"] += 1
+        return orig_rftr(*args, **kwargs)
+
+    with mock.patch.object(cpp, "open_fits_file", c_open), mock.patch.object(
+        cpp, "read_fits_table", c_rft
+    ), mock.patch.object(cpp, "read_fits_table_rows", c_rftr):
+        out = torchfits.read(path, 1)
+
+    assert out["ID"].shape == (64,)
+    assert counts == {"open": 1, "path": 0}, (
+        f"expected one open and zero path-based binding calls, got {counts}"
+    )

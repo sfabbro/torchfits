@@ -87,22 +87,22 @@ def _torch_cmp_mask(tensor: torch.Tensor, op: str, literal: Any) -> torch.Tensor
     # (e.g. comparing an int16 column against 40000 becomes `> -25536`), which
     # silently flips the predicate. Promote the tensor to int64 so the literal
     # is compared at full width instead (matching the C++ pushdown, which now
-    # also compares integers in int64).
-    if (
-        isinstance(literal, int)
-        and not isinstance(literal, bool)
-        and tensor.dtype
-        in (
-            torch.int8,
-            torch.int16,
-            torch.int32,
-            torch.uint8,
-            torch.uint16,
-            torch.uint32,
-        )
+    # also compares integers in int64). uint16/uint32 always compare at int64:
+    # torch has no CPU compare kernels for those dtypes at all (r5a-07).
+    if tensor.dtype in (
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
     ):
-        info = torch.iinfo(tensor.dtype)
-        if not (info.min <= literal <= info.max):
+        widen = tensor.dtype in (torch.uint16, torch.uint32)
+        if isinstance(literal, int) and not isinstance(literal, bool):
+            info = torch.iinfo(tensor.dtype)
+            if not (info.min <= literal <= info.max):
+                widen = True
+        if widen:
             tensor = tensor.to(torch.int64)
 
     if op == "==":
@@ -618,18 +618,27 @@ def _read_table_with_where(
     include_fits_metadata: bool,
     apply_fits_nulls: bool,
     backend: str,
+    header: Any = None,
 ) -> Any:
     import torchfits
 
     header_ok = False
     hdr: Any = {}
     n_rows = 0
-    try:
-        hdr = torchfits.read_header(path, hdu)
-        n_rows = int(hdr.get("NAXIS2", 0))
+    if header is not None:
+        hdr = header
+        try:
+            n_rows = int(hdr.get("NAXIS2", 0))
+        except (TypeError, ValueError):
+            n_rows = 0
         header_ok = True
-    except (OSError, ValueError, TypeError):
-        n_rows = 0
+    else:
+        try:
+            hdr = torchfits.read_header(path, hdu)
+            n_rows = int(hdr.get("NAXIS2", 0))
+            header_ok = True
+        except (ValueError, TypeError):
+            n_rows = 0
 
     plan = (
         choose_where_read_plan(
@@ -723,6 +732,7 @@ def _read_table_with_where(
         include_fits_metadata=include_fits_metadata,
         apply_fits_nulls=apply_fits_nulls,
         backend=plan.unfiltered_backend,
+        header=hdr if header_ok else None,
     )
     filtered = _filter_table_with_where(pa, base, where)
     if drop_after:

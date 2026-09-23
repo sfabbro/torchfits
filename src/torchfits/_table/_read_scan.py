@@ -35,6 +35,7 @@ def _iter_chunks_cpp_table(
     num_rows: int,
     batch_size: int,
     mmap: bool,
+    header: Any = None,
 ) -> Any:
     import torchfits
     import torchfits._C as cpp
@@ -42,7 +43,8 @@ def _iter_chunks_cpp_table(
     if not hasattr(cpp, "read_fits_table_rows_from_handle"):
         return None
 
-    header = torchfits.read_header(path, hdu)
+    if header is None:
+        header = torchfits.read_header(path, hdu)
     total_rows = header.get("NAXIS2", 0)
     try:
         total_rows = (
@@ -120,12 +122,15 @@ def _read_table_from_scan_batches(
     include_fits_metadata: bool,
     apply_fits_nulls: bool,
     backend: str,
+    header: Any = None,
 ) -> Any:
     pa = _require_pyarrow()
-    from . import read as _read_mod
 
+    # Straight to the scan body: re-entering the public scan() wrapper here
+    # re-ran the path guards and the complex/header prelude on every fallback
+    # (a second header read per call, r5a-10).
     batches = list(
-        _read_mod.scan(
+        _scan_iter(
             path,
             hdu=hdu,
             columns=columns,
@@ -138,6 +143,7 @@ def _read_table_from_scan_batches(
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
             backend=backend,
+            header=header,
         )
     )
     if not batches:
@@ -162,8 +168,9 @@ def _read_table_unfiltered(
     include_fits_metadata: bool,
     apply_fits_nulls: bool,
     backend: str,
+    header: Any = None,
 ) -> Any:
-    if backend in {"auto", "cpp"}:
+    if backend in {"auto", "cpp"} or rows is not None:
         single = _read_cpp_table_chunk(
             path=path,
             hdu=hdu,
@@ -177,6 +184,7 @@ def _read_table_unfiltered(
             strip=strip,
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
+            header=header,
         )
         if single is not None:
             return single
@@ -193,6 +201,7 @@ def _read_table_unfiltered(
         include_fits_metadata=include_fits_metadata,
         apply_fits_nulls=apply_fits_nulls,
         backend=backend,
+        header=header,
     )
 
 
@@ -210,6 +219,7 @@ def _scan_iter(
     include_fits_metadata: bool = False,
     apply_fits_nulls: bool = True,
     backend: str = "auto",
+    header: Any = None,
 ) -> Iterator[Any]:
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
@@ -259,6 +269,7 @@ def _scan_iter(
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
             backend=backend,
+            header=header,
         )
 
         yielded = False
@@ -301,11 +312,14 @@ def _scan_iter(
     selected = set(columns) if columns else None
 
     # Read the header once and pass it to all helper functions to avoid
-    # redundant read_header() calls.
-    try:
-        _hdr = torchfits.read_header(path, hdu)
-    except (OSError, ValueError):
-        _hdr = None
+    # redundant read_header() calls. Decode failures degrade to a
+    # metadata-free read; IO errors propagate (r5a-05).
+    _hdr = header
+    if _hdr is None:
+        try:
+            _hdr = torchfits.read_header(path, hdu)
+        except ValueError:
+            _hdr = None
 
     col_tforms = (
         _column_tforms_for_decode(path, hdu, selected, header=_hdr)
@@ -321,7 +335,7 @@ def _scan_iter(
             field_meta, table_meta = _build_fits_metadata(
                 path, hdu, selected, header=_hdr
             )
-        except (OSError, ValueError):
+        except ValueError:
             field_meta, table_meta = {}, {}
     if columns:
         preferred_order = columns[:]
@@ -330,10 +344,20 @@ def _scan_iter(
     else:
         preferred_order = None
 
+    # Reuse the already-read header's NAXIS2 so stream_table does not re-read
+    # it (r5a-10): one header read per scan call.
+    total_rows: Optional[int] = None
+    if _hdr is not None:
+        try:
+            _nr = _hdr.get("NAXIS2", 0)
+            total_rows = int(float(_nr)) if isinstance(_nr, str) else int(_nr)
+        except (TypeError, ValueError):
+            total_rows = None
+
     chunk_iter = None
     if backend in {"auto", "cpp"}:
         chunk_iter = _iter_chunks_cpp_table(
-            path, hdu, columns, start_row, num_rows, batch_size, mmap
+            path, hdu, columns, start_row, num_rows, batch_size, mmap, header=_hdr
         )
     if chunk_iter is None or backend == "torch":
         # Lazy import: table_streaming → hdu at module import time is cyclic.
@@ -348,6 +372,7 @@ def _scan_iter(
             num_rows=num_rows,
             chunk_rows=batch_size,
             mmap=mmap,
+            total_rows=total_rows,
         )
 
     for chunk in chunk_iter:
@@ -366,6 +391,27 @@ def _scan_iter(
         )
 
 
+def _validate_row_selection(rows: Any, header: Any) -> None:
+    """Reject invalid ``rows=`` indices with sequence semantics (r5a-01).
+
+    A ``rows=`` selection has no full-table fallback, so out-of-range indices
+    must fail loudly (``IndexError`` naming the row) instead of being silently
+    dropped into a full-table read.
+    """
+    if header is None:
+        return
+    try:
+        n_rows = int(header.get("NAXIS2", 0))
+    except (TypeError, ValueError):
+        return
+    for row in rows:
+        row = int(row)
+        if row < 0:
+            raise ValueError("rows must be non-negative (0-based)")
+        if row >= n_rows:
+            raise IndexError(f"row {row} out of range for a {n_rows}-row table")
+
+
 def _read_cpp_table_chunk(
     path: str,
     hdu: int,
@@ -379,6 +425,7 @@ def _read_cpp_table_chunk(
     strip: bool,
     include_fits_metadata: bool,
     apply_fits_nulls: bool,
+    header: Any = None,
 ) -> Any:
     """Read a table chunk via C++ TableReader (torch tensors) and convert to Arrow."""
     import numpy as np
@@ -393,6 +440,27 @@ def _read_cpp_table_chunk(
         return _empty_table_with_schema(
             pa, path, hdu, columns, decode_bytes, include_fits_metadata
         )
+
+    # Read the header lazily and at most once, reusing it across every helper.
+    # Deferring the read lets a read that fails or returns empty before any
+    # header consumer runs skip the header I/O entirely — the common numeric
+    # path (no decode/metadata/nulls) only touches the header via the
+    # full-read capability check (P2-1). A caller-provided header seeds the
+    # memo so one read() call performs one header read (r5a-10).
+    import torchfits
+
+    _hdr_memo: list[Any] = [header] if header is not None else []
+
+    def _get_hdr() -> Any:
+        if not _hdr_memo:
+            try:
+                _hdr_memo.append(torchfits.read_header(path, hdu))
+            except ValueError:
+                _hdr_memo.append(None)
+        return _hdr_memo[0]
+
+    if rows is not None:
+        _validate_row_selection(rows, _get_hdr())
 
     if where is not None:
         where_rows = _resolve_rows_from_where_cpp(
@@ -416,23 +484,6 @@ def _read_cpp_table_chunk(
 
     selected = set(columns) if columns else None
 
-    # Read the header lazily and at most once, reusing it across every helper.
-    # Deferring the read lets a read that fails or returns empty before any
-    # header consumer runs skip the header I/O entirely — the common numeric
-    # path (no decode/metadata/nulls) only touches the header via the
-    # full-read capability check (P2-1).
-    import torchfits
-
-    _hdr_memo: list[Any] = []
-
-    def _get_hdr() -> Any:
-        if not _hdr_memo:
-            try:
-                _hdr_memo.append(torchfits.read_header(path, hdu))
-            except (OSError, ValueError):
-                _hdr_memo.append(None)
-        return _hdr_memo[0]
-
     col_tforms = (
         _column_tforms_for_decode(path, hdu, selected, header=_get_hdr())
         if decode_bytes
@@ -446,7 +497,7 @@ def _read_cpp_table_chunk(
             field_meta, table_meta = _build_fits_metadata(
                 path, hdu, selected, header=_get_hdr()
             )
-        except (OSError, ValueError):
+        except ValueError:
             pass
     if columns:
         preferred_order = columns[:]
@@ -463,7 +514,8 @@ def _read_cpp_table_chunk(
     # type is the union of what the native and numpy paths return.
     chunk: dict[str, Any] | None = None
     prefer_torch_full_path = (
-        start_row == 1
+        rows is None
+        and start_row == 1
         and num_rows == -1
         and not decode_bytes
         and not include_fits_metadata
@@ -524,14 +576,11 @@ def _read_cpp_table_chunk(
 
             ranges = list(zip(start0s.tolist(), lengths.tolist()))
 
-        try:
-            reader = _acquire_cpp_reader(path, hdu, cpp)
-            chunk_sorted = _read_ranges_as_chunk(reader, col_list, ranges)
-        except (RuntimeError, OSError) as exc:
-            logger.debug("ranged row read failed: %s", exc)
-            chunk_sorted = None
-        if chunk_sorted is None:
-            return None
+        # A rows= selection has no fallback that could honor it: the scan
+        # fallback would silently return the full table (r5a-01), so ranged
+        # read failures propagate untouched.
+        reader = _acquire_cpp_reader(path, hdu, cpp)
+        chunk_sorted = _read_ranges_as_chunk(reader, col_list, ranges)
 
         inv = np.empty_like(order)
         inv[order] = np.arange(len(order))
@@ -594,18 +643,21 @@ def _scan_torch_iter(
     device: str = "cpu",
     non_blocking: bool = True,
     pin_memory: bool = False,
+    header: Any = None,
 ) -> Iterator[dict[str, Any]]:
     import torchfits
 
     start_row, num_rows = _normalize_row_slice(row_slice)
     use_mmap = mmap
-    _hdr = None
+    _hdr = header
     if use_mmap:
-        # Read header once for the capability check.
-        try:
-            _hdr = torchfits.read_header(path, hdu)
-        except (OSError, ValueError):
-            _hdr = None
+        if _hdr is None:
+            # Read header once for the capability check. Decode failures degrade;
+            # IO errors propagate (r5a-05).
+            try:
+                _hdr = torchfits.read_header(path, hdu)
+            except ValueError:
+                _hdr = None
         use_mmap = _can_use_mmap_row_path_for_full_read(path, hdu, columns, header=_hdr)
 
     # Reuse the already-read header's NAXIS2 so stream_table does not re-read it.

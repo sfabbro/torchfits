@@ -299,7 +299,27 @@ def read_fallback_table(
     table_result = None
     decode_errors: list[BaseException] = []
     table_mmap = mmap if isinstance(mmap, bool) else True
-    if table_mmap:
+
+    # Opportunistic single-open read (r5a-11) for the mmap stage below: the
+    # caller's handle is already open, so try it before the path-based
+    # bindings open the file a second time. This attempt is deliberately not
+    # part of the reader-compatibility chain: a failed attempt is not
+    # recorded and the original readers still run in order, so their
+    # diagnoses surface (truncation identity, r4a-05). IO errors propagate
+    # immediately and are never retried.
+    if table_mmap and hasattr(cpp_module, "read_fits_table_rows_from_handle"):
+        try:
+            candidate = cpp_module.read_fits_table_rows_from_handle(
+                file_handle, hdu_num, col_list, start_row, num_rows
+            )
+            if isinstance(candidate, dict):
+                table_result = candidate
+        except OSError:
+            raise
+        except (RuntimeError, TypeError, ValueError):
+            table_result = None
+
+    if table_result is None and table_mmap:
         try:
             if start_row > 1 or num_rows != -1:
                 if hasattr(cpp_module, "read_fits_table_rows"):
@@ -323,11 +343,13 @@ def read_fallback_table(
             table_result = None
 
     if table_result is None:
-        # Prefer the cold-path binding with the thread-local reader cache:
-        # it reuses the CFITSIO handle, the row scratch buffer and the pread
-        # fd across calls (steady-state reads stop re-faulting ~24 MiB of
-        # anonymous memory per call). from_handle fallbacks keep working for
-        # older extension builds.
+        # Buffered fallback: prefer the cold-path binding with the
+        # thread-local reader cache — it reuses the CFITSIO handle, the row
+        # scratch buffer and the pread fd across calls (steady-state reads
+        # stop re-faulting ~24 MiB of anonymous memory per call). This stage
+        # stays path-based because that cache is keyed on the path; the
+        # single-open fast attempt above covers the common full-read case
+        # (r5a-11). The from_handle stage below is the last-resort reader.
         if hasattr(cpp_module, "read_fits_table_rows"):
             try:
                 table_result = cpp_module.read_fits_table_rows(

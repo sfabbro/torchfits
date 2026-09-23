@@ -18,6 +18,9 @@ from ._read_scan import (
     _scan_torch_iter,
 )
 from ._read_schema import schema
+from ._read_schema import (  # noqa: F401  # re-export private but keep internal use
+    _validate_projection_columns,
+)
 from ._read_where import (  # noqa: F401  # re-export private but keep internal use
     _compile_where_to_simple_predicates,
     _read_table_with_where,
@@ -60,18 +63,66 @@ _COMPLEX_ERR = (
 )
 
 
-def _reject_complex_columns(path: str, hdu: int | str) -> None:
-    """Raise a clear error when the target HDU holds complex columns."""
-    import torchfits as _tf
+def _reject_complex_columns(
+    header: Any,
+    columns: Optional[list[str]] = None,
+    where: Optional[str] = None,
+) -> None:
+    """Raise a clear error when the read would surface complex columns.
+
+    Column projection past complex columns is fine — only columns the result
+    would actually contain (projection plus WHERE predicates) are checked
+    (r5a-08).
+    """
+    from .._where import parse_where_expression, where_columns_from_ast
     from ..fits_schema import complex_column_names
 
-    try:
-        header = _tf.read_header(path, hdu)
-    except Exception:
+    names = complex_column_names(header)
+    if not names:
         return
-    names = sorted(complex_column_names(header))
-    if names:
-        raise NotImplementedError(f"{_COMPLEX_ERR} (columns: {names})")
+    if columns is None:
+        touching = names
+    else:
+        wanted = set(columns)
+        if where is not None:
+            try:
+                wanted |= set(where_columns_from_ast(parse_where_expression(where)))
+            except ValueError:
+                pass  # unparseable predicates fail in the read bodies
+        touching = names & wanted
+    if touching:
+        raise NotImplementedError(f"{_COMPLEX_ERR} (columns: {sorted(touching)})")
+
+
+def _read_prelude(
+    path: str,
+    hdu: int | str,
+    columns: Optional[list[str]],
+    where: Optional[str] = None,
+    *,
+    arrow_api: bool = True,
+) -> tuple[Any, Optional[list[str]]]:
+    """One eager header read validates the projection and rejects complex columns.
+
+    Returns the header for reuse by the read bodies (one header read per
+    call, r5a-10). Unknown projected columns raise ``KeyError`` naming the
+    column, identically for empty and non-empty results (r5a-03).
+    ``columns=[]`` projects like ``columns=None`` (r5a-09). Header decode
+    failures skip the checks (the read bodies surface them); IO errors
+    propagate (r5a-05).
+    """
+    import torchfits
+
+    if not columns:
+        columns = None
+    try:
+        header = torchfits.read_header(path, hdu)
+    except (ValueError, RuntimeError, TypeError):
+        return None, columns
+    columns = _validate_projection_columns(header, columns)
+    if arrow_api:
+        _reject_complex_columns(header, columns, where)
+    return header, columns
 
 
 def scan(
@@ -94,7 +145,7 @@ def scan(
     guard_fits_path(path)
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
-    _reject_complex_columns(path, hdu)
+    header, columns = _read_prelude(path, hdu, columns, where)
     return _scan_iter(
         path,
         hdu=hdu,
@@ -109,6 +160,7 @@ def scan(
         include_fits_metadata=include_fits_metadata,
         apply_fits_nulls=apply_fits_nulls,
         backend=backend,
+        header=header,
     )
 
 
@@ -134,9 +186,13 @@ def read(
     pa = _require_pyarrow()
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
-    _reject_complex_columns(path, hdu)
+    header, columns = _read_prelude(path, hdu, columns, where)
 
-    if backend in {"auto", "cpp"} and not should_skip_cpp_for_where(backend, where):
+    # rows= is a scatter selection only the C++ range engine can honor —
+    # route it there for every backend (r5a-01).
+    if (backend in {"auto", "cpp"} or rows is not None) and not should_skip_cpp_for_where(
+        backend, where
+    ):
         single = _read_cpp_table_chunk(
             path=path,
             hdu=hdu,
@@ -150,6 +206,7 @@ def read(
             strip=strip,
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
+            header=header,
         )
         if single is not None:
             return single
@@ -171,6 +228,7 @@ def read(
             include_fits_metadata=include_fits_metadata,
             apply_fits_nulls=apply_fits_nulls,
             backend=backend,
+            header=header,
         )
 
     return _read_table_from_scan_batches(
@@ -186,6 +244,7 @@ def read(
         include_fits_metadata=include_fits_metadata,
         apply_fits_nulls=apply_fits_nulls,
         backend=backend,
+        header=header,
     )
 
 
@@ -219,6 +278,9 @@ def read_torch(
     """
     path = coerce_fits_path(path)
     guard_fits_path(path)
+    # Torch dict reads serve complex columns, so only the projection is
+    # validated here (r5a-03).
+    _header, columns = _read_prelude(path, hdu, columns, None, arrow_api=False)
     import torchfits
 
     # Lazy import: table_api path must not pull hdu during _table.read import.
@@ -255,6 +317,11 @@ def scan_torch(
     # Eager guard: a generator body would defer this until first next().
     path = coerce_fits_path(path)
     guard_fits_path(path)
+    if isinstance(hdu, str):
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
+    # Torch dict scans serve complex columns, so only the projection is
+    # validated here (r5a-03).
+    header, columns = _read_prelude(path, hdu, columns, None, arrow_api=False)
     return _scan_torch_iter(
         path,
         hdu=hdu,
@@ -265,6 +332,7 @@ def scan_torch(
         device=device,
         non_blocking=non_blocking,
         pin_memory=pin_memory,
+        header=header,
     )
 
 
@@ -285,6 +353,10 @@ def reader(
 ) -> Any:
     pa = _require_pyarrow()
     backend = validate_table_backend(backend)
+    if isinstance(hdu, str):
+        # Resolve now: the empty-result fallback must type the schema from
+        # the requested HDU, not from HDU 1 (r5a-15).
+        hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
     scan_backend = backend
     batches = scan(
         path,
@@ -307,7 +379,7 @@ def reader(
         empty = _empty_table_with_schema(
             pa,
             path,
-            int(hdu) if isinstance(hdu, int) else 1,
+            int(hdu),
             columns,
             decode_bytes,
             include_fits_metadata,

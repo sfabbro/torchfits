@@ -6,11 +6,22 @@ C++ TableReader and assembles them into a single torch-backed dict.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import torch
 
 from .arrow_convert import _is_vla_tuple
+
+
+def _segment_row_count(value: Any) -> Optional[int]:
+    """Row count carried by one column segment, or None for scalar broadcast."""
+    if isinstance(value, torch.Tensor):
+        return int(value.shape[0])
+    if isinstance(value, list):
+        return len(value)
+    if _is_vla_tuple(value):
+        return int(value[1].reshape(-1).shape[0]) - 1
+    return None
 
 
 def _read_ranges_as_chunk(
@@ -23,8 +34,12 @@ def _read_ranges_as_chunk(
     Each ``(start0, length)`` range triggers one ``reader.read_rows`` round-trip
     to CFITSIO, so callers MUST pass *coalesced* ranges (adjacent/contiguous
     rows merged into a single range) to avoid N small reads for scattered row
-    lists. The sole caller (``_read_cpp_table_chunk`` in ``read.py``) coalesces
-    sorted rows via ``np.diff`` before calling this helper.
+    lists. Zero-length ranges are skipped without a round-trip.
+
+    A segment that is empty or short for a non-empty range raises instead of
+    fabricating rows: unreadable rows used to surface as zeros (tensors) or
+    ``None`` (lists) and short list segments silently spliced the buffer
+    (r5a-06, A-14).
     """
     import numpy as np
 
@@ -32,24 +47,34 @@ def _read_ranges_as_chunk(
     n_total = sum(length for _, length in ranges)
     if n_total == 0:
         return {}
-    # ponytail: pre-allocate placeholders for requested columns so an initial
-    # empty range doesn't leave tensor vs list defaults inconsistent later.
-    # Real buffers are materialized on first non-empty segment.
-    for col in col_list:
-        out_sorted[col] = None
 
+    expected: Optional[set[str]] = set(col_list) if col_list else None
     cursor = 0
     for start0, length in ranges:
-        seg = reader.read_rows(col_list, start0 + 1, length)
-        if not seg:
-            cursor += length
+        if length <= 0:
             continue
+        seg = reader.read_rows(col_list, start0 + 1, length)
+        row_lo, row_hi = start0, start0 + length
+        if not seg:
+            raise RuntimeError(
+                f"empty row segment for rows [{row_lo}, {row_hi}): "
+                "refusing to fabricate rows"
+            )
+        if expected is None:
+            expected = set(seg.keys())
+        missing = expected - set(seg.keys())
+        if missing:
+            raise RuntimeError(
+                f"row segment for rows [{row_lo}, {row_hi}) is missing "
+                f"columns {sorted(missing)}"
+            )
         for name, value in seg.items():
             buf: Any = out_sorted.get(name)
             if buf is None:
                 if isinstance(value, torch.Tensor):
                     # Zero-initialized: an empty reader segment must surface
-                    # as zeros, never uninitialized memory.
+                    # as zeros, never uninitialized memory. Segments are
+                    # length-validated below, so every row slot is filled.
                     buf = torch.zeros(
                         (n_total,) + tuple(value.shape[1:]), dtype=value.dtype
                     )
@@ -57,6 +82,12 @@ def _read_ranges_as_chunk(
                     buf = [None] * n_total
                 out_sorted[name] = buf
 
+            n_got = _segment_row_count(value)
+            if n_got is not None and n_got != length:
+                raise RuntimeError(
+                    f"short row segment for rows [{row_lo}, {row_hi}): "
+                    f"column {name!r} returned {n_got} of {length} rows"
+                )
             if isinstance(value, torch.Tensor):
                 buf[cursor : cursor + length] = value
             elif isinstance(value, list):
@@ -74,6 +105,4 @@ def _read_ranges_as_chunk(
             else:
                 buf[cursor : cursor + length] = [value] * length
         cursor += length
-    # Drop columns that never returned data (e.g., all ranges empty)
-    out_sorted = {k: v for k, v in out_sorted.items() if v is not None}
     return out_sorted

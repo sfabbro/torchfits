@@ -55,6 +55,11 @@ def _empty_table_with_schema(
                 idx = header_schema.get_field_index(name)
                 if idx >= 0:
                     ordered_fields.append(header_schema.field(idx))
+                else:
+                    # Known-but-untypable names stay visible as null columns
+                    # (r5a-03/04): an empty result never silently drops a
+                    # requested column that a non-empty read would return.
+                    ordered_fields.append(pa.field(name, pa.null()))
             if ordered_fields:
                 ordered_schema = pa.schema(
                     ordered_fields,
@@ -152,6 +157,8 @@ def _column_tforms_for_decode(
         try:
             header = torchfits.read_header(path, hdu)
         except (OSError, ValueError):
+            # Probe contract: an unreadable header degrades to "no info", so
+            # capability/metadata probes never raise on their own.
             return {}
     out: dict[str, str] = {}
     for col in fits_schema.iter_table_columns(header, selected=selected_columns):
@@ -172,6 +179,7 @@ def _unsigned_column_dtypes(
         try:
             header = torchfits.read_header(path, hdu)
         except (OSError, ValueError):
+            # Probe contract: an unreadable header degrades to "no info".
             return {}
     torch_dtype_map = fits_schema.unsigned_column_dtypes_from_header(header)
     return {
@@ -222,7 +230,9 @@ def _can_use_full_read_path(
         si = str(i)
         name = header.get("TTYPE" + si)
         if not isinstance(name, str) or not name:
-            continue
+            # TTYPE-less columns surface in the readers as COL<i> and still
+            # constrain the scalar-only fast paths (r5a-04).
+            name = f"COL{si}"
         if selected is not None and name not in selected:
             continue
         any_selected = True
@@ -284,13 +294,17 @@ def _arrow_type_from_tform(
         "K": pa.int64(),
         "E": pa.float32(),
         "D": pa.float64(),
+    }
+    if code == "A":
+        # TFORM 'rA' is one r-character string per row: the repeat is the
+        # character width, not a vector length, so this is always a scalar
+        # string/bytes value (the data path decodes each row to one string).
+        return pa.utf8() if decode_bytes else pa.binary(max(int(repeat), 1))
+    if code in ("C", "M"):
         # Complex columns (C/M) have no scalar Arrow equivalent that matches
         # the data path (complex64/complex128); returning a float type here
         # made the header-only schema disagree with scan results. Report None
         # so callers fall back to the data-driven schema, per the contract.
-        "A": pa.utf8() if decode_bytes else pa.binary(),
-    }
-    if code in ("C", "M"):
         return None
     base = _SCALAR.get(code)
     if base is None:
@@ -298,6 +312,106 @@ def _arrow_type_from_tform(
     if repeat == 1:
         return base
     return pa.list_(base, repeat)
+
+
+def _column_arrow_type(col: Any, *, decode_bytes: bool, pa: Any) -> Any | None:
+    """Arrow type for one table column: TFORM shape plus TSCAL/TZERO conventions.
+
+    Must agree with the dtypes the data readers produce: the standard unsigned
+    conventions keep integer storage (uint16/uint32), any other TSCAL/TZERO
+    scaling reads as float64 (table scaling is float64). Raw integer TNULL
+    without scaling keeps its integer type (the sentinel stays a sentinel).
+    """
+    info = col.tform_info
+    arrow_type = _arrow_type_from_tform(
+        info.code or "", info.repeat, decode_bytes=decode_bytes, pa=pa
+    )
+    if arrow_type is None or info.code not in {"B", "I", "J", "K", "E", "D"}:
+        return arrow_type
+    tscal = col.tscal if col.tscal is not None else 1.0
+    tzero = col.tzero if col.tzero is not None else 0.0
+    is_list = pa.types.is_fixed_size_list(arrow_type)
+    elem = arrow_type.value_type if is_list else arrow_type
+    if abs(tscal - 1.0) > 1e-5:
+        new_elem = pa.float64()
+    elif info.code == "I" and abs(tzero - 32768.0) < 1e-5:
+        new_elem = pa.uint16()
+    elif info.code == "J" and abs(tzero - 2147483648.0) < 1e-5:
+        new_elem = pa.uint32()
+    elif tzero != 0.0:
+        new_elem = pa.float64()
+    else:
+        return arrow_type
+    return pa.list_(new_elem, arrow_type.list_size) if is_list else new_elem
+
+
+def _unnamed_columns(header: Any) -> list[Any]:
+    """TTYPE-less columns surfaced by the readers under the auto-name ``COL<i>``.
+
+    The shared ``fits_schema`` walker skips TTYPE-less columns; this restores
+    them as ``TableColumnMeta`` rows so empty results and ``schema()`` can
+    agree with the data paths (r5a-04). The ``COL<i>`` naming mirrors the C++
+    reader convention.
+    """
+    try:
+        tf_count = int(header.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        return []
+    out: list[Any] = []
+    for i in range(1, tf_count + 1):
+        si = str(i)
+        name = header.get("TTYPE" + si)
+        if isinstance(name, str) and name:
+            continue
+        tform = header.get("TFORM" + si)
+        tform_str = str(tform) if tform is not None else ""
+        tscal_raw = header.get("TSCAL" + si)
+        tzero_raw = header.get("TZERO" + si)
+        out.append(
+            fits_schema.TableColumnMeta(
+                index=i,
+                name=f"COL{si}",
+                tform=tform_str,
+                tform_info=fits_schema.parse_tform(tform_str),
+                tdim=None,
+                tnull=header.get("TNULL" + si),
+                tscal=float(tscal_raw) if tscal_raw is not None else 1.0,
+                tzero=float(tzero_raw) if tzero_raw is not None else 0.0,
+            )
+        )
+    return out
+
+
+def _reader_column_names(header: Any) -> set[str]:
+    """All column names a reader can serve for this header (incl. ``COL<i>``)."""
+    names: set[str] = set()
+    try:
+        tf_count = int(header.get("TFIELDS", 0))
+    except (TypeError, ValueError):
+        tf_count = 0
+    for i in range(1, tf_count + 1):
+        si = str(i)
+        name = header.get("TTYPE" + si)
+        names.add(name if isinstance(name, str) and name else f"COL{si}")
+    return names
+
+
+def _validate_projection_columns(
+    header: Any, columns: Optional[list[str]]
+) -> Optional[list[str]]:
+    """Normalize and validate the projected column names (dict-like contract).
+
+    ``columns=[]`` projects like ``columns=None`` (the engine convention:
+    an empty selection means all columns). Unknown names raise ``KeyError``
+    naming the column, identically for empty and non-empty results (r5a-03).
+    """
+    if not columns:
+        return None
+    known = _reader_column_names(header)
+    for name in columns:
+        if name not in known:
+            raise KeyError(f"Column '{name}' not found")
+    return list(columns)
 
 
 def _schema_from_header(
@@ -318,23 +432,29 @@ def _schema_from_header(
     try:
         header = torchfits.read_header(path, hdu)
     except (OSError, ValueError):
+        # Probe contract: returns None when the header cannot be read; the
+        # callers' scan-based fallback surfaces any real IO error.
         return None
 
     pa = _require_pyarrow()
+    columns = _validate_projection_columns(header, columns)
     selected = set(columns) if columns else None
     fields = []
     any_vla = False
 
     table_meta: dict[str, str] = {"fits_hdu": str(hdu)}
 
-    for col in fits_schema.iter_table_columns(header, selected=selected):
+    # Named columns plus TTYPE-less ones (auto-named COL<i>), in file order.
+    cols = list(fits_schema.iter_table_columns(header, selected=selected))
+    cols += [c for c in _unnamed_columns(header) if selected is None or c.name in selected]
+    cols.sort(key=lambda c: c.index)
+
+    for col in cols:
         info = col.tform_info
         if info.vla or info.code is None:
             any_vla = True
             continue
-        arrow_type = _arrow_type_from_tform(
-            info.code, info.repeat, decode_bytes=decode_bytes, pa=pa
-        )
+        arrow_type = _column_arrow_type(col, decode_bytes=decode_bytes, pa=pa)
         if arrow_type is None:
             any_vla = True
             continue
