@@ -511,3 +511,5 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `.dsh/cordis.patch.yml` | R17 | scan | — | clean |
 | `.dsh/skills/science-core/SKILL.md` | R17 | scan | — | clean |
 | `.dsh/skills/torchfits-dev/SKILL.md` | R17 | scan | — | clean |
+| `pixi.lock` | R18 | scan | — | clean (lockfile) |
+| `src/torchfits/py.typed` | R18 | scan | — | clean (PEP 561 marker) |
