@@ -128,6 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - io: Write boundaries stop forging cards and corrupting compressed rewrites
 - io: Typed Range errors and single-walk HTTP cutouts
 - io: Strict batch errors and typed read-pipeline contracts
+- table: Faithful interop — masked TNULL, width-1 scalars, byte vectors
+- table: QuantizeError and KeyError contracts; mutation swallows narrowed
+- table: Row selections honored and read dtype contracts pinned
 ### Fixed — found by adversarial probing
 - `SigmaClip` and `AsymmetricSigmaClip` no longer detach the autograd graph:
   both wrapped their *return* in `torch.no_grad()`, so any pipeline containing
