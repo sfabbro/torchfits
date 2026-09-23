@@ -662,3 +662,13 @@ def test_owed_behavior_notes_match_the_implementation() -> None:
 
     cutout = cli.split("### `cutout`", 1)[1].split("### `", 1)[0]
     assert "not shifted" in cutout
+
+    import json
+
+    lanes = json.loads(
+        (ROOT / "scripts" / "torch_lanes.json").read_text(encoding="utf-8")
+    )
+    current = lanes["2.13"]["torchfits_version"]
+    release = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
+    assert f"**{current}**" in release
+    assert "1.0.0rc5" not in release

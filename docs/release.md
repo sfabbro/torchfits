@@ -10,7 +10,7 @@ because PyTorch has no stable C++ ABI across minors. Lanes live in
 
 | PyTorch lane | torchfits release |
 |---|---|
-| **2.13.x** | **1.1.0** (primary PyPI release lane; CUDA flavors cu126/cu129/cu130) |
+| **2.13.x** | **1.1.3** (primary PyPI release lane; CUDA flavors cu126/cu129/cu130) |
 
 `scripts/torch_lanes.json` currently defines a single lane; auxiliary
 `+torchNNN` local-version wheels are created by adding lanes to that file and
@@ -40,7 +40,7 @@ prerelease suffix:
 python scripts/release_lane.py --lane <X.Y> --prerelease rc<N> --apply
 ```
 
-e.g. `--prerelease rc5` on lane 2.13 renders `1.0.0rc5` everywhere, and
+e.g. `--prerelease rc5` on lane 2.13 appends `rc5` to that lane's `torchfits_version`, and
 `--check` / `check-lane` accept the rc state as the lane's base version.
 A plain `--apply` (no `--prerelease`) always finalizes back to the map
 version.
