@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -15,6 +16,23 @@ import torchfits
 from astropy.io import fits as afits
 from torchfits._hdu.tensor_hdu import TensorHDU
 from torchfits.data import remote as remote_mod
+
+
+def _extension_subprocess_env() -> dict[str, str]:
+    """A fresh interpreter does not inherit this process's loaded libtorch.
+
+    The extension links libc10 without an rpath. ``scripts/cibw_test.sh``
+    exports the same directory for wheel tests; crash-isolation children
+    need it too, or ``import torchfits._C`` dies before the code under test.
+    """
+    lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+    env = os.environ.copy()
+    key = (
+        "DYLD_FALLBACK_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+    )
+    prev = env.get(key, "")
+    env[key] = lib if not prev else lib + os.pathsep + prev
+    return env
 
 
 def test_tensor_hdu_to_tensor_raises_after_close():
@@ -167,6 +185,7 @@ def test_hostile_naxis_subset_reader_never_crashes(tmp_path):
     path.write_bytes(hdr + bytes(range(256)) * 11)
 
     code = (
+        "import torch\n"
         "import numpy as np, sys\n"
         "from torchfits import _cpp\n"
         "try:\n"
@@ -181,6 +200,7 @@ def test_hostile_naxis_subset_reader_never_crashes(tmp_path):
         [sys.executable, "-c", code, str(path)],
         capture_output=True,
         timeout=120,
+        env=_extension_subprocess_env(),
     )
     assert proc.returncode == 0, (
         f"subset reader crashed the interpreter (rc={proc.returncode}): "
@@ -203,6 +223,7 @@ def test_fitsfile_handle_thread_safe_reads_and_close(tmp_path):
         ]
     ).writeto(path)
     code = (
+        "import torch\n"
         "import numpy as np, threading, sys\n"
         "from torchfits import _cpp\n"
         "fh = _cpp.open_fits_file(sys.argv[1], 'r')\n"
@@ -239,6 +260,7 @@ def test_fitsfile_handle_thread_safe_reads_and_close(tmp_path):
         [sys.executable, "-c", code, str(path)],
         capture_output=True,
         timeout=180,
+        env=_extension_subprocess_env(),
     )
     assert proc.returncode == 0, (
         f"concurrent handle use raced (rc={proc.returncode}): "

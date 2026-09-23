@@ -10,6 +10,7 @@ accepted as a single value.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -21,6 +22,23 @@ import torch
 import torchfits
 import torchfits.table as ttable
 import torchfits._C as cpp
+
+
+def _extension_subprocess_env() -> dict[str, str]:
+    """A fresh interpreter does not inherit this process's loaded libtorch.
+
+    The extension links libc10 without an rpath. ``scripts/cibw_test.sh``
+    exports the same directory for wheel tests; this crash-isolation child
+    needs it too, or ``import torchfits._C`` dies before the code under test.
+    """
+    lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+    env = os.environ.copy()
+    key = (
+        "DYLD_FALLBACK_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+    )
+    prev = env.get(key, "")
+    env[key] = lib if not prev else lib + os.pathsep + prev
+    return env
 
 
 def _write_table(path, nrows=10):
@@ -131,13 +149,18 @@ def test_zero_dim_payload_single_row_update(tmp_path):
     """
     path = _write_table(tmp_path / "s0d.fits", nrows=3)
     code = (
+        "import torch\n"
         "import numpy as np, torchfits, torchfits._C as cpp\n"
         f"cpp.update_fits_table_rows_mmap({path!r}, 1, "
         "{'I32': np.array(42, dtype='<i4')}, 1, 1)\n"
         f"print(int(torchfits.read({path!r}, hdu=1)['I32'][0]))\n"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=_extension_subprocess_env(),
     )
     assert proc.returncode == 0, (
         f"0-dim payload crashed: rc={proc.returncode} {proc.stderr}"
