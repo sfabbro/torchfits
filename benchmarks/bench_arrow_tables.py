@@ -265,7 +265,7 @@ def main() -> None:
     for name, fn in methods:
         m, s = _time(fn, args.warmup, args.iterations)
         print(f"{name:24s}: {m:.6f}s ± {s:.6f}s")
-        results.append({"method": name, "mean_s": m, "std_s": s, "rows": args.rows})
+        results.append({"method": name, "median_s": m, "std_s": s, "rows": args.rows})
         if name == "torchfits_arrow_read_raw":
             arrow_tbl = fn()
 
@@ -280,7 +280,7 @@ def main() -> None:
             results.append(
                 {
                     "method": "arrow_to_pandas",
-                    "mean_s": m,
+                    "median_s": m,
                     "std_s": s,
                     "rows": args.rows,
                 }
@@ -298,7 +298,7 @@ def main() -> None:
             results.append(
                 {
                     "method": "arrow_to_polars",
-                    "mean_s": m,
+                    "median_s": m,
                     "std_s": s,
                     "rows": args.rows,
                 }
@@ -307,7 +307,7 @@ def main() -> None:
             pass
 
     with out_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["method", "mean_s", "std_s", "rows"])
+        writer = csv.DictWriter(f, fieldnames=["method", "median_s", "std_s", "rows"])
         writer.writeheader()
         writer.writerows(results)
 

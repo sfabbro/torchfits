@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from benchmarks.bench_contract import annotate_rankings, compute_deficits
@@ -203,3 +205,111 @@ def test_deficits_require_external_peer() -> None:
     ]
     annotate_rankings(rows)
     assert compute_deficits(rows, run_id="test") == []
+
+
+def _one_second(methods, *, runs, warmup):
+    _ = runs, warmup
+    return {name: (1.0, None, None, None) for name in methods}
+
+
+def _write_images(path: Path, n_ext: int, shape: tuple[int, int], dtype) -> None:
+    from astropy.io import fits
+
+    hdus = [fits.PrimaryHDU()]
+    image = np.zeros(shape, dtype=dtype)
+    for _ in range(n_ext):
+        hdus.append(fits.ImageHDU(image.copy()))
+    fits.HDUList(hdus).writeto(path, overwrite=True)
+
+
+def test_fits_cutout_throughput_uses_window_bytes(tmp_path, monkeypatch) -> None:
+    """100x100 cutout MB/s is the window, not the whole file."""
+    import benchmarks.bench_fits_io as fio
+
+    path = tmp_path / "multi_mef_10ext.fits"
+    _write_images(path, 6, (256, 256), np.float32)
+    monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
+    suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
+    rows = suite._benchmark_cutout_rows(
+        {"multi_mef_10ext": path}, runs=1, warmup=0
+    )
+    window_mb = (100 * 100 * 4) / (1024.0 * 1024.0)
+    file_mb = path.stat().st_size / (1024.0 * 1024.0)
+    assert file_mb > window_mb * 2
+    assert rows[0]["size_mb"] == window_mb
+    assert rows[0]["torchfits_mb_s"] == window_mb
+
+
+def test_compressed_cutout_throughput_uses_zbitpix(tmp_path, monkeypatch) -> None:
+    """Rice HDUs store the image type in ZBITPIX, not the tile-table BITPIX."""
+    from astropy.io import fits
+
+    import benchmarks.bench_fits_io as fio
+
+    path = tmp_path / "compressed_rice_1.fits"
+    image = np.zeros((256, 256), dtype=np.int16)
+    fits.HDUList(
+        [fits.PrimaryHDU(), fits.CompImageHDU(image, compression_type="RICE_1")]
+    ).writeto(path, overwrite=True)
+    monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
+    suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
+    rows = suite._benchmark_cutout_rows(
+        {"compressed_rice_1": path}, runs=1, warmup=0
+    )
+    window_mb = (100 * 100 * 2) / (1024.0 * 1024.0)
+    assert rows[0]["size_mb"] == window_mb
+    assert rows[0]["torchfits_mb_s"] == window_mb
+
+
+def test_repeated_cutout_throughput_counts_every_window(tmp_path, monkeypatch) -> None:
+    import benchmarks.bench_fits_io as fio
+
+    path = tmp_path / "medium_float32_2d.fits"
+    from astropy.io import fits
+
+    fits.PrimaryHDU(np.zeros((256, 256), dtype=np.float32)).writeto(
+        path, overwrite=True
+    )
+    monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
+    suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
+    rows = suite._benchmark_repeated_cutout_rows(
+        {"medium_float32_2d": path}, runs=1, warmup=0
+    )
+    payload_mb = (50 * 100 * 100 * 4) / (1024.0 * 1024.0)
+    assert rows[0]["size_mb"] == payload_mb
+    assert rows[0]["torchfits_mb_s"] == payload_mb
+
+
+def test_random_ext_throughput_counts_each_full_read(tmp_path, monkeypatch) -> None:
+    import benchmarks.bench_fits_io as fio
+
+    path = tmp_path / "multi_mef_10ext.fits"
+    _write_images(path, 10, (8, 8), np.float32)
+    monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
+    suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
+    row = suite._benchmark_random_extensions(
+        {"multi_mef_10ext": path}, runs=1, warmup=0
+    )
+    assert row is not None
+    payload_mb = (200 * 8 * 8 * 4) / (1024.0 * 1024.0)
+    assert row["size_mb"] == payload_mb
+    assert row["torchfits_mb_s"] == payload_mb
+
+
+def test_header_row_does_not_claim_ops_per_second(tmp_path, monkeypatch) -> None:
+    import benchmarks.bench_fits_io as fio
+
+    path = tmp_path / "img.fits"
+    _write_images(path, 1, (8, 8), np.float32)
+    monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
+    suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
+    rows = fio._benchmark_headers(
+        run_id="t",
+        files={"img": path},
+        suite=suite,
+        mmap_target="off",
+        runs=1,
+        warmup=0,
+    )
+    assert rows[0]["throughput"] in ("", None)
+    assert rows[0]["unit"] == ""

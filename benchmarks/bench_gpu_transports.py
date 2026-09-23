@@ -32,7 +32,12 @@ if str(ROOT) not in sys.path:
 
 import fitsio  # noqa: E402
 import torchfits  # noqa: E402
-from benchmarks.bench_fits_io import FITSBenchmarkSuite, _strict_patch_astropy  # noqa: E402
+from benchmarks.bench_fits_io import (  # noqa: E402
+    FITSBenchmarkSuite,
+    _strict_patch_astropy,
+    mb_from_bytes,
+    window_payload_bytes,
+)
 from benchmarks.bench_timing import time_median, time_medians_interleaved  # noqa: E402
 from astropy.io import fits as astropy_fits  # noqa: E402
 
@@ -339,7 +344,10 @@ def run_gpu_transport_rows(
                 if path is None:
                     continue
                 case_id = f"{name}::cutout_100x100_gpu"
-                size_mb = path.stat().st_size / (1024 * 1024)
+                with fitsio.FITS(str(path)) as handle:
+                    cutout_header = handle[hdu].read_header()
+                payload_bytes = window_payload_bytes(cutout_header, x2 - x1, y2 - y1)
+                size_mb = payload_bytes / (1024.0 * 1024.0)
                 print(
                     f"[bench-gpu] case={name} cutout=100x100 runs={iterations}",
                     flush=True,
@@ -425,7 +433,7 @@ def run_gpu_transport_rows(
                             "time_s": t,
                             "peak_rss_mb": peak_rss,
                             "peak_cuda_alloc_mb": peak_cuda,
-                            "throughput": "",
+                            "throughput": mb_from_bytes(payload_bytes, t),
                             "unit": "MB/s",
                             "size_mb": size_mb,
                             "n_points": "",
@@ -452,9 +460,12 @@ def run_gpu_transport_rows(
             cutout_size = min(100, naxis1 // 2, naxis2 // 2)
             if cutout_size < 2:
                 cutout_size = 2
+            payload_bytes = window_payload_bytes(
+                header, cutout_size, cutout_size, count=50
+            )
 
             case_id = f"repeated_cutouts_50x_{cutout_size}x{cutout_size}_gpu"
-            size_mb = path.stat().st_size / (1024 * 1024)
+            size_mb = payload_bytes / (1024.0 * 1024.0)
             print(
                 f"[bench-gpu] case=repeated_cutouts_50x_{cutout_size}x{cutout_size} runs={iterations}",
                 flush=True,
@@ -569,7 +580,7 @@ def run_gpu_transport_rows(
                         "time_s": t,
                         "peak_rss_mb": peak_rss,
                         "peak_cuda_alloc_mb": peak_cuda,
-                        "throughput": "",
+                        "throughput": mb_from_bytes(payload_bytes, t),
                         "unit": "MB/s",
                         "size_mb": size_mb,
                         "n_points": "",

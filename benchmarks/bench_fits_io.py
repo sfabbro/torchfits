@@ -56,6 +56,41 @@ NUMPY_METHODS = [
 ]
 
 
+def pixel_itemsize_from_header(header: Any) -> int:
+    """Uncompressed pixel width. Tile-compressed HDUs store it in ZBITPIX."""
+    raw = header.get("ZBITPIX")
+    if raw in (None, ""):
+        raw = header.get("BITPIX", 8)
+    return max(1, abs(int(raw)) // 8)
+
+
+def window_payload_bytes(
+    header: Any, width: int, height: int, *, count: int = 1
+) -> int:
+    """Bytes moved by ``count`` cutouts of ``width``×``height`` pixels."""
+    return int(count) * int(width) * int(height) * pixel_itemsize_from_header(header)
+
+
+def plane_payload_bytes(header: Any) -> int:
+    """Uncompressed image bytes. Compressed HDUs use ZNAXIS*, not the tile table."""
+    if header.get("ZNAXIS") not in (None, ""):
+        naxis = int(header.get("ZNAXIS") or 0)
+        prefix = "ZNAXIS"
+    else:
+        naxis = int(header.get("NAXIS") or 0)
+        prefix = "NAXIS"
+    pixels = 1
+    for axis in range(1, naxis + 1):
+        pixels *= int(header.get(f"{prefix}{axis}") or 1)
+    return pixels * pixel_itemsize_from_header(header)
+
+
+def mb_from_bytes(nbytes: int, seconds: float | None) -> float | None:
+    if seconds is None or seconds <= 0:
+        return None
+    return nbytes / (1024.0 * 1024.0) / seconds
+
+
 class FITSBenchmarkSuite:
     """FITS-only version of the pre-extraction exhaustive fixture suite."""
 
@@ -413,6 +448,9 @@ class FITSBenchmarkSuite:
                 "astropy": astropy_cutout,
                 "fitsio": fitsio_cutout,
             }
+            with fitsio.FITS(str(path)) as handle:
+                cutout_header = handle[hdu].read_header()
+            payload_bytes = window_payload_bytes(cutout_header, x2 - x1, y2 - y1)
             row: dict[str, Any] = {
                 "filename": name,
                 "operation": "cutout_100x100",
@@ -420,7 +458,7 @@ class FITSBenchmarkSuite:
                 "data_type": "mixed",
                 "dimensions": "2d",
                 "compression": compression,
-                "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+                "size_mb": payload_bytes / (1024.0 * 1024.0),
             }
             timed = time_medians_interleaved(
                 {
@@ -445,7 +483,7 @@ class FITSBenchmarkSuite:
             )
             for method_name, (median_s, peak_rss, peak_cuda, _err) in timed.items():
                 row[f"{method_name}_median"] = median_s
-                row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+                row[f"{method_name}_mb_s"] = mb_from_bytes(payload_bytes, median_s)
                 row[f"{method_name}_peak_rss_mb"] = peak_rss
                 row[f"{method_name}_peak_cuda_alloc_mb"] = peak_cuda
             rows.append(row)
@@ -478,6 +516,9 @@ class FITSBenchmarkSuite:
         cutout_size = min(100, naxis1 // 2, naxis2 // 2)
         if cutout_size < 2:
             cutout_size = 2
+        payload_bytes = window_payload_bytes(
+            header, cutout_size, cutout_size, count=50
+        )
 
         coords_rng = np.random.default_rng(42)
         cutouts_coords = []
@@ -539,7 +580,7 @@ class FITSBenchmarkSuite:
             "data_type": "mixed",
             "dimensions": "2d",
             "compression": "none",
-            "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+            "size_mb": payload_bytes / (1024.0 * 1024.0),
         }
         timed = time_medians_interleaved(
             {
@@ -563,7 +604,7 @@ class FITSBenchmarkSuite:
         )
         for method_name, (median_s, peak_rss, peak_cuda, _err) in timed.items():
             row[f"{method_name}_median"] = median_s
-            row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+            row[f"{method_name}_mb_s"] = mb_from_bytes(payload_bytes, median_s)
             row[f"{method_name}_peak_rss_mb"] = peak_rss
             row[f"{method_name}_peak_cuda_alloc_mb"] = peak_cuda
         return [row]
@@ -579,6 +620,12 @@ class FITSBenchmarkSuite:
         if path is None:
             return None
         ext_sequence = [((index * 3) % 10) + 1 for index in range(200)]
+        with fitsio.FITS(str(path)) as handle:
+            plane = {
+                hdu: plane_payload_bytes(handle[hdu].read_header())
+                for hdu in set(ext_sequence)
+            }
+        payload_bytes = sum(plane[hdu] for hdu in ext_sequence)
 
         def torchfits_sequence():
             handle = torchfits.cpp.open_fits_file(str(path), "r")
@@ -621,7 +668,7 @@ class FITSBenchmarkSuite:
             "data_type": "mixed",
             "dimensions": "2d",
             "compression": "uncompressed",
-            "size_mb": path.stat().st_size / (1024.0 * 1024.0),
+            "size_mb": payload_bytes / (1024.0 * 1024.0),
         }
         timed = time_medians_interleaved(
             {
@@ -645,7 +692,7 @@ class FITSBenchmarkSuite:
         )
         for method_name, (median_s, peak_rss, peak_cuda, _err) in timed.items():
             row[f"{method_name}_median"] = median_s
-            row[f"{method_name}_mb_s"] = self._mb_per_second(path, median_s)
+            row[f"{method_name}_mb_s"] = mb_from_bytes(payload_bytes, median_s)
             row[f"{method_name}_peak_rss_mb"] = peak_rss
             row[f"{method_name}_peak_cuda_alloc_mb"] = peak_cuda
         return row
@@ -970,7 +1017,7 @@ def _benchmark_headers(
                     "peak_rss_mb": peak_rss,
                     "peak_cuda_alloc_mb": peak_cuda,
                     "throughput": "",
-                    "unit": "ops/s",
+                    "unit": "",
                     "size_mb": path.stat().st_size / (1024.0 * 1024.0),
                     "n_points": "",
                     "metadata": {
