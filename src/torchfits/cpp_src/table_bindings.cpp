@@ -9,6 +9,7 @@
 #include <mutex>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
@@ -184,8 +185,14 @@ nb::dict tensor_map_to_python(
     // Must be called with the GIL held: wraps each C++ tensor as a Python
     // object. The heavy read work itself happens GIL-free in the callers.
     // Input order (file/request column order) is preserved in the dict.
+    // A repeated TTYPE keeps the first column: name lookup and row updates
+    // use that same first match, so a full read must not surface the later one.
     nb::dict result_dict;
+    std::unordered_set<std::string> seen;
     for (auto& [key, tensor] : result_map) {
+        if (!seen.insert(key).second) {
+            continue;
+        }
         result_dict[key.c_str()] = tensor_to_python(tensor);
     }
     return result_dict;
@@ -196,7 +203,11 @@ nb::dict table_result_to_python(
     bool as_numpy
 ) {
     nb::dict result_dict;
+    std::unordered_set<std::string> seen;
     for (auto& [key, col_data] : result_map) {
+        if (!seen.insert(key).second) {
+            continue;
+        }
         if (col_data.is_vla) {
             if (col_data.vla_offsets.defined() && col_data.fixed_data.defined()) {
                 if (as_numpy) {

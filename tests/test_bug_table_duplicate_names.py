@@ -5,6 +5,8 @@ The C++ reader keyed its working map by column *name*, so a second ``TTYPE``
 overwrote the first; the assembly loop then moved the same entry out twice and
 the surviving column came back as a null tensor (``None`` in Python), while
 ``table.read`` raised ``TypeError: 'NoneType' object is not iterable``.
+A full read and ``columns=["A"]`` must agree, and both return the first card:
+name lookup and row updates already resolve a repeated ``TTYPE`` that way.
 
 The fixture patches the on-disk card on purpose. astropy re-syncs ``TTYPE``
 from ``ColDefs`` during ``writeto``, so building the file with astropy and then
@@ -58,7 +60,8 @@ def test_duplicate_ttype_column_is_not_null(tmp_path, mmap):
     assert list(res) == ["A"]
     assert res["A"] is not None, "duplicate TTYPE returned a null column"
     assert torch.is_tensor(res["A"])
-    assert res["A"].tolist() == [3, 4]
+    # First TTYPE wins, same column columns=["A"] and update_rows see.
+    assert res["A"].tolist() == [1, 2]
 
 
 def test_duplicate_ttype_does_not_break_table_read(tmp_path):
@@ -66,7 +69,7 @@ def test_duplicate_ttype_does_not_break_table_read(tmp_path):
     path = _duplicate_ttype_file(tmp_path / "dup_read.fits")
     table = torchfits.table.read(path)
     assert table is not None
-    assert table["A"].to_pylist() == [3, 4]  # pyarrow ChunkedArray
+    assert table["A"].to_pylist() == [1, 2]  # pyarrow ChunkedArray
 
 
 @pytest.mark.parametrize("mmap", [False, True])
@@ -76,10 +79,20 @@ def test_duplicate_ttype_mixed_types(tmp_path, mmap):
     res = torchfits.table.read_torch(path, mmap=mmap)
 
     assert res["A"] is not None
-    # Second column wins in a Python dict, and must be its OWN tensor — the
-    # float32 column, not the int32 one that shares its name.
-    assert res["A"].dtype == torch.float32
-    assert res["A"].tolist() == [3.0, 4.0]
+    # The surviving column is the first card's own tensor, not a mix of the
+    # two slots that share the name (the later column is float32).
+    assert res["A"].dtype == torch.int32
+    assert res["A"].tolist() == [1, 2]
+
+
+def test_duplicate_ttype_projection_matches_full_read(tmp_path):
+    """Requesting the shared name must return the same column as a full read."""
+    path = _duplicate_ttype_file(tmp_path / "dup_proj.fits")
+    full = torchfits.table.read_torch(path, mmap=False)["A"].tolist()
+    projected = torchfits.table.read_torch(path, columns=["A"], mmap=False)[
+        "A"
+    ].tolist()
+    assert full == projected == [1, 2]
 
 
 def test_mmap_and_buffered_paths_agree(tmp_path):
