@@ -128,3 +128,138 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cpp_src/torchfits_torch.h` | R10 | full (38 ln) | r10a-07 | clean |
 | `src/torchfits/cpp_src/bindings.cpp` | R10 | full (36 ln) | r10a-07 | clean (`cpp-seal-all` holds) |
 | `src/torchfits/cpp_src/CMakeLists.txt` | R10 | full | r10a-02, r10a-04, r10a-05 | fixed (-O3 restored; sanitizer propagation; bracket test wired) |
+| `tests/conftest.py` | R11 | full | — | clean |
+| `tests/cpp/test_bracket_detection.cpp` | R11 | full | — | clean |
+| `tests/test_api.py` | R11 | full | r11a-10 | deferred (r11a-10) |
+| `tests/test_arrow_table_api.py` | R11 | full | — | clean |
+| `tests/test_ascii_table.py` | R11 | full | r11a-01 | fixed (r11a-01) |
+| `tests/test_astropy_upstream_smoke.py` | R11 | full | — | clean |
+| `tests/test_bench_ranking_mmap.py` | R11 | full | — | clean |
+| `tests/test_bench_suites.py` | R11 | full | r11a-03, r11a-04, r11a-07 | fixed (r11a-03, r11a-04); r11a-07 deferred |
+| `tests/test_bug_table_duplicate_names.py` | R11 | full | — | clean |
+| `tests/test_byteswap.py` | R11 | full | r11a-06 | fixed (r11a-06) |
+| `tests/test_bz2.py` | R11 | full | — | clean |
+| `tests/test_cache.py` | R11 | full | r11a-08 | deferred (r11a-08) |
+| `tests/test_cache_config.py` | R11 | full | — | clean |
+| `tests/test_changelog_tooling.py` | R11 | full | — | clean |
+| `tests/test_check_torch_extra_pins.py` | R11 | full | — | clean |
+| `tests/test_checksum.py` | R11 | full | — | clean |
+| `tests/test_clear_all_caches.py` | R11 | full | r11a-09 | deferred (r11a-09) |
+| `tests/test_cli.py` | R11 | full | — | clean |
+| `tests/test_cli_arith_stats.py` | R11 | full | r11a-05 | fixed (r11a-05) |
+| `tests/test_complex_header.py` | R11 | full | r11a-02 | fixed (r11a-02) |
+| `tests/test_compressed_nulls.py` | R11 | full | r11a-06 | fixed (r11a-06) |
+| `tests/test_compression.py` | R11 | full | r11a-03 | fixed (r11a-03) |
+| `tests/test_compression_matrix.py` | R11 | full | — | clean |
+| `tests/test_concurrent_same_file_read.py` | R11 | full | — | clean |
+| `tests/test_cutout_performance_api.py` | R11 | full | — | clean |
+| `tests/test_data.py` | R11 | full | r11b-02 | fixed (r11b-02) |
+| `tests/test_data_datasets.py` | R11 | full | r11b-01 | fixed (r11b-01) |
+| `tests/test_data_ml.py` | R11 | full | — | clean |
+| `tests/test_differential_astropy.py` | R11 | full | — | clean |
+| `tests/test_dlpack_roundtrip.py` | R11 | full | — | clean |
+| `tests/test_docs_code_snippets.py` | R11 | full | — | clean |
+| `tests/test_docs_integrity.py` | R11 | full | — | clean |
+| `tests/test_examples_runner.py` | R11 | full | — | clean |
+| `tests/test_fits_schema.py` | R11 | full | — | clean |
+| `tests/test_fitsio_upstream_smoke.py` | R11 | full | — | clean |
+| `tests/test_hdu.py` | R11 | full | — | clean |
+| `tests/test_hdu_close_and_overflow.py` | R11 | full | — | clean |
+| `tests/test_hdu_file_ops.py` | R11 | full | r11b-03 | fixed (r11b-03) |
+| `tests/test_hdu_str.py` | R11 | full | — | clean |
+| `tests/test_hdu_table_contracts.py` | R11 | full | — | clean |
+| `tests/test_header_ascii_strictness.py` | R11 | full | — | clean |
+| `tests/test_header_duplicate_keys.py` | R11 | full | — | clean |
+| `tests/test_header_value_typing.py` | R11 | full | — | clean |
+| `tests/test_header_versioning.py` | R11 | full | — | clean |
+| `tests/test_http_probe_fixture.py` | R11 | full | — | clean |
+| `tests/test_integration.py` | R11 | full | r11c-01, r11c-05 | fixed (r11c-01, r11c-05) |
+| `tests/test_interop.py` | R11 | full | — | clean |
+| `tests/test_interop_import.py` | R11 | full | — | clean |
+| `tests/test_io.py` | R11 | full | — | clean |
+| `tests/test_io_invariants.py` | R11 | full | — | clean |
+| `tests/test_longstr_and_scaled_tables.py` | R11 | full | r11c-03, r11c-04 | fixed (r11c-03, r11c-04) |
+| `tests/test_malformed_fits.py` | R11 | full | — | clean |
+| `tests/test_mps.py` | R11 | full | — | clean |
+| `tests/test_multichunk_buffered_read.py` | R11 | full | — | clean |
+| `tests/test_native_stub.py` | R11 | full | — | clean |
+| `tests/test_no_external_fits_backends.py` | R11 | full | — | clean |
+| `tests/test_open_table_reader.py` | R11 | full | — | clean |
+| `tests/test_output_parity.py` | R11 | full | — | clean |
+| `tests/test_package_isolation.py` | R11 | full | — | clean |
+| `tests/test_patch_bench_docs.py` | R11 | full | r11c-02 | fixed (r11c-02) |
+| `tests/test_pathlike_acceptance.py` | R11 | full | — | clean |
+| `tests/test_performance.py` | R11 | full | r11d-02 | fixed (r11d-02) |
+| `tests/test_public_boundary.py` | R11 | full | — | clean |
+| `tests/test_public_where.py` | R11 | full | — | clean |
+| `tests/test_quantize_int16.py` | R11 | full | — | clean |
+| `tests/test_read_header.py` | R11 | full | r11d-03 | fixed (r11d-03) |
+| `tests/test_read_policy.py` | R11 | full | — | clean |
+| `tests/test_release_lane.py` | R11 | full | — | clean |
+| `tests/test_release_smoke.py` | R11 | full | — | clean |
+| `tests/test_remote_http_range.py` | R11 | full | — | clean |
+| `tests/test_rgb.py` | R11 | full | — | clean |
+| `tests/test_scale_on_device.py` | R11 | full | — | clean |
+| `tests/test_security.py` | R11 | full | r11d-02 | fixed (r11d-02) |
+| `tests/test_shared_meta_staleness.py` | R11 | full | — | clean |
+| `tests/test_skinny_meta.py` | R11 | full | — | clean |
+| `tests/test_staged_prefetch.py` | R11 | full | — | clean |
+| `tests/test_stream_table_and_cache.py` | R11 | full | — | clean |
+| `tests/test_subset_3d.py` | R11 | full | — | clean |
+| `tests/test_table.py` | R11 | full | r11d-02 | fixed (r11d-02) |
+| `tests/test_table_docs_smoke.py` | R11 | full | — | clean |
+| `tests/test_table_file_ops.py` | R11 | full | — | clean |
+| `tests/test_table_filter_grammar.py` | R11 | full | — | clean |
+| `pixi.toml` | R11 | full | r11d-01 | fixed (r11d-01) |
+| `.github/workflows/ci.yml` | R11 | full | r11d-01 | fixed (r11d-01) |
+| `tests/test_table_filtering.py` | R11 | full | — | clean |
+| `tests/test_table_head.py` | R11 | full | — | clean |
+| `tests/test_table_squeeze_and_ref_cache.py` | R11 | full | — | clean |
+| `tests/test_tablehdu_schema_cache.py` | R11 | full | — | clean |
+| `tests/test_torch_boundary.py` | R11 | full | — | clean |
+| `tests/test_transforms.py` | R11 | full | r11e-03 | fixed (r11e-03) |
+| `tests/test_transforms_e2e.py` | R11 | full | — | clean |
+| `tests/test_transforms_state.py` | R11 | full | r11e-03 | fixed (r11e-03) |
+| `tests/test_transforms_typing.py` | R11 | full | — | clean |
+| `tests/test_truncated_table_errors.py` | R11 | full | — | clean |
+| `tests/test_upstream_parity_inventory.py` | R11 | full | — | clean |
+| `tests/test_validation.py` | R11 | full | r11e-01 | fixed (r11e-01) |
+| `tests/test_where.py` | R11 | full | — | clean |
+| `tests/test_where_and_batch_errors.py` | R11 | full | — | clean |
+| `tests/test_write_fidelity.py` | R11 | full | — | clean |
+| `tests/test_write_read_identity.py` | R11 | full | — | clean |
+| `tests/test_writing.py` | R11 | full | r11e-02 | fixed (r11e-02) |
+| `tests/transforms_reference.py` | R11 | full | — | clean |
+| `tests/transforms_reference.pyi` | R11 | full | — | clean |
+| `tests/test_batch_error_contracts.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_arith_edges.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_convert_edges.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_diff_copy_cutout.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_exit_matrix.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_same_path_refusal.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_setkey_integrity.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_stats_verify.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_cli_transform_parallel.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_deprecated_knobs.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_fitsfile_edges.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_hdu_count_scan.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_hdulist_registry_race.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_http_guard.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_longstr_header_reassembly.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_maskrgb_masking.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_maskrgb_stretch.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_meta_cache_freshness.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_mutation_errors.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_native_infra.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_read_full_numpy_parity.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_read_pipeline_contracts.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_reader_cache_freshness.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_remote_resume.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_strided_update_rows.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_string_decode.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_subset_http_parity.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_table_read_contracts.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_views_dataview_index.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_vla_edge_rows.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_where_matrix.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
+| `tests/test_where_semantics.py` | R11 | scan | — | post-chunk pin (not in the precomputed slices; no wall-clock/RSS assert; see R11.md) |
