@@ -114,3 +114,9 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cpp_src/table_ops.h` | R8-B | full | — | clean |
 | `src/torchfits/cpp_src/table_ops.cpp` | R8-B | full (1094 ln) | r8b-01, r8b-04, r8b-07, r8b-09 | fixed (r8b-07 pinned; r8b-09 deferred) |
 | `src/torchfits/cpp_src/table_bindings.cpp` | R8-B | full (511 ln) | r8b-02, r8b-03, r8b-05, r8b-06, r8b-08 | fixed (r8b-05/06 pinned; r8b-08 deferred) |
+| `src/torchfits/cpp_src/fits_bindings.cpp` | R9-A | deep (2627 ln) | r9a-01, r9a-02, r9a-04, r9a-05, r9a-06, r9a-07, r9a-08, r9a-09, r9a-10..r9a-13 | fixed (r9a-03/08/09 re-derived+pinned; r9a-10/11 verify-only; r9a-12 pin) |
+| `src/torchfits/cpp_src/fits_file.cpp` | R9-B (rescue) | full (1206 ln) | r9b-02, r9b-03, r9b-04, r9b-05 | fixed |
+| `src/torchfits/cpp_src/fits_detail.h` | R9-B (rescue) | full (795 ln) | r9b-01, r9b-04 | fixed |
+| `src/torchfits/cpp_src/fits_file.h` | R9-B | full (123 ln) | r9b-03, r9b-04 (internal state only) | fixed (no new public API) |
+| `src/torchfits/cpp_src/fits_handle.h` | R9-B | full (50 ln) | — | clean |
+| `src/torchfits/cpp_src/fits_rw.h` | R9-B | full (65 ln) | r9b-06 | clean (r9b-06 deferred: defense-in-depth, probe recorded) |

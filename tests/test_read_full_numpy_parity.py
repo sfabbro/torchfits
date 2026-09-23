@@ -71,9 +71,15 @@ def parity_fixtures(tmp_path_factory) -> dict[str, str]:
     u32 = rng.integers(0, 4_000_000_000, size=(5, 7, 3)).astype(np.uint32)
     write("uint32_pack", astropy_fits.PrimaryHDU(u32))
 
-    write("int8_signed", astropy_fits.PrimaryHDU(rng.integers(-128, 128, (11, 23)).astype(np.int8)))
+    write(
+        "int8_signed",
+        astropy_fits.PrimaryHDU(rng.integers(-128, 128, (11, 23)).astype(np.int8)),
+    )
 
-    write("plain_int16", astropy_fits.PrimaryHDU(rng.integers(0, 3000, (9, 4)).astype(np.int16)))
+    write(
+        "plain_int16",
+        astropy_fits.PrimaryHDU(rng.integers(0, 3000, (9, 4)).astype(np.int16)),
+    )
 
     scaled = rng.integers(-3000, 3000, size=(12, 10)).astype(np.int16)
     p = root / "scaled_int16.fits"
@@ -116,7 +122,9 @@ def parity_fixtures(tmp_path_factory) -> dict[str, str]:
     f32[0, 3] = 0.0
     write("float32_ieee", astropy_fits.PrimaryHDU(f32))
 
-    write("float64", astropy_fits.PrimaryHDU(rng.normal(size=(6, 4)).astype(np.float64)))
+    write(
+        "float64", astropy_fits.PrimaryHDU(rng.normal(size=(6, 4)).astype(np.float64))
+    )
 
     # NAXIS=0 with BITPIX=16: the empty result must keep the BITPIX-keyed
     # dtype (empty int16), like read_tensor and every sibling reader.
@@ -168,17 +176,25 @@ _EXPECTED_DTYPE = {
 def _assert_bitwise(got: np.ndarray, expected: np.ndarray, label: str) -> None:
     got = np.asarray(got)
     expected = np.asarray(expected)
-    assert got.shape == expected.shape, f"{label}: shape {got.shape} != {expected.shape}"
-    assert got.dtype == expected.dtype, f"{label}: dtype {got.dtype} != {expected.dtype}"
+    assert got.shape == expected.shape, (
+        f"{label}: shape {got.shape} != {expected.shape}"
+    )
+    assert got.dtype == expected.dtype, (
+        f"{label}: dtype {got.dtype} != {expected.dtype}"
+    )
     # Byte comparison: exact for NaN payloads and signed zero too.
     got_bytes = np.ascontiguousarray(got).view(np.uint8)
     exp_bytes = np.ascontiguousarray(expected).view(np.uint8)
-    np.testing.assert_array_equal(got_bytes, exp_bytes, err_msg=f"{label}: bytes differ")
+    np.testing.assert_array_equal(
+        got_bytes, exp_bytes, err_msg=f"{label}: bytes differ"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED_DTYPE))
 @pytest.mark.parametrize("mmap", [False, True])
-def test_read_full_numpy_matches_read_tensor(parity_fixtures, name: str, mmap: bool) -> None:
+def test_read_full_numpy_matches_read_tensor(
+    parity_fixtures, name: str, mmap: bool
+) -> None:
     path = parity_fixtures[name]
     expected = torchfits.read_tensor(path, hdu=0, mmap=mmap).numpy()
 

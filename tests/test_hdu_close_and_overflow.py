@@ -13,7 +13,6 @@ import torch
 
 import torchfits
 from astropy.io import fits as afits
-from torchfits import _cpp  # noqa: E402
 from torchfits._hdu.tensor_hdu import TensorHDU
 from torchfits.data import remote as remote_mod
 

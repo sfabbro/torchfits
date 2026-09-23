@@ -53,11 +53,15 @@ def _write_compressed_float(path, arr, algorithm):
 def _image_read_paths(path, hdu, width, height):
     return {
         "read_full": lambda: np.asarray(_cpp.read_full(str(path), hdu, True)),
-        "read_full_numpy": lambda: np.asarray(_cpp.read_full_numpy(str(path), hdu, True)),
+        "read_full_numpy": lambda: np.asarray(
+            _cpp.read_full_numpy(str(path), hdu, True)
+        ),
         "read_full_numpy_cached": lambda: np.asarray(
             _cpp.read_full_numpy_cached(str(path), hdu, True)
         ),
-        "read_full_unmapped": lambda: np.asarray(_cpp.read_full_unmapped(str(path), hdu)),
+        "read_full_unmapped": lambda: np.asarray(
+            _cpp.read_full_unmapped(str(path), hdu)
+        ),
         "SubsetReader": lambda: np.asarray(
             _cpp.SubsetReader(str(path), hdu).read(0, 0, width, height)
         ),
