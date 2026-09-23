@@ -1334,7 +1334,7 @@ def test_width1_fixed_list_to_astropy_is_scalar():
 
 def test_repeat1_round_trip_agrees_with_astropy(tmp_path):
     """(N, 1) + TFORM 1J round-trips to (N,) exactly like astropy (r5c-03)."""
-    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("pyarrow")
     pytest.importorskip("astropy")
     from astropy.io import fits as afits
     from astropy.table import Table as AstropyTable

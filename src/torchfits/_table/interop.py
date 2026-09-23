@@ -27,7 +27,8 @@ def _as_input_path(data: Any) -> Optional[str]:
     if isinstance(data, str):
         return data
     if isinstance(data, os.PathLike):
-        return os.fspath(data)
+        fspath: str | bytes = os.fspath(data)
+        return fspath.decode() if isinstance(fspath, bytes) else fspath
     return None
 
 
@@ -494,12 +495,16 @@ def _fixed_size_list_to_astropy(
         return MaskedColumn(data=values, mask=rows_mask, name=name, unit=unit)
 
     data_np = np.asarray(data_np).reshape(n_rows, list_size)
+    squeezed: Any
+    mask_out: Any = mask_np
     if squeeze:
-        data_np = data_np.reshape(n_rows)
-        mask_np = mask_np.reshape(n_rows)
-    if mask_np.any():
-        return MaskedColumn(data=data_np, mask=mask_np, name=name, unit=unit)
-    return Column(data_np, name=name, unit=unit)
+        squeezed = data_np.reshape(n_rows)
+        mask_out = mask_np.reshape(n_rows)
+    else:
+        squeezed = data_np
+    if mask_out.any():
+        return MaskedColumn(data=squeezed, mask=mask_out, name=name, unit=unit)
+    return Column(squeezed, name=name, unit=unit)
 
 
 def _arrow_column_to_astropy(

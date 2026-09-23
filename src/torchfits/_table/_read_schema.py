@@ -331,7 +331,6 @@ def _column_arrow_type(col: Any, *, decode_bytes: bool, pa: Any) -> Any | None:
     tscal = col.tscal if col.tscal is not None else 1.0
     tzero = col.tzero if col.tzero is not None else 0.0
     is_list = pa.types.is_fixed_size_list(arrow_type)
-    elem = arrow_type.value_type if is_list else arrow_type
     if abs(tscal - 1.0) > 1e-5:
         new_elem = pa.float64()
     elif info.code == "I" and abs(tzero - 32768.0) < 1e-5:
