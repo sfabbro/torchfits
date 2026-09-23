@@ -8,6 +8,7 @@ from typing import Any, Optional
 from .._io_engine.paths import coerce_fits_path
 from .._table.utils import (
     _column_tnull_map,
+    _naxis2_row_count,
     _normalize_row_slice,
     _parse_tform,
 )
@@ -72,10 +73,7 @@ def insert_column(
     if not isinstance(index, int) or index < 0 or index > len(columns):
         raise ValueError(f"index must be in [0, {len(columns)}]")
 
-    try:
-        num_rows = int(header_map.get("NAXIS2", 0))
-    except Exception:
-        num_rows = 0
+    num_rows = _naxis2_row_count(header_map, path)
 
     fmt = (
         str(format).strip().upper()
@@ -150,10 +148,7 @@ def replace_column(
     if name not in columns:
         raise KeyError(f"Column '{name}' not found")
 
-    try:
-        num_rows = int(header_map.get("NAXIS2", 0))
-    except Exception:
-        num_rows = 0
+    num_rows = _naxis2_row_count(header_map, path)
 
     existing_schema = _extract_table_schema_from_header(header_map, columns)
     existing_meta = dict(existing_schema.get(name, {}))
@@ -257,10 +252,7 @@ def insert_rows(
     target_hdu, header_map, columns, tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
     )
-    try:
-        total_rows = int(header_map.get("NAXIS2", 0))
-    except Exception:
-        total_rows = 0
+    total_rows = _naxis2_row_count(header_map, path)
     if row > total_rows:
         raise ValueError(
             f"row index {row} is out of range for insert (num_rows={total_rows})"
@@ -316,10 +308,7 @@ def delete_rows(
     target_hdu, header_map, _columns, _tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
     )
-    try:
-        total_rows = int(header_map.get("NAXIS2", 0))
-    except Exception:
-        total_rows = 0
+    total_rows = _naxis2_row_count(header_map, path)
     if total_rows <= 0:
         return
     if start_row > total_rows:
@@ -417,7 +406,7 @@ def update_rows(
     )
     unknown = sorted({str(name) for name in rows} - set(columns))
     if unknown:
-        raise ValueError(f"Unknown columns for table mutation: extra={unknown}")
+        raise KeyError(f"Unknown columns for table mutation: extra={unknown}")
 
     string_widths: dict[str, int] = {}
     vla_codes: dict[str, str] = {}
@@ -545,7 +534,13 @@ def update_rows(
                 )
                 _mutation_cache_barrier(path)
                 return
-            except Exception as exc:
+            except RuntimeError as exc:
+                # The mmap writer raises RuntimeError for both column layouts
+                # it cannot write and genuine failures.  Only the decode/layout
+                # condition warrants a non-mmap fallback; IO and other
+                # non-RuntimeError exceptions are re-raised above this handler,
+                # and truncation is re-raised below rather than masked by a
+                # fallback that could corrupt the file.
                 if forced_mmap or "truncat" in str(exc).lower():
                     raise
 

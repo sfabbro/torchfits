@@ -31,7 +31,9 @@ def write(
 
     ``quantize=\"robust\"`` packs all float columns to ``TFORM=I`` with
     ``TSCAL``/``TZERO``. Pass ``{\"col\": \"robust\"}`` (or per-column option
-    dicts) to select columns. Default keeps native float ``TFORM``.
+    dicts) to select columns. Default keeps native float ``TFORM``.  When
+    ``quantize`` is set but no column qualifies (e.g. an integer-only table),
+    a ``QuantizeError`` is raised rather than silently writing unpacked.
     """
     from .._io_engine._write_helpers import _normalize_table_input
     from .._io_engine.paths import guard_fits_path
@@ -62,6 +64,7 @@ def write(
     else:
         hdr = header
     import torchfits
+    from .._io_engine._write_helpers import QuantizeError
     from .._io_engine.write_api import (  # type: ignore[attr-defined]
         _prepare_quantized_table_data_for_write,
         _prepare_unsigned_table_data_for_write,
@@ -73,6 +76,11 @@ def write(
     data, schema, quantized = _prepare_quantized_table_data_for_write(
         data, quantize, schema
     )
+    if quantize is not None and quantize is not False and not quantized:
+        raise QuantizeError(
+            f"quantize={quantize!r} requested but no table column qualifies for "
+            "packing (only floating-point columns can be quantized)"
+        )
 
     if schema or unsigned_converted or quantized or table_kind == "ascii":
         import torchfits._C as cpp

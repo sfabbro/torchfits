@@ -45,6 +45,21 @@ def _column_tnull_map(header_map: dict[str, Any]) -> dict[str, Any]:
     return fits_schema.column_tnull_map(header_map)
 
 
+def _naxis2_row_count(header_map: dict[str, Any], path: str) -> int:
+    """Return the table row count from the NAXIS2 card.
+
+    A missing NAXIS2 legitimately means zero rows.  A present-but-malformed
+    value is a corrupt header and raises instead of being silently coerced to
+    zero rows (which would turn row mutations into silent no-ops).
+    """
+    try:
+        return int(header_map.get("NAXIS2", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"cannot parse NAXIS2 row count {header_map.get('NAXIS2')!r} for {path!r}"
+        ) from exc
+
+
 def _require_pyarrow() -> Any:
     try:
         import pyarrow as pa

@@ -103,7 +103,7 @@ def test_table_append_update_rename_drop():
             assert np.allclose(vals.numpy(), [0.1, 0.2, 0.3, 0.4, 0.5], atol=1e-6)
             assert flags.tolist() == [True, False, True, False, True]
 
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             torchfits.table.append_rows(
                 path,
                 {

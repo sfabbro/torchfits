@@ -501,3 +501,22 @@ def test_read_torch_where_returns_all_columns(tmp_path) -> None:
         str(path), hdu=1, columns=["A"], where="B > 50"
     )
     assert list(projected.keys()) == ["A"]
+
+
+def test_table_write_quantize_no_qualifying_column_raises(tmp_path):
+    """``quantize=`` with no qualifying (float) column raises QuantizeError.
+
+    A blanket ``quantize="robust"`` over an integer-only table (or a column map
+    whose specs all opt out) must not silently write an unquantized file; the
+    user asked for packing and nothing qualified, so surface it.
+    """
+    from torchfits._io_engine._write_helpers import QuantizeError
+
+    path = str(tmp_path / "int_only.fits")
+    data = {"ID": np.array([1, 2, 3], dtype=np.int32)}
+    with pytest.raises(QuantizeError):
+        torchfits.table.write(path, data, overwrite=True, quantize="robust")
+
+    # Explicit all-opt-out column map is likewise a no-op that must raise.
+    with pytest.raises(QuantizeError):
+        torchfits.table.write(path, data, overwrite=True, quantize={"ID": None})

@@ -200,7 +200,7 @@ def _normalize_mutation_rows(
     expected_columns = set(columns)
     extra = sorted(input_columns - expected_columns)
     if extra:
-        raise ValueError(f"Unknown columns for table mutation: extra={extra}")
+        raise KeyError(f"Unknown columns for table mutation: extra={extra}")
     if not input_columns:
         raise ValueError("rows must include at least one column")
 
