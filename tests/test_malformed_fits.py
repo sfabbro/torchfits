@@ -152,13 +152,73 @@ def test_checksum_detects_corrupted_data(tmp_path):
 
 
 def test_duplicate_extname_resolves_first(tmp_path):
-    path = str(tmp_path / "dupname.fits")
+    path = tmp_path / "dupname.fits"
     hdu_a = afits.ImageHDU(data=np.zeros((2, 2), dtype=np.float32), name="SCI")
     hdu_b = afits.ImageHDU(data=np.ones((3, 3), dtype=np.float32), name="SCI")
     afits.HDUList([afits.PrimaryHDU(), hdu_a, hdu_b]).writeto(path)
 
     got = torchfits.read_tensor(path, hdu="SCI")
     assert got.shape == (2, 2), "first EXTNAME match must win"
+
+
+def _write_three_hdu_file(path):
+    afits.HDUList(
+        [
+            afits.PrimaryHDU(data=np.zeros((4, 4), np.float32)),
+            afits.ImageHDU(data=np.ones((4, 4), np.float32)),
+            afits.ImageHDU(data=np.full((4, 4), 2.0, np.float32)),
+        ]
+    ).writeto(path)
+
+
+def test_truncated_hdu_scan_not_silent(tmp_path):
+    """A file cut mid-way through the next HDU's header must not silently
+    under-report its HDU count (r7a-08; astropy warns, torchfits raises).
+    Contract fixed with R9-FitsBindings: a tail starting a SIMPLE/XTENSION
+    prefix raises RuntimeError naming the path; garbage tails and mid-data
+    truncation of the last HDU stay tolerated with an honest count."""
+    path = str(tmp_path / "trunc_scan.fits")
+    _write_three_hdu_file(path)
+    raw = open(path, "rb").read()
+    xtension_at = [i for i in range(len(raw) - 9) if raw[i : i + 9] == b"XTENSION="]
+    assert len(xtension_at) == 2
+
+    # Cut inside the 3rd HDU's header: two complete HDUs + a partial header.
+    cut = tmp_path / "trunc_scan_cut.fits"
+    cut.write_bytes(raw[: xtension_at[1] + 400])
+    with pytest.raises(RuntimeError) as excinfo:
+        torchfits.read_num_hdus(str(cut))
+    assert "truncat" in str(excinfo.value)
+    assert str(cut) in str(excinfo.value)
+
+    # Garbage tail: tolerated, count unchanged (test_garbage_after_end's pin).
+    junk = tmp_path / "trunc_scan_junk.fits"
+    junk.write_bytes(raw + b"\xff" * 2880)
+    assert torchfits.read_num_hdus(str(junk)) == 3
+
+    # Truncation inside the last HDU's data unit: honest header count, no raise.
+    data_cut = tmp_path / "trunc_scan_data.fits"
+    data_cut.write_bytes(raw[: xtension_at[1] + 2880 + 100])
+    assert torchfits.read_num_hdus(str(data_cut)) == 3
+
+
+def test_truncated_image_subset_raises_not_zeros(tmp_path):
+    """Subset reads on truncated image data must raise a clean error, never
+    return zero-filled or short data (r9b truncated-edge pin)."""
+    path = str(tmp_path / "trunc_subset.fits")
+    data = np.ones((64, 64), dtype=np.float32)
+    afits.PrimaryHDU(data=data).writeto(path)
+    with open(path, "rb+") as fh:
+        fh.truncate(2880 + 100)
+
+    with pytest.raises((RuntimeError, OSError, ValueError)):
+        torchfits.read_subset(path, 0, 0, 0, 8, 8)
+    fh_cpp = torchfits._cpp.open_fits_file(path, "r")
+    try:
+        with pytest.raises((RuntimeError, OSError, ValueError)):
+            fh_cpp.read_subset(0, 0, 0, 8, 8)
+    finally:
+        fh_cpp.close()
 
 
 def test_readers_never_crash_interpreter_on_fuzzed_headers(tmp_path):

@@ -92,6 +92,7 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
 FITSFile::~FITSFile() { close(); }
 
 void FITSFile::close() {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     close_raw_fd();
     if (fptr_) {
         int status = 0;
@@ -101,21 +102,19 @@ void FITSFile::close() {
 }
 
 void FITSFile::ensure_hdu(int hdu_num, int* status) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     if (!fptr_) throw std::runtime_error("FITSFile is closed");
     int target_hdu = hdu_num + start_hdu_;
     if (current_hdu_ != target_hdu) {
         fits_movabs_hdu(fptr_, target_hdu, nullptr, status);
         if (*status == 0) {
             current_hdu_ = target_hdu;
-            if (shared_meta_) {
-                std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-                shared_meta_->current_fits_hdu = target_hdu;
-            }
         }
     }
 }
 
 const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     auto it = scale_cache_.find(hdu_num);
     if (it != scale_cache_.end()) return it->second;
     if (shared_meta_) {
@@ -144,11 +143,13 @@ const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
 }
 
 FITSFile::ScaleInfo FITSFile::get_scale_info_for_hdu(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     const auto& info = get_image_info(hdu_num);
     return get_scale_info(hdu_num, std::get<0>(info));
 }
 
 bool FITSFile::is_compressed_image_cached(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     auto it = compressed_cache_.find(hdu_num);
     if (it != compressed_cache_.end()) return it->second;
     if (shared_meta_) {
@@ -171,6 +172,7 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
 }
 
 const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     auto it = image_info_cache_.find(hdu_num);
     if (it != image_info_cache_.end()) return it->second;
     if (shared_meta_) {
@@ -197,6 +199,7 @@ const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(in
 }
 
 torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -260,6 +263,7 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
 }
 
 torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -389,6 +393,7 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
 }
 
 bool FITSFile::write_image(nb::ndarray<> tensor, int /*hdu_num*/, double /*bscale*/, double /*bzero*/) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     // Note: hdu_num is unused — fits_create_img always appends a new HDU.
     // bscale/bzero are accepted for API compatibility but ignored: calling
     // fits_set_bscale here would inverse-scale pixels without writing
@@ -432,6 +437,7 @@ bool FITSFile::write_image(nb::ndarray<> tensor, int /*hdu_num*/, double /*bscal
 }
 
 std::vector<std::tuple<std::string, std::string, std::string>> FITSFile::get_header(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -470,6 +476,7 @@ std::vector<std::tuple<std::string, std::string, std::string>> FITSFile::get_hea
 }
 
 std::vector<long> FITSFile::get_shape(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -487,6 +494,7 @@ std::vector<long> FITSFile::get_shape(int hdu_num) {
 }
 
 int FITSFile::get_dtype(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -497,6 +505,7 @@ int FITSFile::get_dtype(int hdu_num) {
 }
 
 torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long y2) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -588,6 +597,8 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
 }
 
 int FITSFile::get_num_hdus() {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+    if (!fptr_) throw std::runtime_error("FITSFile is closed");
     int status = 0, nhdus = 0;
     fits_get_num_hdus(fptr_, &nhdus, &status);
     if (status != 0) throw std::runtime_error("Could not read number of HDUs");
@@ -595,6 +606,7 @@ int FITSFile::get_num_hdus() {
 }
 
 std::string FITSFile::get_hdu_type(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -608,6 +620,7 @@ std::string FITSFile::get_hdu_type(int hdu_num) {
 }
 
 bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int hdu_count = 0;
     for (auto handle : hdus) {
         nb::object hdu_obj = nb::cast<nb::object>(handle);
@@ -717,6 +730,7 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
 }
 
 bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     long naxes0[1] = {0};
     fits_create_img(fptr_, BYTE_IMG, 0, naxes0, &status);
@@ -891,6 +905,7 @@ bool FITSFile::write_hdus_compressed_images(nb::list hdus, int compression_type)
 }
 
 std::string FITSFile::read_header_to_string(int hdu_num) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
@@ -907,6 +922,7 @@ std::string FITSFile::read_header_to_string(int hdu_num) {
 }
 
 bool FITSFile::ensure_raw_fd(size_t required_end) {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     if (has_cfitsio_extended_filename_syntax(filename_)) return false;
     if (!raw_fd_ready_) {
         raw_fd_ready_ = true;
@@ -922,6 +938,7 @@ bool FITSFile::ensure_raw_fd(size_t required_end) {
 }
 
 void FITSFile::close_raw_fd() {
+    std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     if (raw_fd_ != -1) { ::close(raw_fd_); raw_fd_ = -1; }
     raw_file_size_ = 0;
     raw_fd_ready_ = false;
@@ -933,6 +950,7 @@ void FITSFile::close_raw_fd() {
 SubsetReader::SubsetReader(const std::string& filename, int hdu_num)
     : file_(filename.c_str(), 0), filename_(filename), hdu_num_(hdu_num) {
     if (hdu_num_ < 0) throw std::runtime_error("HDU index must be non-negative");
+    shared_meta_ = detail::get_shared_meta_for_path(filename_);
     init_from_hdu();
 }
 
@@ -957,6 +975,11 @@ void SubsetReader::init_from_hdu() {
         }
         naxes_[i] = static_cast<long>(naxes[i]);
     }
+    // Validate the complete logical image before consulting CFITSIO or the
+    // mmap fast path. The checker permits zero dimensions (empty windows are
+    // handled without a data read) and rejects products too large for any
+    // supported element type or address-space mapping.
+    (void)detail::checked_nelements_product(naxes_);
     max_x_ = naxes_[0];
     max_y_ = naxes_[1];
     const auto scale = file_.get_scale_info_for_hdu(hdu_num_);
@@ -1011,7 +1034,8 @@ void SubsetReader::init_from_hdu() {
 bool SubsetReader::ensure_data_mmap() {
     if (pixel_base_ != nullptr) return true;
     if (!raw_fast_ok_ || elem_bytes_ == 0 || data_offset_ <= 0) return false;
-    auto meta = detail::get_shared_meta_for_path(filename_);
+    if (!shared_meta_) return false;
+    const auto& meta = shared_meta_;
     if (naxes_.size() < 2 || naxes_[0] <= 0 || naxes_[1] <= 0) return false;
     const uint64_t w = static_cast<uint64_t>(naxes_[0]);
     const uint64_t h = static_cast<uint64_t>(naxes_[1]);
@@ -1033,8 +1057,17 @@ bool SubsetReader::ensure_data_mmap() {
     static const long kPageSize = sysconf(_SC_PAGESIZE);
     const off_t page_mask = kPageSize > 0 ? static_cast<off_t>(kPageSize - 1) : 0;
     map_page_offset_ = static_cast<off_t>(data_offset_) & ~page_mask;
-    map_len_ = nbytes + static_cast<size_t>(static_cast<off_t>(data_offset_) - map_page_offset_);
-    const size_t map_end = static_cast<size_t>(map_page_offset_) + map_len_;
+    const size_t page_delta = static_cast<size_t>(
+        static_cast<off_t>(data_offset_) - map_page_offset_);
+    if (nbytes > std::numeric_limits<size_t>::max() - page_delta) {
+        throw std::runtime_error("NAXIS product overflow: image byte range exceeds addressable mmap");
+    }
+    map_len_ = nbytes + page_delta;
+    const size_t map_page = static_cast<size_t>(map_page_offset_);
+    if (map_page > std::numeric_limits<size_t>::max() - map_len_) {
+        throw std::runtime_error("NAXIS product overflow: image byte range exceeds addressable mmap");
+    }
+    const size_t map_end = map_page + map_len_;
     if (static_cast<size_t>(sb.st_size) < map_end) {
         raw_fd_holder_.reset();
         return false;

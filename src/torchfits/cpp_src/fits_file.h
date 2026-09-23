@@ -72,6 +72,10 @@ private:
     std::unordered_map<int, bool> compressed_cache_;
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache_;
     std::shared_ptr<detail::SharedReadMeta> shared_meta_;
+    // CFITSIO exposes one mutable current-HDU cursor per fitsfile handle.
+    // Persistent FITSFile objects are shared by Python threads, so every
+    // public operation and close() must serialize over that cursor/cache.
+    mutable std::recursive_mutex io_mutex_;
 };
 
 class SubsetReader {
@@ -110,6 +114,9 @@ private:
     void* map_ptr_ = nullptr;
     size_t map_len_ = 0;
     off_t map_page_offset_ = 0;
+    // Keep the metadata generation captured at construction. A lazy mmap must
+    // never reacquire a descriptor for a replacement at the same path.
+    std::shared_ptr<detail::SharedReadMeta> shared_meta_;
     const uint8_t* pixel_base_ = nullptr;
     // Refcounted fd keeps the backing file descriptor alive while mapped and
     // guards against invalidation closing it mid-mmap.

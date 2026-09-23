@@ -277,9 +277,6 @@ struct SharedReadMeta {
     ino_t inode = 0;
     int64_t last_stat_check_ns = 0;
     std::shared_ptr<RawFdHolder> raw_fd;
-    // Absolute CFITSIO HDU the shared fptr is currently on (-1 = unknown).
-    // Lets one-shot FITSFile wrappers skip redundant fits_movabs_hdu.
-    int current_fits_hdu = -1;
     std::shared_mutex mutex;
 };
 
@@ -341,7 +338,6 @@ inline std::shared_ptr<SharedReadMeta> get_shared_meta_for_path(const std::strin
             meta->colnames_cache.clear();
             meta->hdu_type_cache.clear();
             meta->num_hdus = -1;
-            meta->current_fits_hdu = -1;
             // Rotate identity so per-thread caches keyed by {uid, hdu} cannot
             // pair stale shape/dtype/scale metadata with the replaced file
             // (R7-CPP2). In-flight readers keep their own shared_ptr and the
@@ -382,6 +378,20 @@ inline std::shared_ptr<RawFdHolder> get_shared_raw_fd(
     std::unique_lock<std::shared_mutex> lock(meta->mutex);
     if (!meta->raw_fd) {
         meta->raw_fd = std::make_shared<RawFdHolder>(open_readonly_fd(filename));
+    }
+    // Open-time snapshot (r9b-06): the fd must describe the same file
+    // generation the shared stat snapshot does. A replacement that has not
+    // been observed yet (or a lazy open after one) would otherwise hand
+    // another file's bytes to readers holding old-generation metadata.
+    // Callers fall back to their own CFITSIO handle when this returns null.
+    if (meta->raw_fd && meta->raw_fd->fd != -1 && meta->has_stat) {
+        struct stat st {};
+        if (fstat(meta->raw_fd->fd, &st) != 0 ||
+            st.st_ino != meta->inode ||
+            static_cast<off_t>(st.st_size) != meta->size ||
+            torchfits::internal::mtime_ns_from_stat(st) != meta->mtime_ns) {
+            return nullptr;
+        }
     }
     return meta->raw_fd;
 }
@@ -448,18 +458,20 @@ inline size_t datatype_elem_size(int datatype) {
 
 // CFITSIO fnan() (fitsio2.h FNANMASK) treats Inf *and* exponent-zero
 // (signed zero, subnormals) as undefined whenever a nulval pointer is
-// non-NULL. Native IEEE HDUs must pass nullptr so Inf / -0 survive.
-// Pass NaN only for compressed tiles (undefined → 0 otherwise) or
-// integer storage read as float (BLANK).
+// non-NULL. Float/double *storage* holds IEEE values — also inside
+// compressed tiles (GZIP copies bits verbatim; quantized codecs restore
+// special values), as astropy reads them — so those reads must pass nullptr
+// for Inf / -0 / NaN to survive. A NaN nulval is only for integer storage
+// read as float (BLANK promotion / arbitrary scale), where it marks
+// undefined pixels. `compressed` is accepted for call-site symmetry; the
+// storage BITPIX alone decides (r9b-01).
 inline void* cfitsio_float_nulval_ptr(
-    int bitpix, bool compressed, int datatype, float* fnull, double* dnull
+    int bitpix, bool /*compressed*/, int datatype, float* fnull, double* dnull
 ) {
     if (datatype != TFLOAT && datatype != TDOUBLE) {
         return nullptr;
     }
-    const bool native_ieee =
-        !compressed && (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG);
-    if (native_ieee) {
+    if (bitpix == FLOAT_IMG || bitpix == DOUBLE_IMG) {
         return nullptr;
     }
     return (datatype == TFLOAT) ? static_cast<void*>(fnull)
