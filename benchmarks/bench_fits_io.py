@@ -516,9 +516,7 @@ class FITSBenchmarkSuite:
         cutout_size = min(100, naxis1 // 2, naxis2 // 2)
         if cutout_size < 2:
             cutout_size = 2
-        payload_bytes = window_payload_bytes(
-            header, cutout_size, cutout_size, count=50
-        )
+        payload_bytes = window_payload_bytes(header, cutout_size, cutout_size, count=50)
 
         coords_rng = np.random.default_rng(42)
         cutouts_coords = []

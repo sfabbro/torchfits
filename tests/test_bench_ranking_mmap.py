@@ -230,9 +230,7 @@ def test_fits_cutout_throughput_uses_window_bytes(tmp_path, monkeypatch) -> None
     _write_images(path, 6, (256, 256), np.float32)
     monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
     suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
-    rows = suite._benchmark_cutout_rows(
-        {"multi_mef_10ext": path}, runs=1, warmup=0
-    )
+    rows = suite._benchmark_cutout_rows({"multi_mef_10ext": path}, runs=1, warmup=0)
     window_mb = (100 * 100 * 4) / (1024.0 * 1024.0)
     file_mb = path.stat().st_size / (1024.0 * 1024.0)
     assert file_mb > window_mb * 2
@@ -253,9 +251,7 @@ def test_compressed_cutout_throughput_uses_zbitpix(tmp_path, monkeypatch) -> Non
     ).writeto(path, overwrite=True)
     monkeypatch.setattr(fio, "time_medians_interleaved", _one_second)
     suite = fio.FITSBenchmarkSuite(output_dir=tmp_path, use_mmap=False, profile="user")
-    rows = suite._benchmark_cutout_rows(
-        {"compressed_rice_1": path}, runs=1, warmup=0
-    )
+    rows = suite._benchmark_cutout_rows({"compressed_rice_1": path}, runs=1, warmup=0)
     window_mb = (100 * 100 * 2) / (1024.0 * 1024.0)
     assert rows[0]["size_mb"] == window_mb
     assert rows[0]["torchfits_mb_s"] == window_mb
