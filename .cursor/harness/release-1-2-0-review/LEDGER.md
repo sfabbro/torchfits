@@ -120,3 +120,11 @@ Completeness proof: `tracked-files.txt` (468 lines, `git ls-files` at R0). Every
 | `src/torchfits/cpp_src/fits_file.h` | R9-B | full (123 ln) | r9b-03, r9b-04 (internal state only) | fixed (no new public API) |
 | `src/torchfits/cpp_src/fits_handle.h` | R9-B | full (50 ln) | — | clean |
 | `src/torchfits/cpp_src/fits_rw.h` | R9-B | full (65 ln) | r9b-06 | clean (r9b-06 deferred: defense-in-depth, probe recorded) |
+| `src/torchfits/cpp_src/internal_utils.h` | R10 | full (355 ln) | r10a-03, r10a-06 | fixed (byteswap tail UB; no-SIMD fallback verified) |
+| `src/torchfits/cpp_src/security.h` | R10 | full (66 ln) | r10a-01 (r1c-12 parity decision), r10a-02 | fixed (complementary-layer split documented + covered on both layers) |
+| `src/torchfits/cpp_src/hardware.h` | R10 | full (75 ln) | r10a-06 | clean |
+| `src/torchfits/cpp_src/hardware.cpp` | R10 | full (61 ln) | r10a-06 | clean (fallback parity probe) |
+| `src/torchfits/cpp_src/torch_compat.h` | R10 | full (111 ln) | r10a-07 | clean (dtype/ABI shims verified) |
+| `src/torchfits/cpp_src/torchfits_torch.h` | R10 | full (38 ln) | r10a-07 | clean |
+| `src/torchfits/cpp_src/bindings.cpp` | R10 | full (36 ln) | r10a-07 | clean (`cpp-seal-all` holds) |
+| `src/torchfits/cpp_src/CMakeLists.txt` | R10 | full | r10a-02, r10a-04, r10a-05 | fixed (-O3 restored; sanitizer propagation; bracket test wired) |
