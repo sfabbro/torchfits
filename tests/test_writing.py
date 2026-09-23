@@ -9,8 +9,8 @@ import torchfits
 from torchfits._io_engine.write_api import _write_header_cards_if_supported
 
 
-def test_writing():
-    filename = "test_write.fits"
+def test_writing(tmp_path):
+    filename = str(tmp_path / "test_write.fits")
 
     # Create TensorHDU
     data_tensor = torch.randn(10, 10)
@@ -46,20 +46,15 @@ def test_writing():
             assert np.allclose(data_read_table["col2"], data_table["col2"].numpy())
             assert hdul_astro[1].header["TBLKEY"] == "TBLVAL"
 
-    filenames = [filename, "test_write_hdulist.fits"]
+    filenames = [filename, str(tmp_path / "test_write_hdulist.fits")]
 
-    try:
-        # Write via HDUList
-        hdul.write(filenames[0], overwrite=True)
-        assert_written(filenames[0])
+    # Write via HDUList
+    hdul.write(filenames[0], overwrite=True)
+    assert_written(filenames[0])
 
-        # Write via top-level helper
-        torchfits.write(filenames[1], hdul, overwrite=True)
-        assert_written(filenames[1])
-    finally:
-        for path in filenames:
-            if os.path.exists(path):
-                os.remove(path)
+    # Write via top-level helper
+    torchfits.write(filenames[1], hdul, overwrite=True)
+    assert_written(filenames[1])
 
 
 def test_header_card_write_failure_is_not_silent(monkeypatch, tmp_path):
@@ -133,34 +128,26 @@ def test_invalid_hdu_sequences_fail_instead_of_writing_empty_hdus(
     assert not path.exists()
 
 
-def test_table_write_bool_preserved():
-    filename = "test_write_bool_table.fits"
+def test_table_write_bool_preserved(tmp_path):
+    filename = str(tmp_path / "test_write_bool_table.fits")
     data_table = {"flag": torch.tensor([True, False, True], dtype=torch.bool)}
-    try:
-        torchfits.write(filename, data_table, overwrite=True)
-        with fits.open(filename) as hdul:
-            values = hdul[1].data["flag"]
-            assert values.tolist() == [True, False, True]
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, data_table, overwrite=True)
+    with fits.open(filename) as hdul:
+        values = hdul[1].data["flag"]
+        assert values.tolist() == [True, False, True]
 
 
-def test_write_accepts_list_table_dict():
-    filename = "test_write_list_table_dict.fits"
+def test_write_accepts_list_table_dict(tmp_path):
+    filename = str(tmp_path / "test_write_list_table_dict.fits")
     table = {"flag": [True, False, True]}
-    try:
-        torchfits.write(filename, table, overwrite=True)
-        with fits.open(filename) as hdul:
-            values = hdul[1].data["flag"]
-            assert values.tolist() == [True, False, True]
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, table, overwrite=True)
+    with fits.open(filename) as hdul:
+        values = hdul[1].data["flag"]
+        assert values.tolist() == [True, False, True]
 
 
-def test_table_write_rich_types_roundtrip():
-    filename = "test_write_rich_table.fits"
+def test_table_write_rich_types_roundtrip(tmp_path):
+    filename = str(tmp_path / "test_write_rich_table.fits")
     table = {
         "ID": np.array([1, 2, 3], dtype=np.int32),
         "NAME": ["alpha", "beta", "gamma"],
@@ -171,21 +158,17 @@ def test_table_write_rich_types_roundtrip():
             np.array([4, 5, 6], dtype=np.int32),
         ],
     }
-    try:
-        torchfits.write(filename, table, header={"EXTNAME": "CATALOG"}, overwrite=True)
-        with torchfits.open(filename) as hdul:
-            table_hdu = hdul[1]
-            assert table_hdu.header.get("EXTNAME") == "CATALOG"
-            assert table_hdu.get_string_column("NAME") == ["alpha", "beta", "gamma"]
-            vals = table_hdu["Z"]
-            assert np.allclose(
-                vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
-            )
-            vla = table_hdu.get_vla_column("VLA")
-            assert [v.tolist() for v in vla] == [[1, 2], [3], [4, 5, 6]]
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, table, header={"EXTNAME": "CATALOG"}, overwrite=True)
+    with torchfits.open(filename) as hdul:
+        table_hdu = hdul[1]
+        assert table_hdu.header.get("EXTNAME") == "CATALOG"
+        assert table_hdu.get_string_column("NAME") == ["alpha", "beta", "gamma"]
+        vals = table_hdu["Z"]
+        assert np.allclose(
+            vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
+        )
+        vla = table_hdu.get_vla_column("VLA")
+        assert [v.tolist() for v in vla] == [[1, 2], [3], [4, 5, 6]]
 
 
 def test_table_write_vla_object_column_roundtrip(tmp_path):
@@ -285,39 +268,31 @@ def test_table_write_object_string_bytes_decoded(tmp_path):
         assert hdul[1].get_string_column("S") == ["hello", ""]
 
 
-def test_table_write_complex_tensor_roundtrip():
-    filename = "test_write_complex_tensor_table.fits"
+def test_table_write_complex_tensor_roundtrip(tmp_path):
+    filename = str(tmp_path / "test_write_complex_tensor_table.fits")
     table = {
         "ID": torch.tensor([1, 2, 3], dtype=torch.int32),
         "Z": torch.tensor([1 + 2j, 3 + 4j, 5 + 6j], dtype=torch.complex64),
     }
-    try:
-        torchfits.write(filename, table, overwrite=True)
-        with torchfits.open(filename) as hdul:
-            vals = hdul[1]["Z"]
-            assert np.allclose(
-                vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
-            )
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, table, overwrite=True)
+    with torchfits.open(filename) as hdul:
+        vals = hdul[1]["Z"]
+        assert np.allclose(
+            vals.numpy(), np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex64)
+        )
 
 
-def test_write_compressed_image_roundtrip():
-    filename = "test_write_compressed_image.fits"
+def test_write_compressed_image_roundtrip(tmp_path):
+    filename = str(tmp_path / "test_write_compressed_image.fits")
     # Use an integer image to ensure lossless Rice compression.
     data = torch.arange(64 * 64, dtype=torch.int16).reshape(64, 64)
-    try:
-        torchfits.write(filename, data, overwrite=True, compress=True)
-        out = torchfits.read(filename, hdu=1)
-        assert torch.equal(out, data)
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, data, overwrite=True, compress=True)
+    out = torchfits.read(filename, hdu=1)
+    assert torch.equal(out, data)
 
 
-def test_write_compressed_hdulist_mixed():
-    filename = "test_write_compressed_hdulist_mixed.fits"
+def test_write_compressed_hdulist_mixed(tmp_path):
+    filename = str(tmp_path / "test_write_compressed_hdulist_mixed.fits")
     image = torch.arange(16 * 16, dtype=torch.int16).reshape(16, 16)
     table = {"ID": np.array([1, 2, 3], dtype=np.int32), "NAME": ["a", "b", "c"]}
     hdul = torchfits.HDUList(
@@ -328,22 +303,18 @@ def test_write_compressed_hdulist_mixed():
             torchfits.TableHDU(table, header=torchfits.Header({"EXTNAME": "CAT"})),
         ]
     )
-    try:
-        torchfits.write(filename, hdul, overwrite=True, compress=True)
-        with torchfits.open(filename) as opened:
-            assert len(opened) == 3
-            assert opened[1].header.get("EXTNAME") == "SCI"
-            assert opened[2].header.get("EXTNAME") == "CAT"
-        assert torch.equal(torchfits.read(filename, hdu=1), image)
-        table_out = torchfits.read(filename, hdu=2)
-        assert table_out["ID"].tolist() == [1, 2, 3]
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, hdul, overwrite=True, compress=True)
+    with torchfits.open(filename) as opened:
+        assert len(opened) == 3
+        assert opened[1].header.get("EXTNAME") == "SCI"
+        assert opened[2].header.get("EXTNAME") == "CAT"
+    assert torch.equal(torchfits.read(filename, hdu=1), image)
+    table_out = torchfits.read(filename, hdu=2)
+    assert table_out["ID"].tolist() == [1, 2, 3]
 
 
-def test_write_compressed_hdulist_images_roundtrip():
-    filename = "test_write_compressed_hdulist_images.fits"
+def test_write_compressed_hdulist_images_roundtrip(tmp_path):
+    filename = str(tmp_path / "test_write_compressed_hdulist_images.fits")
     img0 = torch.arange(64, dtype=torch.int16).reshape(8, 8)
     img1 = torch.full((8, 8), 5, dtype=torch.int16)
     hdul = torchfits.HDUList(
@@ -356,80 +327,60 @@ def test_write_compressed_hdulist_images_roundtrip():
             ),
         ]
     )
-    try:
-        torchfits.write(filename, hdul, overwrite=True, compress=True)
-        with torchfits.open(filename) as opened:
-            assert len(opened) == 3
-            assert opened[1].header.get("EXTNAME") == "SCI0"
-            assert opened[2].header.get("EXTNAME") == "SCI1"
-        assert torch.equal(torchfits.read(filename, hdu=1), img0)
-        assert torch.equal(torchfits.read(filename, hdu=2), img1)
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, hdul, overwrite=True, compress=True)
+    with torchfits.open(filename) as opened:
+        assert len(opened) == 3
+        assert opened[1].header.get("EXTNAME") == "SCI0"
+        assert opened[2].header.get("EXTNAME") == "SCI1"
+    assert torch.equal(torchfits.read(filename, hdu=1), img0)
+    assert torch.equal(torchfits.read(filename, hdu=2), img1)
 
 
-def test_write_compressed_image_tuple_roundtrip():
-    filename = "test_write_compressed_image_tuple.fits"
+def test_write_compressed_image_tuple_roundtrip(tmp_path):
+    filename = str(tmp_path / "test_write_compressed_image_tuple.fits")
     img0 = torch.arange(16, dtype=torch.int16).reshape(4, 4)
     img1 = torch.full((4, 4), 2, dtype=torch.int16)
     payload = (img0, img1)
-    try:
-        torchfits.write(filename, payload, overwrite=True, compress=True)
-        assert torch.equal(torchfits.read(filename, hdu=1), img0)
-        assert torch.equal(torchfits.read(filename, hdu=2), img1)
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, payload, overwrite=True, compress=True)
+    assert torch.equal(torchfits.read(filename, hdu=1), img0)
+    assert torch.equal(torchfits.read(filename, hdu=2), img1)
 
 
-def test_compressed_write_rejects_dict_hdu_with_non_tensor_image_payload():
-    filename = "test_write_compressed_dict_rejects_table_payload.fits"
-    try:
-        with pytest.raises(
-            RuntimeError,
-            match="Compressed FITS writing supports tensor image payloads",
-        ):
-            torchfits.write(
-                filename,
-                {"data": {"ID": torch.tensor([1, 2, 3], dtype=torch.int32)}},
-                overwrite=True,
-                compress=True,
-            )
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+def test_compressed_write_rejects_dict_hdu_with_non_tensor_image_payload(tmp_path):
+    filename = str(tmp_path / "test_write_compressed_dict_rejects_table_payload.fits")
+    with pytest.raises(
+        RuntimeError,
+        match="Compressed FITS writing supports tensor image payloads",
+    ):
+        torchfits.write(
+            filename,
+            {"data": {"ID": torch.tensor([1, 2, 3], dtype=torch.int32)}},
+            overwrite=True,
+            compress=True,
+        )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
-def test_write_cuda_tensor_copies_to_host_before_fits_write():
-    filename = "test_write_cuda_tensor_host_copy.fits"
+def test_write_cuda_tensor_copies_to_host_before_fits_write(tmp_path):
+    filename = str(tmp_path / "test_write_cuda_tensor_host_copy.fits")
     data = torch.arange(16, dtype=torch.float32, device="cuda").reshape(4, 4)
-    try:
-        torchfits.write(filename, data, overwrite=True)
-        out = torchfits.read(filename, hdu=0)
-        assert out.device.type == "cpu"
-        assert torch.equal(out, data.cpu())
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, data, overwrite=True)
+    out = torchfits.read(filename, hdu=0)
+    assert out.device.type == "cpu"
+    assert torch.equal(out, data.cpu())
 
 
 @pytest.mark.skipif(
     not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
     reason="MPS is not available",
 )
-def test_write_mps_tensor_copies_to_host_before_fits_write():
-    filename = "test_write_mps_tensor_host_copy.fits"
+def test_write_mps_tensor_copies_to_host_before_fits_write(tmp_path):
+    filename = str(tmp_path / "test_write_mps_tensor_host_copy.fits")
     data = torch.arange(16, dtype=torch.float32, device="mps").reshape(4, 4)
-    try:
-        torchfits.write(filename, data, overwrite=True)
-        out = torchfits.read(filename, hdu=0)
-        assert out.device.type == "cpu"
-        assert torch.equal(out, data.cpu())
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    torchfits.write(filename, data, overwrite=True)
+    out = torchfits.read(filename, hdu=0)
+    assert out.device.type == "cpu"
+    assert torch.equal(out, data.cpu())
 
 
 def test_dict_image_hdu_form_uncompressed(tmp_path):

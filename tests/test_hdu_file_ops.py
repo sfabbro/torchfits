@@ -57,6 +57,11 @@ def test_external_overwrite_invalidates_cached_handle(tmp_path):
     first = torchfits.read(str(path), hdu=0)
     assert torch.equal(first, original)
 
+    # SharedReadMeta re-stats at most once per
+    # TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS (default 1000 ms; see
+    # kSharedMetaValidateIntervalNs). Sleep past that throttle so the next
+    # read is allowed to notice the external overwrite. The 0.01 s loop
+    # below only retries until the bytes match; it is not an ordering sleep.
     time.sleep(1.1)
     fits.PrimaryHDU(updated.numpy()).writeto(path, overwrite=True)
     second = torchfits.read(str(path), hdu=0)

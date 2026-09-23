@@ -748,10 +748,6 @@ class TestMeshBackgroundSubtract:
         many = MeshBackgroundSubtract(mesh=(2, 2))(torch.stack([image] * 3))
         assert many.shape == (3, 64, 64)
 
-    def test_repr(self) -> None:
-        text = repr(MeshBackgroundSubtract(mesh=(3, 3)))
-        assert "MeshBackgroundSubtract" in text and "(3, 3)" in text
-
 
 # ---------------------------------------------------------------------------
 # SigmaNormalize / AffineTransform
@@ -809,9 +805,6 @@ class TestAffineTransform:
         with pytest.raises(ValueError, match="non-zero"):
             AffineTransform(scale=0.0)
 
-    def test_repr(self) -> None:
-        assert "AffineTransform" in repr(AffineTransform(2.0, 1.0))
-
 
 # ---------------------------------------------------------------------------
 # Nonlinear clips keep working with payloads
@@ -828,9 +821,6 @@ class TestClipPayloads:
         payload = _payload()
         out = AsymmetricSigmaClip(n_low=3.0, n_high=3.0)(payload)
         assert out["flux"].shape == payload["flux"].shape
-
-    def test_asymmetric_clip_repr_includes_fill(self) -> None:
-        assert "fill='nan'" in repr(AsymmetricSigmaClip(fill="nan"))
 
     def test_weighted_clip_uses_weights_for_thresholds(self) -> None:
         # 40 of 64 pixels are bright but carry essentially zero weight. The

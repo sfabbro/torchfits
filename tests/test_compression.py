@@ -160,6 +160,7 @@ class TestCompressionPerformance:
             finally:
                 os.unlink(f.name)
 
+    @pytest.mark.performance
     def test_large_compressed_image(self):
         """Test reading large compressed images."""
         import time
@@ -186,6 +187,7 @@ class TestCompressionPerformance:
             finally:
                 os.unlink(f.name)
 
+    @pytest.mark.performance
     def test_compressed_subset_performance(self):
         """Test performance of reading subsets from compressed images."""
         import time

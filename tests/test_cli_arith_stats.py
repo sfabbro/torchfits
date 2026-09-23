@@ -57,8 +57,10 @@ def test_arith_mul_saturates_int16(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     got = torchfits.read_tensor(str(out), hdu=0).numpy()
-    assert got.max() <= np.iinfo(np.int16).max
-    assert got.min() >= np.iinfo(np.int16).min
+    # 200*200 and -200*200 overflow int16. A wrapping cast lands at
+    # -25536/25536, which still sits inside int16 bounds, so min/max
+    # checks cannot see the bug. Saturation must clamp to the rails.
+    np.testing.assert_array_equal(got, np.array([[32767, -32768]], dtype=np.int16))
 
 
 def test_arith_div_produces_float(tmp_path):

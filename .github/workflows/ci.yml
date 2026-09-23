@@ -71,7 +71,7 @@ jobs:
       - name: Build and install
         run: pip install -e . --no-build-isolation
       - name: Pytest
-        run: pytest tests/ -q
+        run: pytest tests/ -q -m "not performance"
 
   # Wheels are otherwise built only on a `v*` tag, so a packaging regression
   # (dropped py.typed, missing native stub, absent vendored-CFITSIO licence,

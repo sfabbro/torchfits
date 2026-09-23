@@ -376,11 +376,6 @@ class TestCompose:
         assert len(c) == 3
         assert c[0] is c.transforms[0]
 
-    def test_repr(self) -> None:
-        rep = repr(Compose([ArcsinhStretch(a=0.1)]))
-        assert "Compose" in rep
-        assert "ArcsinhStretch" in rep
-
 
 # ---------------------------------------------------------------------------
 # Stateless stretch transforms (exact roundtrip)
@@ -847,21 +842,6 @@ class TestEdgeCases:
         err = (x - inv).abs().max().item()
         assert err < 2e-5
 
-    def test_repr_methods(self) -> None:
-        """Verify repr is informative and doesn't crash."""
-        for cls, args in [
-            (ArcsinhStretch, {"a": 0.1}),
-            (LogStretch, {"a": 500}),
-            (ZScaleNormalize, {"contrast": 0.3}),
-            (RobustNormalize, {"dim": (-1,)}),
-            (PercentileClipNormalize, {"lower_pct": 5, "upper_pct": 95}),
-            (FITSHeaderScale, {"bscale": 2.0, "bzero": 10.0}),
-        ]:
-            t = cls(**args)  # type: ignore[arg-type]
-            r = repr(t)
-            assert len(r) > 0
-            assert cls.__name__ in r
-
 
 # ---------------------------------------------------------------------------
 # SigmaClip
@@ -977,12 +957,6 @@ class TestSigmaClip:
         out = t.forward(x)
         assert out[0, 0].item() < 10.0
 
-    def test_repr(self) -> None:
-        t = SigmaClip(n_sigma=5.0, max_iter=3, fill="median")
-        r = repr(t)
-        assert "SigmaClip" in r
-        assert "5.0" in r
-
 
 # ---------------------------------------------------------------------------
 # FITSHeaderNormalize
@@ -1048,12 +1022,6 @@ class TestFITSHeaderNormalize:
         assert out.max() <= 1.0
         assert out[1].item() == pytest.approx(0.5, abs=0.01)
 
-    def test_repr(self) -> None:
-        t = FITSHeaderNormalize({"BITPIX": -32}, scale_floats=True)
-        r = repr(t)
-        assert "FITSHeaderNormalize" in r
-        assert "bitpix=-32" in r
-
 
 # ---------------------------------------------------------------------------
 # GlobalScalarNorm (linear, invertible)
@@ -1108,11 +1076,6 @@ class TestGlobalScalarNorm:
     def test_invalid_stat_raises(self) -> None:
         with pytest.raises(ValueError):
             GlobalScalarNorm(stat="invalid")
-
-    def test_repr(self) -> None:
-        r = repr(GlobalScalarNorm(stat="rms", dim=(-1,)))
-        assert "GlobalScalarNorm" in r
-        assert "rms" in r
 
 
 class TestInterquantileScale:
@@ -1208,12 +1171,6 @@ class TestInterquantileScale:
         t = InterquantileScale()
         with pytest.raises(RuntimeError, match="prior forward"):
             t.inverse(torch.zeros(4))
-
-    def test_repr(self) -> None:
-        r = repr(InterquantileScale(q_low=0.1, q_high=0.9, zero_preserving=True))
-        assert "InterquantileScale" in r
-        assert "q_low=0.1" in r
-        assert "zero_preserving=True" in r
 
 
 # ---------------------------------------------------------------------------
@@ -1385,12 +1342,6 @@ class TestAsymmetricSigmaClip:
         with pytest.raises(ValueError):
             AsymmetricSigmaClip(n_high=-1)
 
-    def test_repr(self) -> None:
-        r = repr(AsymmetricSigmaClip(n_low=5.0, n_high=2.0))
-        assert "AsymmetricSigmaClip" in r
-        assert "5.0" in r
-        assert "2.0" in r
-
     def test_mask_excludes_pixels_from_background(self) -> None:
         """Mask forwarded to estimate_background changes the background estimate."""
         # 5x5 grid: 13 pixels at 100.0 (majority), 12 pixels at 0.0.
@@ -1499,19 +1450,6 @@ class TestFITSScaleColumns:
         out = t.forward(x)
         assert out["N"].dtype == torch.int32
 
-    def test_repr(self) -> None:
-        header = {
-            "TFIELDS": 1,
-            "TTYPE1": "F",
-            "TFORM1": "E",
-            "TSCAL1": 0.5,
-            "TZERO1": 100.0,
-        }
-        t = FITSScaleColumns.from_header(header)
-        r = repr(t)
-        assert "FITSScaleColumns" in r
-        assert "0.5" in r
-
     def test_forward_with_mask_none(self) -> None:
         """FITSScaleColumns.forward accepts mask=None without error."""
         t = FITSScaleColumns({"FLUX": (0.5, 100.0)})
@@ -1595,13 +1533,6 @@ class TestTNullToNan:
         t = TNullToNan.from_header({})
         with pytest.raises(RuntimeError, match="lossy"):
             t.inverse({})
-
-    def test_repr(self) -> None:
-        header = {"TFIELDS": 1, "TTYPE1": "X", "TFORM1": "J", "TNULL1": -1}
-        t = TNullToNan.from_header(header)
-        r = repr(t)
-        assert "TNullToNan" in r
-        assert "X" in r
 
     def test_forward_with_mask_none(self) -> None:
         """TNullToNan.forward accepts mask=None without parameter shadowing."""

@@ -311,49 +311,51 @@ class TestTablePerformance:
             table.write(f.name, format="fits", overwrite=True)
             return f.name
 
+    @pytest.mark.performance
     def test_chunked_reading_performance(self):
         """Test performance of chunked reading via table.scan_torch."""
         import time
-
+    
         filepath = self.create_large_table(50000)
-
+    
         try:
             start_time = time.time()
             chunks = list(torchfits.table.scan_torch(filepath, hdu=1, batch_size=5000))
             total_rows = sum(len(chunk["RA"]) for chunk in chunks)
             streaming_time = time.time() - start_time
-
+    
             assert total_rows == 50000
             assert streaming_time < 30.0
-
+    
         finally:
             os.unlink(filepath)
 
+    @pytest.mark.performance
     def test_memory_efficiency(self):
         """Test memory efficiency of table reading via table.scan_torch."""
         import gc
         import psutil
-
+    
         filepath = self.create_large_table(20000)
-
+    
         try:
             process = psutil.Process()
             mem_before = process.memory_info().rss / 1024 / 1024  # MB
-
+    
             # Read table in chunks
             chunks = list(torchfits.table.scan_torch(filepath, hdu=1, batch_size=2000))
             total_rows = sum(len(chunk["RA"]) for chunk in chunks)
-
+    
             mem_after = process.memory_info().rss / 1024 / 1024  # MB
             memory_increase = mem_after - mem_before
-
+    
             assert total_rows == 20000
             file_size = os.path.getsize(filepath) / 1024 / 1024  # MB
             assert memory_increase < 5 * file_size
-
+    
             del chunks
             gc.collect()
-
+    
         finally:
             os.unlink(filepath)
 

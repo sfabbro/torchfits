@@ -303,6 +303,9 @@ def test_float32_special_values():
             # NaNs should remain NaN
             nan_mask = np.isnan(data)
             assert np.all(np.isnan(got[nan_mask])), f"mmap={mmap}: NaN lost"
+            assert not np.signbit(got[0, 0]) and np.signbit(got[0, 1]), (
+                f"mmap={mmap}: signed zero lost"
+            )
 
     finally:
         os.unlink(path)
@@ -332,6 +335,9 @@ def test_float64_special_values():
             )
             nan_mask = np.isnan(data)
             assert np.all(np.isnan(got[nan_mask])), f"mmap={mmap}: NaN lost"
+            assert not np.signbit(got[0, 0]) and np.signbit(got[0, 1]), (
+                f"mmap={mmap}: signed zero lost"
+            )
 
     finally:
         os.unlink(path)

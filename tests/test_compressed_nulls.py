@@ -81,3 +81,6 @@ def test_uncompressed_float_nan_still_nan(tmp_path):
             data[~np.isnan(data)],
             err_msg=f"mmap={mmap}: Inf or signed zero destroyed",
         )
+        assert not np.signbit(got[0, 0]) and np.signbit(got[0, 1]), (
+            f"mmap={mmap}: signed zero lost"
+        )

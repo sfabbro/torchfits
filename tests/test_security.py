@@ -116,6 +116,7 @@ def test_forced_overwrite_prefix_allowed():
         pass
 
 
+@pytest.mark.performance
 def test_header_large_dict_construction_fast():
     """Regression: Header(dict) must stay O(N), not O(N^2) (PR #172)."""
     import time

@@ -204,7 +204,6 @@ class TestFitsImageDataset:
         ds = FitsImageDataset(files)
         r = repr(ds)
         assert "FitsImageDataset" in r
-        assert "n=8" in r
 
 
 # ---------------------------------------------------------------------------

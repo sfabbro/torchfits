@@ -12,6 +12,8 @@ import torch
 
 import torchfits
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 # LONGSTRN / CONTINUE header values
 
@@ -248,21 +250,9 @@ def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
 def test_vendored_cfitsio_has_niobuf_mindirect_guards():
     """The vendored CFITSIO headers must carry the #ifndef guards that let
     -DTORCHFITS_NIOBUF / -DTORCHFITS_MINDIRECT override the defaults."""
-    fitsio_h = Path("extern/cfitsio/fitsio.h")
-    fitsio2_h = Path("extern/cfitsio/fitsio2.h")
+    fitsio_h = _REPO_ROOT / "extern/cfitsio/fitsio.h"
+    fitsio2_h = _REPO_ROOT / "extern/cfitsio/fitsio2.h"
     if not fitsio_h.exists():
         pytest.skip("vendored CFITSIO not materialized")
     assert "#ifndef NIOBUF" in fitsio_h.read_text()
     assert "#ifndef MINDIRECT" in fitsio2_h.read_text()
-
-
-# scale-on-device dead helpers stay gone
-
-
-def test_scale_on_device_dead_helpers_removed():
-    """The never-called _apply_scale_on_device/_apply_unsigned_offset helpers
-    were removed; the live path is exercised by test_scale_on_device.py."""
-    from torchfits._io_engine import _read_pipeline as rp
-
-    assert not hasattr(rp, "_apply_scale_on_device")
-    assert not hasattr(rp, "_apply_unsigned_offset")

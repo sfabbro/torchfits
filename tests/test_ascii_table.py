@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 import torch
 from astropy.io import fits
@@ -38,43 +36,18 @@ def create_ascii_table(filename):
     hdul.writeto(filename, overwrite=True)
 
 
-def test_ascii_table():
-    filename = "test_ascii.fits"
+def test_ascii_table(tmp_path):
+    filename = str(tmp_path / "test_ascii.fits")
     create_ascii_table(filename)
 
-    # Test standard reading
     hdul = torchfits.HDUList.fromfile(filename)
     table_hdu = hdul[1]
-
     data = table_hdu.data
 
     assert torch.allclose(data["a"], torch.tensor([1, 2, 3], dtype=torch.int32))
     assert torch.allclose(data["b"], torch.tensor([4.5, 5.5, 6.5], dtype=torch.float64))
 
-    # Strings might be bytes or converted?
-    # torchfits usually returns byte tensor for strings.
-    # 'x' -> 120.
-
-    # Verify string content
-    # Row 0 should start with 'x' (120)
+    # ASCII string columns come back as byte codes ('x' == 120).
     assert data["c"][0, 0] == 120
-    # Row 1 should start with 'y' (121)
     assert data["c"][1, 0] == 121
-    # Row 2 should start with 'z' (122)
     assert data["c"][2, 0] == 122
-
-    # Test mmap reading (should fail or fallback?)
-    # HDUList.fromfile doesn't expose mmap flag for tables directly,
-    # but TableHDU might use it if configured.
-    # Currently TableHDU uses `read_fits_table` which takes `mmap` arg.
-    # But `HDUList` calls `read_fits_table` without mmap arg (defaults to false) or with?
-    # Let's check hdu.py.
-    pass
-
-    # Clean up
-    if os.path.exists(filename):
-        os.remove(filename)
-
-    # Clean up
-    if os.path.exists(filename):
-        os.remove(filename)

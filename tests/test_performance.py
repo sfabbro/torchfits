@@ -14,6 +14,7 @@ import torch
 import torchfits
 
 
+@pytest.mark.performance
 class TestPerformance:
     """Performance benchmarks and regression tests."""
 
@@ -205,6 +206,7 @@ class TestPerformance:
             os.unlink(filepath)
 
 
+@pytest.mark.performance
 class TestPerformanceRegression:
     """Regression tests to ensure performance doesn't degrade."""
 

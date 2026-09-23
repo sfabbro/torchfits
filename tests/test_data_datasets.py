@@ -95,33 +95,7 @@ def test_resolve_local_path_waits_for_inflight_prefetch(tmp_path, monkeypatch):
     prefetch finished (duplicate work, and a real corruption risk since both
     downloads write the same ".partial" path).
     """
-    import time
-    from unittest import mock
-
-    import torchfits.data.remote as remote
-
-    calls: list[str] = []
-
-    def _slow_download(url, dest):
-        calls.append(url)
-        time.sleep(0.3)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("data")
-        return dest
-
-    with mock.patch.object(remote, "_download", side_effect=_slow_download):
-        url = "https://example.test/warm-cache.fits"
-        remote.prefetch_urls([url], cache_dir=tmp_path)
-        time.sleep(0.05)  # let the prefetch thread start but not finish
-        remote.resolve_local_path(url, cache_dir=tmp_path)
-        time.sleep(0.5)
-
-    assert len(calls) == 1, f"expected exactly one download, got {len(calls)}"
-
-
-def test_concurrent_resolve_local_path_downloads_once(tmp_path, monkeypatch):
     import threading
-    import time
     from unittest import mock
 
     import torchfits.data.remote as remote
@@ -129,18 +103,94 @@ def test_concurrent_resolve_local_path_downloads_once(tmp_path, monkeypatch):
     calls: list[str] = []
     started = threading.Event()
     release = threading.Event()
+    # Set when resolve_local_path observes the live prefetch thread and is
+    # about to join it. The download stays blocked until that happens, so
+    # ordering does not depend on sleep.
+    observed_inflight = threading.Event()
 
     def _slow_download(url, dest):
         calls.append(url)
         started.set()
-        release.wait(timeout=2)
+        if not release.wait(timeout=2):
+            raise AssertionError("in-flight prefetch was not released")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("data")
         return dest
 
+    orig_is_alive = threading.Thread.is_alive
+
+    def _is_alive(self) -> bool:
+        alive = orig_is_alive(self)
+        if alive and self.name == "torchfits-prefetch":
+            observed_inflight.set()
+        return alive
+
+    url = "https://example.test/warm-cache.fits"
+    outputs: list[str] = []
+    monkeypatch.setattr(threading.Thread, "is_alive", _is_alive)
+    with mock.patch.object(remote, "_download", side_effect=_slow_download):
+        remote.prefetch_urls([url], cache_dir=tmp_path)
+        assert started.wait(timeout=1), "prefetch download did not start"
+        resolver = threading.Thread(
+            target=lambda: outputs.append(
+                remote.resolve_local_path(url, cache_dir=tmp_path)
+            )
+        )
+        resolver.start()
+        try:
+            assert observed_inflight.wait(timeout=1), (
+                "resolve_local_path did not observe the in-flight prefetch"
+            )
+        finally:
+            release.set()
+            resolver.join(timeout=2)
+
+    assert not resolver.is_alive()
+    assert len(calls) == 1, f"expected exactly one download, got {len(calls)}"
+    assert len(outputs) == 1
+    assert Path(outputs[0]).read_text() == "data"
+
+
+def test_concurrent_resolve_local_path_downloads_once(tmp_path, monkeypatch):
+    import threading
+    from unittest import mock
+
+    import torchfits.data.remote as remote
+
+    calls: list[str] = []
+    started = threading.Event()
+    release = threading.Event()
+    # Second resolve has entered _download_once while the first download is
+    # still blocked, so release is not a stand-in for scheduler delay.
+    second_entered = threading.Event()
+
+    def _slow_download(url, dest):
+        calls.append(url)
+        started.set()
+        if not release.wait(timeout=2):
+            raise AssertionError("in-flight download was not released")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("data")
+        return dest
+
+    real_download_once = remote._download_once
+    entrants = 0
+    entrants_lock = threading.Lock()
+
+    def _download_once(cache_key, url, dest):
+        nonlocal entrants
+        with entrants_lock:
+            entrants += 1
+            if entrants >= 2:
+                second_entered.set()
+        return real_download_once(cache_key, url, dest)
+
     url = "https://example.test/cold-cache.fits"
     outputs: list[str] = []
-    with mock.patch.object(remote, "_download", side_effect=_slow_download):
+    with (
+        mock.patch.object(remote, "_download_once", side_effect=_download_once),
+        mock.patch.object(remote, "_download", side_effect=_slow_download),
+    ):
         first = threading.Thread(
             target=lambda: outputs.append(
                 remote.resolve_local_path(url, cache_dir=tmp_path)
@@ -152,13 +202,19 @@ def test_concurrent_resolve_local_path_downloads_once(tmp_path, monkeypatch):
             )
         )
         first.start()
-        assert started.wait(timeout=1)
+        assert started.wait(timeout=1), "first download did not start"
         second.start()
-        time.sleep(0.05)
-        release.set()
-        first.join(timeout=2)
-        second.join(timeout=2)
+        try:
+            assert second_entered.wait(timeout=1), (
+                "second resolve did not reach the in-flight download"
+            )
+        finally:
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
 
+    assert not first.is_alive()
+    assert not second.is_alive()
     assert len(calls) == 1
     assert len(outputs) == 2
     assert Path(outputs[0]).read_text() == "data"

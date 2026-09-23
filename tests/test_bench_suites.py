@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -41,6 +42,7 @@ def test_gpu_transports_suite_is_gpu_only() -> None:
     assert s.gpu_only is True
 
 
+@pytest.mark.performance
 def test_time_median_reports_peak_rss() -> None:
     payload = bytearray(2 * 1024 * 1024)
 
@@ -58,20 +60,36 @@ def test_time_median_reports_peak_rss() -> None:
         assert peak_rss > 0.0
 
 
-def test_rss_sampler_sees_transient_peak() -> None:
+@pytest.mark.performance
+def test_rss_sampler_sees_transient_peak(monkeypatch) -> None:
+    import threading
+
+    import benchmarks.bench_timing as timing
+
     held: list[bytearray] = []
+    sampled_while_held = threading.Event()
+    real_rss = timing._rss_mb
+
+    def _rss_while_held() -> float | None:
+        sample = real_rss()
+        if held and sample is not None:
+            sampled_while_held.set()
+        return sample
+
+    monkeypatch.setattr(timing, "_rss_mb", _rss_while_held)
 
     def _spike() -> None:
         # Allocate then free so start/end RSS understates peak.
         blob = bytearray(8 * 1024 * 1024)
         blob[0] = 1
         held.append(blob)
-        time.sleep(0.02)
+        # Sampler thread polls; wait until it observes RSS while the blob is live.
+        if timing._PROC is not None:
+            assert sampled_while_held.wait(timeout=2.0)
         held.clear()
 
     with _RssPeakSampler(interval_s=0.001) as sampler:
         _spike()
-        time.sleep(0.01)
     # Without a live process RSS hook this may be None; otherwise peak must rise.
     if sampler.peak_mb is not None:
         assert sampler.peak_mb > 0.0

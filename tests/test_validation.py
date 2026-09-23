@@ -1,5 +1,3 @@
-import os
-
 import torch
 from astropy.io import fits
 
@@ -11,15 +9,10 @@ def create_valid_fits(filename):
     hdu.writeto(filename, overwrite=True)
 
 
-def test_validation():
-    filename = "test_valid.fits"
+def test_validation(tmp_path):
+    filename = str(tmp_path / "test_valid.fits")
     create_valid_fits(filename)
 
-    try:
-        hdul = torchfits.HDUList.fromfile(filename)
-        is_valid = hdul.validate()
-        assert is_valid
-
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
+    hdul = torchfits.HDUList.fromfile(filename)
+    is_valid = hdul.validate()
+    assert is_valid

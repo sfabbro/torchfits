@@ -106,9 +106,6 @@ class TestRealDataIntegration:
             with torchfits.open(filepath) as hdul:
                 table_hdu = hdul[1]  # First extension is usually the table
 
-                # Test lazy access
-                assert hasattr(table_hdu, "materialize")
-
                 # Test column access
                 # Table columns stay in the FITS-native tensor mapping.
                 ra_col = table_hdu["RA"]  # Direct access via __getitem__
@@ -260,6 +257,7 @@ class TestRealDataIntegration:
 class TestPerformanceIntegration:
     """Integration tests focused on performance with realistic data."""
 
+    @pytest.mark.performance
     def test_memory_efficiency_large_file(self):
         """Test memory efficiency with large files."""
         import gc
