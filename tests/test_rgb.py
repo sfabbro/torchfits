@@ -249,9 +249,16 @@ def test_lupton_rgb_float_parity_with_astropy() -> None:
     Q above 1e10 caps at 1e10) plus a saturated star, negative pixels and a
     non-zero minimum.
     """
+    import inspect
+
     np = pytest.importorskip("numpy")
     pytest.importorskip("astropy")
     from astropy.visualization import make_lupton_rgb
+
+    # output_dtype arrived with the float-output path (astropy 7). Python 3.10
+    # stays on astropy 6.1, whose make_lupton_rgb only returns uint8.
+    if "output_dtype" not in inspect.signature(make_lupton_rgb).parameters:
+        pytest.skip("float Lupton parity needs astropy make_lupton_rgb(output_dtype=)")
 
     rng = np.random.default_rng(0)
     r = np.abs(rng.normal(0, 40, (24, 24)))
