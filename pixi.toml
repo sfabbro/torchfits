@@ -38,22 +38,23 @@ cmake = ">=3.21"
 ninja = ">=1.10"
 python = ">=3.10"
 pytorch = ">=2.13,<2.14"
-cfitsio = ">=4.6.3,<4.6.5"
 
-# Host dependencies - libraries that will be linked into the package
+# Host dependencies - libraries that will be linked into the package.
+# CFITSIO itself is the sha256-pinned vendored tree (TORCHFITS_USE_VENDORED_CFITSIO),
+# not a conda cfitsio package. bzip2 is libbz2 for the BZIP2_1 codec, matching
+# packaging/conda/recipe.yaml.
 [package.host-dependencies]
 python = ">=3.10"
 pytorch = ">=2.13,<2.14"
-cfitsio = ">=4.6.3,<4.6.5"
 nanobind = ">=3.0.1"
 zlib = ">=1.2.13"
+bzip2 = ">=1.0.8"
 
 # Run dependencies - packages needed at runtime
 [package.run-dependencies]
 pytorch = ">=2.13,<2.14"
 numpy = ">=1.26"
 pyarrow = ">=17.0"
-cfitsio = ">=4.6.3,<4.6.5"
 zlib = ">=1.2.13"
 
 # Workspace dependencies - development environment

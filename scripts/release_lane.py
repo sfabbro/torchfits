@@ -27,13 +27,14 @@ Usage::
     release_lane.py --lane 2.13 --apply   rewrite the files for that lane
     release_lane.py --lane 2.13 --prerelease rc5 --apply
                                    rewrite the files for a release candidate
-                                   (e.g. torchfits 1.0.0rc5 on lane 2.13)
+                                   (the suffix is appended to that lane's
+                                   torchfits_version)
 
 ``--check`` is wired into preflight/CI so a lane pin can never drift from the
-lane map. Exit code is non-zero on any mismatch. Pre-release states (e.g.
-``1.0.0rc5``) are recognized by ``--check`` as the lane's base version plus a
-PEP 440 prerelease suffix; ``--apply`` without ``--prerelease`` always renders
-the plain map version (finalize).
+lane map. Exit code is non-zero on any mismatch. Pre-release states (a lane's
+``torchfits_version`` plus a PEP 440 suffix) are recognized by ``--check``
+as that base; ``--apply`` without ``--prerelease`` always renders the plain
+map version (finalize).
 """
 
 from __future__ import annotations
@@ -338,6 +339,16 @@ def _verify(lane: str, expected: dict[Path, str]) -> int:
     return 1 if failed else 0
 
 
+def prerelease_help() -> str:
+    """Help text whose example is the lane map, not a hardcoded old version."""
+    versions = [str(spec["torchfits_version"]) for spec in load_lanes().values()]
+    shown = ", ".join(f"rc5 -> {version}rc5" for version in versions)
+    return (
+        "PEP 440 prerelease suffix appended to the lane's torchfits_version "
+        f"in torch_lanes.json (e.g. {shown})"
+    )
+
+
 def committed_version() -> str | None:
     match = _PYPROJECT_VERSION_RE.search(PYPROJECT.read_text(encoding="utf-8"))
     return match.group(2) if match is not None else None
@@ -354,7 +365,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--prerelease",
-        help="PEP 440 prerelease suffix for the lane version (e.g. rc5 -> 1.0.0rc5)",
+        help=prerelease_help(),
     )
     parser.add_argument(
         "--print-pins",

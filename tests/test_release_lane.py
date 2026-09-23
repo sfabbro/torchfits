@@ -74,3 +74,28 @@ def test_render_rejects_wrong_base_version() -> None:
 def test_render_prerelease_rejects_non_release_lane() -> None:
     with pytest.raises(SystemExit, match="only applies to release lanes"):
         lane.render("2.12", None, prerelease="rc5")
+
+
+def test_prerelease_help_names_the_lane_base() -> None:
+    """--help must show the torch_lanes.json base, not a stale 1.0.0 example."""
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "release_lane.py"), "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    base = _map_version()
+    assert f"{base}rc5" in proc.stdout
+    assert "1.0.0rc5" not in proc.stdout
+
+
+def test_pixi_package_uses_vendored_cfitsio_not_conda_4_6() -> None:
+    """The conda package compiles vendored CFITSIO; it must not depend on 4.6."""
+    text = (ROOT / "pixi.toml").read_text(encoding="utf-8")
+    package = text.split("\n[dependencies]\n", 1)[0]
+    assert 'cfitsio = "' not in package
+    host = package.split("[package.host-dependencies]", 1)[1]
+    host = host.split("\n[", 1)[0]
+    assert "bzip2" in host
