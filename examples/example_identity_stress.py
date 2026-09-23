@@ -1,12 +1,15 @@
 """
-Identity stress – read and write the same files in different ways, perfectly identical (1.1.1).
+Identity stress: the same pixels and columns through several read/write paths.
 
-Covers the bug-prevention matrix for 1.1.1:
-  - image: write() / write_tensor() / HDUList.write() / astropy → read() / read_tensor() / open().data / DataView slice / astropy
-  - table: table.write() / write(dict) / TableHDU → read() / read_torch() / scan() / scan_torch() / where / columns
-  - unsigned / scaling / VLA / TDIM / TNULL / string / bit / logical
-  - HISTORY/COMMENT/CONTINUE, checksum, compression (RICE/GZIP)
-All cross-checked: torchfits ↔ astropy ↔ torchfits must match.
+Checked here:
+  - image: write / write_tensor / HDUList.write / astropy, then read_tensor,
+    the OBJECT card, open().data slices, and astropy getdata
+  - table: table.write / write(dict) / TableHDU, then row count, column I,
+    scan batch sizes, and where= row counts
+  - uint16 image round-trip
+  - VLA lengths and values, the 2-d column, and NAME
+  - RICE_1 (int16) and GZIP_1 (float32) image round-trip
+
 Run: `pixi run python examples/example_identity_stress.py`
 """
 
@@ -115,7 +118,14 @@ def vla_tdim_identity(tmp: str) -> None:
     got = tf_table.read(p, hdu=1)
     got_t = tf_table.read_torch(p, hdu=1)
     assert got.num_rows == n
+    tdim_got = np.asarray(got.column("TDIMCOL").to_pylist(), dtype=np.float32)
+    assert tdim_got.shape == tdim.shape
+    assert np.array_equal(tdim_got, tdim)
     assert len(got_t["VLA"]) == n
+    for i, col in enumerate(got_t["VLA"]):
+        assert np.array_equal(col.numpy(), vla[i])
+    names = [str(v).strip() for v in got.column("NAME").to_pylist()]
+    assert names == [f"OBJ_{i}" for i in range(n)]
     print("VLA/TDIM identity: OK")
 
 
@@ -142,7 +152,7 @@ def main() -> None:
         unsigned_scaling_identity(tmp)
         vla_tdim_identity(tmp)
         compression_identity(tmp)
-    print("All identity checks passed – 1.1.1 ready")
+    print("All identity checks passed")
 
 
 if __name__ == "__main__":

@@ -4,18 +4,20 @@ cfitsio cookbook tribute – reproduces `cookbook.c` patterns with torchfits.
 From https://heasarc.gsfc.nasa.gov/docs/software/fitsio/c/c_user/node13.html
 (cfitsio cookbook.c):
   - Create primary + image extension + binary table (like fits_create_file etc.)
-  - Write/read image subsets (fits_read_subset / fits_write_subset)
+  - Read an image window through a DataView slice (fits_read_subset analogue)
   - Checksum handling (fits_write_chksum / fits_verify_chksum)
-  - TFORM variants (1J, 1K, 1E, 1D, 1L, 16A, 1X, 1C? complex not supported)
+  - TFORM variants that this script writes (J, K, E, D, L, A). Complex is not written.
   - Header keyword read/write (fits_write_key / fits_read_key)
-  - Copy HDU (fits_copy_hdu) and delete/insert semantics
+  - Byte copy via ``python -m torchfits.cli copy`` (fits_copy_hdu analogue)
 
-All verified against astropy as cfitsio ground truth.
+A failed read, a failed checksum, or a value mismatch raises. Sections do not
+print OK after catching the error.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -77,11 +79,15 @@ def test_cfitsio_multi_hdu_copy(tmp: str) -> None:
         ]
     )
     hdul.writeto(src, overwrite=True)
-    # torchfits copy is CLI `torchfits copy` → byte copy via shutil.copy2 (preserves compression)
-    import shutil
-
-    shutil.copy2(src, dst)
-    assert open(src, "rb").read() == open(dst, "rb").read()
+    proc = subprocess.run(
+        [sys.executable, "-m", "torchfits.cli", "copy", src, dst],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout)
+    assert Path(src).read_bytes() == Path(dst).read_bytes()
     # verify via torchfits
     assert torchfits.read_tensor(src, hdu=1).numpy()[0, 0] == 5
     print("cfitsio 2/7 multi-HDU copy: OK")
@@ -114,10 +120,8 @@ def test_cfitsio_checksum(tmp: str) -> None:
         overwrite=True,
         checksum=True,
     )
-    # fits_verify_chksum analogue
-    ok = torchfits.verify_checksums(path)
-    # verify_returns dict or bool – we just check it doesn't raise and reports present
-    assert ok is not None
+    report = torchfits.verify_checksums(path)
+    assert report["status"] == "ok" and report["present"] and report["ok"]
     # astropy also writes checksums
     print("cfitsio 4/7 checksum: OK")
 
@@ -138,8 +142,16 @@ def test_cfitsio_tform_variants(tmp: str) -> None:
     }
     torchfits.table.write(path, tbl, overwrite=True)
     got = tf_table.read(path, hdu=1)
-    for k in ["C_J", "C_K", "C_E", "C_D", "C_L", "C_A"]:
-        assert k in got.column_names
+    assert np.array_equal(np.asarray(got.column("C_J").to_pylist()), tbl["C_J"])
+    assert np.array_equal(np.asarray(got.column("C_K").to_pylist()), tbl["C_K"])
+    assert np.allclose(np.asarray(got.column("C_E").to_pylist()), tbl["C_E"])
+    assert np.allclose(np.asarray(got.column("C_D").to_pylist()), tbl["C_D"])
+    assert [bool(v) for v in got.column("C_L").to_pylist()] == tbl["C_L"].tolist()
+    got_a = [
+        (v.decode() if isinstance(v, (bytes, np.bytes_)) else str(v)).strip()
+        for v in got.column("C_A").to_pylist()
+    ]
+    assert got_a == list(tbl["C_A"])
     print("cfitsio 5/7 TFORM variants: OK")
 
 
@@ -170,32 +182,19 @@ def test_cfitsio_header_keys(tmp: str) -> None:
 
 
 def test_cfitsio_ascii_table(tmp: str) -> None:
-    # qfits/cfitsio ASCII table (TFIELDS, TBCOL) – torchfits currently supports binary;
-    # we verify that reading an astropy ASCII table does not crash and data is accessible via fallback.
     path = os.path.join(tmp, "cf_ascii.fits")
-    # Create ASCII table via astropy
-    c1 = fits.Column(
-        name="ID", format="A10", array=np.array([f"ID{i}" for i in range(5)])
-    )
-    c2 = fits.Column(
-        name="VAL", format="F6.2", array=np.array([1.1, 2.2, 3.3, 4.4, 5.5])
-    )
-    # ASCII table HDU
+    expected_id = [f"ID{i}" for i in range(5)]
+    expected_val = [1.1, 2.2, 3.3, 4.4, 5.5]
+    c1 = fits.Column(name="ID", format="A10", array=np.array(expected_id))
+    c2 = fits.Column(name="VAL", format="F6.2", array=np.array(expected_val))
     hdu = fits.TableHDU.from_columns([c1, c2], nrows=5)
-    # TableHDU is ASCII when `nrows` and `tbcol`? Actually use `fits.TableHDU` for ASCII.
-    # Simpler: use BinTable as fallback if ASCII not supported.
-    try:
-        hdul = fits.HDUList([fits.PrimaryHDU(), hdu])
-        hdul.writeto(path, overwrite=True)
-        # torchfits should read via fallback (CFITSIO) – at least not crash
-        try:
-            tbl = tf_table.read(path, hdu=1)
-            print(f"cfitsio 7/7 ASCII fallback: {tbl.num_rows} rows")
-        except Exception as e:
-            print(f"cfitsio 7/7 ASCII fallback (expected maybe): {e}")
-    except Exception as e:
-        print(f"cfitsio 7/7 ASCII creation skipped: {e}")
-    print("cfitsio 7/7 ASCII: OK")
+    fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path, overwrite=True)
+    tbl = tf_table.read(path, hdu=1)
+    ids = [str(v).strip() for v in tbl.column("ID").to_pylist()]
+    vals = [float(v) for v in tbl.column("VAL").to_pylist()]
+    assert ids == expected_id
+    assert np.allclose(vals, expected_val)
+    print(f"cfitsio 7/7 ASCII: {tbl.num_rows} rows OK")
 
 
 def main() -> None:

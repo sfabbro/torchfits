@@ -14,7 +14,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Examples explicitly excluded from auto-discovery (e.g., they require
 # external data not available in CI, or are run via a different path).
 _EXCLUDE = {
-    "desi_shaped_spectrum.py",  # requires DESI data download
     "cli/make_rgb_demo.py",  # auxiliary script, not a standalone example
     "test_examples.py",  # this file
 }

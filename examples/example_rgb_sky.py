@@ -8,8 +8,8 @@ Same ``rgb()`` defaults on every panel. Prefers cached public FITS from
 - HST WFC3 UVIS OPAL F395N/F502N/F631N Jupiter (full-frame SCI downsample)
 
 Missing files fall back to synthetic stamps so the example still runs
-under ``TORCHFITS_EXAMPLE_FAST=1``. Gallery PNGs are written only from
-real cutouts. HSC-SSP is not fetched.
+under ``TORCHFITS_EXAMPLE_FAST=1``. PNGs are written to ``examples/output/``.
+HSC-SSP is not fetched.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from torchfits.transforms.rgb import write_rgb_image  # noqa: E402
 FETCH_CMD = "bash scripts/fetch_rgb_sky_samples.sh"
 SKY_DIR = CACHE_DIR / "rgb_sky"
 TILE = 360
-GALLERY_DIR = ROOT / "docs" / "assets" / "gallery"
 _READ_ERR = (OSError, RuntimeError, ValueError, IndexError)
 
 
@@ -155,10 +154,11 @@ def _synthetic_jwst(n: int = TILE) -> tuple[torch.Tensor, ...]:
     for cx, cy, amp in ((-0.3, -0.2, 8.0), (0.15, 0.1, 6.0), (0.4, -0.15, 5.0)):
         cores = cores + amp * torch.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / 0.006)
     tidal = 0.4 * torch.exp(-((yy - 0.4 * xx) ** 2) / 0.02)
-    f150 = sky + 0.6 * cores + tidal
-    f200 = sky + 0.9 * cores + 0.7 * tidal
-    f444 = sky + 1.1 * cores + 0.5 * tidal
-    return f150, f200, f444
+    # Blue → red, matching the real F115W / F150W / F200W cutouts.
+    f115 = sky + 0.6 * cores + tidal
+    f150 = sky + 0.9 * cores + 0.7 * tidal
+    f200 = sky + 1.1 * cores + 0.5 * tidal
+    return f115, f150, f200
 
 
 def _synthetic_jupiter(n: int = TILE) -> tuple[torch.Tensor, ...]:
@@ -223,10 +223,6 @@ def main() -> int:
     merger_grz = _read_grz(merger_path)
     jwst_bands = _read_band_set(jwst_paths)
     jup_bands = _read_band_set(jup_paths)
-    all_real = all(
-        item is not None for item in (dwarf_grz, merger_grz, jwst_bands, jup_bands)
-    )
-
     if dwarf_grz is None:
         print("dwarf: synthetic (no ic3418_grz.fits)")
         dg, dr, di, dz = _synthetic_dwarf()
@@ -271,12 +267,6 @@ def main() -> int:
     strip_path = out_dir / "rgb_vs_lupton_dwarf.png"
     write_rgb_image(str(collage_path), collage)
     write_rgb_image(str(strip_path), strip)
-    if not _fast_mode() and all_real:
-        GALLERY_DIR.mkdir(parents=True, exist_ok=True)
-        write_rgb_image(str(GALLERY_DIR / "rgb_sky_collage.png"), collage)
-        write_rgb_image(str(GALLERY_DIR / "rgb_vs_lupton_dwarf.png"), strip)
-    elif not _fast_mode():
-        print(f"skip gallery: missing real cutouts; run {FETCH_CMD}")
     print(f"wrote {collage_path}")
     print(f"wrote {strip_path}")
     return 0

@@ -3,14 +3,14 @@ CCfits cookbook tribute – reproduces the CCfits C++ cookbook with torchfits.
 
 Covers (as in https://heasarc.gsfc.nasa.gov/fitsio/ccfits/html/cookbook.html):
   1. Primary image create + header keywords (OBJECT, EXPTIME, FILTER)
-  2. Binary table with TFORM J/K/E/D/L/X/A + TUNIT/TNULL
+  2. Binary table column types J/K/E/D/L/X/A (values, not only names)
   3. Column projection & row slice (like CCfits Column::read)
-  4. Image scaling (BSCALE/BZERO) & unsigned (BZERO) round-trip
+  4. Unsigned uint16 image round-trip (BZERO)
   5. HISTORY/COMMENT & long CONTINUE strings
-  6. Multi-HDU file (Primary + ImageExt + BinTable) and header inheritance
+  6. Multi-HDU file (primary image, image extension, binary table) and EXTNAME
 
-Every file is written once with astropy (ground truth) and once with torchfits;
-both are read back with the other library and verified bit-for-bit / astropy-equal.
+Primary image and the binary-table columns this script writes are checked
+against the arrays passed in. Not every section writes both libraries.
 """
 
 from __future__ import annotations
@@ -140,6 +140,16 @@ def test_binary_table(tmp: str) -> None:
     # read via astropy the torchfits file
     ref_tbl = fits.getdata(path_tf, ext=1)
     assert ref_tbl["COL_J"].tolist() == col_j.tolist()
+    assert ref_tbl["COL_K"].tolist() == col_k.tolist()
+    assert np.allclose(ref_tbl["COL_E"], col_e)
+    assert np.allclose(ref_tbl["COL_D"], col_d)
+    assert ref_tbl["COL_L"].astype(bool).tolist() == col_l.tolist()
+    assert ref_tbl["COL_X"].astype(bool).tolist() == col_x.tolist()
+    got_a = [
+        (v.decode() if isinstance(v, (bytes, np.bytes_)) else str(v)).strip()
+        for v in ref_tbl["COL_A"]
+    ]
+    assert got_a == list(col_a)
     print("CCfits 2/6 binary table: OK")
 
 
@@ -204,8 +214,12 @@ def test_history_longstring(tmp: str) -> None:
     assert tf_hdr["OBSERVER"] == hdr["OBSERVER"]
     assert ref_hdr["LONGSTR"] == long_val
     assert tf_hdr["LONGSTR"] == long_val
-    # HISTORY may be duplicated; check at least one
-    assert "HISTORY" in tf_hdr or "HISTORY" in str(open(path, "rb").read())
+    history = tf_hdr.get("HISTORY")
+    history_text = (
+        history if isinstance(history, str) else " ".join(map(str, history or []))
+    )
+    assert "CCfits cookbook" in history_text
+    assert "comment" in str(tf_hdr.get("COMMENT", "")).lower()
     print("CCfits 5/6 HISTORY/CONTINUE: OK")
 
 

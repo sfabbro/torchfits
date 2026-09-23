@@ -396,6 +396,10 @@ def section_training(dataset: FitsImageDataset) -> None:
 
     accuracy = _evaluate(model, train_ds)
     print(f"   loss {losses[0]:.4f} -> {losses[-1]:.4f}; final accuracy={accuracy:.2f}")
+    if not losses[-1] < losses[0]:
+        raise AssertionError(
+            f"training loss did not fall: {losses[0]:.4f} -> {losses[-1]:.4f}"
+        )
 
 
 @torch.no_grad()

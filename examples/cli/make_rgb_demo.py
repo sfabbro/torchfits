@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Build a vivid 3-band RGB PNG via ``torchfits convert`` (synthetic demo)."""
+"""Build a vivid 3-band RGB PNG with ``lupton_rgb`` (synthetic demo).
+
+The PNG and the three band files land in ``examples/output/`` unless a
+directory is passed as argv[1]. The printed ``torchfits convert`` line is
+the CLI equivalent; this script does not invoke it.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +31,11 @@ def _band(h: int, w: int, cx: float, cy: float, amp: float) -> torch.Tensor:
 
 
 def main() -> int:
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("docs/assets/gallery")
+    out_dir = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else Path(__file__).resolve().parents[1] / "output"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     h, w = 256, 256
     r = _band(h, w, -0.25, -0.1, 1.2)

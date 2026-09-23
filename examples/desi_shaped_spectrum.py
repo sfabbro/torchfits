@@ -7,6 +7,7 @@ https://desidatamodel.readthedocs.io/en/latest/DESI_SPECTRO_REDUX/SPECPROD/healp
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +32,11 @@ def _write_desi_shaped(path: Path) -> None:
 
 
 def main() -> None:
-    path = Path("/tmp/torchfits_desi_shaped.fits")
+    with tempfile.TemporaryDirectory(prefix="torchfits_desi_") as tmp:
+        _run(Path(tmp) / "desi_shaped.fits")
+
+
+def _run(path: Path) -> None:
     _write_desi_shaped(path)
     ds = FitsSpectrumDataset(
         [str(path)],
