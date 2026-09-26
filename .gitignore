@@ -92,3 +92,7 @@ examples/output/
 # Synced into docs/ at docs-build time (source of truth: examples/)
 docs/published-examples/
 docs/assets/gallery/_rgb_demo/
+
+# Agent tooling (installed skills and per-batch scratch notes), not project code
+.agents/
+skills-lock.json
