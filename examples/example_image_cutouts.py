@@ -42,7 +42,11 @@ def main() -> None:
         # Compare with the equivalent slice from a full read
         full = torchfits.read_tensor(path, hdu=0)
         manual = full[y1:y2, x1:x2]
-        print(f"tensor slice matches read_subset: {torch.equal(cutout, manual)}")
+        if not torch.equal(cutout, manual):
+            raise RuntimeError(
+                "read_subset disagrees with the equivalent full-read slice"
+            )
+        print("tensor slice matches read_subset: True")
 
         # open_subset_reader: reuse file handle for many cutouts
         with torchfits.open_subset_reader(path, hdu=0) as reader:
@@ -61,9 +65,9 @@ def main() -> None:
             [(path, 0, x1, y1, x2, y2)],
             add_channel_dim=False,
         )
-        print(
-            f"FitsCutoutDataset matches read_subset: {torch.equal(patch_ds[0], cutout)}"
-        )
+        if not torch.equal(patch_ds[0], cutout):
+            raise RuntimeError("FitsCutoutDataset disagrees with read_subset")
+        print("FitsCutoutDataset matches read_subset: True")
     finally:
         os.unlink(path)
 

@@ -1,5 +1,13 @@
 # Documentation Review Progress
 
+> **CLOSED — completed after `1.0.0rc5`; kept as a record, not as a
+> current status.** Nothing here is re-verified on later releases. The counts
+> below were true at the time; `docs/` has since grown (it holds 25 `.md`
+> files now, not the 23 reviewed) and the doc-contract suites have grown with
+> it. For the live gates use `pixi run docs-contract` / `docs-links` and
+> `tests/test_docs_integrity.py`; for open work use `.cursor/post-1.0-backlog.md`.
+> Nothing links to this file.
+
 Started after the `1.0.0rc5` release. Review criteria:
 
 - Accessible to astronomers, software developers, and students.
@@ -46,9 +54,9 @@ were fixed and pushed in four commits:
   renamed (`test_read_header.py`); HorseHead Compose snippets cast `.float()`;
   PyPI publish is token-based, not trusted publishing.
 
-## Verification
+## Verification (as of that pass)
 
-- `pixi run docs-contract` — 23 tests pass.
+- `pixi run docs-contract` — 23 tests passed then; the same two suites hold 34 today.
 - `pixi run docs-build` — clean build.
 - `pixi run docs-links` — no broken local links; only the two known
   non-fatal external warnings (fonts.gstatic.com, legacysurvey.org).

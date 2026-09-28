@@ -6,10 +6,7 @@ import argparse
 import inspect
 from typing import Any
 
-import torch
-
 import torchfits
-from torchfits._io_engine._hdu_rewrite import _strip_compression_cards
 from torchfits.hdu import Header
 
 from .common import (
@@ -117,6 +114,10 @@ def _transform_one(
     transform: Any,
     hdu: int,
 ) -> None:
+    import torch
+
+    from torchfits._io_engine._hdu_rewrite import _strip_compression_cards
+
     input_path, output_path = pair
     try:
         tensor = torchfits.read_tensor(input_path, hdu=hdu)
@@ -165,8 +166,7 @@ def run(args: argparse.Namespace) -> int:
     )
     name, transform = _build_transform(args.name)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
-    if file_jobs == 1:
-        configure_torch_jobs(int(args.jobs))
+    configure_torch_jobs(int(args.jobs))
 
     # Transforms may carry per-call state (_last_state/_last_mask). With
     # multi-file fan-out, give every worker its own instance so concurrent
@@ -184,5 +184,6 @@ def run(args: argparse.Namespace) -> int:
             hdu=int(args.hdu),
         ),
         file_jobs,
+        torch_runtime=True,
     )
     return EXIT_OK

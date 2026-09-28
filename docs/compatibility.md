@@ -14,7 +14,7 @@ For supported FITS formats, HDU types, tile compression algorithms, and catalog 
 | **PyTorch** | **2.13.x** (ABI-matched wheels) | **≥ 2.10** (`pip install --no-deps --no-build-isolation .`) |
 | **Hardware & CUDA** | **CPU**, **CUDA 12.6, 12.9, 13.0**, **Apple Silicon MPS** | All PyTorch-supported compute devices |
 | **Operating Systems** | **Linux** (`x86_64`, `aarch64`)<br>**macOS** (`arm64` Apple Silicon) | Linux, macOS |
-| **Core Libraries** | **NumPy ≥ 1.20**, **PyArrow ≥ 5.0** | Same |
+| **Core Libraries** | **NumPy ≥ 1.26**, **PyArrow ≥ 17.0** | Same |
 
 ---
 

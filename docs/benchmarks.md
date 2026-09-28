@@ -5,14 +5,16 @@
 > `exhaustive_cuda_20260807_013736`):**
 > torchfits wins **100% of significant image comparisons** on both CPU and
 > CUDA hosts — compressed and uncompressed, every dtype, every transport —
-> and 98.9–99.5% of smart-family table comparisons. The remaining
-> **significant** case family where a peer is ahead is **narrow-table full
-> reads with `mmap=False`** (fitsio, by 21–36% on CPU and 8% on CUDA):
-> fitsio reads one column at a time while our buffered path stages whole
-> rows; the structural fix (single-pass decode into caller-visible memory)
-> lands in 1.2. Image HCOMPRESS lags vs fitsio are sub-1.03× noise on the
-> shared-CFITSIO path. Full per-cell data below; CSVs under
-> [Published CSVs](#published-csvs).
+> and 98.9–99.5% of smart-family table comparisons. The **significant** case
+> families where a peer leads are **narrow-table full reads with `mmap=False`**
+> (fitsio, by 21–36% on CPU and 8% on CUDA) and **`predicate_filter` on the
+> `ascii_10000` catalog** (6.4% on CPU; fitsio leads no `ascii_*` case at all
+> on CUDA). Both have the same shape: fitsio reads one column at a time while
+> our buffered path stages whole rows, and the structural fix (single-pass
+> decode into caller-visible memory) lands in 1.2. Image HCOMPRESS lags vs
+> fitsio are sub-1.03× on CPU and reach 1.037× on CUDA, both inside the
+> contract's noise floor on the shared-CFITSIO path. Full per-cell data below;
+> CSVs under [Published CSVs](#published-csvs).
 
 
 `torchfits` benchmarks cover FITS **tensor** I/O (IMAGE HDUs, typically 1D–4D)
@@ -235,10 +237,11 @@ MegaCam cutouts remain a separate comparison (tile decompress inside CFITSIO).
 ## Cold-start and the torch boundary
 
 Operation-level benchmarks measure a call; they cannot show what a *process*
-costs to start. That is where PyTorch lives: a header peek reads a 2880-byte
-block in microseconds, yet every metadata entry point used to pay for an
-image-size tensor runtime it never touched, because the single native extension
-links `TORCH_LIBRARIES` and imports `torch` in its module body.
+costs to start. That is where the old boundary showed up: a header peek reads a
+2880-byte block in microseconds, but metadata entry points used to pay about a
+second for an image-size tensor runtime they never touched. The native module
+now defers the Python `torch` import, and Arrow table reads use a raw native
+buffer transport instead of constructing Python tensors.
 
 The rule this project holds to: **PyTorch is loaded at exactly one boundary —
 the first call whose documented return type is a `torch.Tensor`, or that takes
@@ -246,36 +249,65 @@ the first call whose documented return type is a `torch.Tensor`, or that takes
 enforces that in fresh interpreters with `import torch` blocked outright, and
 `benchmarks/bench_import_boundary.py` records what it costs.
 
-Baseline (cold process, spawn to exit, minimum of 3, macOS arm64, 2026-09).
-"torch" marks entry points that must not load it:
+Since the `libtorchfits_core` split, metadata does not merely avoid the Python
+`torch` import — it never loads a library that links libtorch. The path-based
+probes (`read_header`, `read_keys`, `read_colnames`, `read_nrows`,
+`read_num_hdus`, `read_hdu_type`, `read_shape`, `read_table_info`) run entirely
+through `libtorchfits_core`, which carries CFITSIO and its own thread pool and
+nothing else. `tests/test_core_library.py` compares that module's answers with
+the torch-linked extension's, and `tests/test_torch_boundary.py` checks the
+library's own dependency list with `otool -L` / `ldd`.
+
+Sample baseline (cold process, spawn to exit, minimum of 5, macOS arm64,
+Python 3.13.15, 2026-09-25):
 
 | Entry point | Cold ms | Loads torch | Budget |
 |---|---:|---|---:|
-| `import torchfits` | 49 | no | 250 ms |
-| `import torchfits.hdu` | 1113 | **yes** | 250 ms |
-| `import torchfits.io` | 1128 | **yes** | 250 ms |
-| `import torchfits.table` | 1132 | **yes** | 500 ms |
-| `read_header` | 1136 | **yes** | 250 ms |
-| `read_keys` | 1131 | **yes** | 250 ms |
-| `read_colnames` | 1118 | **yes** | 250 ms |
-| `read_num_hdus` | 1135 | **yes** | 250 ms |
-| `read_shape` | 1125 | **yes** | 250 ms |
-| `read_table_info` | 1132 | **yes** | 250 ms |
-| `open` + `hdul[1].header` | 1132 | **yes** | 250 ms |
-| `table.read` (Arrow) | 1555 | **yes** | 600 ms |
-| `table.schema` | 1422 | **yes** | 600 ms |
-| `read_tensor` (tensor destination) | 1134 | yes | — |
-| `table.read_torch` (tensor destination) | 1150 | yes | — |
-| `import torch` (reference) | 1114 | yes | — |
+| `import torchfits` | 30 | no | 250 ms |
+| `import torchfits.hdu` | 32 | no | 250 ms |
+| `import torchfits.io` | 55 | no | 250 ms |
+| `import torchfits.table` | 59 | no | 500 ms |
+| `read_header` | 59 | no | 120 ms |
+| `read_keys` | 53 | no | 120 ms |
+| `read_colnames` | 56 | no | 120 ms |
+| `read_num_hdus` | 56 | no | 120 ms |
+| `read_shape` | 58 | no | 120 ms |
+| `read_table_info` | 57 | no | 120 ms |
+| `_core.read_colnames` (library only) | 35 | no | 80 ms |
+| `_core.read_header_dict` (library only) | 33 | no | 80 ms |
+| `open` + `hdul[1].header` | 222 | no | 250 ms |
+| `table.read` (Arrow) | 515 | no | 600 ms |
+| `table.schema` | 167 | no | 600 ms |
+| `read_tensor` (tensor destination) | 770 | yes | — |
+| `table.read_torch` (tensor destination) | 737 | yes | — |
+| `import torch` (reference) | 722 | yes | — |
 
-The ~49 ms floor is interpreter start; the remaining ~1070 ms is PyTorch. Every
-row above the tensor-destination pair is paying it for a header read. The
-harness writes its own minimal FITS file with the standard library, so it runs
-in a torch-free environment either way:
+The ~30 ms floor is interpreter start. Three rows are worth reading carefully:
+
+* The `_core.*` rows are the floor of the new path: a `dlopen` of
+  `libtorchfits_core` plus one query, with no `torchfits` package machinery. The
+  metadata rows above sit ~22 ms higher, which is the Python-side caching and
+  path-guard layer.
+* `open` + `hdul[1].header` is **not** on the core path yet. `torchfits.open`
+  returns an `HDUList` that owns a native handle, and that handle is the same
+  object the tensor readers take, so it must come from the torch-linked
+  extension. Its 250 ms budget is measured, not aspirational; making the handle
+  lazy is tracked in [roadmap](roadmap.md).
+* The Arrow rows are budgeted from the *slow* end of their own spread, not the
+  fastest sample. `table.read` has measured between 461 and 529 ms (minimum of
+  five) across runs on this machine, so a 500 ms gate passed only on a good day
+  and the budget is 600 ms. A gate that only sometimes passes is not a gate.
+
+Earlier baselines for the same rows, for comparison: metadata calls were
+332–337 ms and `table.schema` 489 ms before the split — a 4× reduction from
+removing libtorch from the metadata path.
+
+The harness writes its own minimal FITS files with the standard library, so it
+runs in a torch-free environment:
 
 ```bash
 pixi run python benchmarks/bench_import_boundary.py           # report
-pixi run python benchmarks/bench_import_boundary.py --strict  # gate
+pixi run python benchmarks/bench_import_boundary.py --strict  # boundary + timing gate
 ```
 
 ## Correctness checks

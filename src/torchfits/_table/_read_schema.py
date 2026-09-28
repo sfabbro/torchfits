@@ -84,6 +84,97 @@ def _empty_table_with_schema(
     return pa.table({})
 
 
+# The FITS keywords recorded per column when ``include_fits_metadata=True``.
+# The data path and the header-only path must publish the same set, or the
+# same read answers differently depending on whether it returned rows
+# (TE-005). TUNIT has no field on TableColumnMeta, so it is read from the
+# header by index like the other index-keyed cards.
+_COLUMN_FITS_META_FIELDS: tuple[str, ...] = (
+    "tform",
+    "tunit",
+    "tdim",
+    "tnull",
+    "tscal",
+    "tzero",
+)
+
+
+def _column_fits_metadata(header: Any, col: Any) -> dict[str, str]:
+    """FITS keywords for one column, as the single source of truth.
+
+    Every metadata producer goes through this, so a non-empty read, an empty
+    read and :func:`schema` cannot drift apart again.
+    """
+    si = str(col.index)
+    values = {
+        "tform": col.tform,
+        "tunit": header.get("TUNIT" + si),
+        "tdim": col.tdim,
+        "tnull": col.tnull,
+        "tscal": col.tscal,
+        "tzero": col.tzero,
+    }
+    out: dict[str, str] = {}
+    for key in _COLUMN_FITS_META_FIELDS:
+        value = values[key]
+        if value is None or value == "":
+            continue
+        out["fits_" + key] = str(value)
+    return out
+
+
+def _all_table_columns(header: Any, selected: Optional[set[str]] = None) -> list[Any]:
+    """Named columns plus TTYPE-less ones, in file order, honouring *selected*."""
+    cols = list(fits_schema.iter_table_columns(header, selected=selected))
+    cols += [
+        c for c in _unnamed_columns(header) if selected is None or c.name in selected
+    ]
+    cols.sort(key=lambda c: c.index)
+    return cols
+
+
+def _attach_fits_metadata(
+    pa: Any, table: Any, header: Any, include_fits_metadata: bool
+) -> Any:
+    """Publish header-derived FITS metadata on an already-built table.
+
+    The data paths know each column's Arrow type but not the FITS keywords
+    behind it, and ``pa.Table.from_arrays(..., names=...)`` publishes fields
+    carrying no metadata at all. So a read whose predicate matched zero rows
+    would otherwise answer differently from the same read with rows -- the
+    defect recorded as TE-005. Zero-copy: the existing column buffers are
+    reused and only the schema is rebuilt.
+    """
+    if not include_fits_metadata or table.num_columns == 0:
+        return table
+    by_name = {
+        col.name: _column_fits_metadata(header, col)
+        for col in _all_table_columns(header)
+    }
+    fields = []
+    changed = False
+    for field in table.schema:
+        entry = by_name.get(field.name)
+        if not entry:
+            fields.append(field)
+            continue
+        fields.append(
+            field.with_metadata(
+                {
+                    key.encode("utf-8"): value.encode("utf-8")
+                    for key, value in entry.items()
+                }
+            )
+        )
+        changed = True
+    if not changed:
+        return table
+    return pa.Table.from_arrays(
+        [table.column(field.name) for field in fields],
+        schema=pa.schema(fields, metadata=table.schema.metadata),
+    )
+
+
 def _build_fits_metadata(
     path: str,
     hdu: int,
@@ -98,49 +189,10 @@ def _build_fits_metadata(
     table_meta: dict[str, str] = {
         "fits_hdu": str(hdu),
     }
-
-    try:
-        tf_count = int(header.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        tf_count = 0
-
-    for i in range(1, tf_count + 1):
-        si = str(i)
-        name = header.get("TTYPE" + si)
-        if not isinstance(name, str) or not name:
-            continue
-        if selected_columns is not None and name not in selected_columns:
-            continue
-
-        entry: dict[str, str] = {}
-
-        v = header.get("TFORM" + si)
-        if v is not None:
-            entry["fits_tform"] = str(v)
-
-        v = header.get("TUNIT" + si)
-        if v is not None:
-            entry["fits_tunit"] = str(v)
-
-        v = header.get("TDIM" + si)
-        if v is not None:
-            entry["fits_tdim"] = str(v)
-
-        v = header.get("TNULL" + si)
-        if v is not None:
-            entry["fits_tnull"] = str(v)
-
-        v = header.get("TSCAL" + si)
-        if v is not None:
-            entry["fits_tscal"] = str(v)
-
-        v = header.get("TZERO" + si)
-        if v is not None:
-            entry["fits_tzero"] = str(v)
-
+    for col in _all_table_columns(header, selected_columns):
+        entry = _column_fits_metadata(header, col)
         if entry:
-            field_meta[name] = entry
-
+            field_meta[col.name] = entry
     return field_meta, table_meta
 
 
@@ -181,10 +233,10 @@ def _unsigned_column_dtypes(
         except (OSError, ValueError):
             # Probe contract: an unreadable header degrades to "no info".
             return {}
-    torch_dtype_map = fits_schema.unsigned_column_dtypes_from_header(header)
+    dtype_names = fits_schema.unsigned_column_dtype_names_from_header(header)
     return {
-        col: str(dt).split(".")[-1]
-        for col, dt in torch_dtype_map.items()
+        col: dtype_name
+        for col, dtype_name in dtype_names.items()
         if selected_columns is None or col in selected_columns
     }
 
@@ -444,11 +496,7 @@ def _schema_from_header(
     table_meta: dict[str, str] = {"fits_hdu": str(hdu)}
 
     # Named columns plus TTYPE-less ones (auto-named COL<i>), in file order.
-    cols = list(fits_schema.iter_table_columns(header, selected=selected))
-    cols += [
-        c for c in _unnamed_columns(header) if selected is None or c.name in selected
-    ]
-    cols.sort(key=lambda c: c.index)
+    cols = _all_table_columns(header, selected)
 
     for col in cols:
         info = col.tform_info
@@ -462,13 +510,11 @@ def _schema_from_header(
 
         metadata = None
         if include_fits_metadata:
-            meta: dict[bytes, bytes] = {}
-            if col.tform:
-                meta[b"fits_tform"] = col.tform.encode("utf-8")
-            if col.tdim is not None:
-                meta[b"fits_tdim"] = col.tdim.encode("utf-8")
-            if col.tnull is not None:
-                meta[b"fits_tnull"] = str(col.tnull).encode("utf-8")
+            # Same keys as the data path -- see _column_fits_metadata (TE-005).
+            meta = {
+                key.encode("utf-8"): value.encode("utf-8")
+                for key, value in _column_fits_metadata(header, col).items()
+            }
             if meta:
                 metadata = meta
 

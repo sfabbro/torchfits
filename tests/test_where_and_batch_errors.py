@@ -106,18 +106,19 @@ def test_torch_where_filter_still_runs_for_small_tables(tmp_path):
     cpp.read_fits_table.assert_not_called()
 
 
-def test_read_batch_paths_uses_read_exc_types_and_strict():
-    """Batch C++ failures must not bare-except; strict re-raises."""
+def test_read_batch_paths_uses_read_exc_types_and_degrades_per_file():
+    """Batch C++ failures must not bare-except; they degrade to per-file reads."""
     cpp = mock.Mock()
     cpp.read_images_batch.side_effect = RuntimeError("batch boom")
     logger = mock.Mock()
     logger.isEnabledFor.return_value = False
+    visited: list[str] = []
 
-    with mock.patch.object(
-        _read_pipeline,
-        "read_unified",
-        side_effect=lambda **kwargs: torch.zeros(2, 2),
-    ):
+    def fake_unified(**kwargs):
+        visited.append(kwargs["path"])
+        return torch.zeros(2, 2)
+
+    with mock.patch.object(_read_pipeline, "read_unified", side_effect=fake_unified):
         out = _read_pipeline._read_batch_paths(
             cpp_module=cpp,
             path=["a.fits", "b.fits"],
@@ -144,40 +145,12 @@ def test_read_batch_paths_uses_read_exc_types_and_strict():
             cold_nocache=False,
             read_exc_types=io._READ_EXC_TYPES,
             logger=logger,
-            strict=False,
         )
     assert len(out) == 2
     logger.debug.assert_called()
-
-    with pytest.raises(RuntimeError, match="batch boom"):
-        _read_pipeline._read_batch_paths(
-            cpp_module=cpp,
-            path=["a.fits", "b.fits"],
-            hdu=0,
-            device="cpu",
-            mmap=True,
-            fp16=False,
-            bf16=False,
-            raw_scale=False,
-            columns=None,
-            start_row=1,
-            num_rows=-1,
-            cache_capacity=10,
-            handle_cache_capacity=16,
-            fast_header=True,
-            return_header=False,
-            mode="auto",
-            autodetect_hdu=lambda p, c: 0,
-            batch_to_device=lambda xs, d: xs,
-            resolve_image_mmap=lambda *a, **k: True,
-            read_check_cache=lambda *a, **k: (False, None, None),
-            read_header=lambda *a, **k: {},
-            debug_scale=False,
-            cold_nocache=False,
-            read_exc_types=io._READ_EXC_TYPES,
-            logger=logger,
-            strict=True,
-        )
+    # Every path is retried individually so the eventual error (if any) names
+    # the file that actually failed rather than the whole batch.
+    assert visited == ["a.fits", "b.fits"]
 
 
 def test_read_batch_raises_naming_corrupt_path(tmp_path):
@@ -271,7 +244,6 @@ def test_read_batch_paths_short_batch_result_falls_back_per_file():
             cold_nocache=False,
             read_exc_types=io._READ_EXC_TYPES,
             logger=logger,
-            strict=False,
         )
     assert len(out) == 2
     assert calls == ["a.fits", "b.fits"]
@@ -310,5 +282,4 @@ def test_read_batch_paths_does_not_swallow_keyboardinterrupt():
             cold_nocache=False,
             read_exc_types=io._READ_EXC_TYPES,
             logger=logger,
-            strict=False,
         )

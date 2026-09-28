@@ -59,6 +59,10 @@ def check(wheel: Path) -> int:
         metadata = zf.read(metadata_name).decode("utf-8")
         stub_name = next((n for n in names if n.endswith("torchfits/_C.pyi")), None)
         stub = zf.read(stub_name).decode("utf-8") if stub_name else ""
+        core_stub_name = next(
+            (n for n in names if n.endswith("torchfits/_core.pyi")), None
+        )
+        core_stub = zf.read(core_stub_name).decode("utf-8") if core_stub_name else ""
 
     problems: list[str] = []
 
@@ -67,10 +71,33 @@ def check(wheel: Path) -> int:
             problems.append(message)
 
     # --- compiled extension -------------------------------------------------
-    shared_objects = [n for n in names if n.endswith(".so") or n.endswith(".pyd")]
+    # Three native artifacts ship: the torch-linked extension, the metadata
+    # module over the torch-free library, and that library. The split is only
+    # real if the library actually travels -- without it, `_core` fails to
+    # dlopen and every metadata call breaks on a clean install.
+    native = [n for n in names if n.endswith((".so", ".pyd", ".dylib", ".dll"))]
     require(
-        len(shared_objects) == 1 and shared_objects[0].startswith("torchfits/"),
-        f"expected exactly one native extension under torchfits/, got {shared_objects}",
+        all(n.startswith("torchfits/") for n in native),
+        f"native artifacts must all live under torchfits/, got {native}",
+    )
+    # Classify by the interpreter-extension suffix, not by substring: the core
+    # *library* is libtorchfits_core.{so,dylib}, which also contains "_core".
+    modules = sorted(n for n in native if n.endswith((".so", ".pyd")))
+    libraries = sorted(n for n in native if n not in modules)
+    module_stems = {Path(n).name.split(".")[0] for n in modules}
+    require(
+        module_stems == {"_C", "_core"},
+        f"expected the _C and _core extension modules, got {modules}",
+    )
+    require(
+        len(modules) == 2,
+        f"expected exactly two extension modules (_C, _core), got {modules}",
+    )
+    require(
+        len(libraries) == 1 and Path(libraries[0]).name.startswith("libtorchfits_core"),
+        f"expected libtorchfits_core as the only non-module library, got {libraries}. "
+        "The extension resolves its CFITSIO symbols against it, so _C cannot "
+        "import without it.",
     )
 
     # --- typing support (PEP 561 + the generated native stub) ---------------
@@ -84,6 +111,15 @@ def check(wheel: Path) -> int:
     )
     for symbol in STUB_REQUIRED_SYMBOLS:
         require(symbol in stub, f"torchfits/_C.pyi does not declare {symbol!r}")
+    core_stub_name = next((n for n in names if n.endswith("torchfits/_core.pyi")), None)
+    require(
+        core_stub_name is not None,
+        "torchfits/_core.pyi is missing: mypy would treat the metadata core as Any",
+    )
+    require(
+        "def read_header_dict(" in core_stub,
+        "torchfits/_core.pyi does not declare read_header_dict(",
+    )
 
     # --- licences -----------------------------------------------------------
     licence_entries = [n for n in names if "/licenses/" in n]

@@ -5,16 +5,16 @@ destinations are Arrow (``read`` / ``read_arrow``), tensor columns
 (``read_torch``), or Polars (``read_polars``).
 
 On the format question: Arrow is the *contract*, not the native representation.
-The C++ engine knows nothing about Arrow (``grep -rn arrow cpp_src`` finds two
-comments and no code); it returns per-column ``torch.Tensor`` buffers, and the
-Arrow table is a zero-copy view over that memory via ``pa.Array.from_buffers``.
-The intended long-term shape is the reverse: raw buffers are the native
-transport, Arrow is built from them in Python, and torch becomes one
-``torch.from_blob`` destination among several. Until that lands, importing this
-module still loads PyTorch.
+The C++ engine exposes Python-owned raw column buffers without constructing a
+Python tensor. Arrow builds arrays from those buffers in Python, while explicit
+tensor destinations continue to cross the native ``THPVariable_Wrap`` boundary.
+Importing this namespace and using Arrow metadata/data paths therefore does not
+load PyTorch.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from ._table.interop import (
     FITSPolarsFrame,
@@ -30,16 +30,6 @@ from ._table.interop import (
     write_ipc,
     write_parquet,
 )
-from ._table.mutation import (
-    append_rows,
-    delete_rows,
-    drop_columns,
-    insert_column,
-    insert_rows,
-    rename_columns,
-    replace_column,
-    update_rows,
-)
 from ._table.read import (
     dataset,
     read,
@@ -52,6 +42,45 @@ from ._table.read import (
 )
 from ._table.write import write
 from ._table_engine import TABLE_BACKENDS
+
+if TYPE_CHECKING:
+    from ._table.mutation import (
+        append_rows,
+        delete_rows,
+        drop_columns,
+        insert_column,
+        insert_rows,
+        rename_columns,
+        replace_column,
+        update_rows,
+    )
+
+# Mutation accepts Arrow/numpy as well as tensor values and has a large
+# coercion graph. Keep it behind the explicit mutation call so importing the
+# table namespace or using Arrow reads does not initialize the tensor runtime.
+_MUTATION_EXPORTS = frozenset(
+    {
+        "append_rows",
+        "delete_rows",
+        "drop_columns",
+        "insert_column",
+        "insert_rows",
+        "rename_columns",
+        "replace_column",
+        "update_rows",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _MUTATION_EXPORTS:
+        from ._table import mutation
+
+        value = getattr(mutation, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Explicit Arrow synonym of ``read`` (destination-qualified symmetry).
 read_arrow = read

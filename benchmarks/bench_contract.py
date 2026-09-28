@@ -369,6 +369,24 @@ def _fmt_float(value: Any, digits: int = 4) -> str:
     return f"{v:.{digits}f}"
 
 
+def _process_peak_rss(row: dict[str, Any]) -> str:
+    """Peak process RSS observed while timing this group, in MB.
+
+    Both probes read the same process-wide counter, so this is the higher of
+    the two; it is deliberately reported once rather than as a TorchFits-vs-
+    winner pair, which would always print the same number twice.
+    """
+    values = [
+        v
+        for v in (
+            _to_float(row.get("torchfits_peak_rss_mb")),
+            _to_float(row.get("best_peak_rss_mb")),
+        )
+        if v is not None
+    ]
+    return _fmt_float(max(values) if values else None, 1)
+
+
 def write_summary(
     path: Path,
     *,
@@ -623,14 +641,19 @@ def write_summary(
             for (domain, family), items in sorted(by_domain_family.items()):
                 f.write(f"### {domain.upper()} - {family}\n\n")
                 f.write(
-                    "| Case | Operation | TorchFits (s) | TF RSS (MB) | Winner | Winner (s) | Winner RSS (MB) | Lag (x) | Behind (%) | mmap | host |\n"
+                    "| Case | Operation | TorchFits (s) | Winner | Winner (s) | Process peak RSS (MB) | Lag (x) | Behind (%) | mmap | host |\n"
                 )
-                f.write("|---|---|---:|---:|---|---:|---:|---:|---:|---|---|\n")
+                f.write("|---|---|---:|---|---:|---:|---:|---:|---|---|\n")
                 for row in items:
                     tf_time = _fmt_float(row.get("torchfits_time_s"), 6)
-                    tf_rss = _fmt_float(row.get("torchfits_peak_rss_mb"), 1)
                     best_time = _fmt_float(row.get("best_time_s"), 6)
-                    best_rss = _fmt_float(row.get("best_peak_rss_mb"), 1)
+                    # One column, not two: `bench_timing._RssPeakSampler` samples
+                    # `psutil.Process().memory_info().rss`, i.e. the whole
+                    # interpreter process. Every method in a group runs in that
+                    # process, so a "TF RSS" / "Winner RSS" pair was the same
+                    # number twice and read as a memory comparison that this
+                    # metric cannot make.
+                    rss = _process_peak_rss(row)
                     lag = _fmt_float(row.get("lag_ratio"), 3)
                     pct = _fmt_float(row.get("pct_behind"), 2)
                     mmap = row.get("mmap_target") or "-"
@@ -640,13 +663,19 @@ def write_summary(
                     best_method = str(row.get("best_method") or "-")
                     winner = f"{best_library}:{best_method}"
                     f.write(
-                        f"| {case_label} | {row.get('operation')} | {tf_time} | {tf_rss} | {winner} | {best_time} | {best_rss} | {lag} | {pct} | {mmap} | {host} |\n"
+                        f"| {case_label} | {row.get('operation')} | {tf_time} | {winner} | {best_time} | {rss} | {lag} | {pct} | {mmap} | {host} |\n"
                     )
                 f.write("\n")
 
         f.write("## Notes\n\n")
         f.write(
             "- Strict mmap fairness is enforced in comparable sets. Rows with unmatched mmap controls are marked `SKIPPED`.\n"
+        )
+        f.write(
+            "- `Process peak RSS` is the interpreter process's peak resident set, "
+            "sampled by `bench_timing._RssPeakSampler`. It is the same for every "
+            "method in a comparison group and is **not** a per-library memory "
+            "figure; ranking is time-based.\n"
         )
         f.write(
             "- Rankings are family-specific and never mix smart vs specialized method families.\n"

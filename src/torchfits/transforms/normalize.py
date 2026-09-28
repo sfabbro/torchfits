@@ -49,12 +49,12 @@ class AffineTransform(FITSTransform):
         self.offset = float(offset)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         out = view.flux * self.scale + self.offset
         return view.replace(out, ivar=self.scale_ivar(view.ivar, self.scale))
 
     def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         out = (view.flux - self.offset) / self.scale
         return view.replace(out, ivar=self.scale_ivar(view.ivar, 1.0 / self.scale))
 
@@ -100,7 +100,7 @@ class ZScaleNormalize(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         z1, z2 = zscale_limits(
             flux,
@@ -122,7 +122,7 @@ class ZScaleNormalize(FITSTransform):
                 "ZScaleNormalize.inverse() requires a prior forward() pass "
                 "to capture the per-image limits."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         z1, z2 = self._last_state
         span = z2 - z1
         # Functional: inverses never mutate their input.
@@ -159,7 +159,7 @@ class RobustNormalize(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         med, std = estimate_background(
             view.flux,
             dim=self.dim,
@@ -178,7 +178,7 @@ class RobustNormalize(FITSTransform):
             raise RuntimeError(
                 "RobustNormalize.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         safe_std = torch.clamp_min(self._last_std, 1e-9)
         out = view.flux * safe_std + self._last_med
         return view.replace(out, ivar=self.divide_ivar(view.ivar, 1.0 / safe_std))
@@ -208,7 +208,7 @@ class BackgroundSubtract(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         bg, _ = estimate_background(
             view.flux,
             dim=self.dim,
@@ -224,7 +224,7 @@ class BackgroundSubtract(FITSTransform):
             raise RuntimeError(
                 "BackgroundSubtract.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         return view.replace(view.flux + self._last_bg)
 
     def __repr__(self) -> str:
@@ -269,7 +269,7 @@ class PercentileClipNormalize(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         if view.ivar is not None:
             self._warn_ivar_not_propagated()
@@ -296,7 +296,7 @@ class PercentileClipNormalize(FITSTransform):
             raise RuntimeError(
                 "PercentileClipNormalize.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         lower, upper = self._last_state
         return view.replace(view.flux * (upper - lower) + lower)
 
@@ -313,7 +313,9 @@ class MinMaxNormalize(FITSTransform):
     """Normalise to [0, 1] using per-image min / max.
 
     A group with no valid pixels (all masked or NaN) yields NaN rather than an
-    infinity-derived value; masked/NaN pixels themselves stay NaN.
+    infinity-derived value. Masked and NaN pixels themselves stay NaN: a mask
+    means no data, so an excluded pixel never comes back as a (usually
+    out-of-range) finite value scaled by limits computed without it.
     """
 
     propagates_ivar = True
@@ -326,7 +328,7 @@ class MinMaxNormalize(FITSTransform):
         self.dim = tuple(dim)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         effective = view.effective_mask(mask)
         with torch.no_grad():
@@ -353,7 +355,7 @@ class MinMaxNormalize(FITSTransform):
             raise RuntimeError(
                 "MinMaxNormalize.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         vmin = self._last_state[0]
         span = self._last_span
         out = view.flux * span + vmin
@@ -404,7 +406,7 @@ class GlobalScalarNorm(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         effective = view.effective_mask(mask)
         dim = self.dim if self.dim is not None else tuple(range(flux.ndim))
@@ -469,7 +471,7 @@ class GlobalScalarNorm(FITSTransform):
             raise RuntimeError(
                 "GlobalScalarNorm.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         return view.replace(
             view.flux * self._scalar,
             ivar=self.divide_ivar(view.ivar, 1.0 / self._scalar),
@@ -530,7 +532,7 @@ class SigmaNormalize(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         effective = view.effective_mask(mask)
         med, mad = estimate_background(
@@ -562,7 +564,7 @@ class SigmaNormalize(FITSTransform):
             raise RuntimeError(
                 "SigmaNormalize.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         scale = self._last_scale.to(dtype=view.flux.dtype, device=view.flux.device)
         out = view.flux * scale
         if self._last_offset is not None:
@@ -671,7 +673,7 @@ class InterquantileScale(FITSTransform):
         return xf / scale, scale
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         scaled, scale = self._forward_flux(
             view.flux, view.effective_mask(mask), view.ivar
         )
@@ -682,7 +684,7 @@ class InterquantileScale(FITSTransform):
             raise RuntimeError(
                 "InterquantileScale.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         scale = self._last_scale.to(dtype=flux.dtype, device=flux.device)
         restored = flux * scale

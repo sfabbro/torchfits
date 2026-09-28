@@ -10,8 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, TextIO, TypeVar
 
-import torch
-
 from torchfits._io_engine.paths import cfitsio_base_path
 
 EXIT_OK = 0
@@ -218,6 +216,8 @@ def configure_torch_jobs(jobs: int) -> int:
     if jobs < 0:
         raise UsageError("--jobs must be >= 0 (0 = CPU count)")
     resolved = max(1, os.cpu_count() or 1) if jobs == 0 else jobs
+    import torch
+
     torch.set_num_threads(resolved)
     return resolved
 
@@ -249,21 +249,37 @@ def run_file_jobs(
     items: list[T],
     fn: Callable[[T], R],
     jobs: int,
+    *,
+    torch_runtime: bool = False,
 ) -> list[R]:
     """Run ``fn`` over ``items`` serially or via a thread pool.
 
-    When ``jobs > 1``, each worker caps ``torch.set_num_threads(1)`` so ATen
-    does not oversubscribe beside CFITSIO I/O. Results keep input order.
-    On the first worker failure, remaining futures are cancelled (best-effort).
+    ``torch_runtime=True`` is an explicit pixel/tensor destination marker. It
+    initializes torch; metadata-only commands leave it false and therefore
+    remain genuinely torch-free. Fan-out (``workers > 1``) additionally caps
+    each worker at one intra-op thread, because ``-J`` already saturates the
+    cores and the caller's ``-j`` choice is documented to yield to that. The
+    serial branch deliberately does NOT cap: with a single worker there is
+    nothing to oversubscribe, so the thread count ``configure_torch_jobs``
+    resolved from ``-j`` stays in force. Results keep input order. On the
+    first worker failure, remaining futures are cancelled (best-effort).
     """
     if not items:
         return []
     workers = max(1, min(jobs, len(items)))
     if workers == 1:
+        if torch_runtime:
+            # Import for its side effect (the tensor runtime the callee needs);
+            # leave torch's thread count exactly as the caller configured it.
+            import torch  # noqa: F401
+
         return [fn(item) for item in items]
 
     def _worker(item: T) -> R:
-        torch.set_num_threads(1)
+        if torch_runtime:
+            import torch
+
+            torch.set_num_threads(1)
         return fn(item)
 
     ordered: dict[int, R] = {}

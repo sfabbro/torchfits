@@ -39,9 +39,13 @@ class SigmaClip(FITSTransform):
     dim :
         Dimensions along which stats are computed independently.
     fill : str
-        Replacement strategy for clipped/masked pixels: ``"mean"``,
+        Replacement strategy for *clipped* pixels: ``"mean"``,
         ``"median"``, or ``"nan"`` (keep the rejection visible as NaN
         instead of silently filling with a plausible background value).
+        Pixels the caller masked out, and pixels whose input was not finite,
+        are no data rather than clipped ones: they come back NaN whatever
+        ``fill`` says, because a replacement value would claim a measurement
+        that was never made.
     """
 
     propagates_ivar = False
@@ -69,7 +73,7 @@ class SigmaClip(FITSTransform):
         of allocating fresh ``torch.zeros_like`` / ``torch.where`` tensors
         each iteration.
         """
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         if view.ivar is not None:
             self._warn_ivar_not_propagated()
         data = view.flux
@@ -214,6 +218,8 @@ class AsymmetricSigmaClip(FITSTransform):
     fill : str
         Replacement for clipped pixels: ``"median"`` (default) or ``"nan"``
         to keep the rejection visible instead of filling with background.
+        Caller-masked and non-finite pixels come back NaN either way -- they
+        are no data, not clipped pixels.
     weighted : bool
         Use inverse-variance weighted background statistics when ``ivar``
         is present.
@@ -250,7 +256,7 @@ class AsymmetricSigmaClip(FITSTransform):
         self.weighted = bool(weighted)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         if view.ivar is not None:
             self._warn_ivar_not_propagated()
         # Same promotion as SigmaClip: integer images promote to float and

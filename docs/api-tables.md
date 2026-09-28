@@ -250,7 +250,9 @@ torchfits.table.write(path, data, *, schema=None, header=None,
 |---|---|---|---|
 | `path` | `str` | *(required)* | Output path |
 | `data` | `dict`, `Table`, or DataFrame | *(required)* | Column dictionary, Astropy Table, PyArrow Table, or DataFrame |
+| `schema` | `dict[str, dict[str, Any]]` or `None` | `None` | Per-column FITS layout overrides: `format`/`tform` (e.g. `{"bits": {"format": "4X"}}`), `unit`/`tunit`, `null`/`tnull`, `bscale`, `bzero`, `dim`/`tdim` |
 | `header` | `dict` or `None` | `None` | FITS header key-value pairs |
+| `extname` | `str` or `None` | `None` | `EXTNAME` for the written table HDU (merged into `header`) |
 | `overwrite` | `bool` | `False` | Overwrite existing file |
 | `table_type` | `str` | `"binary"` | `"binary"` or `"ascii"` |
 | `quantize` | `None` or `str` or `dict` | `None` | Opt-in robust `TFORM=I` + `TSCAL`/`TZERO` for float columns (`"robust"` for all floats, `{"FLUX": "robust"}` per column, or options `{"lo_q","hi_q","keep_zero"}`). Integer columns are left alone. Default keeps native float `TFORM`. |
@@ -299,10 +301,26 @@ Root `torchfits.read()` has no `where=` parameter.
     The WHERE dialect is Python-expression based — single `=` is not an
     operator; write `==` (also accepts `&&` / `||` / `~` C-style forms).
 
-Null-like values (NaN on float columns, `None` on object columns) follow
-SQL three-valued logic: a comparison is unknown, so the row is excluded.
-`NOT (X == v)` therefore matches `X != v`, and both leave NaN rows out.
-Test nulls with `IS NULL` / `IS NOT NULL`. `== NULL` is rejected.
+!!! note "How null rows are filtered"
+    With `apply_fits_nulls=True` (the default) a `TNULL` sentinel is a null
+    and the dialect follows **SQL three-valued logic**: a null carries an
+    unknown value, so no predicate — positive or negated — selects it.
+
+    | Predicate | A `TNULL` row |
+    |---|---|
+    | `==`, `!=`, `<`, `>`, `<=`, `>=`, `IN`, `NOT IN`, `BETWEEN`, `NOT BETWEEN` | not selected |
+    | `NOT (...)` | not selected |
+    | `IS NULL` | selected |
+    | `IS NOT NULL` | not selected |
+
+    Negation therefore always agrees with the dual operator:
+    `where="NOT (A == 1)"` and `where="A != 1"` return the same rows, and so
+    do `NOT (A > 1)` / `A <= 1` and `NOT (A IN (...))` / `A NOT IN (...)`.
+    On float columns a NaN pixel is treated the same way: IEEE makes
+    `NaN != v` true, but the comparison is unknown, so the row is excluded.
+    This holds identically on all three read backends (`auto`, `cpp`, `torch`)
+    and matches the `torchfits.where` reference evaluator. Use `IS NULL` /
+    `IS NOT NULL` to test for absence. `== NULL` is rejected.
 
 ### `backend=` on `table.read` / `table.scan`
 
@@ -487,8 +505,12 @@ schema = torchfits.table.schema("catalog.fits", hdu=1)
 ds = torchfits.table.dataset("catalog.fits", hdu=1)
 sc = torchfits.table.scanner("catalog.fits", columns=["RA", "DEC"])
 
-# Parquet export
+# Parquet export -- `dest` is the output path; I/O kwargs (columns, where,
+# hdu, ...) are forwarded to the read, so exports can be filtered and
+# projected without materialising the whole table first.
 torchfits.table.write_parquet("out.parquet", "catalog.fits", hdu=1)
+torchfits.table.write_parquet("bright.parquet", "catalog.fits", where="MAG < 20")
+torchfits.table.write_csv("bright.csv", "catalog.fits", where="MAG < 20")
 
 # Cache cleanup
 torchfits.table.clear_cache()

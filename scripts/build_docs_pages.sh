@@ -189,5 +189,5 @@ now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"
 print(f"pages tree ready: {out}")
 print(f"  stable tag: {tag}")
 print(f"  edge commit: {sha}")
-print(f"  edge URL:   ${SITE_URL_BASE}/edge/")
+print(f"  edge URL:   {SITE_URL_BASE}/edge/")
 PY

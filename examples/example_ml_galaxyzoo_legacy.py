@@ -47,6 +47,12 @@ from torchfits.transforms import (  # noqa: E402
 
 SIZE = 64
 DEFAULT_GZ_N = 200
+# Per-cutout wall-clock cap. urlretrieve() with no timeout blocks indefinitely on
+# a stalled connection, and the examples runner's only backstop is its 300s
+# per-example kill, which fails the whole example. A socket timeout instead
+# raises TimeoutError -- already an OSError, so the handler below skips just this
+# cutout and the example degrades to the cutouts that did arrive.
+CUTOUT_TIMEOUT_S = 20.0
 CUTOUT_URL = (
     "https://www.legacysurvey.org/viewer/fits-cutout"
     "?ra={ra}&dec={dec}&layer=ls-dr10-south&pixscale=0.262&bands=grz&size={size}"
@@ -101,7 +107,10 @@ def _ensure_cutout(
     tmp = dest.with_name(dest.name + ".partial")
     url = CUTOUT_URL.format(ra=ra_deg, dec=dec_deg, size=SIZE)
     try:
-        urllib.request.urlretrieve(url, tmp)  # noqa: S310 — fixed public API
+        # urlopen, not urlretrieve: urlretrieve takes no timeout and blocks
+        # indefinitely on a stalled connection.
+        with urllib.request.urlopen(url, timeout=CUTOUT_TIMEOUT_S) as response:  # noqa: S310 — fixed public API
+            tmp.write_bytes(response.read())
         tmp.replace(dest)
         return dest
     except (urllib.error.URLError, OSError):

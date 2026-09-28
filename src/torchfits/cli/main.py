@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import traceback
 from typing import Callable
@@ -51,11 +52,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _discard_stdout() -> None:
+    """Point stdout at ``os.devnull`` so a later flush cannot fail again.
+
+    ``torchfits info many.fits | head -1`` closes the read end while we are
+    still writing. The standard remedy is to redirect the real file
+    descriptor: the buffered bytes are lost either way, but the interpreter's
+    exit-time flush then succeeds instead of reporting "Exception ignored on
+    flushing sys.stdout" and exiting 120.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError):  # detached/closed stdout in embedders
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         parser = build_parser()
         args = parser.parse_args(argv)
-        return int(args.func(args))
+        code = int(args.func(args))
     except CliError as exc:
         print(exc, file=sys.stderr)
         return exc.exit_code
@@ -63,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         print("interrupted", file=sys.stderr)
         return EXIT_INTERRUPT
     except BrokenPipeError:
+        _discard_stdout()
         return EXIT_OK
     except OSError as exc:
         print(exc, file=sys.stderr)
@@ -70,6 +88,17 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         traceback.print_exc()
         return EXIT_INTERNAL
+    # Flush here rather than leaving it to interpreter shutdown: stdout is
+    # block-buffered whenever it is not a TTY, so a closed downstream pipe
+    # would otherwise be reported as exit 120 plus shutdown noise, neither of
+    # which is in the documented exit-code table. A truncated pipe is not a
+    # failure -- the consumer chose to stop reading -- so the command's own
+    # exit code is preserved either way.
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _discard_stdout()
+    return code
 
 
 if __name__ == "__main__":

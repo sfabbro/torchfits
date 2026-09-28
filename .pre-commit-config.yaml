@@ -12,11 +12,11 @@ repos:
         exclude: ^(extern/patches/|docs/assets/)
       - id: end-of-file-fixer
         exclude: ^(extern/patches/|docs/assets/)
+      # No exclude: the only file that ever needed one was .dsh/cordis.patch.yml,
+      # which used a JavaScript type tag (``!!js ...``) that only its own parser
+      # accepts. .dsh/ has been removed, and every remaining YAML file in the
+      # tree — workflows, dependabot, the rattler-build recipe — is plain YAML.
       - id: check-yaml
-        # .dsh/ is repo-local agent tooling and uses a JavaScript type tag
-        # (``!!js ...``) that only its own parser accepts; the rest of the
-        # tree — including the rattler-build recipe — is plain YAML.
-        exclude: ^\.dsh/
       - id: check-added-large-files
       - id: check-merge-conflict
 

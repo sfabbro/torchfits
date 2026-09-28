@@ -97,7 +97,7 @@ Building from source is only needed if you are developing torchfits or targeting
 ```bash
 git clone https://github.com/astroai/torchfits.git
 cd torchfits
-./extern/vendor.sh      # downloads vendored CFITSIO
+./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt   # downloads the pinned CFITSIO
 
 # Install build dependencies and compile against your environment
 pip install numpy scikit-build-core nanobind
@@ -161,6 +161,9 @@ Prebuilt binary wheels are available for Linux (x86_64, aarch64) and macOS (Appl
 
 The binary extension was built against a different PyTorch minor version than the one currently active in Python. Either install the matching prebuilt wheel for your PyTorch version or rebuild from source.
 
-**`./extern/vendor.sh fails`**
+**`./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt` fails**
 
-Ensure `curl` and `tar` are installed and reachable. If behind a proxy, set `HTTPS_PROXY`.
+The script requires `--cfitsio-version`; run with no arguments it prints its
+usage and exits 1. Beyond that, ensure `curl` and `tar` are installed and
+reachable (a sha256 mismatch against the pinned CFITSIO tarball also fails
+here, by design). If behind a proxy, set `HTTPS_PROXY`.

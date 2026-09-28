@@ -112,5 +112,6 @@ def run(args: argparse.Namespace) -> int:
         pairs,
         lambda pair: _cutout_one(pair, hdu=int(args.hdu), box=args.box),
         file_jobs,
+        torch_runtime=True,
     )
     return EXIT_OK

@@ -5,15 +5,26 @@
 ```bash
 git clone https://github.com/astroai/torchfits.git
 cd torchfits
-pixi install
+pixi install --locked
 pixi run preflight-push   # quick check while editing
 pixi run test             # full unit suite
+pixi run current-source-gate  # locked environment + complete local gate
 ```
 
 The project uses [pixi](https://pixi.sh/) for environment management,
 [ruff](https://github.com/astral-sh/ruff) for linting, and
 [pytest](https://docs.pytest.org/) for testing. Detailed coding guidelines live in
 [`AGENTS.md`](https://github.com/astroai/torchfits/blob/main/AGENTS.md).
+
+The workspace pins Pixi `0.81.0` in `pixi.toml`; `pixi.lock` pins the actual
+package artifacts. The reproducible complete local gate is:
+
+```bash
+pixi install --locked
+pixi run current-source-gate
+```
+
+The task repeats the locked install and then runs the full `ci-local` gate.
 
 ## Verify tiers
 
@@ -84,7 +95,7 @@ output — publish selected CSVs under `docs/assets/bench/<run-id>/`).
 The C++ extension is built by [scikit-build-core](https://scikit-build-core.readthedocs.io/) with [nanobind](https://nanobind.readthedocs.io/) bindings. Populate vendored sources with:
 
 ```bash
-./extern/vendor.sh
+./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
 ```
 
 Rebuild after C++ changes (default and test envs do **not** share the
@@ -118,7 +129,7 @@ Full suite / pre-push:
 
 ```bash
 pixi run test
-pixi run ci-local
+pixi run current-source-gate
 ```
 
 Upstream parity + docs contract (also part of the release gate):
@@ -126,6 +137,63 @@ Upstream parity + docs contract (also part of the release gate):
 ```bash
 pixi run release-gate
 ```
+
+### Real-observation tests
+
+Two suites run against real CFHT data — three 1.6 GB MegaPipe mosaics
+(21404x20347, single HDU) and ten Rice-compressed MegaCam MEFs (37–41 HDUs,
+`1PB(nnnn)` tiles). That data is not in git, so both skip unless it is fetched:
+
+```bash
+bash scripts/fetch_cfht_megacam_sample.sh    # ~2.5 GB
+bash scripts/fetch_cfht_megapipe_sample.sh  # ~5 GB
+pixi run -e test -- pytest tests/test_core_library_real_data.py tests/test_reads_real_data.py -q
+```
+
+`tests/test_core_library_real_data.py` is about the **metadata** path: it
+compares `torchfits._core` with the torch-linked `torchfits._C` answer for
+answer on all 409 (frame, HDU) records, and walks the whole 9 GB corpus in a
+fresh interpreter with `torch` and `numpy` both blocked, asserting the
+torch-linked extension module is never imported.
+
+`tests/test_reads_real_data.py` goes past the header and holds the **reads**
+against `astropy.io.fits` — a separate implementation with its own Rice
+decompressor and header parser, so agreement is evidence rather than
+self-consistency. Decompressed extensions, the raw variable-length tile
+stream, the real `BZERO` convention, and 435 megapixels of mosaic all have to
+match exactly.
+
+Run them before a PR that touches FITS parsing, header handling, the HDU
+resolution rules, image or table reads, or the core/extension split. Synthetic
+fixtures cannot reach the failure modes real data has: a 358-card header with
+70-character `HISTORY` values, a `NAXIS=0` primary where `NAXIS1` is genuinely
+absent, a compressed `IMAGE` whose HDU 1 still answers `read_table_info`, tile
+lengths that vary from 35 bytes to the `1PB(n)` bound, and a file too large to
+cache. See [Architecture](architecture.md#the-torch-boundary) for what the
+split guarantees.
+
+### Checking the torch boundary yourself
+
+The boundary claims are enforced by tests, but the quickest way to find a leak
+is to block the import and run something real:
+
+```bash
+python - <<'PY'
+import importlib.abc, runpy, sys
+class _Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".")[0] in {"torch", "numpy"}:
+            raise ImportError(fullname + " is blocked")
+        return None
+sys.meta_path.insert(0, _Block())
+sys.argv = [sys.argv[1]]
+runpy.run_path(sys.argv[1], run_name="__main__")
+PY examples/example_mef_header.py
+```
+
+Auditing `examples/` this way is how the `where=`-filter leak was found, and
+the remaining `torchfits.open()` leak is recorded in
+[Roadmap](roadmap.md#12-the-torch-boundary-in-progress).
 
 ## Benchmarks
 

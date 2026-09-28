@@ -12,7 +12,29 @@ Status values:
 
 - **Supported**: Fully implemented and verified against standard FITS test suites.
 - **Partial**: Supported for common workflows with documented boundary behavior.
+- **Unsupported**: A recognized FITS feature that torchfits does not currently expose.
 - **Out of Scope**: High-level astronomy models (coordinates, cosmology, units) that belong in dedicated domain packages.
+
+Every major format family has an explicit status below. The upstream parity
+smokes referenced by this matrix are inventoried in
+`benchmarks/replays/upstream_sources.json` and checked by
+`tests/test_upstream_parity_inventory.py`.
+
+<!-- major-format-coverage:start -->
+| Major FITS surface | Status | Contract |
+|---|:---:|---|
+| Primary HDU and 2D image arrays | **Supported** | Read/write with standard numeric BITPIX values. |
+| 3D/4D image cubes and MEF | **Supported** | Tensor dimensions, extension selection, and metadata are preserved. |
+| Binary tables (`BINTABLE`) | **Supported** | Projection, row windows, predicates, Arrow, and tensor reads. |
+| ASCII tables (`TABLE`) | **Supported** | Fixed-width parsing through the table readers. |
+| Variable-length arrays (`P`/`Q`) | **Partial** | Buffered reads and Arrow conversion are supported; memory-mapped updates are not. |
+| Tile-compressed images | **Supported** | Rice, gzip, H-Compress, and PLIO read/write paths exposed by CFITSIO. |
+| Header cards and checksums | **Supported** | Typed metadata, `CHECKSUM`, and `DATASUM` verification/rewrite. |
+| Random-group HDUs | **Unsupported** | The core reader does not decode the random-group data model. |
+| `A3DTABLE` HDUs | **Unsupported** | The reader exposes image, binary-table, and ASCII-table HDUs. |
+| WCS/coordinate transformations | **Out of Scope** | Use `astropy.wcs`; torchfits preserves standard header cards only. |
+| HEALPix, units, sphere geometry, and sky simulation | **Out of Scope** | These belong to dedicated astronomy/domain packages. |
+<!-- major-format-coverage:end -->
 
 ---
 

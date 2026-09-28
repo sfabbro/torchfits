@@ -56,10 +56,12 @@ def main() -> None:
             out_path, scaled, header={"OBJECT": "M31 x2"}, overwrite=True
         )
         roundtrip = torchfits.read_tensor(out_path)
-        print(
-            "write_tensor round-trip:",
-            torch.allclose(roundtrip.cpu(), scaled.cpu()),
-        )
+        # Printed as a bare bool this was a claim the gate could not see: the
+        # example printed "write_tensor round-trip: False" on a corrupted
+        # write and still exited 0, so the runner reported PASS. Raise instead.
+        if not torch.allclose(roundtrip.cpu(), scaled.cpu()):
+            raise RuntimeError(f"write_tensor round-trip lost the data at {out_path}")
+        print("write_tensor round-trip: True")
         os.unlink(out_path)
     finally:
         os.unlink(path)

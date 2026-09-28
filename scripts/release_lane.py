@@ -8,8 +8,8 @@ the CUDA build flavors that lane ships.
 
 This script renders or checks the lane pins in:
 
-- ``pyproject.toml`` — project version, ``torch`` runtime dependency, and the
-  ``[cpu]`` / ``[cuda]`` extra pins,
+- ``pyproject.toml`` — project version, the ``torch`` build-requirement and
+  runtime pins, and the ``[cpu]`` / ``[cuda]`` extra pins,
 - ``constraints-wheel.txt`` — build-time torch constraint (cibuildwheel),
 - ``pixi.toml`` — package version and the ``pytorch`` build/host/run/dev pins,
 - ``packaging/conda/recipe.yaml`` — conda recipe version and pytorch pin,
@@ -84,11 +84,51 @@ _PRERELEASE_SUFFIX_RE = re.compile(
 )
 _DEV_LOCAL_RE = re.compile(r"\.dev0\+torch\d+$")
 
+# The lane an experimental build names in its local segment. ``render`` writes
+# ``f"{base}.dev0+torch{lane.replace('.', '')}"``, so the inverse of that
+# encoding is the first digit as the major and the rest as the minor — the same
+# recovery ``scripts/verify_wheel_matrix.sh`` does from a wheel filename.
+_DEV_LOCAL_LANE_RE = re.compile(r"\.dev0\+torch(\d)(\d+)$")
+
+
+def local_lane(version: str) -> str | None:
+    """The torch lane a ``+torch<minor>`` dev build is pinned to, if any.
+
+    ``X.Y.Z.dev0+torch212`` is an *experimental* lane render, not the release
+    lane its base version names. Stripping the suffix (as ``--check`` does when
+    it maps a version back to the lane map) silently reports the release lane
+    instead, so a tree on 2.12 would hand CI a 2.13 torch pin.
+    """
+    match = _DEV_LOCAL_LANE_RE.search(version)
+    return f"{match.group(1)}.{match.group(2)}" if match else None
+
 
 def strip_prerelease(version: str) -> str:
     """Return the lane base version of *version* (drop prerelease/dev-local)."""
     return _PRERELEASE_SUFFIX_RE.sub("", _DEV_LOCAL_RE.sub("", version))
 
+
+PYPROJECT_BUILD_REQUIRES_BLOCK = """requires = [
+    "scikit-build-core>=1.0.3",
+    "nanobind>=3.0.1",
+    # The build-time torch must be the lane torch and no other. Under pip's
+    # default build isolation this list is what the build environment resolves,
+    # so a floor with no upper bound builds against whichever minor is newest
+    # on PyPI and stamps that minor into the extension (CMake embeds it as
+    # TORCHFITS_TORCH_ABI) -- which then refuses to import under the {lane}
+    # this release is pinned to. Every source path inside this repo passes
+    # --no-build-isolation and never sees the difference; this pin is what
+    # protects a plain `pip install .` and the packager SDIST-README.txt is
+    # written for. Keep it identical to the runtime pin below.
+    "torch>={lane},<{next_lane}",
+    "numpy>=1.26"
+]"""
+
+# The [build-system] requires list is the only top-level `requires = [` in the
+# file, so this anchor is unique; _replace_once turns that into an assertion.
+_PYPROJECT_BUILD_REQUIRES_RE = re.compile(
+    r"^requires = \[\n.*?^\]$", re.MULTILINE | re.DOTALL
+)
 
 PYPROJECT_DEPS_BLOCK = """# Core runtime dependencies for the library.
 # These are automatically managed by pixi for conda packages
@@ -168,11 +208,22 @@ def lane_for_version(version: str, lanes: dict[str, dict[str, object]]) -> str:
 
 
 def current_lane() -> str:
-    text = PYPROJECT.read_text(encoding="utf-8")
-    match = _PYPROJECT_VERSION_RE.search(text)
-    if match is None:
+    """The lane the committed tree actually tracks.
+
+    An experimental (``+torch<minor>``) build names its own lane in the version
+    local segment; everything else is looked up in the release-lane map.
+    """
+    version = committed_version()
+    if version is None:
         raise SystemExit("pyproject.toml has no version field")
-    return lane_for_version(match.group(2), load_lanes())
+    dev = local_lane(version)
+    return dev if dev is not None else lane_for_version(version, load_lanes())
+
+
+def committed_torch_spec() -> str | None:
+    """The torch specifier ``constraints-wheel.txt`` actually pins, if any."""
+    match = _CONSTRAINTS_RE.search(CONSTRAINTS.read_text(encoding="utf-8"))
+    return match.group(0).removeprefix("torch") if match else None
 
 
 def _replace_once(text: str, pattern: re.Pattern[str], new: str, what: str) -> str:
@@ -241,6 +292,12 @@ def render(
     )
     pyproject = _replace_once(
         pyproject,
+        _PYPROJECT_BUILD_REQUIRES_RE,
+        PYPROJECT_BUILD_REQUIRES_BLOCK.format(lane=lane, next_lane=nxt),
+        "pyproject build-system requires",
+    )
+    pyproject = _replace_once(
+        pyproject,
         _PYPROJECT_DEPS_RE,
         PYPROJECT_DEPS_BLOCK.format(lane=lane, next_lane=nxt),
         "pyproject dependencies",
@@ -305,14 +362,12 @@ def render(
 
 
 def check() -> int:
-    version_text = PYPROJECT.read_text(encoding="utf-8")
-    match = _PYPROJECT_VERSION_RE.search(version_text)
-    if match is None:
+    version = committed_version()
+    if version is None:
         print("[FAIL] pyproject.toml has no version field", flush=True)
         return 1
-    version = match.group(2)
     try:
-        lane = lane_for_version(version, load_lanes())
+        lane = current_lane()
     except SystemExit as exc:
         print(f"[FAIL] {exc}", flush=True)
         return 1
@@ -370,7 +425,7 @@ def main() -> int:
     parser.add_argument(
         "--print-pins",
         action="store_true",
-        help="print lane/version/torch pins for the committed state (CI use)",
+        help="print the committed tree's lane/version/torch pin (CI use)",
     )
     args = parser.parse_args()
 
@@ -394,11 +449,32 @@ def main() -> int:
             return _verify(args.lane, expected)
         return check()
 
-    lanes = load_lanes()
     if args.print_pins:
-        lane = current_lane()
-        version = str(lanes[lane]["torchfits_version"])
-        print(f"lane={lane} version={version} torch=>={lane},<{next_lane(lane)}")
+        # Consumers install `pip install "torch$TORCH_PIN"`, so the pin printed
+        # here must be the pin the committed tree carries -- not one inferred
+        # from the release-lane map. An experimental-lane tree (dev0+torch<minor>)
+        # is a real state this repo's own scripts produce, and the map lookup
+        # reported the wrong lane for it; assert the two agree instead.
+        version = committed_version()
+        if version is None:
+            print("[FAIL] pyproject.toml has no version field", flush=True)
+            return 1
+        try:
+            lane = current_lane()
+        except SystemExit as exc:
+            print(f"[FAIL] {exc}", flush=True)
+            return 1
+        want = f">={lane},<{next_lane(lane)}"
+        got = committed_torch_spec()
+        if got != want:
+            print(
+                f"[FAIL] {lane} lane expects constraints-wheel.txt to pin torch{want} "
+                f"but it pins {got!r}; re-render with "
+                f"'release_lane.py --lane {lane} --apply'",
+                flush=True,
+            )
+            return 1
+        print(f"lane={lane} version={version} torch={got}")
         return 0
 
     if args.lane is None:

@@ -33,6 +33,7 @@
 #include "torchfits_torch.h"
 #include "torch_compat.h"
 #include "hardware.h"
+#include "nb_ndarray_utils.h"
 #include "fits_detail.h"
 #include "table_types.h"
 #include "security.h"
@@ -193,13 +194,20 @@ public:
                  fprintf(stderr, "Warning: Failed to get column %d info: %s\n", i, err_msg);
                  #endif
                  continue;
-            }
-
-            if (repeat_long < 0 ||
-                repeat_long > static_cast<long>(std::numeric_limits<int>::max())) {
-                throw std::runtime_error(
-                    std::string("TFORM repeat count overflows int for column ") + ttype);
-            }
+            }              // A repeat of 0 is legal in a TFORM and astropy reads such a column
+              // as zero-width (shape (nrows, 0)). It must not reach the read
+              // paths: col.repeat drives the element count, so a zero-repeat
+              // column reads a cell count of 0 from a row that does contain
+              // neighbouring columns' bytes, and torchfits then returns another
+              // column's data under this column's name. extract_column_data
+              // already rejects repeat <= 0; rejecting it here too makes the
+              // two agree and fails at open time rather than mid-read.
+              if (repeat_long <= 0 ||
+                  repeat_long > static_cast<long>(std::numeric_limits<int>::max())) {
+                  throw std::runtime_error(
+                      std::string("TFORM repeat count must be positive for column ") +
+                      ttype + " (got " + std::to_string(repeat_long) + ")");
+              }
             col.repeat = static_cast<int>(repeat_long);
             col.name = std::string(ttype);
             col.width = 1;  // Will be set based on type
@@ -1160,7 +1168,7 @@ public:
                         }
                     });
                     if (col.type == FITSColumnType::BYTE && col.fits_typecode == TSBYTE) {
-                        detail::_xor_sign_bit_u8(
+                        detail::xor_sign_bit_u8(
                             out,
                             static_cast<size_t>(num_rows) * static_cast<size_t>(repeat));
                     }
@@ -1449,7 +1457,11 @@ public:
 
             valid_indices.reserve(nrows_);
 
-            // Scan body shared between sequential and parallel dispatch.
+            // Scan body. Called exactly once, sequentially, over the whole row
+            // range -- see the call site below for why a parallel chunk + merge
+            // was measured and dropped. `out` therefore receives indices in
+            // ascending order, which the result assembly relies on; a parallel
+            // dispatch would have to restore that order itself.
             auto scan_chunk = [&](long start, long end, std::vector<long>& out) {
                 if (ctx.is_int) {
                     if (op == FilterOp::EQ || op == FilterOp::NE) {
@@ -2384,11 +2396,12 @@ public:
 
         // Contiguous heap → one pread + endian convert (skips N× fits_read_col).
         // Default off until THEAP/offset edge cases are fully proven vs CFITSIO.
-        static const bool heap_pread_enabled = []() {
-            const char* env = std::getenv("TORCHFITS_VLA_HEAP_PREAD");
-            if (!env || env[0] == '\0') return false;
-            return (env[0] == '1' || env[0] == 'y' || env[0] == 'Y' || env[0] == 't' || env[0] == 'T');
-        }();
+        // env_flag_default_false rather than a local check, so the opt-in
+        // vocabulary matches every other flag ("1"/"true"/"yes"/"on", any
+        // casing). The previous first-character test accepted 't'/'y' but not
+        // 'o', so TORCHFITS_VLA_HEAP_PREAD=on silently stayed off.
+        static const bool heap_pread_enabled =
+            internal::env_flag_default_false("TORCHFITS_VLA_HEAP_PREAD");
         bool heap_contiguous =
             heap_pread_enabled && direct_io_ok() &&
             (elem_bytes > 0 && total > 0);
@@ -2817,7 +2830,7 @@ public:
                  }
              });
              if (col.type == FITSColumnType::BYTE && col.fits_typecode == TSBYTE) {
-                 detail::_xor_sign_bit_u8(
+                 detail::xor_sign_bit_u8(
                      dest,
                      static_cast<size_t>(num_rows) * static_cast<size_t>(total_width));
              }
@@ -2905,15 +2918,45 @@ public:
         return !has_cfitsio_extended_filename_syntax(filename_);
     }
 
-    // Serializes read/update calls when one reader instance is shared across
-    // Python threads (persistent open_fits_mmap_reader capsule, exposed
-    // TableReader objects). CFITSIO cursor state and the scratch buffer are
+    // Serializes access to a reader that is genuinely shared across Python
+    // threads: the CFITSIO cursor, the cached offsets, and scratch_buffer_ are
     // not safe for unsynchronized concurrent use.
+    //
+    // Nothing in this header acquires it. The lock is taken by the bindings that
+    // hand out a shared reader -- read_fits_table_rows_mmap_from_reader and
+    // read_fits_table_rows_mmap_from_reader_raw in table_bindings.cpp, both of
+    // which hold it across read_columns_mmap() with the GIL released. It is
+    // public so those callers can reach it.
+    //
+    // Every other path is per-call or per-thread and needs no lock: the bindings
+    // taking a filename either build a stack-local TableReader, or take one from
+    // g_reader_cache, which is a ThreadLocalReaderCache and so never hands the
+    // same reader to two threads. update_rows_mmap() is in the first group --
+    // it takes a filename and opens its own reader.
+    //
+    // INVARIANT: any binding that accepts a TableReader capsule must hold
+    // io_mutex_ for the whole call, with the GIL released.
     mutable std::mutex io_mutex_;
 
     // Total in-row bytes for the requested columns (fixed-width columns only;
-    // returns -1 when any requested column is variable-width, which makes the
-    // parallel fan-out gate reject).
+    // returns -1 when any requested column is variable-width, and -1 when a
+    // name does not resolve -- both are the "reject" signal for a fan-out gate).
+    //
+    // NOT CALLED. The cross-thread fan-out that these two helpers fed was
+    // measured 3-8x SLOWER than the sequential path and reverted (b45a1b4,
+    // "perf(cpp): keep double-buffer prefetch; document fan-out experiment").
+    // What survives here is the gate's input computation, kept as the record of
+    // that experiment; the dispatch itself is gone. The measurements live in
+    // .cursor/post-1.0-backlog.md under "Performance: narrow-table buffered
+    // full-read". Do not read either comment below as describing live
+    // dispatch: nothing in this header or in table_bindings.cpp calls these
+    // two functions, and `git grep` over the tree finds only the definitions.
+    //
+    // The arithmetic is width * repeat, exact for every fixed-width type EXCEPT
+    // BIT: a BIT column has width 1 and repeat = bit count but occupies
+    // ceil(repeat/8) bytes on disk (analyze_table's storage_bytes), so this
+    // over-counts a BIT projection by up to 8x. Adequate as a size estimate,
+    // not a byte-exact row width.
     long long projected_bytes(const std::vector<std::string>& names) const {
         long long total = 0;
         for (const auto& n : names) {
@@ -2939,6 +2982,11 @@ public:
     // True when every requested column resolves to a fixed numeric type that
     // fits_read_col can write directly into a tensor (no strings, logical
     // conversion, BIT packing, complex pairing, or VLA heaps).
+    //
+    // NOT CALLED either -- see projected_bytes above for why, and for the
+    // measurements. The type list below is the whole policy: a revived gate
+    // gets no help from these two functions for BIT, string, logical, complex
+    // or VLA columns, and must consult col.type itself.
     bool all_fixed_numeric(const std::vector<std::string>& names) const {
         for (const auto& n : names) {
             bool found = false;

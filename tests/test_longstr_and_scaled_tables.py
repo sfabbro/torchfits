@@ -215,7 +215,7 @@ def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
 
     counts = {"opens": 0, "reader_rows": 0, "legacy_rows": 0}
     real_open = cpp.open_fits_mmap_reader
-    real_reader_rows = cpp.read_fits_table_rows_mmap_from_reader
+    real_reader_rows = cpp.read_fits_table_rows_mmap_from_reader_raw
     real_legacy = cpp.read_fits_table_rows
 
     def counted_open(*a, **k):
@@ -232,7 +232,11 @@ def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
 
     with (
         mock.patch.object(cpp, "open_fits_mmap_reader", counted_open),
-        mock.patch.object(cpp, "read_fits_table_rows_mmap_from_reader", counted_reader),
+        mock.patch.object(
+            cpp,
+            "read_fits_table_rows_mmap_from_reader_raw",
+            counted_reader,
+        ),
         mock.patch.object(cpp, "read_fits_table_rows", counted_legacy),
     ):
         it = scan(str(p), hdu=1, batch_size=16, mmap=True)

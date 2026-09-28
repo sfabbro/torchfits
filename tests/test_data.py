@@ -509,13 +509,28 @@ class TestMakeLoader:
         assert calls == [url]
 
     def test_drop_last(self, temp_image_dir):
+        """TS-011: the fixture is 8 files, so batch_size=6 leaves a short tail.
+
+        Only ``drop_last=True`` was asserted; the default ``False`` side --
+        keep the partial final batch -- was never pinned, so a loader that
+        dropped it unconditionally would still pass this test.
+        """
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)
-        loader = make_loader(ds, batch_size=6, drop_last=True, optimize_cache=False)
-        count = 0
-        for _ in loader:
-            count += 1
-        assert count == 1
+
+        dropped = make_loader(ds, batch_size=6, drop_last=True, optimize_cache=False)
+        kept = make_loader(ds, batch_size=6, drop_last=False, optimize_cache=False)
+        default = make_loader(ds, batch_size=6, optimize_cache=False)
+
+        assert len(list(dropped)) == 1
+
+        kept_batches = list(kept)
+        assert len(kept_batches) == 2
+        assert len(list(default)) == 2
+        # The collate returns (data, labels), so the batch size is the leading
+        # dim of element 0: 6 then a short tail of 2, not a repeat of 6.
+        assert kept_batches[0][0].shape[0] == 6
+        assert kept_batches[1][0].shape[0] == 2
 
     def test_iterable_dataset_no_shuffle_by_default(self, temp_image_dir):
         _tmpdir, files = temp_image_dir

@@ -1,12 +1,14 @@
 """Tensor-to-PyArrow conversion via the buffer protocol.
 
-Provides :func:`tensor_to_arrow_array`, which converts a 1-D PyTorch tensor
-to a ``pyarrow.Array`` using the tensor's NumPy buffer view and
+Provides :func:`tensor_to_arrow_array`, which converts 1-D or 2-D PyTorch
+tensors to a ``pyarrow.Array`` using the tensor's NumPy buffer view and
 ``pa.Array.from_buffers``.
 
 Supported dtypes: float32, float64, float16, int8, int16, int32, int64,
-uint8.  Unsupported dtypes (bool, complex, bfloat16, …) fall back to
-``pa.array(tensor.tolist())``.
+uint8.  Unsupported dtypes (bool, bfloat16, …) fall back to
+``pa.array(tensor.tolist())``.  Complex tensors are rejected because Arrow
+has no complex type; zero-width 2-D tensors are rejected because Arrow fixed-
+size lists require a positive list size.
 """
 
 from __future__ import annotations
@@ -33,15 +35,22 @@ def tensor_to_arrow_array(tensor: torch.Tensor, pa: Any) -> Any:
 
     Uses the NumPy view's buffer for supported numeric dtypes, falling back to
     ``pa.array(tensor.tolist())`` for types that don't have a direct Arrow
-    buffer representation (bool, complex, bfloat16).
+    buffer representation (bool, bfloat16).  Complex tensors raise
+    ``ValueError`` because Arrow has no complex type.  A 2-D tensor must have a
+    positive width so it can be represented as an Arrow fixed-size list.
 
     Args:
-        tensor: 1-D PyTorch tensor (any device, any contiguity).
+        tensor: 1-D or 2-D PyTorch tensor (any device, any contiguity).
         pa: The ``pyarrow`` module (passed by caller to avoid a hard import).
 
     Returns:
         A ``pyarrow.Array`` of the appropriate type.
     """
+    # Complex values have no Arrow scalar type.  Reject them before the
+    # fallback tries to infer a type from Python complex objects.
+    if tensor.is_complex():
+        raise ValueError("tensor_to_arrow_array does not support complex tensors")
+
     # detach so we never keep an autograd graph alive for raw byte access
     tensor = tensor.detach()
     if tensor.device.type != "cpu":
@@ -51,6 +60,10 @@ def tensor_to_arrow_array(tensor: torch.Tensor, pa: Any) -> Any:
 
     if tensor.ndim == 2:
         width = int(tensor.shape[1])
+        if width == 0:
+            raise ValueError(
+                "tensor_to_arrow_array does not support 2-D tensors with zero width"
+            )
         flat = tensor_to_arrow_array(tensor.reshape(-1), pa)
         return pa.FixedSizeListArray.from_arrays(flat, width)
     if tensor.ndim != 1:
@@ -60,7 +73,7 @@ def tensor_to_arrow_array(tensor: torch.Tensor, pa: Any) -> Any:
 
     arrow_name = _TORCH_DTYPE_ARROW.get(tensor.dtype)
     if arrow_name is None:
-        # Unsupported buffer dtype (bool, complex, bfloat16, …) — fall back.
+        # Unsupported buffer dtype (bool, bfloat16, …) — fall back.
         return pa.array(tensor.tolist())
 
     arrow_type = getattr(pa, arrow_name)()

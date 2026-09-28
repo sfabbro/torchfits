@@ -985,8 +985,33 @@ class TestIterableFileSharding:
         kwargs = dict(shuffle=True, shuffle_buffer_size=3, seed=11, world_size=2)
         ds0 = FitsTensorIterableDataset(tagged_images, rank=0, **kwargs)
         epoch1 = self._values(ds0)
-        assert self._values(ds0) == epoch1  # same seed => same order every epoch
+        epoch2 = self._values(ds0)
+        # Shard membership is a function of (rank, world_size) only, so it
+        # holds for every epoch however the rows are ordered inside it.
         assert set(epoch1) == {0.0, 2.0, 4.0}  # count preserved under shuffle
+        assert set(epoch2) == {0.0, 2.0, 4.0}
+        # ...and the order within the shard is what varies epoch to epoch.
+        # Before DA-001 this was a no-op: the permutation was seeded from
+        # ``seed + worker_id``, a constant for the life of the dataset, so
+        # every epoch replayed epoch 1 exactly.
+        assert epoch1 != epoch2
+
+        # The property that assertion used to stand in for: the same seed
+        # still replays the same *sequence* of epochs.
+        twin = FitsTensorIterableDataset(tagged_images, rank=0, **kwargs)
+        assert self._values(twin) == epoch1
+        assert self._values(twin) == epoch2
+
+        # A different seed is a different sequence. Compared over three
+        # epochs, not one: this rank's shard holds 3 rows, so a single
+        # permutation has only 3! = 6 possibilities and two seeds collide
+        # on it by chance roughly a third of the time.
+        def _sequence(dataset, n=3):
+            return [self._values(dataset) for _ in range(n)]
+
+        assert _sequence(
+            FitsTensorIterableDataset(tagged_images, rank=0, **dict(kwargs, seed=12))
+        ) != _sequence(FitsTensorIterableDataset(tagged_images, rank=0, **kwargs))
 
         ds1 = FitsTensorIterableDataset(tagged_images, rank=1, **kwargs)
         rank1 = self._values(ds1)
@@ -996,7 +1021,6 @@ class TestIterableFileSharding:
         _install_fake_worker(monkeypatch, 0, 2)
         w0 = self._values(ds0)
         _install_fake_worker(monkeypatch, 0, 2)
-        assert self._values(ds0) == w0  # worker shards deterministic
         _install_fake_worker(monkeypatch, 1, 2)
         w1 = self._values(ds0)
         assert not set(w0) & set(w1)  # workers disjoint
@@ -1020,3 +1044,282 @@ class TestIterableFileSharding:
             list(FitsTensorIterableDataset(tagged_images, rank=-1, world_size=2))
         with pytest.raises(ValueError, match="world_size"):
             list(FitsTensorIterableDataset(tagged_images, rank=0, world_size=0))
+
+
+# ---------------------------------------------------------------------------
+# Epoch-varying shuffle (DA-001) and the dataset contracts fixed with it
+# ---------------------------------------------------------------------------
+
+
+class TestEpochVaryingShuffle:
+    """``shuffle=True`` and ``shuffle_buffer_size=`` must change the order
+    every epoch, and must still be reproducible from ``seed=``.
+
+    Both seeds used to come from ``seed + worker_id``, a constant for the
+    life of the dataset, so epoch 2 replayed epoch 1 byte for byte and a
+    whole training run saw the same batch order forever.
+    """
+
+    @pytest.fixture
+    def twenty_images(self, tmp_path):
+        paths = []
+        for i in range(20):
+            p = tmp_path / f"i{i:02d}.fits"
+            fits.PrimaryHDU(np.full((2, 2), float(i), dtype=np.float32)).writeto(
+                str(p), overwrite=True
+            )
+            paths.append(str(p))
+        return paths
+
+    @staticmethod
+    def _order(dataset, epochs=3):
+        return [[float(t.flatten()[0]) for t in dataset] for _ in range(epochs)]
+
+    def test_shuffle_permutation_varies_per_epoch(self, twenty_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        ds = FitsTensorIterableDataset(twenty_images, shuffle=True, seed=7)
+        orders = self._order(ds)
+        assert len({tuple(o) for o in orders}) == len(orders), (
+            "every epoch produced the same order"
+        )
+        for o in orders:
+            assert sorted(o) == [float(i) for i in range(20)]
+
+    def test_shuffle_buffer_varies_per_epoch(self, twenty_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        ds = FitsTensorIterableDataset(twenty_images, shuffle_buffer_size=10, seed=7)
+        orders = self._order(ds)
+        assert len({tuple(o) for o in orders}) == len(orders)
+        for o in orders:
+            assert sorted(o) == [float(i) for i in range(20)]
+
+    def test_same_seed_replays_the_epoch_sequence(self, twenty_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        kwargs = dict(shuffle=True, shuffle_buffer_size=8, seed=7)
+        assert self._order(FitsTensorIterableDataset(twenty_images, **kwargs)) == (
+            self._order(FitsTensorIterableDataset(twenty_images, **kwargs))
+        )
+
+    def test_a_different_seed_is_a_different_sequence(self, twenty_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        def seq(seed):
+            return self._order(
+                FitsTensorIterableDataset(
+                    twenty_images, shuffle=True, shuffle_buffer_size=8, seed=seed
+                )
+            )
+
+        assert seq(7) != seq(8)
+
+    def test_no_shuffle_still_follows_file_order(self, twenty_images):
+        from torchfits.data import FitsTensorIterableDataset
+
+        ds = FitsTensorIterableDataset(twenty_images, shuffle=False)
+        first = [float(t.flatten()[0]) for t in ds]
+        assert first == [float(i) for i in range(20)]
+        assert [float(t.flatten()[0]) for t in ds] == first
+
+    def test_table_iterable_shuffle_buffer_varies_per_epoch(self, tmp_path):
+        from torchfits.data import FitsTableIterableDataset
+
+        path = tmp_path / "cat.fits"
+        cols = [fits.Column(name="v", format="J", array=np.arange(20, dtype=np.int32))]
+        fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(
+            str(path), overwrite=True
+        )
+        ds = FitsTableIterableDataset(str(path), shuffle_buffer_size=6, seed=3)
+        orders = [[int(row["v"].item()) for row in ds] for _ in range(3)]
+        assert len({tuple(o) for o in orders}) == 3
+        for o in orders:
+            assert sorted(o) == list(range(20))
+
+    def test_staged_cutout_coordinates_vary_per_epoch(self, tmp_path):
+        from torchfits.data import FitsStagedCutoutIterableDataset
+
+        path = tmp_path / "mosaic.fits"
+        fits.PrimaryHDU(np.arange(64 * 64, dtype=np.float32).reshape(64, 64)).writeto(
+            str(path), overwrite=True
+        )
+        ds = FitsStagedCutoutIterableDataset(
+            [str(path)],
+            cutouts_per_file=6,
+            cutout_size=(8, 8),
+            shuffle_files=True,
+            seed=3,
+        )
+        seen: list[list[tuple[int, int, int, int]]] = []
+        real = FitsStagedCutoutIterableDataset._default_cutout_coords
+
+        def spy(self, height, width, ch, cw, rng):
+            out = real(self, height, width, ch, cw, rng)
+            seen[-1].append(out)
+            return out
+
+        FitsStagedCutoutIterableDataset._default_cutout_coords = spy
+        try:
+            for _ in range(2):
+                seen.append([])
+                list(ds)
+        finally:
+            FitsStagedCutoutIterableDataset._default_cutout_coords = real
+        assert seen[0] != seen[1], "epoch 2 cut the byte-identical patches"
+        assert len(seen[0]) == len(seen[1]) == 6
+
+
+class TestTableDatasetRowCount:
+    """``len(FitsTableDataset(...))`` must be the table's own row count."""
+
+    def test_zero_column_table_keeps_its_rows(self, tmp_path):
+        from torchfits.data import FitsTableDataset
+
+        path = tmp_path / "zerocol.fits"
+        fits.HDUList(
+            [fits.PrimaryHDU(), fits.BinTableHDU.from_columns([], nrows=6)]
+        ).writeto(str(path), overwrite=True)
+
+        ds = FitsTableDataset(str(path), hdu=1)
+        assert len(ds) == 6
+        # The rows are addressable, and a zero-column row is honestly empty.
+        row, label = ds[0]
+        assert row == {}
+        assert label.item() == 0
+
+    def test_matching_labels_accepted_on_a_zero_column_table(self, tmp_path):
+        from torchfits.data import FitsTableDataset
+
+        path = tmp_path / "zerocol.fits"
+        fits.HDUList(
+            [fits.PrimaryHDU(), fits.BinTableHDU.from_columns([], nrows=6)]
+        ).writeto(str(path), overwrite=True)
+        # 6 labels for 6 rows: accepted. Before, n_rows read 0 and this raised.
+        FitsTableDataset(str(path), hdu=1, labels=[1, 2, 3, 4, 5, 6])
+        with pytest.raises(ValueError, match="labels length"):
+            FitsTableDataset(str(path), hdu=1, labels=[1, 2, 3])
+
+    def test_out_of_range_index_raises(self, tmp_path):
+        from torchfits.data import FitsTableDataset
+
+        path = tmp_path / "zerocol.fits"
+        fits.HDUList(
+            [fits.PrimaryHDU(), fits.BinTableHDU.from_columns([], nrows=6)]
+        ).writeto(str(path), overwrite=True)
+        ds = FitsTableDataset(str(path), hdu=1)
+        assert ds[5][1].item() == 0  # last row is addressable
+        for bad in (6, 99, -7):
+            with pytest.raises(IndexError, match="out of range"):
+                ds[bad]
+
+    def test_where_filter_still_counts_filtered_rows(self, tmp_path):
+        from torchfits.data import FitsTableDataset
+
+        path = tmp_path / "cat.fits"
+        cols = [fits.Column(name="v", format="E", array=np.arange(8, dtype=np.float32))]
+        fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(
+            str(path), overwrite=True
+        )
+        # The filtered count, not NAXIS2 and not zero.
+        assert len(FitsTableDataset(str(path), hdu=1, where="v > 4.0")) == 3
+        assert len(FitsTableDataset(str(path), hdu=1, where="v > 999.0")) == 0
+        assert len(FitsTableDataset(str(path), hdu=1)) == 8
+
+
+class TestSpectrumCompanionGuards:
+    """DA-003 / DA-004 / DA-005."""
+
+    @pytest.fixture
+    def table_spectrum(self, tmp_path):
+        path = tmp_path / "spec.fits"
+        cols = [
+            fits.Column(name="FLUX", format="E", array=np.arange(8, dtype=np.float32))
+        ]
+        hdus = [
+            fits.PrimaryHDU(),
+            fits.BinTableHDU.from_columns(cols),
+            fits.ImageHDU(np.full(8, 4.0, dtype=np.float32), name="IVAR"),
+        ]
+        fits.HDUList(hdus).writeto(str(path), overwrite=True)
+        return str(path)
+
+    @pytest.mark.parametrize("kwarg", ["ivar_hdu", "mask_hdu", "wavelength_hdu"])
+    def test_table_spectrum_rejects_every_hdu_companion(self, table_spectrum, kwarg):
+        from torchfits.data import FitsSpectrumDataset
+
+        with pytest.raises(ValueError, match="read companions from columns"):
+            FitsSpectrumDataset(table_spectrum, hdu=1, column="FLUX", **{kwarg: "IVAR"})
+
+    def test_ivar_column_still_works(self, table_spectrum):
+        from torchfits.data import FitsSpectrumDataset
+
+        payload = FitsSpectrumDataset(
+            table_spectrum, hdu=1, column="FLUX", ivar_column="FLUX"
+        )[0]
+        assert set(payload) == {"flux", "ivar"}
+
+    @pytest.fixture
+    def mismatched_mask(self, tmp_path):
+        path = tmp_path / "badshape.fits"
+        flux = np.arange(12, dtype=np.float32).reshape(3, 4)
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(flux),
+                fits.ImageHDU(np.ones((1, 4), dtype=np.uint8), name="M"),
+            ]
+        ).writeto(str(path), overwrite=True)
+        return str(path)
+
+    def test_companion_shape_must_match_the_flux(self, mismatched_mask):
+        from torchfits.data import FitsTensorDataset
+
+        with pytest.raises(ValueError, match="pixel-aligned"):
+            FitsTensorDataset(
+                mismatched_mask, hdu=0, mask_hdu="M", add_channel_dim=True
+            )[0]
+
+    def test_aligned_companion_is_accepted(self, tmp_path):
+        from torchfits.data import FitsTensorDataset
+
+        path = tmp_path / "goodshape.fits"
+        flux = np.arange(12, dtype=np.float32).reshape(3, 4)
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(flux),
+                fits.ImageHDU(np.ones((3, 4), dtype=np.uint8), name="M"),
+            ]
+        ).writeto(str(path), overwrite=True)
+        payload, _ = FitsTensorDataset(
+            str(path), hdu=0, mask_hdu="M", add_channel_dim=True
+        )[0]
+        assert payload["flux"].shape == payload["mask"].shape
+
+    def test_label_key_reads_the_spectra_own_hdu(self, tmp_path):
+        from torchfits.data import FitsSpectrumDataset
+
+        path = tmp_path / "lab.fits"
+        cols = [
+            fits.Column(name="FLUX", format="E", array=np.arange(4, dtype=np.float32))
+        ]
+        table = fits.BinTableHDU.from_columns(cols)
+        table.header["CLASS"] = 7  # in the table's own header
+        fits.HDUList([fits.PrimaryHDU(), table]).writeto(str(path), overwrite=True)
+        assert FitsSpectrumDataset(
+            str(path), hdu=1, column="FLUX", label_key="CLASS"
+        ).labels == [7]
+
+    def test_label_key_in_the_primary_only_is_not_silently_used(self, tmp_path):
+        from torchfits.data import FitsSpectrumDataset
+
+        path = tmp_path / "lab2.fits"
+        cols = [
+            fits.Column(name="FLUX", format="E", array=np.arange(4, dtype=np.float32))
+        ]
+        primary = fits.PrimaryHDU()
+        primary.header["CLASS"] = 7
+        fits.HDUList([primary, fits.BinTableHDU.from_columns(cols)]).writeto(
+            str(path), overwrite=True
+        )
+        with pytest.raises((RuntimeError, KeyError)):
+            FitsSpectrumDataset(str(path), hdu=1, column="FLUX", label_key="CLASS")

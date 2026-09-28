@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import warnings
 from pathlib import Path
-from typing import Any, Callable
-
-import torch
+from typing import TYPE_CHECKING, Any, Callable
 
 import torchfits
 from torchfits._io_engine.paths import cfitsio_base_path
+
+if TYPE_CHECKING:
+    import torch
 
 from .common import (
     EXIT_OK,
@@ -56,6 +57,8 @@ def _saturate_to(t: torch.Tensor, dtype: torch.dtype) -> tuple[torch.Tensor, int
     Returns the cast tensor and the number of elements that required clamping
     (i.e. wrapped values a naive cast would have corrupted).
     """
+    import torch
+
     if not t.dtype.is_floating_point and dtype.is_floating_point:
         return t.to(dtype), 0
     info = torch.iinfo(dtype)
@@ -87,6 +90,8 @@ def _compute(
     float scalar) and saturating-cast back to ``out_dtype``; out-of-range
     pixels raise a RuntimeWarning instead of wrapping silently.
     """
+    import torch
+
     if out_dtype.is_floating_point:
         return op_fn(left.to(out_dtype), right)
 
@@ -244,6 +249,8 @@ def _image_indices(path: str, hdu: str | None) -> list[int]:
 
 
 def _read_image(path: str, index: int) -> tuple[torch.Tensor, Any]:
+    import torch
+
     tensor = torchfits.read_tensor(path, hdu=index)
     if not isinstance(tensor, torch.Tensor):
         raise IoError(f"{path}:{index} read_tensor did not return a tensor")
@@ -269,6 +276,8 @@ def _b_tensor(
 
 
 def _resolve_out_dtype(spec: str, left: torch.Tensor) -> torch.dtype:
+    import torch
+
     if spec == "float32":
         return torch.float32
     if spec == "float64":
@@ -282,6 +291,8 @@ def _apply_op(
     right: torch.Tensor | float,
     dtype_spec: str = "auto",
 ) -> torch.Tensor:
+    import torch
+
     if op == "div" and not isinstance(right, torch.Tensor) and right == 0:
         raise UsageError("division by zero")
     if op == "div" and isinstance(right, torch.Tensor) and bool((right == 0).any()):
@@ -308,6 +319,8 @@ def _arith_one_file(
     split: str,
     batch_inputs: tuple[str, ...] = (),
 ) -> None:
+    import torch
+
     indices = _image_indices(path_a, hdu)
     if not indices:
         raise IoError(f"{path_a}: no image HDUs to process")
@@ -413,8 +426,7 @@ def run(args: argparse.Namespace) -> int:
 
     hdu2 = _parse_hdu2(args.hdu2)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(a_paths))
-    if file_jobs == 1:
-        configure_torch_jobs(int(args.jobs))
+    configure_torch_jobs(int(args.jobs))
 
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir is not None:
@@ -444,7 +456,7 @@ def run(args: argparse.Namespace) -> int:
         )
 
     try:
-        run_file_jobs(a_paths, _one, file_jobs)
+        run_file_jobs(a_paths, _one, file_jobs, torch_runtime=True)
     except UsageError:
         raise
     except ZeroDivisionError as exc:

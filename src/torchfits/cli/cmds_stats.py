@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-import torch
-
 import torchfits
 
 from .common import (
@@ -50,6 +48,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
 
 def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
+    import torch
+
     try:
         with torchfits.open(path) as hdul:
             indices = selected_hdu_indices(len(hdul), hdu)
@@ -105,12 +105,12 @@ def _stats_one(path: str, hdu: str | None) -> list[dict[str, Any]]:
 def run(args: argparse.Namespace) -> int:
     paths = resolve_paths(args.paths, use_stdin=args.stdin)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(paths))
-    if file_jobs == 1:
-        configure_torch_jobs(int(args.jobs))
+    configure_torch_jobs(int(args.jobs))
     chunks = run_file_jobs(
         paths,
         lambda path: _stats_one(path, args.hdu),
         file_jobs,
+        torch_runtime=True,
     )
     records = [record for chunk in chunks for record in chunk]
     emit_records(records, format=resolve_emit_format(args))

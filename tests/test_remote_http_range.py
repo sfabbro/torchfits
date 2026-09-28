@@ -444,7 +444,14 @@ def test_download_resume_rejects_incomplete_206(tmp_path, monkeypatch):
 def _race_worker(url: str, cache_dir: str, expected: bytes, flags, idx: int) -> None:
     from pathlib import Path
 
+    from torchfits import http_util
     from torchfits.data.remote import resolve_local_path
+
+    # ``spawn`` does not inherit pytest's monkeypatch from ``allow_loopback``.
+    # Recreate that test-only exception in each worker so the spawned process
+    # exercises the same downloader path without opening a real public socket.
+    http_util.is_internal_url = lambda _url: False
+    http_util._resolve_public_addrs = lambda _url: ("127.0.0.1",)
 
     try:
         local = resolve_local_path(url, cache_dir=Path(cache_dir))
@@ -482,7 +489,11 @@ def test_resolve_local_path_multiprocess_single_download(tmp_path, allow_loopbac
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
 
-    ctx = mp.get_context("fork")
+    # ``spawn`` is required on macOS when the test's HTTP server thread is
+    # alive: forking a process with Objective-C/Torch extension state can abort
+    # in urllib's system-configuration proxy lookup before the worker runs.
+    # The test's contract is cross-process file locking, not fork semantics.
+    ctx = mp.get_context("spawn")
     try:
         flags = ctx.Array("b", [0] * 6)
         workers = [

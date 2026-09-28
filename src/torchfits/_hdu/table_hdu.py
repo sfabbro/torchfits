@@ -14,6 +14,74 @@ from ._repr import render_html_table
 from .header import Header
 
 
+def _row_aligned_count(value: Any) -> Optional[int]:
+    """Row count of a column value, or ``None`` when it is not row-shaped.
+
+    One definition of "has one entry per row", shared by every method that
+    slices or masks columns (:meth:`TableHDU.filter`, :meth:`TableHDU.head`)
+    so the row-aligned set cannot drift between the two halves of an
+    operation -- a table whose mask was built from one column set and applied
+    to another silently produced a misaligned result.
+    """
+    if isinstance(value, torch.Tensor):
+        return int(value.shape[0]) if value.dim() > 0 else None
+    if hasattr(value, "ndim"):  # numpy array, without importing numpy here
+        if value.ndim > 0:
+            return int(value.shape[0])
+        return None
+    if isinstance(value, list):
+        return len(value)
+    return None
+
+
+def _is_sequence_cell(value: Any) -> bool:
+    """Whether a list-column entry is itself a sequence (VLA / vector cell)."""
+    return isinstance(value, (list, tuple)) or hasattr(value, "ndim")
+
+
+def _predicate_array(value: Any) -> Any:
+    """The array a ``where`` predicate may compare a column against.
+
+    Returns ``None`` when the grammar has nothing to compare: a vector (TDIM)
+    or variable-length column, whose per-row cells are sequences rather than
+    scalars. A packed FITS string column is a ``(rows, width)`` uint8 tensor,
+    which ``pyarrow.array`` rejects, so it is decoded to text and a predicate
+    sees the same strings the file holds.
+    """
+    import numpy as np
+
+    if isinstance(value, list):
+        if any(_is_sequence_cell(item) for item in value):
+            return None
+        return np.asarray(value, dtype=object)
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach()
+        if tensor.device.type != "cpu":
+            tensor = tensor.cpu()
+        if tensor.dtype == torch.uint8 and tensor.dim() == 2:
+            from .._string_decode import decode_byte_tensor
+
+            return np.asarray(
+                decode_byte_tensor(tensor, encoding="ascii", strip=True),
+                dtype=object,
+            )
+        arr: Any = tensor.numpy()
+    else:
+        arr = value
+        if arr.dtype == np.uint8 and arr.ndim == 2:
+            from .._string_decode import decode_byte_tensor
+
+            return np.asarray(
+                decode_byte_tensor(torch.as_tensor(arr), encoding="ascii", strip=True),
+                dtype=object,
+            )
+    if arr.ndim == 2 and arr.shape[1] == 1:
+        return arr[:, 0]
+    if arr.ndim > 1:
+        return None
+    return arr
+
+
 class TableDataAccessor:
     def __init__(self, table_hdu: Any) -> None:
         self._table = table_hdu
@@ -21,15 +89,23 @@ class TableDataAccessor:
     def __getitem__(self, key: str) -> Any:
         if hasattr(self._table, "_raw_data") and key in self._table._raw_data:
             value = self._table._raw_data[key]
+            # A packed uint8 FITS string column is a (rows, width) char-code
+            # tensor, not a scalar column: it keeps its 2-D shape here as it
+            # does in TableHDU.__getitem__, in _squeeze_scalar_columns and in
+            # get_string_column. A squeeze that ignored the uint8 exception
+            # collapsed a 1-character string column to bare char codes, so the
+            # same column read as (N,) through .data and (N, 1) through
+            # every other accessor.
+            is_packed_string = isinstance(value, torch.Tensor) and (
+                value.dtype == torch.uint8
+            )
             if (
-                isinstance(value, torch.Tensor)
-                and value.dim() == 2
+                not is_packed_string
+                and hasattr(value, "ndim")
+                and value.ndim == 2
                 and value.shape[1] == 1
-                and value.dtype != torch.uint8
             ):
-                return value.squeeze(1)
-            if hasattr(value, "ndim") and value.ndim == 2 and value.shape[1] == 1:
-                return value.squeeze(1)
+                return value.reshape(-1)
             return value
         raise KeyError(f"Column '{key}' not found")
 
@@ -249,39 +325,35 @@ class TableHDU:
 
         data_map = self._raw_data
         if not data_map:
-            return self
+            # A zero-column table still has a row count (its header's NAXIS2,
+            # see num_rows) and a where condition can only name a column, so
+            # say so rather than silently returning every row -- which is what
+            # a typo'd column name on a columnless table used to do.
+            raise ValueError(
+                "cannot filter a table with no columns: a where condition must "
+                "name a column and this table has none"
+            )
 
         num_rows = self.num_rows
         if num_rows <= 0:
             return self
 
         eval_locals: Dict[str, Any] = {}
+        row_aligned: set[str] = set()
         for name, value in data_map.items():
-            if (
-                isinstance(value, torch.Tensor)
-                and value.dim() > 0
-                and value.shape[0] == num_rows
-            ):
-                t = value.detach()
-                if t.device.type != "cpu":
-                    t = t.cpu()
-                arr = t.numpy()
-                if arr.ndim == 2 and arr.shape[1] == 1:
-                    arr = arr[:, 0]
-                eval_locals[str(name)] = arr
-            elif (
-                isinstance(value, np.ndarray)
-                and value.ndim > 0
-                and value.shape[0] == num_rows
-            ):
-                arr = value
-                if arr.ndim == 2 and arr.shape[1] == 1:
-                    arr = arr[:, 0]
-                eval_locals[str(name)] = arr
-            elif isinstance(value, list) and len(value) == num_rows:
-                eval_locals[str(name)] = np.asarray(value, dtype=object)
+            if _row_aligned_count(value) != num_rows:
+                continue
+            row_aligned.add(str(name))
+            comparable = _predicate_array(value)
+            if comparable is not None:
+                eval_locals[str(name)] = comparable
 
         if not eval_locals:
+            if row_aligned:
+                raise ValueError(
+                    "no column in this table can be used in a where condition "
+                    "(vector and variable-length columns are not comparable)"
+                )
             raise ValueError("No row-aligned columns available for filtering")
 
         # Build a minimal Arrow table and delegate to pyarrow.compute predicates.
@@ -309,26 +381,18 @@ class TableHDU:
                 )
 
         filtered: Dict[str, Any] = {}
+        mask_t = torch.from_numpy(mask)
         for name, value in data_map.items():
-            if (
-                isinstance(value, torch.Tensor)
-                and value.dim() > 0
-                and value.shape[0] == num_rows
-            ):
-                mask_t = torch.from_numpy(mask)
-                if value.device.type != "cpu":
-                    mask_t = mask_t.to(value.device)
-                filtered[name] = value[mask_t]
-            elif (
-                isinstance(value, np.ndarray)
-                and value.ndim > 0
-                and value.shape[0] == num_rows
-            ):
-                filtered[name] = value[mask]
-            elif isinstance(value, list) and len(value) == num_rows:
-                filtered[name] = [item for item, keep in zip(value, mask) if keep]
-            else:
+            if str(name) not in row_aligned:
                 filtered[name] = value
+            elif isinstance(value, list):
+                filtered[name] = [item for item, keep in zip(value, mask) if keep]
+            elif isinstance(value, torch.Tensor):
+                filtered[name] = value[
+                    mask_t if value.device.type == "cpu" else mask_t.to(value.device)
+                ]
+            else:
+                filtered[name] = value[mask]
 
         return TableHDU(
             filtered,
@@ -350,20 +414,23 @@ class TableHDU:
         keep = max(0, min(current_rows, n))
 
         if self._raw_data:
-            import numpy as np
-
             new_dict: Dict[str, Any] = {}
             for k, v in self._raw_data.items():
-                if isinstance(v, torch.Tensor) and v.dim() > 0:
-                    new_dict[k] = v[:keep]
-                elif isinstance(v, np.ndarray) and v.ndim > 0:
-                    new_dict[k] = v[:keep]
-                elif isinstance(v, list):
+                if _row_aligned_count(v) is not None:
                     new_dict[k] = v[:keep]
                 else:
                     new_dict[k] = v
             return TableHDU(new_dict, {}, self._derived_header())
-        return self
+        # A zero-column table has no column data to slice, but its row count
+        # still comes from the header's NAXIS2 (see num_rows), so the only way
+        # to honour head() is to narrow the derived header. Returning self
+        # handed back a `current_rows`-row table from head(keep) -- on a
+        # 6-row zero-column BINTABLE, head(2) reported 6 rows.
+        if keep >= current_rows:
+            return self
+        derived = self._derived_header()
+        derived["NAXIS2"] = keep
+        return TableHDU({}, {}, derived)
 
     @staticmethod
     def _value_num_rows(value: Any) -> int:

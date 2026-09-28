@@ -284,3 +284,50 @@ def test_tablehdu_isolated_from_caller_dict_mutation():
     assert hdu.num_rows == 10
     assert hdu["x"].shape[0] == 10
     assert hdu.columns == ["x"]
+
+
+def test_data_accessor_keeps_the_2d_shape_of_a_1_char_string_column(tmp_path):
+    """hdu.data[col], hdu[col] and to_tensor_dict()[col] must agree.
+
+    The accessor squeezed any (N, 1) column, including a packed uint8 FITS
+    string column, so a 1-character string column came back as bare char
+    codes there while both other accessors (and get_string_column) kept the
+    (rows, width) form the rest of the library uses.
+    """
+    from torchfits.hdu import TableHDU
+
+    path = str(tmp_path / "onechar.fits")
+    torchfits.write(
+        path,
+        {
+            "NAME": ["alpha", "beta"],
+            "CH": ["a", "b"],
+        },
+        header={
+            "NAXIS": 2,
+            "NAXIS1": 40,
+            "NAXIS2": 2,
+            "XTENSION": "BINTABLE",
+            "BITPIX": 8,
+            "PCOUNT": 0,
+            "GCOUNT": 1,
+            "TFIELDS": 2,
+            "TTYPE1": "NAME",
+            "TFORM1": "5A",
+            "TTYPE2": "CH",
+            "TFORM2": "1A",
+        },
+        overwrite=True,
+    )
+    with torchfits.open(path) as hdul:
+        table = hdul[1].materialize()
+
+    assert isinstance(table, TableHDU)
+    assert table.data["CH"].shape == table["CH"].shape
+    assert table.data["CH"].shape == table.to_tensor_dict()["CH"].shape
+    assert table.data["CH"].dim() == 2
+    assert table.get_string_column("CH") == ["a", "b"]
+    # A non-string (N, 1) column is still a scalar column and reads as (N,).
+    scalar = TableHDU({"x": torch.arange(4, dtype=torch.int32).reshape(4, 1)})
+    assert scalar.data["x"].shape == (4,)
+    assert scalar["x"].shape == (4,)

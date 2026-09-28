@@ -11,6 +11,10 @@
 #include <nanobind/ndarray.h>
 namespace nb = nanobind;
 
+// Implemented by bindings.cpp.  Tensor conversion is the native boundary at
+// which the Python torch runtime must be present and ABI-compatible.
+void ensure_torch_abi();
+
 // Forward declare THPVariableClass
 extern PyObject* THPVariableClass;
 
@@ -23,6 +27,7 @@ inline bool THPVariable_Check(PyObject* obj) {
 extern PyObject* THPVariable_Wrap(const at::TensorBase& var);
 
 inline nb::object tensor_to_numpy_object(const torch::Tensor& tensor) {
+    ensure_torch_abi();
     PyObject* tensor_obj = THPVariable_Wrap(tensor);
     if (!tensor_obj) {
         throw std::runtime_error("Failed to wrap tensor for NumPy conversion");
@@ -76,6 +81,7 @@ inline nb::ndarray<nb::numpy, T, nb::c_contig> alloc_numpy_array(
 
 // Helper function to convert torch::Tensor to Python object - FAST PATH
 inline nb::object tensor_to_python(const torch::Tensor& tensor) {
+    ensure_torch_abi();
     PyObject* tensor_obj = THPVariable_Wrap(tensor);
     if (!tensor_obj) {
         throw std::runtime_error("Failed to wrap tensor");
@@ -85,6 +91,7 @@ inline nb::object tensor_to_python(const torch::Tensor& tensor) {
 
 // Helper function to convert Python object to torch::Tensor - FAST PATH
 inline torch::Tensor python_to_tensor(nb::object obj) {
+    ensure_torch_abi();
     if (!PyObject_HasAttrString(obj.ptr(), "__dlpack__")) {
         throw std::runtime_error("Object does not implement __dlpack__");
     }

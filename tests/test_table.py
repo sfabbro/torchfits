@@ -49,6 +49,15 @@ class TestTableReading:
             assert "RA" in result
             assert "DEC" in result
             assert len(result["RA"]) == 100
+            # The values, not just the shape: every assertion in this class used
+            # to be a count or a dtype, so a reader returning correctly-shaped
+            # arrays of zeros would have passed all five of them.
+            for name in ("ID", "RA", "DEC", "MAG_G", "FLAG"):
+                np.testing.assert_allclose(
+                    np.asarray(result[name], dtype=np.float64),
+                    expected_data[name].astype(np.float64),
+                    err_msg=f"column {name} came back with the wrong values",
+                )
 
         finally:
             os.unlink(filepath)
@@ -66,6 +75,11 @@ class TestTableReading:
             assert "RA" in result
             assert "DEC" in result
             assert "MAG_G" not in result  # Should not be included
+            # Selection must not reorder or reshape the values it did keep.
+            np.testing.assert_allclose(
+                np.asarray(result["RA"], dtype=np.float64),
+                expected_data["RA"].astype(np.float64),
+            )
 
         finally:
             os.unlink(filepath)
@@ -81,6 +95,17 @@ class TestTableReading:
 
             assert isinstance(result, dict)
             assert len(result["RA"]) == 50
+            # The window must land on rows 100..149, in order. `start_row` is
+            # 1-based (docs/api-tables.md), so the first row returned is file
+            # row 99 -- a detail the old length-only assertion never pinned.
+            first = 100 - 1
+            np.testing.assert_allclose(
+                np.asarray(result["RA"], dtype=np.float64),
+                expected_data["RA"][first : first + 50].astype(np.float64),
+            )
+            np.testing.assert_array_equal(
+                np.asarray(result["ID"]), expected_data["ID"][first : first + 50]
+            )
 
         finally:
             os.unlink(filepath)
@@ -94,6 +119,11 @@ class TestTableReading:
             chunks = list(torchfits.table.scan_torch(filepath, hdu=1, batch_size=1000))
             total_rows = sum(len(chunk["RA"]) for chunk in chunks)
             assert total_rows == 10000
+            # Every row, in order, across the batch boundaries.
+            streamed = torch.cat([chunk["RA"] for chunk in chunks])
+            torch.testing.assert_close(
+                streamed, torch.as_tensor(expected_data["RA"], dtype=streamed.dtype)
+            )
 
         finally:
             os.unlink(filepath)
@@ -261,6 +291,8 @@ class TestTableReading:
             assert result["ID"].dtype in [torch.int32, torch.int64]
             assert result["RA"].dtype in [torch.float32, torch.float64]
             assert result["FLAG"].dtype in [torch.uint8, torch.int16, torch.int32]
+            # A dtype assertion alone is satisfied by correctly-typed garbage.
+            np.testing.assert_array_equal(np.asarray(result["ID"]), expected_data["ID"])
 
         finally:
             os.unlink(filepath)

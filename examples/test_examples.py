@@ -18,27 +18,44 @@ _EXCLUDE = {
     "test_examples.py",  # this file
 }
 
-# Optional-deps examples: pass if they exit 0 or print a known skip message.
+# Optional examples: pass if they exit 0, print a known skip message, or time
+# out. They still run — the point is that they must not red the gate for a reason
+# outside this repository's control.
 OPTIONAL = {
     "example_polars.py",
+    # Fetches a catalog and one FITS cutout per row from a third-party HTTP
+    # service (legacysurvey.org). Its availability depends on that service and on
+    # the network, not on anything here, so a network problem must not fail CI.
+    "example_ml_galaxyzoo_legacy.py",
 }
+
+# Markers an optional example prints when it declines to run. The examples use a
+# "SKIP: ..." convention; the older "not installed"/"skipping" pair matched none
+# of the seven examples that print one, so an optional example skipping that way
+# was still reported as a failure.
+SKIP_MARKERS = (
+    "skip:",
+    "not installed",
+    "skipping",
+)
 
 
 def _discover_examples() -> list[str]:
     """Discover all example scripts via glob, excluding test-runner and aux files."""
-    patterns = [
-        os.path.join(SCRIPT_DIR, "*.py"),
-        os.path.join(SCRIPT_DIR, "cli", "*.py"),
+    # (subdir, pattern) pairs: whether a hit is a cli/ script is decided by the
+    # subdirectory it was globbed from, never by the absolute pattern text --
+    # a checkout under e.g. ~/clinical/ or ~/client/ used to reclassify every
+    # top-level example as cli/<name>.py, and the whole gate then failed with
+    # "file not found".
+    globs = [
+        ("", os.path.join(SCRIPT_DIR, "*.py")),
+        ("cli", os.path.join(SCRIPT_DIR, "cli", "*.py")),
     ]
     discovered: list[str] = []
-    for pattern in patterns:
+    for subdir, pattern in globs:
         for path in sorted(glob.glob(pattern)):
-            name = (
-                os.path.basename(path)
-                if "cli" not in pattern
-                else os.path.join("cli", os.path.basename(path))
-            )
-            base = os.path.basename(name)
+            base = os.path.basename(path)
+            name = os.path.join(subdir, base) if subdir else base
             if base.startswith("_") or name in _EXCLUDE:
                 continue
             discovered.append(name)
@@ -61,6 +78,11 @@ TIMEOUTS = {
 }
 
 
+def _assertions_enabled() -> bool:
+    """False when this process was started with ``-O`` / ``PYTHONOPTIMIZE``."""
+    return __debug__
+
+
 def _python_cmd() -> list[str]:
     if os.environ.get("PIXI_ENVIRONMENT_NAME"):
         return [sys.executable]
@@ -76,6 +98,14 @@ def _run_example(name: str) -> tuple[bool, str]:
 
     timeout = TIMEOUTS.get(name, 180)
     env = os.environ.copy()
+    # PYTHONOPTIMIZE (or `python -O` on this runner) erases every `assert` in the
+    # examples, and the identity-stress and cookbook examples are built almost
+    # entirely out of them: they would print "All ... checks passed" having
+    # checked nothing, and the gate would call that a PASS. Assertions are the
+    # point here, so the children are started with them on.
+    env.pop("PYTHONOPTIMIZE", None)
+    if not _assertions_enabled():
+        return False, "runner started with assertions disabled (-O)"
     if os.environ.get("GITHUB_ACTIONS"):
         env["TORCHFITS_EXAMPLE_FAST"] = "1"
     # The denoise example trains a U-Net + evaluates CCDs; the smoke path
@@ -97,22 +127,35 @@ def _run_example(name: str) -> tuple[bool, str]:
             env=env,
         )
     except subprocess.TimeoutExpired as exc:
+        # A timeout is an environment problem rather than a defect in the
+        # example, which is what "optional" is meant to absorb. A required
+        # example still fails here: one that cannot finish inside its budget is
+        # a real signal about the repository.
+        if name in OPTIONAL:
+            return True, f"skipped (timed out after {timeout}s, optional)"
         return False, f"timeout after {timeout}s: {exc}"
     if result.returncode == 0:
         return True, ""
 
     output = (result.stderr or "") + (result.stdout or "")
-    # Only OPTIONAL examples are allowed to skip on missing deps.
-    if name in OPTIONAL:
-        skip_markers = ("not installed", "skipping")
-        if any(marker in output.lower() for marker in skip_markers):
-            return True, "skipped (optional dependency missing)"
+    # Only OPTIONAL examples may decline to run.
+    if name in OPTIONAL and any(m in output.lower() for m in SKIP_MARKERS):
+        return True, "skipped (optional)"
     return False, output[:1500]
 
 
 def main() -> int:
     print(f"Running examples from: {os.getcwd()}")
     success = True
+
+    if not _assertions_enabled():
+        print(
+            "refusing to run: this interpreter has assertions disabled (-O / "
+            "PYTHONOPTIMIZE), and the identity-stress and cookbook examples are "
+            "built out of `assert`. Re-run without -O.",
+            file=sys.stderr,
+        )
+        return 1
 
     required = [n for n in _discover_examples() if n not in OPTIONAL]
     optional = [n for n in _discover_examples() if n in OPTIONAL]

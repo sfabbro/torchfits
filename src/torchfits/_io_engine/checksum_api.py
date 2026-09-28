@@ -9,8 +9,8 @@ from typing import Any, Dict
 def _cpp() -> Any:
     """Resolve the native extension lazily.
 
-    Importing it maps libtorch and imports ``torch``, so checksums -- pure byte
-    arithmetic that never touches a tensor -- must not do it at module scope.
+    Importing it maps libtorch but does not import the Python ``torch`` module;
+    keep the import lazy so checksum metadata does not initialize tensor state.
     """
     import torchfits._C as cpp
 

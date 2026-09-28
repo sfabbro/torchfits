@@ -5,10 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterator, Optional
 
-import torch
-
-from .._io_engine.device import to_device
-from .._table.cache import _acquire_cpp_handle, _acquire_cpp_reader
+from .._table.cache import _acquire_cpp_reader
 from .._table.utils import _normalize_row_slice, _require_pyarrow
 from .._table.arrow_convert import _chunk_to_record_batch
 from .._table_engine import validate_table_backend
@@ -61,7 +58,9 @@ def _iter_chunks_cpp_table(
     col_list = columns if columns else []
 
     def _generator() -> Any:
-        can_mmap_rows = mmap and hasattr(cpp, "read_fits_table_rows")
+        can_mmap_rows = mmap and hasattr(
+            cpp, "read_fits_table_rows_mmap_from_reader_raw"
+        )
         if can_mmap_rows:
             can_mmap_rows = _can_use_mmap_row_path_for_full_read(
                 path, hdu, columns, header=header
@@ -84,7 +83,7 @@ def _iter_chunks_cpp_table(
                 size = min(batch_size, end_row - row + 1)
                 if can_mmap_rows and mmap_reader is not None:
                     try:
-                        yield cpp.read_fits_table_rows_mmap_from_reader(
+                        yield cpp.read_fits_table_rows_mmap_from_reader_raw(
                             mmap_reader, col_list, row, size
                         )
                         row += size
@@ -97,7 +96,7 @@ def _iter_chunks_cpp_table(
 
                 if file_handle is None:
                     file_handle = cpp.open_fits_file(path, "r")
-                yield cpp.read_fits_table_rows_from_handle(
+                yield cpp.read_fits_table_rows_raw_from_handle(
                     file_handle, hdu, col_list, row, size
                 )
                 row += size
@@ -391,6 +390,27 @@ def _scan_iter(
         )
 
 
+def _row_index_0(row: Any) -> int:
+    """Convert one ``rows=`` entry to a 0-based index, rejecting negatives.
+
+    ``int()`` truncates toward zero, so checking the *converted* value let a
+    negative fractional index slip through: ``rows=[-0.5]`` became ``0``, which
+    passed the non-negativity guard and silently read row 0. The guard has to
+    test the un-converted value, or the same coercion that produces the index
+    defeats the check that validates it.
+    """
+    index = int(row)
+    try:
+        negative = bool(row < 0)
+    except TypeError:
+        # A value int() accepted but that cannot be ordered against 0 (e.g.
+        # the string "3"); the converted index is all we can validate.
+        negative = False
+    if index < 0 or negative:
+        raise ValueError(f"rows must be non-negative (0-based), got {row!r}")
+    return index
+
+
 def _validate_row_selection(rows: Any, header: Any) -> None:
     """Reject invalid ``rows=`` indices with sequence semantics (r5a-01).
 
@@ -405,11 +425,9 @@ def _validate_row_selection(rows: Any, header: Any) -> None:
     except (TypeError, ValueError):
         return
     for row in rows:
-        row = int(row)
-        if row < 0:
-            raise ValueError("rows must be non-negative (0-based)")
-        if row >= n_rows:
-            raise IndexError(f"row {row} out of range for a {n_rows}-row table")
+        index = _row_index_0(row)
+        if index >= n_rows:
+            raise IndexError(f"row {index} out of range for a {n_rows}-row table")
 
 
 def _read_cpp_table_chunk(
@@ -513,7 +531,7 @@ def _read_cpp_table_chunk(
     # One chunk holds whole columns straight from the C++ engine, so the value
     # type is the union of what the native and numpy paths return.
     chunk: dict[str, Any] | None = None
-    prefer_torch_full_path = (
+    prefer_raw_full_path = (
         rows is None
         and start_row == 1
         and num_rows == -1
@@ -524,41 +542,38 @@ def _read_cpp_table_chunk(
             path, hdu, columns, header=_get_hdr()
         )
     )
-    if prefer_torch_full_path:
+    if prefer_raw_full_path:
         if mmap and _can_use_mmap_row_path_for_full_read(
             path, hdu, columns, header=_get_hdr()
         ):
             try:
-                chunk = cpp.read_fits_table(path, hdu, col_list, True)
+                chunk = cpp.read_fits_table_raw(path, hdu, col_list, True)
             except (RuntimeError, OSError) as exc:
                 logger.debug("mmap full table read failed; retrying: %s", exc)
                 chunk = None
         if chunk is None:
             try:
                 if not col_list:
-                    file_handle = _acquire_cpp_handle(path, cpp)
-                    try:
-                        chunk = cpp.read_fits_table_from_handle(file_handle, hdu)
-                    finally:
-                        try:
-                            file_handle.close()
-                        except (RuntimeError, OSError):
-                            pass
+                    reader = _acquire_cpp_reader(path, hdu, cpp)
+                    chunk = reader.read_rows_raw([], 1, -1)
                 else:
-                    chunk = cpp.read_fits_table(path, hdu, col_list, False)
+                    chunk = cpp.read_fits_table_raw(path, hdu, col_list, False)
             except (RuntimeError, OSError) as exc:
                 logger.debug("full table read failed; falling back: %s", exc)
                 chunk = None
 
     if chunk is None and rows is not None:
-        rows_arr = np.asarray(rows, dtype=np.int64)
+        # Convert through _row_index_0 so the non-negativity guard sees the
+        # un-truncated value; np.asarray(..., dtype=int64) would truncate a
+        # negative fraction to 0 and let it through. This branch also runs
+        # when the header read failed and _validate_row_selection was skipped,
+        # so the two checks must agree.
+        rows_arr = np.asarray([_row_index_0(r) for r in rows], dtype=np.int64)
         if rows_arr.size == 0:
             pa = _require_pyarrow()
             return _empty_table_with_schema(
                 pa, path, hdu, columns, decode_bytes, include_fits_metadata
             )
-        if np.any(rows_arr < 0):
-            raise ValueError("rows must be non-negative (0-based)")
 
         order = np.argsort(rows_arr, kind="stable")
         sorted_rows = rows_arr[order]
@@ -586,9 +601,7 @@ def _read_cpp_table_chunk(
         inv[order] = np.arange(len(order))
         chunk = {}
         for name, value in chunk_sorted.items():
-            if isinstance(value, torch.Tensor):
-                chunk[name] = value[inv]
-            elif isinstance(value, np.ndarray):
+            if isinstance(value, np.ndarray):
                 chunk[name] = value[inv]
             elif isinstance(value, list):
                 chunk[name] = [value[i] for i in inv]
@@ -598,12 +611,12 @@ def _read_cpp_table_chunk(
     if chunk is None:
         try:
             if mmap:
-                chunk = cpp.read_fits_table_rows(
+                chunk = cpp.read_fits_table_rows_raw(
                     path, hdu, col_list, start_row, num_rows, True
                 )
             else:
                 reader = _acquire_cpp_reader(path, hdu, cpp)
-                chunk = reader.read_rows(col_list, start_row, num_rows)
+                chunk = reader.read_rows_raw(col_list, start_row, num_rows)
         except (RuntimeError, OSError) as exc:
             logger.debug("row-slice table read failed: %s", exc)
             chunk = None
@@ -645,7 +658,10 @@ def _scan_torch_iter(
     pin_memory: bool = False,
     header: Any = None,
 ) -> Iterator[dict[str, Any]]:
+    import torch
     import torchfits
+
+    from .._io_engine.device import to_device
 
     start_row, num_rows = _normalize_row_slice(row_slice)
     use_mmap = mmap

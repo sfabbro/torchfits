@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 
+#include "core/core_export.h"
 #include "internal_utils.h"
 
 namespace torchfits {
@@ -22,9 +23,9 @@ public:
     bool owner = false;
 
     MMapHandle() = default;
-    explicit MMapHandle(const std::string& filename);
-    explicit MMapHandle(const std::string& filename, bool writable);
-    explicit MMapHandle(void* ptr, size_t size, int fd, bool owner = true);
+    TORCHFITS_CORE_API explicit MMapHandle(const std::string& filename);
+    TORCHFITS_CORE_API explicit MMapHandle(const std::string& filename, bool writable);
+    TORCHFITS_CORE_API explicit MMapHandle(void* ptr, size_t size, int fd, bool owner = true);
 
     // Move constructor
     MMapHandle(MMapHandle&& other) noexcept
@@ -55,7 +56,10 @@ public:
         cleanup();
     }
 
-    void cleanup(); // Implementation in hardware.cpp or inline if header-only
+    // Out-of-line definitions live in libtorchfits_core (hardware.cpp), so
+    // the torch-linked extension and the torch-free metadata core map the same
+    // file rather than each compiling their own copy of the mmap bookkeeping.
+    TORCHFITS_CORE_API void cleanup();
 };
 
 // Convenience wrappers that accept signed integer types commonly used in

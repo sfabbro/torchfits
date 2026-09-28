@@ -18,12 +18,14 @@ from __future__ import annotations
 import errno
 import http.client
 import ipaddress
+import math
 import os
 import socket
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 from typing import Any, Callable, Mapping
 
 
@@ -55,14 +57,56 @@ def _parse_http_content_range(value: str | None) -> tuple[int, int, int | None] 
     return start, end, total
 
 
+def _warn_unusable_timeout(raw: str, default: float, problem: str) -> None:
+    """Name the variable, the bad value and the fallback, in one line.
+
+    A warning that says only "invalid timeout" leaves the reader no better off
+    than the silence it replaces: the failure surfaces much later, inside
+    urllib/socket, as an errno 36 or a ValueError about a timeout value.
+    """
+    warnings.warn(
+        f"TORCHFITS_HTTP_TIMEOUT={raw!r} {problem}; using the default of "
+        f"{default:g}s instead. Set it to a positive number of seconds "
+        f"(e.g. TORCHFITS_HTTP_TIMEOUT=30), or unset it to accept {default:g}s.",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def http_timeout(default: float = 120.0) -> float:
+    """HTTP(S) timeout in seconds, from ``TORCHFITS_HTTP_TIMEOUT``.
+
+    Unset or blank means *default*. A value that is not a **positive, finite
+    number** also means *default* -- and says so, once, instead of failing
+    later somewhere unrelated.
+
+    The unusable cases are not hypothetical. Measured against a real socket,
+    each of these reached the transport and produced a raw low-level error with
+    no hint that this variable was involved:
+
+    ==========================  =======================================
+    ``TORCHFITS_HTTP_TIMEOUT``  what the caller actually saw
+    ==========================  =======================================
+    ``0``                       ``BlockingIOError: [Errno 36]`` -- the
+                                socket goes non-blocking and never connects
+    ``-5``                      ``ValueError: Timeout value out of range``
+    ``nan``                     ``ValueError: Invalid value NaN``
+    ``inf``                     ``OverflowError: timestamp out of range``
+    ``30s``                     nothing -- a silent 120s
+    ==========================  =======================================
+    """
     raw = os.environ.get("TORCHFITS_HTTP_TIMEOUT", "").strip()
     if not raw:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
+        _warn_unusable_timeout(raw, default, "is not a number")
         return default
+    if not math.isfinite(value) or value <= 0.0:
+        _warn_unusable_timeout(raw, default, "is not a positive, finite number")
+        return default
+    return value
 
 
 def auth_headers() -> dict[str, str]:

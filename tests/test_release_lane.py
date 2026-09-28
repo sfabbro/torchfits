@@ -99,3 +99,114 @@ def test_pixi_package_uses_vendored_cfitsio_not_conda_4_6() -> None:
     host = package.split("[package.host-dependencies]", 1)[1]
     host = host.split("\n[", 1)[0]
     assert "bzip2" in host
+
+
+def test_local_lane_recovers_the_experimental_lane() -> None:
+    """``render`` writes ``+torch<major><minor>``; the reader must invert it.
+
+    The same recovery lives in ``scripts/verify_wheel_matrix.sh`` (from a wheel
+    filename), so the encoding is a repo convention, not a one-off.
+    """
+    base = _map_version()
+    assert lane.local_lane(f"{base}.dev0+torch212") == "2.12"
+    assert lane.local_lane(f"{base}.dev0+torch213") == "2.13"
+    assert lane.local_lane(base) is None
+    assert lane.local_lane(f"{base}rc5") is None
+    # Only a dev-local segment names a lane; a prerelease is still the map lane.
+    assert lane.lane_for_version(f"{base}rc5", lane.load_lanes()) == "2.13"
+
+
+def _lane_tree(tmp_path: Path, lane_name: str) -> None:
+    """A throwaway tree rendered onto ``lane_name`` by the real renderer."""
+    for name in ("pyproject.toml", "constraints-wheel.txt", "pixi.toml"):
+        (tmp_path / name).write_text(
+            (ROOT / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    (tmp_path / "recipe.yaml").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "recipe.yaml").write_text(
+        (ROOT / "packaging/conda/recipe.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tmp_path / "__init__.py").write_text(
+        (ROOT / "src/torchfits/__init__.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    for path, rendered in lane.render(lane_name, None).items():
+        path = tmp_path / path.name
+        path.write_text(rendered, encoding="utf-8")
+
+
+def _use_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(lane, "ROOT", tmp_path)
+    monkeypatch.setattr(lane, "PYPROJECT", tmp_path / "pyproject.toml")
+    monkeypatch.setattr(lane, "CONSTRAINTS", tmp_path / "constraints-wheel.txt")
+    monkeypatch.setattr(lane, "PIXI", tmp_path / "pixi.toml")
+    monkeypatch.setattr(lane, "RECIPE", tmp_path / "recipe.yaml")
+    monkeypatch.setattr(lane, "INIT", tmp_path / "__init__.py")
+    monkeypatch.setattr(lane, "LANES_FILE", ROOT / "scripts" / "torch_lanes.json")
+
+
+def test_current_lane_follows_an_experimental_lane_render(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tree rendered onto 2.12 must not report the 2.13 release lane.
+
+    ``--print-pins`` feeds ``TORCH_PIN`` to seven CI jobs, which install
+    ``torch>=<pin>``; reporting the map lane for a dev-lane tree would install a
+    torch the tree is not ABI-matched to.
+    """
+    _lane_tree(tmp_path, "2.12")
+    _use_tree(monkeypatch, tmp_path)
+    assert lane.committed_torch_spec() == ">=2.12,<2.13"
+    assert lane.current_lane() == "2.12"
+    assert lane.check() == 0
+
+
+def test_print_pins_reports_the_committed_lane(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _lane_tree(tmp_path, "2.12")
+    _use_tree(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["release_lane.py", "--print-pins"])
+    assert lane.main() == 0
+    out = capsys.readouterr().out
+    assert "lane=2.12" in out
+    assert "torch=>=2.12,<2.13" in out
+
+
+def test_print_pins_fails_loudly_when_the_tree_pin_disagrees(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A drifted constraints file must not be papered over with a map lookup."""
+    _lane_tree(tmp_path, "2.13")
+    _use_tree(monkeypatch, tmp_path)
+    constraints = tmp_path / "constraints-wheel.txt"
+    text, count = re.subn(
+        r"^torch>=2\.13,<2\.14$",
+        "torch>=2.12,<2.13",
+        constraints.read_text(),
+        count=0,
+        flags=re.M,
+    )
+    assert count == 1
+    constraints.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["release_lane.py", "--print-pins"])
+    assert lane.main() == 1
+    assert "constraints-wheel.txt" in capsys.readouterr().out
+
+
+def test_print_pins_reports_the_committed_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A prerelease state prints its own version, not the map's base version."""
+    _lane_tree(tmp_path, "2.13")
+    _use_tree(monkeypatch, tmp_path)
+    expected = f"{_map_version()}rc5"
+    for name in ("pyproject.toml", "pixi.toml", "recipe.yaml", "__init__.py"):
+        path = tmp_path / name
+        text, count = re.subn(re.escape(_map_version()), expected, path.read_text())
+        assert count >= 1, name
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["release_lane.py", "--print-pins"])
+    assert lane.main() == 0
+    assert f"version={expected}" in capsys.readouterr().out

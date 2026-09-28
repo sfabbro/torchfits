@@ -68,6 +68,31 @@ _ROOT_FUNCTIONS: dict[str, tuple[str, str]] = {
     "to_astropy": ("torchfits.interop", "to_astropy"),
 }
 
+# These entry points return metadata or manage metadata caches only.  Keep
+# their root lookup free of the tensor-runtime initializer; the native module
+# itself defers the Python ``torch`` import until a tensor boundary is used.
+_METADATA_ROOT_FUNCTIONS = frozenset(
+    {
+        "open",
+        "read_header",
+        "read_colnames",
+        "read_extname",
+        "read_hdu_type",
+        "read_keys",
+        "read_nrows",
+        "read_num_hdus",
+        "read_shape",
+        "read_table_info",
+        "read_batch_info",
+        "get_cache_performance",
+        "clear_file_cache",
+        "clear_all_caches",
+        "verify_checksums",
+        "delete_hdu",
+        "write_checksums",
+    }
+)
+
 _ROOT_OBJECTS: dict[str, tuple[str, str]] = {
     "Header": ("torchfits.hdu", "Header"),
     "Card": ("torchfits.hdu", "Card"),
@@ -140,9 +165,38 @@ def _ensure_runtime_init() -> None:
     # libtorch_cuda.so, libtorch_python.so) are loaded before torchfits._C.
     import torch  # noqa: F401
 
-    import_module("torchfits._C")
+    native = import_module("torchfits._C")
+    # Metadata may have imported the extension before torch was present.  The
+    # module initializer then intentionally skipped this check, so enforce the
+    # ABI again at the tensor boundary after loading torch.
+    getattr(native, "_check_torch_abi")()
+    _check_core_build_id(native)
 
     _RUNTIME_INITIALIZED = True
+
+
+def _check_core_build_id(native: Any) -> None:
+    """Fail if ``_C`` and the loaded ``libtorchfits_core`` are from different builds.
+
+    ``_C`` resolves its CFITSIO symbols against ``libtorchfits_core`` at load
+    time. A half-rebuilt checkout can leave a fresh ``_C`` next to a stale core,
+    which every compile-time check accepts and which only misbehaves once a
+    struct layout disagrees. This is the first point where both sides are
+    loaded, so it is where the comparison can be made.
+    """
+    extension_id = getattr(native, "__core_build_id__", None)
+    if extension_id is None:
+        return
+    from torchfits import _core as core
+
+    library_id = core.core_library_build_id()
+    if extension_id != library_id:
+        raise ImportError(
+            "torchfits._C and the libtorchfits_core it loaded are from different "
+            f"builds:\n  _C:      {extension_id}\n  library: {library_id}\n"
+            "Reinstall the package (pip install -e . --no-build-isolation) so every "
+            "native artifact comes from the same build."
+        )
 
 
 def __getattr__(name: str) -> Any:
@@ -160,7 +214,8 @@ def __getattr__(name: str) -> Any:
                 _ensure_runtime_init()
             value: Any = import_module(_NAMESPACES[name])
         elif name in _ROOT_FUNCTIONS:
-            _ensure_runtime_init()
+            if name not in _METADATA_ROOT_FUNCTIONS:
+                _ensure_runtime_init()
             module_name, attr_name = _ROOT_FUNCTIONS[name]
             value = getattr(import_module(module_name), attr_name)
         elif name in _ROOT_OBJECTS:

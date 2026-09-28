@@ -8,28 +8,39 @@ TMP_DIR="${ROOT_DIR}/.tmp-vendor"
 CFITSIO_REPO="HEASARC/cfitsio"
 CFITSIO_VERSION=""
 CFITSIO_SPEC_FILE=""
+CFITSIO_SPEC_IS_FILE="0"
 CFITSIO_SHA256=""
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") --cfitsio-version <tag-or-versions-file>
+Usage: $(basename "$0") --cfitsio-version <versions-file>
+       $(basename "$0") --cfitsio-version <tag>   # preview only, see below
 
-Vendored dependencies are pinned: pass an exact tag or a versions file
-(extern/VERSIONS.txt). A sha256 recorded in the versions file is enforced
-against the downloaded tarball; fetching a tag with no recorded hash
-requires TORCHFITS_VENDOR_ALLOW_UNPINNED=1 (the hash is then computed and
-recorded for the next run). "latest" resolution was removed so builds can
-never silently pick up different upstream code (H4).
+Vendored dependencies are pinned: pass extern/VERSIONS.txt. A sha256 recorded
+in the versions file is enforced against the downloaded tarball, and that file
+is the ONLY thing this script will write. "latest" resolution was removed so
+builds can never silently pick up different upstream code (H4).
+
+Passing a bare tag instead of the versions file vendors that tag and prints
+the sha256 it computed, but does NOT update extern/VERSIONS.txt. Patches are
+named "<tag>-<name>.patch" and are skipped for any other tag, so a bare-tag
+run is a preview of another version, not a way to move the pin: to move it,
+edit extern/VERSIONS.txt deliberately and pass that file.
 
 Examples:
-  $(basename "$0") --cfitsio-version extern/VERSIONS.txt
-  $(basename "$0") --cfitsio-version cfitsio-4.6.2   # requires ALLOW_UNPINNED
+  $(basename "$0") --cfitsio-version extern/VERSIONS.txt   # what CI runs
+  $(basename "$0") --cfitsio-version cfitsio-4.6.2        # preview; prints hash
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cfitsio-version)
+      if [[ $# -lt 2 ]]; then
+        echo "--cfitsio-version requires a value." >&2
+        usage
+        exit 1
+      fi
       CFITSIO_VERSION="$2"
       CFITSIO_SPEC_FILE="$2"
       shift 2
@@ -45,6 +56,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "${CFITSIO_VERSION}" ]]; then
+  echo "--cfitsio-version is required (pass extern/VERSIONS.txt)." >&2
+  usage
+  exit 1
+fi
+if [[ -f "${CFITSIO_SPEC_FILE}" ]]; then
+  CFITSIO_SPEC_IS_FILE="1"
+fi
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -154,7 +174,7 @@ fetch_and_extract() {
 
 
 # Resolve the pinned hash from the versions file (if the user passed one).
-if [[ -n "${CFITSIO_SPEC_FILE}" && -f "${CFITSIO_SPEC_FILE}" ]]; then
+if [[ "${CFITSIO_SPEC_IS_FILE}" == "1" ]]; then
   CFITSIO_SHA256="$(grep -E '^cfitsio_sha256=' "${CFITSIO_SPEC_FILE}" | head -n1 | cut -d= -f2- || true)"
 fi
 
@@ -178,14 +198,49 @@ if [[ -d "${PATCH_DIR}" ]]; then
     echo "Applying patch ${p} to ${EXTERN_DIR}/cfitsio"
     ( cd "${EXTERN_DIR}/cfitsio" && patch -p1 < "${p}" )
   done
+  # A patch is named "<tag>-<name>.patch" and is applied only to that exact
+  # tag, so vendoring any other tag silently yields an UNPATCHED tree. Some of
+  # those patches are security fixes (cfitsio-4.7.0-plio-cbuf is a CFITSIO heap
+  # overflow on PLIO-compressed incompressible data), so say what was left out
+  # instead of letting it disappear into a passing build.
+  skipped=0
+  for p in "${PATCH_DIR}"/*.patch; do
+    [[ -f "${p}" ]] || continue
+    case "$(basename "${p}")" in
+      "${CFITSIO_VERSION}"-*) continue ;;
+    esac
+    if [[ "${skipped}" -eq 0 ]]; then
+      echo "WARNING: ${CFITSIO_VERSION} has no matching patch; these are being skipped:" >&2
+    fi
+    skipped=$((skipped + 1))
+    echo "  $(basename "${p}")" >&2
+  done
+  if [[ "${skipped}" -gt 0 ]]; then
+    echo "  -> ${EXTERN_DIR}/cfitsio is NOT patched. If this tag is meant to" >&2
+    echo "     replace ${CFITSIO_VERSION}, add <tag>-<name>.patch copies first." >&2
+  fi
 fi
 
 RECORDED_HASH="$(compute_archive_hash)"
-cat > "${EXTERN_DIR}/VERSIONS.txt" <<VERSIONS
+if [[ "${CFITSIO_SPEC_IS_FILE}" == "1" ]]; then
+  # The tag came out of the file, so this can only ever rewrite the same tag;
+  # a changed upstream hash would have failed the check above. It is kept for
+  # the "pin a new tag by hand" flow, where the file is edited first and the
+  # recorded hash refreshed by running this.
+  cat > "${CFITSIO_SPEC_FILE}" <<VERSIONS
 cfitsio_repo=${CFITSIO_REPO}
 cfitsio_tag=${CFITSIO_VERSION}
 cfitsio_sha256=${RECORDED_HASH}
 VERSIONS
+  echo "Recorded versions in ${CFITSIO_SPEC_FILE}"
+else
+  # Bare tag: report, do not record. Writing here is how a stray
+  # `--cfitsio-version cfitsio-X.Y.Z` used to repoint the tracked pin and
+  # silently drop every patch written for the pinned tag.
+  echo "cfitsio_tag=${CFITSIO_VERSION}"
+  echo "cfitsio_sha256=${RECORDED_HASH}"
+  echo "Not recorded: ${EXTERN_DIR}/VERSIONS.txt is only written when it is the"
+  echo "--cfitsio-version argument. To move the pin, edit it and re-run with it."
+fi
 
 echo "Vendored deps prepared in ${EXTERN_DIR}"
-echo "Recorded versions in ${EXTERN_DIR}/VERSIONS.txt"

@@ -372,6 +372,46 @@ def test_rows_empty_list_preserves_schema(numeric_fits):
     assert str(t.schema.field("ID").type) == "int32"
 
 
+def test_negative_fractional_row_is_rejected(numeric_fits):
+    """The non-negativity guard must survive the int() coercion it relies on.
+
+    ``int()`` truncates toward zero, so validating the *converted* index let a
+    negative fraction through: ``rows=[-0.5]`` became ``0``, passed the guard,
+    and silently read row 0. The same bypass existed a second time in
+    ``np.asarray(rows, dtype=np.int64)``, which is the path taken when the
+    header read failed and the first check was skipped -- so the two checks
+    had to be brought into agreement, not just the first one.
+    """
+    import torchfits.table as table
+
+    for bad in ([-0.5], [-1.5], [0, -0.25]):
+        with pytest.raises(ValueError, match="rows must be non-negative"):
+            table.read(numeric_fits, rows=bad)
+
+
+def test_row_index_conversion_keeps_documented_acceptance(numeric_fits):
+    """Closing the bypass must not tighten what rows= already accepted.
+
+    The documented type is ``list[int]``; numpy integers and integral-valued
+    floats reached a row before this fix, and the empty/duplicate/unsorted
+    cases are the contract the scatter engine is built around.
+    """
+    import numpy as np
+    import torchfits.table as table
+
+    assert table.read(numeric_fits, rows=[np.int64(3)]).column("ID").to_pylist() == [3]
+    assert table.read(numeric_fits, rows=[3.0]).column("ID").to_pylist() == [3]
+    # Order is the caller's, not sorted; duplicates are preserved.
+    assert table.read(numeric_fits, rows=[7, 2, 7]).column("ID").to_pylist() == [
+        7,
+        2,
+        7,
+    ]
+    # A plain negative integer was already rejected and must stay rejected.
+    with pytest.raises(ValueError, match="rows must be non-negative"):
+        table.read(numeric_fits, rows=[-1])
+
+
 def test_empty_result_dtype_matches_full_read(tmp_path):
     """Empty results and schema() must report the data dtypes (r5a-02):
     unsigned conventions stay integer (uint16), scaled columns read as
@@ -624,3 +664,57 @@ def test_fallback_table_opens_file_once_per_call(tmp_path):
     assert counts == {"open": 1, "path": 0}, (
         f"expected one open and zero path-based binding calls, got {counts}"
     )
+
+
+def _unnamed_second_column_file(tmp_path, name="unnamed_where.fits"):
+    """Table whose *second* column has no TTYPE card, so it reads as COL2."""
+    path = str(tmp_path / name)
+    fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="ID", format="J", array=np.arange(4, dtype=np.int32)),
+            fits.Column(
+                name="SC", format="J", array=np.arange(100, 104, dtype=np.int32)
+            ),
+        ]
+    ).writeto(path)
+    with fits.open(path, mode="update") as hd:
+        del hd[1].header["TTYPE2"]  # the column data stays, the name card goes
+    return path
+
+
+@pytest.mark.parametrize("backend", ["auto", "cpp", "torch"])
+@pytest.mark.parametrize("expr", ["ID > 1", "ID >= 0", "ID < 0"])
+def test_where_read_keeps_unnamed_columns(tmp_path, backend, expr):
+    """A filtered read must return the same columns as an unfiltered one.
+
+    Both where= strategies built their column list from
+    `fits_schema.iter_table_columns`, which skips TTYPE-less columns, so the
+    result had one fewer column than the same read without a filter -- and the
+    two strategies disagreed with each other, meaning the columns you got
+    depended on whether torch had already been imported (TE-007).
+    """
+    import torchfits.table as table
+
+    path = _unnamed_second_column_file(tmp_path)
+    expected = table.read(path, hdu=1).column_names
+    assert expected == ["ID", "COL2"]
+
+    got = table.read(path, hdu=1, where=expr, backend=backend)
+    assert got.column_names == expected
+
+
+def test_where_read_is_stable_across_repeated_calls(tmp_path):
+    """Repeated identical reads in one process must not lose a column.
+
+    The first where= read found torch unimported and took the C++ path; once
+    torch was in sys.modules the torch path took over, and the two disagreed
+    about TTYPE-less columns. So a second call returned a different schema for
+    the same query.
+    """
+    import torchfits.table as table
+
+    path = _unnamed_second_column_file(tmp_path, "unnamed_repeat.fits")
+    first = table.read(path, hdu=1, where="ID > 1").column_names
+    for _ in range(3):
+        assert table.read(path, hdu=1, where="ID > 1").column_names == first
+    assert first == ["ID", "COL2"]

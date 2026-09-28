@@ -285,7 +285,9 @@ Synthetic DESI-shaped demo: `examples/desi_shaped_spectrum.py`.
 ## `FitsTensorIterableDataset`
 
 Iterable dataset for multi-worker sharded tensor loading. Each worker processes
-a deterministic subset — every file is seen exactly once per epoch.
+a disjoint, deterministic subset — every file is seen exactly once per epoch.
+*Which* order those files arrive in is a separate question, answered by
+`shuffle` and `seed` (see the note below).
 
 ```python
 from torchfits.data import FitsTensorIterableDataset
@@ -306,8 +308,8 @@ ds = FitsTensorIterableDataset(
 | `transform` | `callable` or `None` | `None` | Applied to each payload |
 | `device` | `str` | `"cpu"` | Torch device |
 | `mmap` | `bool` or `str` | `True` | Memory-mapped reads |
-| `shuffle` | `bool` | `False` | Shuffle file order (deterministic — same `seed=` permutation every epoch) |
-| `seed` | `int` | `0` | Base seed for shuffling |
+| `shuffle` | `bool` | `False` | Shuffle file order; a **different permutation each epoch** |
+| `seed` | `int` | `0` | Base seed for shuffling — the same `seed` replays the same *sequence* of epochs |
 | `add_channel_dim` | `bool` | `False` | Prepend channel dimension |
 | `cache_dir` | `str` or `Path` or `None` | `None` | Override remote prefetch directory |
 
@@ -317,6 +319,21 @@ ds = FitsTensorIterableDataset(
     Use when you have many files and want deterministic multi-worker loading
     without file duplication. Unlike map-style + `num_workers`, each worker
     gets a disjoint shard of files.
+
+!!! warning "Sharding is deterministic; shuffling is per-epoch"
+    Two different guarantees, and only the first one is "same every time":
+
+    * **The shard** is a function of `(rank, world_size, worker_id)` alone, so
+      every rank and worker sees its own disjoint slice on every epoch.
+    * **The order within the shard** changes every epoch when `shuffle=True` or
+      `shuffle_buffer_size=` is set. These were seeded from `seed` alone, which
+      made `shuffle=True` a no-op across epochs; they now mix a per-dataset
+      epoch counter with `torch.initial_seed()`.
+
+    `seed=` still makes a run reproducible: two datasets built with the same
+    `seed` in the same process replay the same sequence of epochs. If you need
+    one *fixed* order — a fixture, a golden-output test — leave `shuffle=False`
+    and set no `shuffle_buffer_size`.
 
 ---
 
@@ -634,3 +651,11 @@ Every file is seen exactly once across the entire cluster without duplication.
 
 ### Reservoir Shuffle Buffer
 Because streaming datasets do not load all samples into memory at once, setting `shuffle_buffer_size=N` enables an $O(N)$ streaming reservoir shuffle. Incoming items from the dataset stream are mixed with past items in a rolling buffer, yielding pseudo-random batches across files and mosaics.
+
+The buffer is re-seeded every epoch, so each epoch mixes differently. It is a
+*reservoir* shuffle, not a uniform permutation: an item's chance of landing in
+a given output slot rises with its position in the stream, which is the
+standard streaming trade-off (measured here over 20,000 seeds with $N=8$ and
+buffer 3: the last input item ended up in the final slot 33.6% of the time,
+the first 4.4%). The buffer size is therefore the shuffle window — raise it
+towards the dataset size when you need a stronger mix, at $O(N)$ memory.

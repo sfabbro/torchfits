@@ -71,14 +71,33 @@ def test_clear_all_caches_accessible_from_root() -> None:
     assert callable(torchfits.clear_all_caches)
 
 
-def test_clear_cache_disk_true_parameter() -> None:
-    """clear_cache(disk=True) should not crash."""
-    # Just verify it doesn't raise — disk cleanup tested above.
-    torchfits.cache.clear_cache(disk=False)
+def test_clear_cache_disk_true_parameter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """clear_cache(disk=True) removes the disk cache root.
+
+    Deep-review unit 10, TE-004: this test was named and documented for
+    ``disk=True`` and called ``disk=False``, so a reader counting coverage
+    would credit the flag with a test that never exercised it. The branch is
+    reachable directly, so it is now called directly.
+    """
+    cache_dir = tmp_path / "torchfits_cache"
+    (cache_dir / "remote").mkdir(parents=True)
+    (cache_dir / "remote" / "cached.fits").write_bytes(b"payload")
+
+    monkeypatch.setenv("TORCHFITS_CACHE_DIR", str(cache_dir))
+    assert (cache_dir / "remote" / "cached.fits").exists()
+
+    torchfits.cache.clear_cache(disk=True)
+
+    assert not cache_dir.exists() or not any(cache_dir.rglob("*"))
 
 
 def test_cache_subsystem_still_works_after_clear() -> None:
     """Subsystem clear should not break after a full clear."""
     torchfits.clear_all_caches()
-    # Should not raise.
-    torchfits.get_cache_performance()
+    # A full clear resets the counters, so this also proves the subsystem
+    # accessor still answers rather than raising.
+    stats = torchfits.get_cache_performance()
+    assert stats["total_requests"] == 0, stats
+    assert stats["hit_rate"] == 0.0, stats

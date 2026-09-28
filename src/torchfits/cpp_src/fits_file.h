@@ -38,6 +38,11 @@ public:
     int get_start_hdu() const { return start_hdu_; }
 
     void ensure_hdu(int hdu_num, int* status);
+    // Same move, but throws naming the query that needed it. Used by the
+    // HDU-keyed cache lookups below, which read the CFITSIO current-HDU cursor:
+    // their caches are keyed by hdu_num, so they must position the cursor
+    // themselves rather than trust the caller to have done it first.
+    void ensure_hdu_checked(int hdu_num, const char* what);
 
     const ScaleInfo& get_scale_info(int hdu_num, int bitpix);
     ScaleInfo get_scale_info_for_hdu(int hdu_num);

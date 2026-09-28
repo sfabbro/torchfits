@@ -20,6 +20,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def default_search_dirs() -> list[str]:
+    """Benchmark-run roots, skipping the ones that do not exist.
+
+    ``TORCHFITS_BENCH_ROOT`` used to be read with an empty-string default, and
+    ``Path("")`` is ``Path(".")``: with the variable unset the whole current
+    directory joined a recursive ``**/results.csv`` scan, which picked up the
+    committed ``docs/assets/bench/*/results.csv`` sample runs as if they were
+    matrix legs.  An unset variable now means "no such root".
+    """
+    candidates = [
+        os.path.expanduser("~/torchfits-gpu-bench"),
+        os.environ.get("TORCHFITS_BENCH_ROOT", ""),
+        str(ROOT / "benchmarks_results"),
+    ]
+    return [c for c in candidates if c]
+
+
 def find_result_dirs(search_paths: list[Path]) -> list[Path]:
     """Find all benchmark run directories containing results.csv."""
     found: list[Path] = []
@@ -130,17 +147,18 @@ def main() -> None:
     parser.add_argument(
         "--search-dirs",
         nargs="+",
-        default=[
-            os.path.expanduser("~/torchfits-gpu-bench"),
-            os.environ.get("TORCHFITS_BENCH_ROOT", ""),
-            str(ROOT / "benchmarks_results"),
-        ],
-        help="Directories to search for benchmark runs",
+        default=None,
+        help="Directories to search for benchmark runs (default: "
+        "~/torchfits-gpu-bench, $TORCHFITS_BENCH_ROOT when set, "
+        "benchmarks_results/)",
     )
-    parser.add_argument("--json", action="store_true", help="Output raw JSON analysis")
     args = parser.parse_args()
 
-    search_paths = [Path(p) for p in args.search_dirs]
+    search_paths = (
+        [Path(p) for p in default_search_dirs()]
+        if args.search_dirs is None
+        else [Path(p) for p in args.search_dirs]
+    )
     run_dirs = find_result_dirs(search_paths)
 
     if not run_dirs:

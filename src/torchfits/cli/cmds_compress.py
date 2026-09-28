@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import torch
 import torchfits
 from torchfits._io_engine.paths import cfitsio_base_path
 
@@ -134,6 +133,8 @@ def _rewrite_one_input_split_hdu(
     batch_inputs: tuple[str, ...] = (),
 ) -> int:
     """Compress/decompress image HDUs from one input; return count written."""
+    import torch
+
     try:
         with torchfits.open(input_path) as hdul:
             indices = selected_hdu_indices(len(hdul), hdu)
@@ -192,14 +193,14 @@ def _rewrite_split_hdu(args: argparse.Namespace, *, compress: bool | str) -> Non
     ensure_unique_basenames(inputs)
     ensure_unique_split_stems(inputs)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(inputs))
-    if file_jobs == 1:
-        configure_torch_jobs(int(args.jobs))
+    configure_torch_jobs(int(args.jobs))
     counts = run_file_jobs(
         inputs,
         lambda path: _rewrite_one_input_split_hdu(
             path, out_dir, args.hdu, compress=compress, batch_inputs=tuple(inputs)
         ),
         file_jobs,
+        torch_runtime=True,
     )
     if sum(counts) == 0:
         raise IoError("no image HDUs to process")
@@ -213,12 +214,12 @@ def _run_rewrite(args: argparse.Namespace, *, compress: bool | str) -> int:
 
     pairs = _resolve_file_pairs(args)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
-    if file_jobs == 1:
-        configure_torch_jobs(int(args.jobs))
+    configure_torch_jobs(int(args.jobs))
     run_file_jobs(
         pairs,
         lambda pair: _rewrite_file(pair[0], pair[1], compress=compress),
         file_jobs,
+        torch_runtime=True,
     )
     return EXIT_OK
 

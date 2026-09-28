@@ -29,12 +29,14 @@
 
 #include "torchfits_torch.h"
 #include "torch_compat.h"
+#include "core/metadata_api.h"
 #include "security.h"
 #include "hardware.h"
 #include "fits_detail.h"
 #include "fits_file.h"
 #include "fits_rw.h"
 #include "internal_utils.h"
+#include "nb_ndarray_utils.h"
 
 namespace torchfits {
 
@@ -113,6 +115,16 @@ void FITSFile::ensure_hdu(int hdu_num, int* status) {
     }
 }
 
+void FITSFile::ensure_hdu_checked(int hdu_num, const char* what) {
+    int status = 0;
+    ensure_hdu(hdu_num, &status);
+    if (status != 0) {
+        throw std::runtime_error(
+            "Could not move to HDU " + std::to_string(hdu_num) + " for " + what +
+            " (status " + std::to_string(status) + ")");
+    }
+}
+
 const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
     std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     auto it = scale_cache_.find(hdu_num);
@@ -130,6 +142,7 @@ const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
         }
     }
     ScaleInfo info;
+    ensure_hdu_checked(hdu_num, "scale lookup");
     const auto detected = detail::detect_scale_info_fast(fptr_, bitpix);
     info.scaled = detected.scaled; info.trusted = detected.trusted;
     info.bscale = detected.bscale; info.bzero = detected.bzero;
@@ -161,6 +174,7 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
         }
     }
     int status = 0;
+    ensure_hdu_checked(hdu_num, "compression check");
     int is_compressed = fits_is_compressed_image(fptr_, &status);
     bool result = (status == 0 && is_compressed);
     compressed_cache_[hdu_num] = result;
@@ -184,6 +198,7 @@ const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(in
         }
     }
     int status = 0;
+    ensure_hdu_checked(hdu_num, "image info lookup");
     int bitpix = 0;
     int naxis = 0;
     std::array<LONGLONG, 9> naxes_ll{};
@@ -441,38 +456,7 @@ std::vector<std::tuple<std::string, std::string, std::string>> FITSFile::get_hea
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
-    int nkeys = 0, morekeys = 0;
-    fits_get_hdrspace(fptr_, &nkeys, &morekeys, &status);
-    std::vector<std::tuple<std::string, std::string, std::string>> header;
-    header.reserve(nkeys);
-    char keyname[FLEN_KEYWORD], value[FLEN_VALUE], comment[FLEN_COMMENT];
-    for (int i = 1; i <= nkeys; i++) {
-        fits_read_keyn(fptr_, i, keyname, value, comment, &status);
-        if (status == 0) {
-            std::string key_str(keyname), val_str(value), com_str(comment);
-            val_str = detail::sanitize_fits_string(val_str);
-            if (val_str.length() >= 2 && val_str.front() == '\'') {
-                size_t last_quote = val_str.rfind('\'');
-                if (last_quote != std::string::npos && last_quote > 0) {
-                    val_str = val_str.substr(1, last_quote - 1);
-                    size_t last_char = val_str.find_last_not_of(' ');
-                    if (last_char != std::string::npos) val_str = val_str.substr(0, last_char + 1);
-                    else val_str = "";
-                    size_t pos = 0;
-                    while ((pos = val_str.find("''", pos)) != std::string::npos) {
-                        val_str.replace(pos, 2, "'"); pos += 1;
-                    }
-                }
-            }
-            if (key_str == "HISTORY" || key_str == "COMMENT") {
-                if (val_str.empty() && !com_str.empty()) {
-                    val_str = com_str; com_str = "";
-                }
-            }
-            header.emplace_back(key_str, val_str, com_str);
-        } else { status = 0; }
-    }
-    return header;
+    return core::header_cards(fptr_);
 }
 
 std::vector<long> FITSFile::get_shape(int hdu_num) {
@@ -480,17 +464,7 @@ std::vector<long> FITSFile::get_shape(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
-    int naxis = 0;
-    fits_get_img_dim(fptr_, &naxis, &status);
-    if (status != 0) throw std::runtime_error("Could not read image dimensions");
-    if (naxis < 0 || naxis > 9) throw std::runtime_error("Invalid NAXIS for image shape");
-    std::vector<long> naxes(static_cast<size_t>(naxis));
-    if (naxis > 0) {
-        fits_get_img_size(fptr_, naxis, naxes.data(), &status);
-        if (status != 0) throw std::runtime_error("Could not read image size");
-    }
-    std::reverse(naxes.begin(), naxes.end());
-    return naxes;
+    return core::image_shape(fptr_);
 }
 
 int FITSFile::get_dtype(int hdu_num) {
@@ -498,10 +472,7 @@ int FITSFile::get_dtype(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
-    int bitpix = 0;
-    fits_get_img_type(fptr_, &bitpix, &status);
-    if (status != 0) throw std::runtime_error("Could not read image type");
-    return bitpix;
+    return core::image_bitpix(fptr_);
 }
 
 torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long y2) {
@@ -610,13 +581,7 @@ std::string FITSFile::get_hdu_type(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
-    int hdutype = 0;
-    fits_get_hdu_type(fptr_, &hdutype, &status);
-    if (status != 0) throw std::runtime_error("Could not read HDU type");
-    if (hdutype == IMAGE_HDU) return "IMAGE";
-    if (hdutype == ASCII_TBL) return "ASCII_TABLE";
-    if (hdutype == BINARY_TBL) return "BINARY_TABLE";
-    return "UNKNOWN";
+    return core::hdu_type_name(fptr_);
 }
 
 bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
@@ -909,16 +874,7 @@ std::string FITSFile::read_header_to_string(int hdu_num) {
     int status = 0;
     ensure_hdu(hdu_num, &status);
     if (status != 0) throw std::runtime_error("Could not move to HDU");
-    char* header_str = nullptr;
-    int nkeys = 0;
-    const int hdr_status = fits_hdr2str(fptr_, 0, nullptr, 0, &header_str, &nkeys, &status);
-    if (hdr_status != 0 || status != 0 || header_str == nullptr) {
-        if (header_str != nullptr) fits_free_memory(header_str, &status);
-        return "";
-    }
-    std::string result(header_str);
-    fits_free_memory(header_str, &status);
-    return result;
+    return core::header_text(fptr_);
 }
 
 bool FITSFile::ensure_raw_fd(size_t required_end) {
@@ -1124,7 +1080,7 @@ bool SubsetReader::try_read_via_mmap(
         if (elem_bytes_ == 1) {
             std::memcpy(dst_row, src, row_bytes);
             if (mmap_conv_ == MmapConv::SignedByte) {
-                detail::_xor_sign_bit_u8(dst_row, row_bytes);
+                detail::xor_sign_bit_u8(dst_row, row_bytes);
             }
         } else if (elem_bytes_ == 2) {
             auto* dst16 = reinterpret_cast<uint16_t*>(dst_row);

@@ -42,37 +42,100 @@ Landed so far:
 
 - `import torchfits.hdu` 883 ms → 2.6 ms and `import torchfits.io` 882 ms →
   34.6 ms, both with torch absent; `Header`/`Card` work in a torch-free process.
+- The native module and metadata calls no longer initialize the Python
+  `torch` package. `read_header`, `read_keys`, shape/HDU inventory and checksum
+  verification pass with an import blocker installed.
+- Arrow table reads now cross a real native raw-buffer boundary. Fixed columns
+  and flat VLA values/offsets are returned as typed, Python-owned memoryviews
+  without `THPVariable_Wrap`; strings, bits, vectors and VLA rows are materialized
+  into Arrow in Python. `table.read`, `table.schema` and the `table` CLI command
+  pass the same fresh-process blocker test.
+- All seven metadata CLI commands (`info`, `header`, `probe`, `verify`, `table`,
+  `copy`, `setkey`) are parser-safe and runtime-safe without torch. Pixel commands
+  declare their tensor runtime explicitly and retain their thread controls.
 - An interpreter-exit defect fixed: the cache hook imported the extension
   unconditionally, so a process that never loaded it printed a traceback (or a
   warning) on every exit.
 
+- **The dynamic dependency boundary is split.** `libtorchfits_core` is a separate
+  shared library holding CFITSIO, the shared read-metadata cache, the FITS
+  inspection rules, and its own `parallel_for`; it links no Torch target. It is
+  bound as `torchfits._core`, and the path-based metadata probes
+  (`read_header`, `read_keys`, `read_colnames`, `read_nrows`, `read_num_hdus`,
+  `read_hdu_type`, `read_shape`, `read_table_info`) now run entirely through it
+  — so they never dlopen libtorch. Cold start for those calls went 332–337 ms →
+  53 ms. `_C` resolves its `fits_*` symbols against the core (one CFITSIO in
+  the process; `check_core_link.cmake` fails the build if any is left unbound),
+  a build-id constant stamped into all three artifacts rejects a mismatched
+  pair at import, and `tests/test_core_library.py` compares the two modules
+  answer-for-answer.
+- The split is now checked against **real observations**, not only synthetic
+  fixtures. `tests/test_core_library_real_data.py` compares the two modules on
+  all 409 (frame, HDU) records of the fetched CFHT sample data (three 1.6 GB
+  MegaPipe mosaics, ten Rice-compressed MegaCam MEFs) and walks the whole
+  corpus with `torch` and `numpy` blocked.
+  `tests/test_reads_real_data.py` goes past the header and holds the *reads*
+  against `astropy.io.fits` — a separate implementation with its own Rice
+  decompressor: 4644x2112 decompressed frames match exactly, the raw VLA tile
+  stream is byte-identical, and 435 megapixels of real mosaic match in every
+  sampled window. A synthetic fixture cannot reach a 358-card header, a
+  `NAXIS=0` primary whose `NAXIS1` is genuinely absent, or a compressed HDU
+  that is an `IMAGE` to one library and a table to another.
+
 Remaining, in order:
 
-1. **Torch-free core library.** Extract the inspection half of `FITSFile`, the
-   `SharedReadMeta` caches and a `parallel_for` of our own into a single
-   `libtorchfits_core` shared library; bind it as `torchfits._core` with a
-   build-id guard against `_C`. Target: `read_header` 1136 ms → ~5 ms, and the
-   metadata CLI commands (`info`, `header`, `probe`, `verify`, `copy`, `setkey`,
-   `table`) off torch entirely.
-2. **Buffer transport for tables.** Return owned byte arenas instead of
-   `torch::Tensor` buffers, build Arrow from them zero-copy, and make
-   `table.read_torch` one `torch.from_blob` destination. Target: `table.read`
-   1555 ms → ~140 ms with no torch installed, and one copy fewer on the tensor
-   path.
-3. **Image payloads in the core**, which also makes `compress`/`decompress`
-   torch-free — they re-encode bytes and never do pixel math.
-4. **Mechanical proof and packaging.** A test asserting the core's dynamic
-   dependencies contain no libtorch, docs, and a decision on publishing the core
-   as its own distribution (it helps the metadata and table audience, not the
-   pixel-math commands, which will always need torch).
+1. **Zero-copy Arrow assembly.** The raw transport is correctness-first: native
+   tensors are copied once into Python-owned buffers, then the established Arrow
+   conversion materializes typed NumPy views. Build primitive and list Arrow
+   buffers directly from those memoryviews and benchmark before removing the
+   staging copy.
+
+   This is also what stands between the Arrow path and numpy. `torchfits.table`
+   is torch-free today but not numpy-free, and auditing `src/torchfits/_table/`
+   showed the numpy imports are overwhelmingly in the staging step
+   (`arrow_convert.py` has nine function-scope `import numpy as np`, plus
+   `_read_scan.py` and `_read_where.py`), not in the native transport. So
+   "zero-copy" and "the table path stops needing numpy" are the same piece of
+   work, not two. Note that pyarrow itself imports numpy when `pyarrow.compute`
+   loads, so a fully numpy-free `table.read` is not reachable while the Arrow
+   conversion goes through pyarrow at all — the achievable goal is that
+   *torchfits* stops adding its own numpy dependency to the process.
+2. **Image payloads in the core**, which also makes `compress`/`decompress`
+   torch-free — they re-encode bytes and never do pixel math. Tensor
+   destinations can then share one owned byte arena via `torch.from_blob`.
+3. **A torch-free `torchfits.open()`.** `HDUList` owns a native handle that is
+   the same object the tensor readers take, so it still loads `_C` (204 ms cold
+   against 53 ms for a path-based probe). Enumerating the inventory through
+   `libtorchfits_core` and opening the handle lazily on first tensor access
+   closes the gap.
+
+   Auditing `examples/` with an import blocker found a *second*, independent
+   mechanism, which the dlopen half of this item does not fix:
+   `hdu_list.py` dispatches on `isinstance(hdu, _table_hdu_types())` to decide
+   what an HDU is, and resolving those classes imports
+   `torchfits._hdu.table_hdu`, which imports `torch` at module scope. So
+   `torchfits.open(...)` followed by nothing but `hdul[1].header` pulls in the
+   Python `torch` package purely to answer a dispatch question — an
+   `examples/example_mef_header.py` run with `torch` blocked fails on exactly
+   that. `TableHDURef.materialize()` reaches the same module. Both need a
+   torch-free marker on the classes (an `is_table` attribute checked before the
+   `isinstance`) rather than the class import; that is why the item is a
+   dispatch refactor and not just a lazy handle.
+4. **Packaging the split.** Decide whether to publish `libtorchfits_core` as its
+   own distribution: it helps metadata and table users, but pixel-math commands
+   still need torch, so a separate package would only pay off for callers that
+   never import torch at all.
 
 ## Current focus
 
-- **Single-pass arena decode for buffered table reads.** Removes the one
-  remaining significant benchmark deficit vs `fitsio` (narrow-table full
-  reads with `mmap=False`, ~6–17%): decode straight into caller-visible,
-  strided tensors instead of staging whole rows in scratch chunks. An
-  API-visible change targeted at the next minor.
+- **Single-pass arena decode for buffered table reads.** Removes the
+  largest remaining significant benchmark deficits vs `fitsio` (narrow-table
+  full reads with `mmap=False`, 21–36% on CPU and 8% on CUDA, plus
+  `predicate_filter` on the `ascii_10000` catalog, 6.4% on CPU): decode
+  straight into caller-visible, strided tensors instead of staging whole rows
+  in scratch chunks. An API-visible change targeted at the next minor. The
+  authoritative numbers are in [Benchmarks](benchmarks.md#performance-deficits);
+  the per-run CSVs are published there.
 - **Selective-projection fast path** in the same reader, so filtered scans
   stop paying for whole-row pread when only a few columns are needed.
 - **Table semantics polish:** complex-column dtypes in `schema()`,

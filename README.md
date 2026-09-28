@@ -71,10 +71,10 @@ Pixi-first (do not use bare `python` for project work):
 ```bash
 git clone https://github.com/astroai/torchfits.git
 cd torchfits
-pixi install
+pixi install --locked
 pixi run preflight-push   # fast gate while editing
 pixi run test             # full unit suite
-pixi run ci-local         # pre-push parity
+pixi run current-source-gate  # locked environment + complete local gate
 ```
 
 Agent conventions: [`AGENTS.md`](AGENTS.md). Release process: [`docs/release.md`](docs/release.md).

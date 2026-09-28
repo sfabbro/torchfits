@@ -35,12 +35,14 @@
 #include "torch_compat.h"
 #include "security.h"
 #include "internal_utils.h"
+#include "nb_ndarray_utils.h"
 #include "hardware.h"
 #include "fits_handle.h"
 #undef READONLY
 #include <fitsio.h>
 #include <fitsio2.h>
 
+#include "core/metadata_api.h"
 #include "fits_detail.h"
 #include "fits_file.h"
 #include "fits_rw.h"
@@ -371,68 +373,10 @@ namespace {
 // HDU is ignored), and a file truncated after a complete header set
 // under-reports nothing: that error surfaces at read time.
 int checked_num_hdus(FITSFile& file) {
-    fitsfile* fptr = file.get_fptr();
-    int num_hdus = file.get_num_hdus();
-    if (num_hdus <= 0 || fptr == nullptr) {
-        return num_hdus;
-    }
-
-    int status = 0;
-    char name[FLEN_FILENAME] = {0};
-    fits_file_name(fptr, name, &status);
-    if (status != 0 || name[0] == '\0') {
-        return num_hdus;
-    }
-    const std::string path(name);
-    if (has_cfitsio_extended_filename_syntax(path) ||
-        path.find("://") != std::string::npos) {
-        return num_hdus;  // no reliable on-disk extent to compare
-    }
-    struct stat st {};
-    if (::stat(path.c_str(), &st) != 0) {
-        return num_hdus;
-    }
-
-    int mstatus = 0;
-    file.ensure_hdu(num_hdus - 1, &mstatus);
-    if (mstatus != 0) {
-        return num_hdus;
-    }
-    LONGLONG headstart = 0, datastart = 0, dataend = 0;
-    int astatus = 0;
-    fits_get_hduaddrll(fptr, &headstart, &datastart, &dataend, &astatus);
-    if (astatus != 0) {
-        return num_hdus;
-    }
-    // ffghadll: dataend is the byte offset where the next HDU would begin —
-    // the exclusive, record-aligned end of the last parsed HDU.
-    const LONGLONG fsize = static_cast<LONGLONG>(st.st_size);
-    if (dataend <= 0 || dataend >= fsize) {
-        return num_hdus;  // no trailing bytes (a short file is data truncation)
-    }
-
-    unsigned char probe[8] = {0};
-    int fd = d::open_readonly_fd(path);
-    if (fd == -1) {
-        return num_hdus;
-    }
-    ssize_t got = ::pread(fd, probe, sizeof(probe), static_cast<off_t>(dataend));
-    ::close(fd);
-    if (got <= 0) {
-        return num_hdus;
-    }
-    auto starts_hdu_header = [probe, got](const char* word) {
-        const size_t want = std::strlen(word);
-        const size_t have = std::min(static_cast<size_t>(got), want);
-        return std::memcmp(probe, word, have) == 0;
-    };
-    if (starts_hdu_header("SIMPLE") || starts_hdu_header("XTENSION")) {
-        throw std::runtime_error(
-            "FITS file appears truncated or corrupt: the HDU scan parsed " +
-            std::to_string(num_hdus) + " HDU(s) but another HDU header at byte " +
-            std::to_string(dataend) + " could not be parsed: " + path);
-    }
-    return num_hdus;
+    // The completeness check (trailing bytes that begin another HDU header mean
+    // fits_get_num_hdus stopped early) lives in the torch-free core so the
+    // metadata module and the tensor extension apply the same rule.
+    return core::checked_num_hdus(file.get_fptr(), file.get_start_hdu());
 }
 }  // namespace
 
@@ -1329,9 +1273,26 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             continue;
         }
 
-        nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(obj);
-        int ndim = tensor.ndim();
-        long rows = 1;
+      nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(obj);
+      int ndim = tensor.ndim();
+      if (ndim > 2) {
+          // A FITS column is 1D (scalar, TFORM '1X') or 2D (vector, TFORM 'rX').
+          // Packing uses nelements = rows * repeat, where repeat is shape(1), so
+          // every axis past the second would be dropped from the element count and
+          // its data silently discarded — the write succeeds and the file then
+          // misrepresents the array. The VLA branch above already rejects >1D for
+          // the same reason; this keeps the fixed-width branch equally honest. The
+          // Python mutation layer validates this too, but it is not the layer that
+          // talks to CFITSIO.
+          std::string shape;
+          for (int d = 0; d < ndim; ++d) {
+              shape += (d ? "x" : "") + std::to_string(tensor.shape(d));
+          }
+          throw std::runtime_error(
+              "Column '" + col.name + "' must be 1D or 2D, got " +
+              std::to_string(ndim) + "D (shape " + shape + ")");
+      }
+      long rows = 1;
         if (ndim == 0) {
             rows = 1;
         } else {
@@ -1455,14 +1416,25 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             long nelements = num_rows * col.repeat;
             if (col.datatype == TLOGICAL || col.datatype == TBIT) {
                 nb::dlpack::dtype dt = tensor.dtype();
+                // Densify before indexing. A strided payload (a column slice,
+                // an every-N-th view) keeps its logical elements at
+                // t.stride(k), not at consecutive addresses from t.data(), so
+                // the flat reads below would take the base pointer's own
+                // stride-1 order and silently write a different column than
+                // the caller passed. Every sibling write path (populate_rows,
+                // append_rows, the fixed-width branch below) packs first for
+                // the same reason.
+                std::vector<uint8_t> contig_buf;
+                nb::ndarray<> tensor_view = tensor;
+                void* packed = ensure_c_contiguous_ndarray(tensor_view, nelements, contig_buf);
                 std::vector<unsigned char> logical(static_cast<size_t>(nelements));
                 if (dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8) {
-                    const bool* src = static_cast<const bool*>(tensor.data());
+                    const bool* src = static_cast<const bool*>(packed);
                     for (long idx = 0; idx < nelements; ++idx) {
                         logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                     }
                 } else if (dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8) {
-                    const uint8_t* src = static_cast<const uint8_t*>(tensor.data());
+                    const uint8_t* src = static_cast<const uint8_t*>(packed);
                     for (long idx = 0; idx < nelements; ++idx) {
                         logical[static_cast<size_t>(idx)] = src[idx] ? 1 : 0;
                     }
@@ -1828,10 +1800,19 @@ void bind_fits(nb::module_& m) {
 
         const bool signed_byte_scaled =
             scaled && bitpix == BYTE_IMG && scale_info.bscale == 1.0 && scale_info.bzero == -128.0;
-        if (use_mmap && !compressed && bitpix == BYTE_IMG && (!scaled || signed_byte_scaled)) {
-            if (!has_cfitsio_extended_filename_syntax(filename)) {
-                // Phase 2 (no GIL): raw pread/mmap of the full data segment.
-                nb::gil_scoped_release release;
+    if (use_mmap && !compressed && bitpix == BYTE_IMG && (!scaled || signed_byte_scaled)) {
+        if (!has_cfitsio_extended_filename_syntax(filename)) {
+            // Phase 2 (no GIL): raw pread/mmap of the full data segment.
+            //
+            // `out` is an nb::object, so the GIL must be held again before it
+            // is returned: returning it from inside the released scope copies
+            // (increfs) a Python reference with the GIL released. The I/O
+            // therefore lives in a lambda that reports only whether it filled
+            // the destination, and the single return below runs with the GIL
+            // held -- the convention every other binding in this file follows
+            // (release for the work, gil_scoped_acquire before touching
+            // Python).
+            auto fill_from_raw_io = [&]() -> bool {
                 LONGLONG headstart = 0, data_offset = 0, dataend = 0;
                 int status = 0;
                 fits_get_hduaddrll(fptr, &headstart, &data_offset, &dataend, &status);
@@ -1870,13 +1851,17 @@ void bind_fits(nb::module_& m) {
                             if (ok) {
                                 ::close(fd);
                                 if (signed_byte_scaled) {
-                                    d::_xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                                    d::xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
                                 }
-                                return out;
+                                return true;
                             }
                             // Pread failed after the size check passed: the file
                             // may have been truncated concurrently. Re-stat
-                            // before mapping — memcpy past EOF would SIGBUS.
+                            // before mapping -- memcpy past EOF would SIGBUS.
+                            // The map length stays sb.st_size, the size already
+                            // checked against data_offset + nbytes: mapping past
+                            // the file's current end is harmless because the
+                            // memcpy stays inside the verified extent.
                             struct stat fresh_sb {};
                             if (fstat(fd, &fresh_sb) == 0 &&
                                 (size_t) fresh_sb.st_size >= (size_t) data_offset + nbytes) {
@@ -1887,19 +1872,27 @@ void bind_fits(nb::module_& m) {
                                     munmap(map_ptr, sb.st_size);
                                     ::close(fd);
                                     if (signed_byte_scaled) {
-                                        d::_xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
+                                        d::xor_sign_bit_u8(static_cast<uint8_t*>(dst), nbytes);
                                     }
-                                    return out;
+                                    return true;
                                 }
                             }
                         }
                         ::close(fd);
                     }
-                } else {
-                    status = 0;
                 }
+                return false;
+            };
+            bool filled = false;
+            {
+                nb::gil_scoped_release release;
+                filled = fill_from_raw_io();
+            }
+            if (filled) {
+                return out;
             }
         }
+    }
 
         int anynul = 0;
         int status = 0;
@@ -2393,53 +2386,26 @@ void bind_fits(nb::module_& m) {
     m.def("read_header_dict", [](const std::string& filename, int hdu_num) -> nb::list {
         // Let open/parse failures propagate: silently returning an empty list
         // turned a broken read into a seemingly-valid empty header.
-        nb::gil_scoped_release release;
-        FITSFile file(filename.c_str(), 0);
-        auto header = file.get_header(hdu_num);
-        nb::gil_scoped_acquire acquire;
+        std::vector<core::HeaderCard> cards;
+        {
+            nb::gil_scoped_release release;
+            cards = core::header_cards_path(filename, hdu_num);
+        }
         nb::list result;
-        for (const auto& item : header) {
+        for (const auto& item : cards) {
             result.append(nb::make_tuple(std::get<0>(item), std::get<1>(item), std::get<2>(item)));
         }
         return result;
     });
 
-    // Skinny metadata: open → move HDU → structural/key query. No full header dump.
+    // Skinny metadata: open → move HDU → structural/key query. No full header
+    // dump. The implementation is the torch-free core's, so this binding and
+    // the identical one in torchfits._core cannot drift.
     m.def(
         "read_nrows",
         [](const std::string& filename, int hdu_num) -> long long {
             nb::gil_scoped_release release;
-            // Guard before get_shared_meta_for_path: it stats the path and
-            // inserts a global-map entry (same order as read_shape).
-            check_fits_filename_security(filename);
-            auto meta = d::get_shared_meta_for_path(filename);
-            if (meta) {
-                std::shared_lock<std::shared_mutex> lock(meta->mutex);
-                auto it = meta->nrows_cache.find(hdu_num);
-                if (it != meta->nrows_cache.end()) {
-                    return it->second;
-                }
-            }
-            FITSFile file(filename.c_str(), 0);
-            int status = 0;
-            file.ensure_hdu(hdu_num, &status);
-            if (status != 0) {
-                throw std::runtime_error("read_nrows: could not move to HDU");
-            }
-            long nrows = 0;
-            fits_get_num_rows(file.get_fptr(), &nrows, &status);
-            if (status != 0) {
-                char err_text[FLEN_ERRMSG];
-                fits_get_errstatus(status, err_text);
-                throw std::runtime_error(
-                    std::string("read_nrows: ") + err_text +
-                    " (HDU must be a table)");
-            }
-            if (meta) {
-                std::unique_lock<std::shared_mutex> lock(meta->mutex);
-                meta->nrows_cache[hdu_num] = static_cast<long long>(nrows);
-            }
-            return static_cast<long long>(nrows);
+            return core::nrows_path(filename, hdu_num);
         },
         nb::arg("filename"),
         nb::arg("hdu_num"));
@@ -2448,100 +2414,21 @@ void bind_fits(nb::module_& m) {
         "read_keys",
         [](const std::string& filename, int hdu_num,
            const std::vector<std::string>& keys) -> nb::dict {
-            struct KeyRaw {
-                std::string key;
-                std::string value;
-            };
-            std::vector<KeyRaw> raw;
-            raw.reserve(keys.size());
+            std::vector<core::KeyValue> values;
             {
                 nb::gil_scoped_release release;
-                FITSFile file(filename.c_str(), 0);
-                int status = 0;
-                file.ensure_hdu(hdu_num, &status);
-                if (status != 0) {
-                    throw std::runtime_error("read_keys: could not move to HDU");
-                }
-                fitsfile* fptr = file.get_fptr();
-                for (const auto& key : keys) {
-                    char value[FLEN_VALUE] = {0};
-                    char comment[FLEN_COMMENT] = {0};
-                    status = 0;
-                    if (fits_read_keyword(
-                            fptr, key.c_str(), value, comment, &status) != 0) {
-                        if (status == KEY_NO_EXIST) {
-                            throw std::runtime_error(
-                                "read_keys: keyword not found: " + key);
-                        }
-                        char err_text[FLEN_ERRMSG];
-                        fits_get_errstatus(status, err_text);
-                        throw std::runtime_error(
-                            std::string("read_keys: ") + err_text + " (" + key +
-                            ")");
-                    }
-                    raw.push_back(
-                        KeyRaw{key, d::sanitize_fits_string(std::string(value))});
-                }
+                values = core::keywords_path(filename, hdu_num, keys);
             }
             nb::dict out;
-            for (const auto& item : raw) {
-                const std::string& val = item.value;
-                if (val.empty()) {
-                    out[item.key.c_str()] = nb::none();
-                    continue;
+            for (const auto& kv : values) {
+                const char* key = kv.key.c_str();
+                switch (kv.kind) {
+                    case core::KeyValue::Kind::None:  out[key] = nb::none(); break;
+                    case core::KeyValue::Kind::Bool:  out[key] = kv.bool_value; break;
+                    case core::KeyValue::Kind::Int:   out[key] = kv.int_value; break;
+                    case core::KeyValue::Kind::Double: out[key] = kv.double_value; break;
+                    case core::KeyValue::Kind::Str:   out[key] = kv.str_value; break;
                 }
-                if (val == "T") {
-                    out[item.key.c_str()] = true;
-                    continue;
-                }
-                if (val == "F") {
-                    out[item.key.c_str()] = false;
-                    continue;
-                }
-                if (val.front() == '\'') {
-                    std::string s = val;
-                    size_t last_quote = s.rfind('\'');
-                    if (last_quote != std::string::npos && last_quote > 0) {
-                        s = s.substr(1, last_quote - 1);
-                        size_t last_char = s.find_last_not_of(' ');
-                        if (last_char != std::string::npos)
-                            s = s.substr(0, last_char + 1);
-                        else
-                            s.clear();
-                        size_t pos = 0;
-                        while ((pos = s.find("''", pos)) != std::string::npos) {
-                            s.replace(pos, 2, "'");
-                            pos += 1;
-                        }
-                    }
-                    out[item.key.c_str()] = s;
-                    continue;
-                }
-                try {
-                    // Full-consumption check: a partially numeric string
-                    // ("1999-01-01") must stay a string, not truncate to its
-                    // leading number.
-                    size_t pos = 0;
-                    if (val.find_first_of(".eE") != std::string::npos) {
-                        const double dv = std::stod(val, &pos);
-                        while (pos < val.size() &&
-                               std::isspace(static_cast<unsigned char>(val[pos]))) ++pos;
-                        if (pos == val.size()) {
-                            out[item.key.c_str()] = dv;
-                            continue;
-                        }
-                    } else {
-                        const long long iv = std::stoll(val, &pos);
-                        while (pos < val.size() &&
-                               std::isspace(static_cast<unsigned char>(val[pos]))) ++pos;
-                        if (pos == val.size()) {
-                            out[item.key.c_str()] = iv;
-                            continue;
-                        }
-                    }
-                } catch (const std::exception&) {
-                }
-                out[item.key.c_str()] = val;
             }
             return out;
         },
@@ -2552,49 +2439,17 @@ void bind_fits(nb::module_& m) {
     m.def(
         "read_shape",
         [](const std::string& filename, int hdu_num) -> nb::tuple {
-            int bitpix = 0;
-            int naxis = 0;
-            std::array<LONGLONG, 9> naxes_ll{};
-            naxes_ll.fill(0);
+            std::pair<int, std::vector<long>> shape;
             {
                 nb::gil_scoped_release release;
-                // Security before get_shared_meta_for_path: it stats and
-                // inserts a global-map entry for the path.
-                check_fits_filename_security(filename);
-                // Warm SharedReadMeta: skip CFITSIO open when image params
-                // were already populated by a prior read / SubsetReader.
-                auto meta = d::get_shared_meta_for_path(filename);
-                bool hit = false;
-                if (meta) {
-                    std::shared_lock<std::shared_mutex> lock(meta->mutex);
-                    auto it = meta->image_info_cache.find(hdu_num);
-                    if (it != meta->image_info_cache.end()) {
-                        bitpix = std::get<0>(it->second);
-                        naxis = std::get<1>(it->second);
-                        naxes_ll = std::get<2>(it->second);
-                        hit = true;
-                    }
-                }
-                if (!hit) {
-                    FITSFile file(filename.c_str(), 0);
-                    int status = 0;
-                    file.ensure_hdu(hdu_num, &status);
-                    if (status != 0) {
-                        throw std::runtime_error("read_shape: could not move to HDU");
-                    }
-                    // get_image_info populates per-handle + SharedReadMeta caches.
-                    const auto& info = file.get_image_info(hdu_num);
-                    bitpix = std::get<0>(info);
-                    naxis = std::get<1>(info);
-                    naxes_ll = std::get<2>(info);
-                }
+                shape = core::image_shape_path(filename, hdu_num);
             }
-            nb::list shape;
+            nb::list dims;
             // Torch / row-major order (reverse of FITS NAXISn).
-            for (int i = naxis - 1; i >= 0; --i) {
-                shape.append(static_cast<long long>(naxes_ll[i]));
+            for (long dim : shape.second) {
+                dims.append(static_cast<long long>(dim));
             }
-            return nb::make_tuple(bitpix, nb::tuple(shape));
+            return nb::make_tuple(shape.first, nb::tuple(dims));
         },
         nb::arg("filename"),
         nb::arg("hdu_num"));
@@ -2603,22 +2458,7 @@ void bind_fits(nb::module_& m) {
         "read_hdu_type",
         [](const std::string& filename, int hdu_num) -> std::string {
             nb::gil_scoped_release release;
-            check_fits_filename_security(filename);
-            auto meta = d::get_shared_meta_for_path(filename);
-            if (meta) {
-                std::shared_lock<std::shared_mutex> lock(meta->mutex);
-                auto it = meta->hdu_type_cache.find(hdu_num);
-                if (it != meta->hdu_type_cache.end()) {
-                    return it->second;
-                }
-            }
-            FITSFile file(filename.c_str(), 0);
-            std::string hdu_type = file.get_hdu_type(hdu_num);
-            if (meta) {
-                std::unique_lock<std::shared_mutex> lock(meta->mutex);
-                meta->hdu_type_cache[hdu_num] = hdu_type;
-            }
-            return hdu_type;
+            return core::hdu_type_path(filename, hdu_num);
         },
         nb::arg("filename"),
         nb::arg("hdu_num"));
@@ -2627,21 +2467,7 @@ void bind_fits(nb::module_& m) {
         "read_num_hdus",
         [](const std::string& filename) -> int {
             nb::gil_scoped_release release;
-            check_fits_filename_security(filename);
-            auto meta = d::get_shared_meta_for_path(filename);
-            if (meta) {
-                std::shared_lock<std::shared_mutex> lock(meta->mutex);
-                if (meta->num_hdus >= 0) {
-                    return meta->num_hdus;
-                }
-            }
-            FITSFile file(filename.c_str(), 0);
-            const int num_hdus = checked_num_hdus(file);
-            if (meta) {
-                std::unique_lock<std::shared_mutex> lock(meta->mutex);
-                meta->num_hdus = num_hdus;
-            }
-            return num_hdus;
+            return core::num_hdus_path(filename);
         },
         nb::arg("filename"));
 
@@ -2649,55 +2475,7 @@ void bind_fits(nb::module_& m) {
         "read_colnames",
         [](const std::string& filename, int hdu_num) -> std::vector<std::string> {
             nb::gil_scoped_release release;
-            check_fits_filename_security(filename);
-            auto meta = d::get_shared_meta_for_path(filename);
-            if (meta) {
-                std::shared_lock<std::shared_mutex> lock(meta->mutex);
-                auto it = meta->colnames_cache.find(hdu_num);
-                if (it != meta->colnames_cache.end()) {
-                    return it->second;
-                }
-            }
-            FITSFile file(filename.c_str(), 0);
-            int status = 0;
-            file.ensure_hdu(hdu_num, &status);
-            if (status != 0) {
-                throw std::runtime_error("read_colnames: could not move to HDU");
-            }
-            fitsfile* fptr = file.get_fptr();
-            int ncols = 0;
-            fits_get_num_cols(fptr, &ncols, &status);
-            if (status != 0) {
-                char err_text[FLEN_ERRMSG];
-                fits_get_errstatus(status, err_text);
-                throw std::runtime_error(
-                    std::string("read_colnames: ") + err_text +
-                    " (HDU must be a table)");
-            }
-            std::vector<std::string> names;
-            names.reserve(ncols);
-            for (int i = 1; i <= ncols; ++i) {
-                char ttype[FLEN_VALUE];
-                memset(ttype, 0, FLEN_VALUE);
-                char keyname[FLEN_KEYWORD];
-                snprintf(keyname, FLEN_KEYWORD, "TTYPE%d", i);
-                int col_status = 0;
-                fits_read_key(fptr, TSTRING, keyname, ttype, nullptr, &col_status);
-                if (col_status != 0) {
-                    snprintf(ttype, FLEN_VALUE, "COL%d", i);
-                } else {
-                    // Trim trailing spaces from TSTRING.
-                    size_t len = strnlen(ttype, FLEN_VALUE);
-                    while (len > 0 && ttype[len - 1] == ' ') --len;
-                    ttype[len] = '\0';
-                }
-                names.emplace_back(ttype);
-            }
-            if (meta) {
-                std::unique_lock<std::shared_mutex> lock(meta->mutex);
-                meta->colnames_cache[hdu_num] = names;
-            }
-            return names;
+            return core::colnames_path(filename, hdu_num);
         },
         nb::arg("filename"),
         nb::arg("hdu_num"));
@@ -2705,62 +2483,15 @@ void bind_fits(nb::module_& m) {
     m.def(
         "read_table_info",
         [](const std::string& filename, int hdu_num) -> nb::dict {
-            long nrows = 0;
-            std::vector<std::string> names;
-            std::vector<std::string> tforms;
+            core::TableInfo info;
             {
                 nb::gil_scoped_release release;
-                FITSFile file(filename.c_str(), 0);
-                int status = 0;
-                file.ensure_hdu(hdu_num, &status);
-                if (status != 0) {
-                    throw std::runtime_error("read_table_info: could not move to HDU");
-                }
-                fitsfile* fptr = file.get_fptr();
-                fits_get_num_rows(fptr, &nrows, &status);
-                int ncols = 0;
-                if (status == 0) fits_get_num_cols(fptr, &ncols, &status);
-                if (status != 0) {
-                    char err_text[FLEN_ERRMSG];
-                    fits_get_errstatus(status, err_text);
-                    throw std::runtime_error(
-                        std::string("read_table_info: ") + err_text +
-                        " (HDU must be a table)");
-                }
-                names.reserve(ncols);
-                tforms.reserve(ncols);
-                for (int i = 1; i <= ncols; ++i) {
-                    char ttype[FLEN_VALUE];
-                    char tform[FLEN_VALUE];
-                    memset(ttype, 0, FLEN_VALUE);
-                    memset(tform, 0, FLEN_VALUE);
-                    char keyname[FLEN_KEYWORD];
-                    snprintf(keyname, FLEN_KEYWORD, "TTYPE%d", i);
-                    int col_status = 0;
-                    fits_read_key(fptr, TSTRING, keyname, ttype, nullptr, &col_status);
-                    if (col_status != 0) {
-                        snprintf(ttype, FLEN_VALUE, "COL%d", i);
-                    } else {
-                        size_t len = strnlen(ttype, FLEN_VALUE);
-                        while (len > 0 && ttype[len - 1] == ' ') --len;
-                        ttype[len] = '\0';
-                    }
-                    col_status = 0;
-                    snprintf(keyname, FLEN_KEYWORD, "TFORM%d", i);
-                    fits_read_key(fptr, TSTRING, keyname, tform, nullptr, &col_status);
-                    if (col_status == 0) {
-                        size_t len = strnlen(tform, FLEN_VALUE);
-                        while (len > 0 && tform[len - 1] == ' ') --len;
-                        tform[len] = '\0';
-                    }
-                    names.emplace_back(ttype);
-                    tforms.emplace_back(tform);
-                }
+                info = core::table_info_path(filename, hdu_num);
             }
             nb::dict out;
-            out["nrows"] = static_cast<long long>(nrows);
-            out["colnames"] = names;
-            out["tforms"] = tforms;
+            out["nrows"] = static_cast<long long>(info.nrows);
+            out["colnames"] = info.colnames;
+            out["tforms"] = info.tforms;
             return out;
         },
         nb::arg("filename"),

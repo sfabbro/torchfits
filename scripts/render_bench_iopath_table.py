@@ -40,7 +40,6 @@ Cell text rules:
 
 Usage::
 
-    python scripts/render_bench_iopath_table.py
     python scripts/render_bench_iopath_table.py --csv <path>
 
 Reads ``benchmarks_results/<run-dir>/results.csv`` and prints the

@@ -183,6 +183,24 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 | [`example_polars.py`](published-examples/example_polars.py) | `read_polars` and out-of-core `scan_polars` streaming |
 | [`example_table_recipes.py`](published-examples/example_table_recipes.py) | SQL pushdown, DuckDB querying, and Arrow record batch iterators |
 
+### Datasets & Streaming
+
+| Script | Purpose & Key APIs |
+|---|---|
+| [`example_staged_cutouts.py`](published-examples/example_staged_cutouts.py) | `FitsStagedCutoutIterableDataset`: background prefetch of the next survey mosaic, bounded scratch staging, `DataLoader` integration |
+| [`example_streaming_cubes_spectra.py`](published-examples/example_streaming_cubes_spectra.py) | `FitsCubeIterableDataset` and `FitsSpectrumIterableDataset` for constant-memory IFU cubes and multi-arm spectra |
+
+### Correctness Cookbooks & Harnesses
+
+These are assertion-driven rather than illustrative: every check below raises on
+failure, so the smoke suite reports a broken read or write instead of printing it.
+
+| Script | What it asserts |
+|---|---|
+| [`example_cfitsio_cookbook.py`](published-examples/example_cfitsio_cookbook.py) | The `fitsio` C cookbook, in torchfits: create/read, multi-HDU copy, subset reads, checksums, `TFORM` `J/K/E/D/L/A`, header key update/delete, ASCII tables |
+| [`example_ccfits_cookbook.py`](published-examples/example_ccfits_cookbook.py) | The CCfits C++ cookbook, in torchfits: primary image + header parity with astropy, binary-table column types `J/K/E/D/L/X/A`, projection + row slice + `where=`, `uint16` BZERO round-trip, `HISTORY`/`CONTINUE` long strings, multi-HDU `EXTNAME` |
+| [`example_identity_stress.py`](published-examples/example_identity_stress.py) | The same pixels and columns through every write/read path: `write`/`write_tensor`/`HDUList`/astropy, tensor dicts, `scan` batch sizes, `where=` row counts, `uint16`, VLA + 2-d columns, `RICE_1` and `GZIP_1` |
+
 ### Machine Learning & Preprocessing
 
 | Script | Purpose & Key APIs |
@@ -208,12 +226,18 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 | [`gallery_tables_lc.py`](published-examples/gallery_tables_lc.py) | light-curve / table plots |
 
 Samples use `TORCHFITS_SAMPLE_CACHE` when set, otherwise torchfits' normal
-cache precedence. CI sets `TORCHFITS_EXAMPLE_FAST=1` to skip downloads.
+cache precedence. `examples/test_examples.py` sets `TORCHFITS_EXAMPLE_FAST=1`
+for every example under CI, and unconditionally for
+`example_megacam_cr_denoise.py`, to skip downloads and bound its training run.
+The runner also refuses to start under `PYTHONOPTIMIZE`, which would delete the
+assertions three of these examples are built from.
 
 ### Out of gallery
 
-These live under `examples/` but are not part of the published gallery /
-`docs-contract` verification suite (CLI demos or specialized shapes):
+These are published alongside the gallery but are not themselves part of the
+image/table figure pipeline:
 
-- `examples/desi_shaped_spectrum.py` — DESI-shaped spectrum demo ([API data](api-data.md))
-- `examples/cli/make_rgb_demo.py` — RGB collage generator for CLI recipes ([CLI recipes](cli-recipes.md))
+- [`desi_shaped_spectrum.py`](published-examples/desi_shaped_spectrum.py) — DESI-shaped multi-arm spectrum demo ([API data](api-data.md))
+- [`cli/make_rgb_demo.py`](published-examples/cli/make_rgb_demo.py) — synthetic RGB collage generator for CLI recipes ([CLI recipes](cli-recipes.md))
+- [`cli/imstat_imarith.sh`](published-examples/cli/imstat_imarith.sh) — `imstat`/`imarith`-style walk through nine `torchfits` CLI subcommands on the HorseHead sample
+- [`test_examples.py`](published-examples/test_examples.py) — the smoke runner itself: it executes every other example on this page and is the gate `docs-contract` runs

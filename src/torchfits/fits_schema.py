@@ -276,18 +276,11 @@ def bit_column_names(header: Mapping[str, Any]) -> set[str]:
     return out
 
 
-def unsigned_column_dtypes_from_header(
+def unsigned_column_dtype_names_from_header(
     header: Mapping[str, Any],
-) -> dict[str, torch.dtype]:
-    """Map standard unsigned FITS table conventions (TZERO offset) to torch dtypes.
-
-    Header parsing is torch-free; the import happens here because this is the
-    one function in the module that has to name a ``torch.dtype`` at runtime
-    (the module-scope import cost every metadata caller a tensor runtime).
-    """
-    import torch
-
-    out: dict[str, torch.dtype] = {}
+) -> dict[str, str]:
+    """Map standard unsigned FITS conventions to dtype names without torch."""
+    out: dict[str, str] = {}
     for col in iter_table_columns(header):
         code = col.tform_info.code
         if code is None:
@@ -298,10 +291,24 @@ def unsigned_column_dtypes_from_header(
         # iter_table_columns always yields a float tzero (0.0 default).
         tzero = col.tzero if col.tzero is not None else 0.0
         if code == "I" and abs(tzero - 32768.0) < 1e-5:
-            out[col.name] = torch.uint16
+            out[col.name] = "uint16"
         elif code == "J" and abs(tzero - 2147483648.0) < 1e-5:
-            out[col.name] = torch.uint32
+            out[col.name] = "uint32"
     return out
+
+
+def unsigned_column_dtypes_from_header(
+    header: Mapping[str, Any],
+) -> dict[str, torch.dtype]:
+    """Map standard unsigned FITS table conventions to explicit torch dtypes.
+
+    Header parsing is shared with the torch-free Arrow path. Only this tensor
+    destination converts the stable names to runtime ``torch.dtype`` objects.
+    """
+    import torch
+
+    names = unsigned_column_dtype_names_from_header(header)
+    return {name: getattr(torch, dtype_name) for name, dtype_name in names.items()}
 
 
 def column_tnull_map(header_map: Mapping[str, Any]) -> dict[str, Any]:

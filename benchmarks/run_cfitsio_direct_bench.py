@@ -372,9 +372,23 @@ def main() -> int:
         print(f"wrote {out_dir / 'cfitsio_direct_summary.csv'}")
         print((out_dir / "cfitsio_direct_summary.csv").read_text(encoding="utf-8"))
 
-        assert stats["ok"] >= 50, f"expected >=50 OK rows, got {stats}"
-        assert stats["ops"] >= 5, f"expected broadly covered ops, got {stats}"
-        assert stats["error"] == 0, f"expected zero ERROR rows, got {stats}"
+        # These are the only checks that the C benchmark actually produced usable
+        # numbers, and they must not be `assert`: under `python -O` (or
+        # PYTHONOPTIMIZE=1) an assert statement is removed from the bytecode
+        # entirely -- compiling this function at optimize=2 reduces it to a bare
+        # `return 0` -- so a run that produced three rows, or one ERROR row, would
+        # exit 0 and publish `cfitsio_direct.csv` as a cross-library comparison.
+        problems = []
+        if stats["ok"] < 50:
+            problems.append(f"expected >=50 OK rows, got {stats['ok']}")
+        if stats["ops"] < 5:
+            problems.append(f"expected broadly covered ops, got {stats['ops']}")
+        if stats["error"] != 0:
+            problems.append(f"expected zero ERROR rows, got {stats['error']}")
+        if problems:
+            raise SystemExit(
+                "cfitsio_direct benchmark validation failed: " + "; ".join(problems)
+            )
         return 0
     finally:
         if not args.keep_temp:

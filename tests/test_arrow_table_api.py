@@ -1,3 +1,4 @@
+import gc
 import os
 import tempfile
 
@@ -82,6 +83,50 @@ def _make_bit_vla_table_file():
     ]
     fits.BinTableHDU.from_columns(cols).writeto(handle.name, overwrite=True)
     return handle.name
+
+
+def test_native_raw_transport_owns_buffers_and_preserves_vla_offsets():
+    """The Arrow transport is typed owner-backed memory, not hidden tensors."""
+    pytest.importorskip("pyarrow")
+    import torchfits._C as cpp
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    path = _make_bit_vla_table_file()
+    try:
+        reader = cpp.TableReader(path, 1)
+        raw = reader.read_rows_raw(["BITS", "VLA"], 1, 3)
+        assert raw["BITS"]["kind"] == "fixed"
+        assert raw["BITS"]["dtype"] == "bool"
+        assert tuple(raw["BITS"]["shape"]) == (3, 8)
+        assert isinstance(raw["BITS"]["data"], memoryview)
+        assert isinstance(raw["BITS"]["data"].obj, bytearray)
+        assert not raw["BITS"]["data"].readonly
+
+        assert raw["VLA"]["kind"] == "vla"
+        assert raw["VLA"]["dtype"] == "int32"
+        assert tuple(raw["VLA"]["shape"]) == (3,)
+        assert isinstance(raw["VLA"]["offsets"], memoryview)
+        assert isinstance(raw["VLA"]["offsets"].obj, bytearray)
+
+        bits = _raw_column_to_numpy(raw["BITS"])
+        values, offsets = _raw_column_to_numpy(raw["VLA"])
+        assert bits.tolist() == [
+            [True, False, True, False, True, False, True, False],
+            [False, True, False, True, False, True, False, True],
+            [True, True, True, True, False, False, False, False],
+        ]
+        assert values.tolist() == [1, 2, 3, 4, 5, 6]
+        assert offsets.tolist() == [0, 2, 3, 6]
+
+        # Python conversion owns its arrays; releasing every native result view
+        # cannot dangle the data later consumed by Arrow.
+        raw.clear()
+        del raw, reader
+        gc.collect()
+        assert bool(bits[0, 0]) is True
+        assert values.tolist() == [1, 2, 3, 4, 5, 6]
+    finally:
+        os.unlink(path)
 
 
 def test_arrow_scan_and_read():
@@ -1430,3 +1475,179 @@ def test_chunk_byte_vector_vs_char_dispatch():
         {"S": chars}, False, "ascii", True, column_tforms={"S": "4A"}
     )
     assert pa.types.is_fixed_size_binary(raw.schema.field("S").type)
+
+
+def test_stream_writers_accept_an_arrow_table():
+    """stream=True must accept the documented "Arrow Table" input.
+
+    A pyarrow.Table is iterable, but iterating it yields *columns*, not
+    record batches. The streaming branches write each item straight to a
+    writer, so without normalization parquet/csv/ipc export either raised or
+    left a truncated, zero-row file behind.
+    """
+    pytest.importorskip("pyarrow")
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    path = _make_table_file()
+    dest = tempfile.mkdtemp()
+    try:
+        table = torchfits.table.read(path, hdu=1)
+        assert isinstance(table, pa.Table)
+
+        parquet_path = os.path.join(dest, "t.parquet")
+        torchfits.table.write_parquet(parquet_path, table, stream=True)
+        # A truncated writer still leaves a readable-but-empty file, so the
+        # row count is the assertion that actually catches the regression.
+        assert pq.read_table(parquet_path).num_rows == table.num_rows
+
+        csv_path = os.path.join(dest, "t.csv")
+        torchfits.table.write_csv(csv_path, table, stream=True)
+        with open(csv_path) as handle:
+            assert len(handle.read().strip().splitlines()) == table.num_rows + 1
+
+        ipc_path = os.path.join(dest, "t.arrow")
+        torchfits.table.write_ipc(ipc_path, table, stream=True)
+        with open(ipc_path, "rb") as handle:
+            back = pa.ipc.open_file(handle).read_all()
+        assert back.num_rows == table.num_rows
+        assert back.column_names == table.column_names
+    finally:
+        os.unlink(path)
+
+
+def test_stream_conversions_return_per_batch_frames_for_an_arrow_table():
+    """stream=True is an iterator of frames, not one object, for any input.
+
+    ``to_pandas`` short-circuited on Table.to_pandas and returned a single
+    DataFrame; ``to_polars`` iterated the Table and yielded one polars Series
+    per column. Both are documented as returning per-batch frames.
+    """
+    pytest.importorskip("pyarrow")
+    pa = pytest.importorskip("pyarrow")
+    pd = pytest.importorskip("pandas")
+    path = _make_table_file()
+    try:
+        # Two chunks -> two frames, so a per-batch contract is observable.
+        table = torchfits.table.read(path, hdu=1)
+        multi = pa.concat_tables([table.slice(0, 1), table.slice(1, 2)])
+
+        frames = list(torchfits.table.to_pandas(multi, stream=True))
+        assert len(frames) == 2
+        assert all(isinstance(frame, pd.DataFrame) for frame in frames)
+        assert pd.concat(frames, ignore_index=True).shape[0] == multi.num_rows
+
+        if pytest.importorskip("polars", reason="polars optional"):
+            polars_frames = list(torchfits.table.to_polars(multi, stream=True))
+            assert len(polars_frames) == 2
+            assert all(
+                isinstance(frame, polars_frames[0].__class__) for frame in polars_frames
+            )
+            assert sum(frame.height for frame in polars_frames) == multi.num_rows
+    finally:
+        os.unlink(path)
+
+
+def test_empty_arrow_table_still_produces_a_valid_streamed_file():
+    """A zero-row input must still produce a valid, readable, empty file.
+
+    Two things are pinned here. Before the fix this raised, because a 0-row
+    Table still *has* columns and so still iterates as columns. After the fix
+    the input is normalized to zero record batches, so the schema has to be
+    taken from the original input -- reading it off the normalized iterator
+    instead would skip the eager writer and create no file at all, which is
+    what a FITS query matching nothing produces via reader().
+    """
+    pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    path = _make_table_file()
+    dest = tempfile.mkdtemp()
+    try:
+        empty = torchfits.table.read(path, hdu=1).slice(0, 0)
+        parquet_path = os.path.join(dest, "empty.parquet")
+        torchfits.table.write_parquet(parquet_path, empty, stream=True)
+        assert os.path.exists(parquet_path)
+        assert pq.read_table(parquet_path).num_rows == 0
+    finally:
+        os.unlink(path)
+
+
+def _meta_table_file(tmp_path, name="meta.fits"):
+    """Table whose second column carries all six FITS metadata keywords."""
+    path = str(tmp_path / name)
+    Table(
+        {
+            "ID": np.array([1, 2, 3], dtype=np.int32),
+            "A": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+        }
+    ).write(path, format="fits", overwrite=True)
+    with fits.open(path, mode="update") as hd:
+        hd[1].header["TUNIT2"] = "mJy"
+        hd[1].header["TSCAL2"] = 2.0
+        hd[1].header["TZERO2"] = 1.0
+        hd[1].header["TDIM2"] = "(1)"
+        hd[1].header["TNULL2"] = -32768
+    return path
+
+
+def _field_keys(schema, name="A"):
+    field = schema.field(schema.get_field_index(name))
+    return sorted(
+        k.decode() if isinstance(k, bytes) else str(k) for k in field.metadata or {}
+    )
+
+
+def test_every_metadata_path_publishes_the_same_keywords(tmp_path):
+    """One read, one answer -- regardless of rows, projection or backend.
+
+    There were three producers of the FITS field metadata: the data path
+    (six keywords), the header-only schema path (three), and the empty-result
+    builder (none). So a read that returned no rows described its columns less
+    completely than the same read that did (TE-005).
+    """
+    pytest.importorskip("pyarrow")
+    path = _meta_table_file(tmp_path)
+    expected = {
+        "fits_tdim",
+        "fits_tform",
+        "fits_tnull",
+        "fits_tscal",
+        "fits_tunit",
+        "fits_tzero",
+    }
+
+    seen = {}
+    for backend in ("auto", "cpp", "torch"):
+        seen[("rows", backend)] = _field_keys(
+            torchfits.table.read(
+                path, hdu=1, include_fits_metadata=True, backend=backend
+            ).schema
+        )
+        seen[("empty", backend)] = _field_keys(
+            torchfits.table.read(
+                path,
+                hdu=1,
+                where="ID > 1000",
+                include_fits_metadata=True,
+                backend=backend,
+            ).schema
+        )
+        seen[("projected", backend)] = _field_keys(
+            torchfits.table.read(
+                path, hdu=1, columns=["A"], include_fits_metadata=True, backend=backend
+            ).schema
+        )
+    seen[("schema()", "-")] = _field_keys(
+        torchfits.table.schema(path, hdu=1, include_fits_metadata=True)
+    )
+
+    for label, keys in seen.items():
+        assert set(keys) == expected, f"{label} -> {keys}"
+    assert len({tuple(v) for v in seen.values()}) == 1, seen
+
+
+def test_read_without_metadata_still_omits_it(tmp_path):
+    """The fix must not leak metadata into a plain read (default False)."""
+    pytest.importorskip("pyarrow")
+    path = _meta_table_file(tmp_path, "nometa.fits")
+    table = torchfits.table.read(path, hdu=1)
+    assert _field_keys(table.schema) == []

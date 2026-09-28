@@ -22,11 +22,55 @@ from .state import (
 
 _UNSET: Any = object()
 
-# Instances already warned about a non-propagated companion ``ivar``.  The
-# "warned once" bookkeeping lives here — never on the instance — so
-# ``__call__`` keeps ``__dict__`` byte-stable and one transform can be shared
-# across ``-J`` worker threads.  Weak entries drop out with their instance.
-_IVAR_WARNED: "weakref.WeakSet[Any]" = weakref.WeakSet()
+# ``id()`` of instances already warned about a non-propagated companion
+# ``ivar``.  The bookkeeping lives here — never on the instance — so ``__call__``
+# keeps ``__dict__`` byte-stable and one transform can be shared across ``-J``
+# worker threads.  Keyed by ``id()`` rather than held in a ``WeakSet`` because a
+# subclass written as a ``@dataclass`` gets ``__eq__`` and therefore
+# ``__hash__ = None``: a WeakSet membership test raised ``TypeError:
+# unhashable`` at exactly the moment the warning was due, turning a warning into
+# a crash.  A finaliser drops the key when the instance dies, so a recycled
+# ``id()`` cannot alias a stale entry.
+_IVAR_WARNED: set[int] = set()
+
+
+def _blank_invalid(flux: torch.Tensor, invalid: torch.Tensor | None) -> torch.Tensor:
+    """Return *flux* with every *invalid* position set to NaN.
+
+    A mask means "there is no data here", so a transform must not hand back a
+    finite value for it: the value is not merely unreliable but usually
+    *amplified*, because the mask excluded the pixel from the statistics and so
+    removed it from the very min/max/median the transform then divides by.  On a
+    3x4 frame with a masked-out 900.0 against a flat 10.0 background,
+    ``RobustNormalize`` returned ``8.9e11`` for that pixel and
+    ``mask_from_nan`` -- the library's own validity helper -- called it valid.
+
+    Non-finite inputs are blanked on the same rule, so a transform never
+    converts a NaN into a plausible number (``SigmaClip(fill="mean")`` did).
+
+    Integer flux is promoted with the same rule :func:`transforms.apply_mask`
+    uses (a NaN sentinel cannot be built in an integer dtype).
+    """
+    if invalid is None:
+        return flux
+    keep = invalid.to(device=flux.device, dtype=torch.bool)
+    if not flux.dtype.is_floating_point:
+        flux = flux.to(
+            torch.float32
+            if flux.dtype.itemsize <= 2 or flux.device.type == "mps"
+            else torch.float64
+        )
+    return torch.where(keep, flux, torch.full_like(flux, float("nan")))
+
+
+def _blank_ivar(
+    ivar: torch.Tensor | None, invalid: torch.Tensor | None
+) -> torch.Tensor | None:
+    """Zero the ``ivar`` of invalid positions (0 = no information)."""
+    if ivar is None or invalid is None:
+        return ivar
+    keep = invalid.to(device=ivar.device, dtype=torch.bool)
+    return torch.where(keep, ivar, torch.zeros_like(ivar))
 
 
 @dataclass
@@ -44,6 +88,7 @@ class PayloadView:
     mask: torch.Tensor | None
     state: DataState | None
     meta: dict[str, Any]
+    invalid: torch.Tensor | None = None
 
     @property
     def is_plain(self) -> bool:
@@ -60,8 +105,16 @@ class PayloadView:
         ivar: Any = _UNSET,
         state: Any = _UNSET,
     ) -> Any:
-        """Rebuild the original container with new flux (and optionally ivar)."""
+        """Rebuild the original container with new flux (and optionally ivar).
+
+        Positions :attr:`invalid` marks -- the caller's mask (or the payload's
+        own) plus every non-finite input -- are blanked here rather than in each
+        transform, so "a mask means no data" is one rule with one
+        implementation instead of a convention every transform has to remember.
+        """
         new_ivar = self.ivar if ivar is _UNSET else ivar
+        flux = _blank_invalid(flux, self.invalid)
+        new_ivar = _blank_ivar(new_ivar, self.invalid)
         if self.is_plain:
             return flux
         if isinstance(self.original, dict):
@@ -100,10 +153,23 @@ class FITSTransform:
 
     All transforms accept an optional ``mask`` parameter
     (``torch.Tensor | None``) on both :meth:`forward` and
-    :meth:`inverse`.  The mask is a boolean tensor where ``True``
-    indicates a valid pixel.  Transforms that compute statistics
-    (median, min, max, etc.) use the mask to exclude invalid
-    pixels; pointwise transforms can safely ignore it.
+    :meth:`inverse``.  The mask is a boolean tensor where ``True``
+    indicates a valid pixel, and it means **no data there**, not merely
+    "leave this out of the statistics".  Every transform therefore does two
+    things with it: the statistics that need it exclude those pixels, and the
+    result marks them NaN (:attr:`PayloadView.replace` does this in one place,
+    so no transform can forget).  Masking an outlier is the point -- otherwise
+    the pixel is divided by limits computed without it and comes back
+    amplified.  A payload's own ``mask`` field counts the same way, and
+    non-finite input is always treated as no data.
+
+    A transform that is a *declared* identity for its input returns that input
+    untouched, mask included -- there is no statistic to exclude the masked
+    pixels from and nothing was amplified.  Two classes do this and document
+    it: ``FITSHeaderScale`` with ``bscale=1``/``bzero=0``, and
+    ``FITSHeaderNormalize`` on a float header with ``scale_floats=False``.
+    Measured: on the TR-001 fixture those two return the masked pixel's
+    ``900.0`` while every scaling branch returns ``NaN``.
 
     Inputs may be a bare :class:`torch.Tensor`, the
     ``{"flux", "ivar"?, "mask"?}`` dict payload emitted by
@@ -163,6 +229,7 @@ class FITSTransform:
         self,
         x: Any,
         *,
+        mask: torch.Tensor | None = None,
         state: DataState | None = None,
         expects: Any = _UNSET,
     ) -> PayloadView:
@@ -171,6 +238,11 @@ class FITSTransform:
         ``expects`` overrides the class-level whitelist — ``inverse()`` passes
         :meth:`inverse_expects` so undoing a transform accepts what the forward
         pass produced.
+
+        ``mask`` is the caller's validity mask.  It is recorded on the view so
+        :meth:`PayloadView.replace` can honour it on the way out; a payload's
+        own ``mask`` field is used when no explicit mask is passed, and
+        non-finite input is always treated as no-data.
         """
         check_state(
             x,
@@ -178,13 +250,21 @@ class FITSTransform:
             type(self).__name__,
             state=state,
         )
+        flux = get_flux(x)
+        own = get_mask(x)
+        declared = mask if mask is not None else own
+        invalid = declared
+        if invalid is not None or flux.is_floating_point():
+            finite = torch.isfinite(flux)
+            invalid = finite if invalid is None else (invalid.to(torch.bool) & finite)
         return PayloadView(
             original=x,
-            flux=get_flux(x),
+            flux=flux,
             ivar=get_ivar(x),
-            mask=get_mask(x),
+            mask=own,
             state=get_state(x) if state is None else state,
             meta=get_meta(x),
+            invalid=invalid,
         )
 
     @staticmethod
@@ -246,9 +326,17 @@ class FITSTransform:
 
     def _warn_ivar_not_propagated(self) -> None:
         """Warn once per instance that ``ivar`` is passed through unchanged."""
-        if self in _IVAR_WARNED:
+        key = id(self)
+        if key in _IVAR_WARNED:
             return
-        _IVAR_WARNED.add(self)
+        _IVAR_WARNED.add(key)
+        try:
+            # Drop the key with the instance so a recycled id() cannot alias it.
+            weakref.finalize(self, _IVAR_WARNED.discard, key)
+        except TypeError:
+            # Not weak-referenceable: the key can outlive the instance, which
+            # costs at most one skipped warning.
+            pass
         warnings.warn(
             f"{type(self).__name__} is nonlinear: companion 'ivar' is passed "
             "through unchanged and no longer strictly describes the transformed "

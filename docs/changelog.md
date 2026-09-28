@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- Real-observation **read** coverage (`tests/test_reads_real_data.py`): the
+  reads of the same CFHT sample data are cross-checked against
+  `astropy.io.fits` — an independent implementation with its own Rice
+  decompressor and header parser. Decompressed MegaCam extensions
+  (4644x2112 uint16) match exactly, the raw variable-length tile stream is
+  byte-identical row for row (4644 tiles, up to 198 distinct lengths per frame,
+  longest exactly filling the declared `1PB(n)` bound), the real
+  `BSCALE=1.0`/`BZERO=32768.0` convention round-trips to astropy's unsigned
+  array, `read_shape` agrees on all 409 (frame, HDU) geometries, and 435
+  megapixels of real mosaic match in every sampled window and in a whole-file
+  strided sample. Skips when the sample data is absent.
+- Real-observation coverage for the native split
+  (`tests/test_core_library_real_data.py`): the three 1.6 GB CFHT MegaPipe
+  mosaics and ten Rice-compressed MegaCam MEFs now prove `_core` and `_C` answer
+  identically across all 409 (frame, HDU) records, that header text is exactly
+  `80 * (cards + 1)` bytes of 80-column cards on every HDU, and that the whole
+  9 GB corpus is readable in a fresh interpreter where `torch` and `numpy` both
+  raise on import and the torch-linked extension is never imported at all. The
+  tests skip when the sample data is absent
+  (`scripts/fetch_cfht_megacam_sample.sh`, `scripts/fetch_cfht_megapipe_sample.sh`).
+- `libtorchfits_core`: the native stack's torch-free half, shipped as its own
+  shared library and bound as `torchfits._core`. It carries CFITSIO, the shared
+  read-metadata cache, the FITS inspection rules, and its own `parallel_for`
+  (sized by `TORCHFITS_NUM_THREADS`, which ATen reads too). The path-based
+  metadata probes — `read_header`, `read_keys`, `read_colnames`, `read_nrows`,
+  `read_num_hdus`, `read_hdu_type`, `read_shape`, `read_table_info` — now run
+  entirely through it, so they never dlopen libtorch: cold start drops from
+  332–337 ms to ~53 ms on macOS arm64. `torchfits._core.Metadata` exposes the
+  same queries over an open read-only handle.
+- Torch-free Arrow table transport: native fixed columns and flat VLA
+  values/offsets now cross a typed, Python-owned raw-buffer boundary, and the
+  `table` namespace supports schema/Arrow reads without importing Python
+  `torch`. `read_torch` / `scan_torch` remain explicit tensor boundaries.
 - Processing-state contract for transforms: `DataState`
   (`STORED`/`PHYSICAL`/`CONTINUUM_NORMALIZED`/`NORMALIZED`), `DataStateError`
   and the typed `Payload` container (interchangeable with the existing
@@ -56,7 +89,361 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - data: Spectra companions, IFU windows, table sharding and bands
 - transforms: Add data-state contract, IVAR/mask awareness and ML transforms
 - types: Check the native extension boundary instead of assuming it
+### Fixed
+- `torchfits._core.Metadata` is now safe to share across threads. CFITSIO keeps
+  one mutable current-HDU cursor per `fitsfile`, and the accessors locked only
+  around the move to an HDU, then issued the query that depended on that cursor
+  with the lock released. Two threads sharing a handle could therefore read
+  another thread's HDU. Measured on a 37-HDU Rice-compressed MegaCam MEF with
+  four threads: wrong answers, spurious `Could not read image dimensions`, and a
+  hard crash. The lock is now held across the whole move-then-read. Python could
+  not reach it -- the `Metadata` bindings hold the GIL -- so it is pinned by a new
+  C++ probe (`tests/cpp/test_fitsreader_threads.cpp`) rather than a threaded
+  Python test.
+- `libtorchfits_core`'s thread pool no longer deadlocks when a `parallel_for` is
+  issued from inside a pool worker. The caller's keep-the-last-chunk rule only
+  covered a nested call on the calling thread; a worker-side nested call queued
+  work and waited for workers that were themselves inside user code. Measured
+  deadlock at every `TORCHFITS_NUM_THREADS` >= 2. A nested call from a worker now
+  runs its chunks inline on that worker, so nesting is safe (it just does not fan
+  out a second time) and the throw contract still holds. The header comment that
+  claimed unconditional safety now states what is actually guaranteed, and
+  `tests/cpp/test_parallel_for_nesting.cpp` pins it at pool sizes 1/2/4/8/64
+  under a timeout so a regression fails instead of hanging.
+- `table.read(..., where=...)` no longer fails in a torch-free environment. The
+  torch-accelerated filter is an optimisation that is *supposed* to return
+  `None` and let the Arrow filter take over; it imported `torch` unguarded, so
+  a filtered Arrow read raised `ImportError` instead of falling through.
+  `examples/example_table_recipes.py` now runs with `torch` blocked, and
+  `tests/test_torch_boundary.py` pins it.
+- The release smoke and the cibuildwheel test command now verify the native
+  split rather than only `torchfits._C`: `tests/test_release_smoke.py` asserts
+  `TORCH_FREE`, that the module, library and extension build ids agree, and
+  runs a metadata round trip in a child with `torch` and `numpy` blocked.    A wheel that shipped without `libtorchfits_core` passed every functional test
+    before this.
+  - `pixi run bench-gpu-install` deletes all three native artifacts before
+    rebuilding instead of only `_C*.so`, and the exhaustive bench script checks
+    build-id agreement rather than a bare `_C` import. A CPU build followed by a
+    GPU build left the first build's `libtorchfits_core` in place, which
+    surfaces as a build-id `ImportError` at the first metadata call rather than
+    as a build failure.
+  - `torchfits._core`'s shape accessors now say which axis order they return.
+    `Metadata.shape()` and `read_shape()` report the row-major (torch) shape,
+    while `Metadata.image_info()` reports `NAXIS1..NAXISn` as written in the
+    header; for a non-square HDU the two are exact transposes, and the element
+    count is identical either way, so reaching for the wrong one produced a
+    silently transposed shape with nothing to hint that an order was in play.
+    The two orderings are intentional and unchanged -- `image_info()` exists to
+    report the header as written -- so all three accessors gained docstrings
+    that state their order and cross-reference each other. The text propagates
+    to the generated `_core.pyi`, and
+    `tests/test_core_library.py::test_shape_and_image_info_state_their_axis_order`
+    pins both the behaviour on a deliberately non-square image and the docstring,
+    so removing either fails.
+  - `scripts/gen_native_stub.py` no longer emits a `.pyi` that cannot be parsed.
+    Its return-type rewrite re-terminated every `def` it touched with `: ...`,
+    but stubgen writes a bare `:` when the binding carries a docstring and puts
+    the docstring on the indented lines below — so any documented binding with a
+    hand-supplied return type got a second body. The rewrite now reproduces
+    whichever terminator stubgen emitted, and the generator parses its own output
+    before writing it, naming the binding when it fails. This was invisible
+    before because stubgen, the rewrites and the drift gate are all string-level
+    and would happily commit a broken file; the axis-order docstrings above are
+    the first documented bindings that also carry a return-type override, and
+    `preflight-push` caught the result on the first run.
+  - Writing to a file that a reader still holds open now fails with an
+    actionable message instead of CFITSIO's bare `could not open the named file`.
+    `open_table_reader()` returns a handle that owns its own CFITSIO handle, so
+    dropping the reader *cache* cannot release it and CFITSIO keeps refusing the
+    `READWRITE` open. That is a reasonable thing to do — open a reader, then
+    write — and the old message named neither the cause nor the fix. The error
+    now says which reader to close and what else could produce it (a missing
+    parent directory, or permissions). The `FILE_NOT_OPENED` retry it depends on
+    is also pinned by a new C++ probe, and the comment above it no longer names
+    `fits_already_open` as if it were a status code: it is a CFITSIO function, and
+    the status is the generic `FILE_NOT_OPENED`.
+  - The native big-endian byte-swap helpers (`bswap16_copy`,
+    `bswap16_copy_u16_offset`, `bswap32_copy`, `bswap32_copy_u32_offset`,
+    `bswap64_copy`) are now tested directly against a byte-wise reference, at
+    element counts straddling every SIMD vector width and the scalar tail. They
+    had no direct test, and neither did the rest of the suite reach them: the
+    unsigned fast paths in `read_tensor_canonical` are gated on `!compressed`
+    while the real CFHT corpus is Rice-compressed throughout. Measured by
+    corrupting the NEON 16-bit shuffle (`vrev16q_u8` -> `vrev32q_u8`, a
+    plausible wrong-width edit): all 26 pre-existing byteswap tests and all 113
+    read/write-parity tests still passed, so byte-reversed pixels could have
+    shipped on every arm64 wheel with nothing failing. The new probe reports 12
+    failures for that edit, and prints which SIMD branch was compiled in so a
+    run that silently fell through to the scalar tail is visible in CI output.
+  - C++ environment flags now share one vocabulary. `table_types.h` and
+    `table_reader.h` each hand-rolled a `getenv` check against the first
+    character of the value, and the two disagreed with the canonical
+    `internal_utils.h` helper on real inputs: `TORCHFITS_TABLE_BUFFERED=off`
+    enabled the buffered path under the local check and disabled it under the
+    helper, and `TORCHFITS_VLA_HEAP_PREAD=on` did the reverse. Same variable,
+    opposite answers, no error either way. Both now call the shared helpers, with
+    a new `env_flag_default_false` for the opt-in flag that had no equivalent.
+    The documented contract (`0`/`1`, and these knobs being explicitly outside
+    the public API) is unchanged. A new drift gate in
+    `tests/test_docs_integrity.py` fails if a boolean `TORCHFITS_*` flag ever
+    parses `getenv` by hand again; numeric knobs stay exempt, since      `TORCHFITS_NUM_THREADS` legitimately parses with `std::stoi`.
+  - A table column with more than two axes is now rejected instead of being
+    silently truncated. The fixed-width column branch took its repeat count from
+    `shape(1)` and packed `rows * repeat` elements, so every axis past the second
+    fell out of the element count: a `(4, 3, 5)` column of 60 values was written
+    as if it were `(4, 3)`, keeping 12 and discarding 48, and the resulting file
+    was indistinguishable from a genuine `(4, 3)` column. The sibling VLA branch
+    and `append_rows` already rejected more than two dimensions, and the public
+    Python layer does too, so this only ever reached the native binding -- but
+    that is the layer that talks to CFITSIO, and the error names the column and
+    its shape. The shared `ensure_c_contiguous_ndarray` helper also now bounds
+    the element count it is handed against the array's own size. That count is
+    what the caller passes on to CFITSIO rather than something the array carries,
+    and the contiguous fast path returned the source pointer without consulting
+    it, so an over-large count would have read past the end of the buffer; all
+    current callers derive it from the array, making the guard defence in depth.
+  - Three HDU-keyed metadata lookups on the native file handle now position the
+    CFITSIO cursor themselves. `get_image_info`, `get_scale_info` and
+    `is_compressed_image_cached` cache on an HDU number but, on a cache miss,
+    read whichever HDU the handle is currently sitting on — positioning was left
+    to the caller as an unstated precondition. All twelve call sites happened to
+    honour it, so nothing was wrong today; measured by removing the positioning,
+    after which the whole suite still passed, which is the reason the invariant is
+    now enforced in the three methods instead of assumed by their callers. The
+    shared metadata cache they feed is process-wide and keyed by path, so a single
+    mis-keyed entry would have been served to every later reader of that file
+    rather than staying local to one handle.
+  - The Galaxy Zoo example now bounds its per-cutout download. It is a *required*
+    example, and it pulled one FITS cutout per row from a third-party HTTP
+    service using `urllib.request.urlretrieve`, which accepts no timeout and
+    blocks until the operating system gives up. Measured against an unroutable
+    address, a single cutout took 75s that way; at the eight cutouts the test
+    runner requests on a cold cache that is 600s inside an example whose budget
+    is 300s, and the runner reports a timeout as a failure. The fetch now uses
+    `urlopen` with an explicit 20s timeout, which lands in the error handler
+    that was already there -- `TimeoutError` is an `OSError` -- so one slow
+    cutout is skipped instead of consuming the whole budget. Observed as a
+    one-off `test_example_scripts_exit_zero` failure that passed on re-run.
+  - The examples runner now means what `OPTIONAL` says. Two gaps made it weaker
+    than it looked: a timeout was reported as a failure for optional and required
+    examples alike, so a slow network could still red the gate for an example
+    whose purpose is to exercise a network path; and the skip-marker list
+    (`"not installed"`, `"skipping"`) matched none of the seven examples that
+    print the repository's actual `SKIP: ...` convention, so an optional example
+    declining to run was still counted as a failure. `example_ml_galaxyzoo_legacy.py`
+    is now optional for the same reason its downloads are bounded -- its
+    availability belongs to `legacysurvey.org`, not to this repository. Required
+    examples are unchanged: they still fail on a timeout, on a non-zero exit, and
+    a `SKIP:` line does not excuse them.
+  - `TableReader`'s mutex comment now says where the lock is actually taken. The
+    header declared `io_mutex_` and described what it protects -- the CFITSIO
+    cursor, the cached offsets, and the reused `scratch_buffer_` -- without saying
+    that nothing in the header acquires it. The bindings that hand out a *shared*
+    reader take it instead, because the only shared reader is the
+    `open_fits_mmap_reader` capsule; every other path is per-call or per-thread and
+    needs no lock, since the reader cache is a `ThreadLocalReaderCache` and never
+    gives the same reader to two threads. Read on its own, the comment was
+    misleading enough to suggest the mutex was dead code. The comment now names
+    the two bindings that hold it, explains why the other paths do not, states the
+    invariant for new capsule bindings, and a test enforces it.
+  - A table column whose `TFORM` repeat count is zero is now rejected instead of
+    being filled with a neighbouring column's bytes. The repeat count drives the
+    element count, so a zero-repeat column read nothing from a row that does hold
+    the other columns' data, and the result surfaced under that column's name.
+    `TFORMn = '0J'` is legal -- astropy reads such a column as zero-width -- and
+    on a file astropy accepts, `DDDD` came back as `[286331154, 0]`, which is the
+    adjacent column `AAA`'s row-1 value, not garbage. The validation covered
+    overflow and negative counts but not zero, while the row de-interleaver
+    already rejected `repeat <= 0`; the two now agree, and the file is rejected at
+    open time with the column named.
+  - A comment in the mmap table scanner no longer describes a parallel dispatch
+    that was measured and removed. It claimed the scan body was "shared between
+    sequential and parallel dispatch" while the only call site is a single
+    sequential pass. That mattered: the result gather has a bulk-`memcpy` fast
+    path for runs of consecutive file rows, which is only correct while the scan
+    emits indices in ascending order -- a coupling the stale comment hid.
+  - A non-contiguous `bool` or `BIT` table payload is now written as the values
+    the caller passed. The logical and `TBIT` branches of the table writer read
+    the payload with a flat index over the element count, which only matches the
+    caller's column when the payload is contiguous: for a strided view the
+    logical elements sit at the view's strides, not at consecutive addresses
+    from the base pointer, so the flat read took the base's own stride-1 order.
+    A stride-2 view of `[T, F, T, F, T, F, T, F]` -- four Trues -- was written as
+    `[T, F, T, F]`, silently. Every sibling write path already densified first;
+    the two branches now do too.
+  - The four table-mutation functions now state that they resolve column names
+    case-insensitively (`fits_get_colnum(..., CASEINSEN, ...)`) while every read
+    path -- and the mmap writer, which the same update API falls back *from* --
+    matches names exactly. On a table with `TTYPE = 'FLUX'`, the native
+    `update_fits_table_rows` and `append_fits_table_rows` accept `{'flux': ...}`
+    and write into `FLUX`, while `read_fits_table_rows(['flux'])` reports
+    "Column not found". The supported Python API is unaffected -- all five
+    mutation entry points validate names against the header first -- so this is
+    a trap for the next reader of the C++ layer, not a live bug.
+  - Two unused `TableReader` helpers no longer read as live dispatch.
+    `projected_bytes` and `all_fixed_numeric` fed a cross-thread fan-out that was
+    measured at 3-8x slower than the sequential path and reverted; nothing in the
+    tree calls either one, but their comments described the "parallel fan-out
+    gate" as if it still existed. Both now say they are unreferenced, point at
+    the measurements, and note that `projected_bytes` over-counts a `BIT`
+    projection by up to 8x (it multiplies width by repeat, while a bit array
+    occupies `ceil(repeat/8)` bytes).
+  - The numpy full-image reader no longer returns a Python object with the GIL
+    released. Its raw `pread`/`mmap` shortcut for byte images had two
+    `return out;` statements inside a `gil_scoped_release` scope, so each
+    returned an `nb::object` -- copying it increfs a Python reference without
+    the GIL. Nothing observable breaks today (the array has no other reference,
+    so the unsynchronised incref cannot race), but it is a latent defect and it
+    broke a convention the other twenty-odd bindings observe without exception:
+    release for the work, reacquire before touching Python, return afterwards.
+    The I/O now lives in a helper that only reports whether it filled the
+    destination, so the single return runs with the GIL held.
+  - A stale one-line comment above the skinny-metadata bindings, duplicated by
+    the three-line comment explaining the same thing, has been removed.
+  - The command-injection regression test now covers the whole native surface.
+    It pinned two of the entry points that take a FITS path -- the Python façade
+    and `open_fits_file` -- while 41 of them enforce the filename guard, in 25
+    places in C++ plus two constructors. All 41 are now exercised, and a
+    companion test fails if a new path-taking entry point is added without a
+    verdict. Removing the guard from one of them makes the new test fail.
+  - Rewriting a tile-compressed FITS uncompressed no longer leaves CompImage
+    dither metadata behind. `ZDITHER<n>` -- the subtractive-dither offset
+    CFITSIO stamps for the `SUBTRACTIVE_DITHER_1` quantizer -- was in neither
+    the exact-key nor the prefix drop set, so `ZIMAGE`, `ZCMPTYPE`, `ZBITPIX`,
+    `ZNAXIS*`, `ZTILE*`, `ZQUANTIZ`, `ZNAME*` and `ZVAL*` were all stripped and
+    `ZDITHER0` alone survived onto an `IMAGE` extension with no tiles and no
+    dither. Opening a compressed MEF and writing it back uncompressed carried
+    the card across; so did `replace_hdu` on a compressed HDU. It is dropped as
+    a prefix, so every `ZDITHER<n>` is covered, and the compressed write path
+    drops it too rather than replaying an offset that contradicts the tiles
+    CFITSIO just wrote.
+  - The two copies of the CompImage drop set are now one. `_hdu_rewrite` kept a
+    private copy of the exact-key set that had already drifted from the
+    write-boundary one by a card; both restated the same policy in a form that
+    nothing kept in sync. `_hdu_rewrite` now imports the shared sets, so a card
+    added to one is stripped by both.
+  - `torchfits.read_batch` now documents what it does rather than what it did
+    not. The docstring and `docs/api-core-io.md` promised that a file that
+    fails to read is "skipped with a warning" so result positions would not map
+    1:1 onto the input paths. Measured: with the default `strict=False` it
+    raises `RuntimeError` naming the path and how many files read before it, and
+    emits no warning; the result list is never silently short. The behaviour is
+    the tested and intended one -- `tests/test_where_and_batch_errors.py` pins
+    the raise -- so the two documentation sites were corrected to state it,
+    including what `strict=True` actually changes.
+  - A negative `hdu` is now rejected the same way by every public entry point,
+    and a bad HDU index no longer emits a warning blaming the header parser.
+    `_resolve_hdu_index` passed a negative index straight through to CFITSIO,
+    so `read_shape`, `read_hdu_type`, `read_nrows`, `read_colnames`,
+    `read_table_info` and `read_keys` reported "could not move to HDU" while
+    `read`, `read_tensor`, `read_subset` and `read_table` all raised
+    `ValueError("hdu must be a non-negative integer")`. Separately, `get_header`
+    warned that its fast path had failed whenever the fast header read raised --
+    including for an ordinary error the fallback cannot fix either, so
+    `read_header(path, hdu=99)` emitted a misleading `RuntimeWarning` beside the
+    real `OSError`. The warning now appears only when the fallback actually
+    rescued the read, which keeps the diagnostic for a genuine parse failure.
+  - `table.read`/`table.scan` now report an invalid `backend=` the same way
+    whatever its type. The validator tests membership in a `frozenset`, which
+    hashes its argument, so a list or dict backend leaked `TypeError: unhashable
+    type` out of the public entry points instead of the documented
+    `ValueError("backend must be one of: auto, torch, cpp")` -- and only
+    unhashable types were affected, since a tuple, `bytes` or an `int` already
+    produced the right error. The leak therefore depended on hashability rather
+    than on validity.
+  - A negative `rows=` index can no longer be read as row 0. The
+    non-negativity check validated the value *after* `int()` had truncated it
+    toward zero, so `rows=[-0.5]` became `0`, passed the guard, and silently
+    read row 0 instead of raising. The same truncation appeared a second time
+    in `np.asarray(rows, dtype=np.int64)` -- which is the only check in play
+    when the header read fails -- so the two disagreed about what counts as a
+    negative index. Both now share one conversion that tests the un-truncated
+    value. Positive fractions, numpy integers and integral floats still
+    resolve as before.
+  - `stream=True` now honours the `pyarrow.Table` input that
+    `write_parquet`/`write_csv`/`write_ipc`/`to_pandas`/`to_polars` all document.
+    A `Table` is iterable, but it iterates its *columns*, and it exposes
+    `.schema`, so the streaming branches built a writer and then fed it columns.
+    `write_parquet(..., stream=True)` raised **and left a readable but zero-row
+    parquet file on disk**; `to_polars(..., stream=True)` silently yielded one
+    polars Series per column; `to_pandas(..., stream=True)` returned a single
+    DataFrame where an iterator of per-batch frames is documented. All inputs
+    are now normalized to record batches first, while `RecordBatchReader`s and
+    plain batch iterables are left untouched so a streaming FITS read still
+    streams, and the eager writer still takes its schema from the original input
+    so an empty source still produces a valid, readable, zero-row file.
+  - `NOT (...)` in a `where=` clause no longer returns rows that a NULL must
+    exclude. The **dialect is unchanged** -- a null is unknown, and the 1.1.0
+    rule ("negation excludes NULL rows") is what now actually runs. Three
+    separate places in the Arrow evaluator broke it, and each had to be fixed
+    for the rule to hold:
+    (1) `_eval` collapsed nulls to `False` at every leaf, so by the time a
+    `not` node ran there was nothing left to invert and it became a plain bool
+    flip -- on a `TNULL` column `NOT (A == 1)` returned the NULL row while
+    `A != 1` correctly did not, and 8 of 11 SQL equivalence pairs selected
+    different rows;
+    (2) `_in_mask` and `_between_mask` filled nulls to `False` in their
+    *positive* branch, so `NOT (A IN (...))` and `NOT (A BETWEEN ...)` were
+    wrong for the same reason -- their negated branches were already correct,
+    because they take the negation as a flag and invert before filling;
+    (3) `pyarrow.compute.is_in` is a membership test, not a comparison: it
+    answers a **non-null `False`** for a null input, where `pc.equal` answers
+    null. Its result is now re-marked as null before any inversion, or
+    `NOT (A IN (...))` selects the very rows `A NOT IN` excludes.
+    Nulls now propagate to a single top-level fill, so negation always agrees
+    with the dual operator -- `NOT (x == v)` == `x != v`, `NOT (x > v)` ==
+    `x <= v`, `NOT (x IN ...)` == `x NOT IN ...` -- and the Arrow path matches
+    the existing `torchfits.where` reference evaluator, which already
+    implemented this contract. Verified across 12 negation/dual pairs x 3 read
+    backends (`auto`, `cpp`, `torch`) plus the reference evaluator: 0
+    disagreements. Queries that contain no negation are unaffected.
+  - The parquet/CSV/IPC exporters can now be filtered. `write_parquet`,
+    `write_csv` and `write_ipc` named their *destination* parameter `where`
+    forwarding `**kwargs` to the read, and `where` is one of the documented
+    I/O kwargs -- so `write_parquet(dest, path, where="MAG < 20")` raised
+    `TypeError: got multiple values for argument 'where'` and the row filter
+    could not be reached on any of the three. The destination is now `dest`
+    (`write_parquet(dest, data, ...)`); the argument is unchanged for every
+    positional call, which is how all of them were written.
+  - FITS column metadata no longer depends on how the read turned out. Three
+    separate producers answered "what keywords does this column have"
+    differently: the data path published six (`TFORM`, `TUNIT`, `TDIM`,
+    `TNULL`, `TSCAL`, `TZERO`), the header-only `schema()` path published
+    three, and a read that matched zero rows published none at all -- so the
+    same call described its columns differently purely because the result
+    happened to be empty. `TUNIT` has no field on the parsed column, which is
+    why the two producers had drifted. There is now one producer and one
+    column list; every read shape and backend publishes the same six keywords,
+    and a plain read still publishes none.
+  - **BUGFIX:** a `where=` read no longer silently drops TTYPE-less columns.
+    Both filtering strategies built their output column list from a walker
+    that skips columns with no `TTYPE` card, so a filtered read returned one
+    column fewer than the same read without a filter. The two strategies also
+    disagreed with each other, and because the C++ pushdown declines unless
+    torch is already imported, *which* columns came back depended on whether
+    that was the first filtered read in the process -- the first call returned
+    the full column set and every later call silently returned fewer, with the
+    same rows. Filtered and unfiltered reads now agree on every backend and
+    across repeated calls.
+
 ### Changed
+- The wheel now ships three native artifacts: `_C` (torch-linked), `_core` (the
+  torch-free metadata module) and `libtorchfits_core` itself. `_C` resolves its
+  CFITSIO symbols against the core so there is exactly one CFITSIO in the
+  process; a post-link `nm` guard fails the build if any of them is left
+  unbound, and a build-id constant stamped into all three artifacts turns a
+  mismatched install into an `ImportError` instead of a misread.
+- `torchfits._C.pyi` is joined by a generated `torchfits._core.pyi`; the stub
+  generator now drives both modules and `scripts/check_wheel_contents.py`
+  requires all three native artifacts plus both stubs to be present.
+- The cold-start boundary benchmark gained `_core` entries and its metadata
+  budgets were re-tightened (400 ms → 120 ms, Arrow 900 ms → 600 ms) against
+  the now torch-free path. `torchfits.open()` still loads `_C` because the
+  `HDUList` handle is shared with the tensor readers; it keeps its own measured
+  250 ms budget rather than borrowing the metadata one.
+- The CLI parser and metadata commands (`info`, `header`, `probe`, `verify`,
+  `table`, `copy`, `setkey`) are now torch-free; pixel/tensor commands declare
+  their runtime explicitly so their existing thread controls remain intact.
 - Dependency requirements now carry honest ranges. Every non-load-bearing
   upper cap is gone (`ruff`, `zensical`, `pyarrow`, `polars`, `duckdb`, and the
   exact `mypy` pin), and the two floors that could not be installed on a
@@ -215,6 +602,418 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their declarations, bindings and Python call sites (which had been calling
   no-ops after every mutation), plus an unreachable `_REMOVED_STUBS` branch.
   The live native state is `SharedReadMeta`.
+- `TableHDU.filter()` / `TableHDURef.filter()` no longer raise
+  `ArrowInvalid: only handle 1-dimensional arrays` on any table holding a
+  packed string column (a `(rows, width)` uint8 tensor), a `TDIM` vector column
+  or a variable-length column: the predicate table is now built only from
+  columns Arrow can hold, string columns are decoded to text so
+  `NAME == 'alpha'` matches, and the other kinds are sliced into the result
+  without being offered to the predicate. Every filter on such a table
+  previously failed, including a numeric predicate that never mentioned the
+  offending column.
+- `TableHDU.head()` truncates a zero-column table. Its row count comes from the
+  header's `NAXIS2`, but with no column data to slice it returned `self`
+  unchanged, so `head(2)` on a 6-row zero-column BINTABLE reported 6 rows. The
+  derived header is now narrowed instead.
+- `HDUList.validate()` reaches the data instead of only the header: it is
+  `False` for an HDU whose handle has been detached (`close()` /
+  `mark_closed()`) and for one whose file has gone away. Both guards previously
+  failed open -- the `TensorHDU` branch was skipped by the very state
+  `mark_closed()` creates, and a file-backed table HDU is a `TableHDURef`, which
+  the `TableHDU`-only `isinstance` check never matched, so no table was ever
+  validated and the method could not return `False`.
+- `TableHDU.data[col]` keeps the 2-D `(rows, width)` shape of a packed uint8
+  string column, matching `hdu[col]`, `to_tensor_dict()` and
+  `get_string_column()`. A 1-character string column (`TFORM='1A'`) came back as
+  bare char codes through `.data` and as `(N, 1)` through every other accessor.
+
+### Fixed — transforms audit
+- `mask=` is now a mask in the full sense: a pixel the caller masks is written
+  back as `NaN` with `ivar = 0`, not merely excluded from the statistics that
+  choose the transform's parameters. Every statistics-based transform already
+  honoured the mask when computing parameters, but the output kept the
+  masked-out value — on a 3×4 frame with a single masked-out `900.0` against a
+  flat `10.0` sky, `RobustNormalize` returned `8.9e11`, `MinMaxNormalize`
+  `8.9e7` and `SigmaNormalize` `9.0e14`, and the library's own
+  `mask_from_nan` helper reported the pixel **valid**. `MinMaxNormalize`'s
+  docstring already claimed masked pixels stay `NaN`; it now does. Callers
+  that passed `mask=` to get a clean statistic and relied on getting the raw
+  pixel back are affected, and the invalid mask is now applied in
+  `PayloadView.replace()` so no transform can forget it. A transform that is a
+  *declared* identity for its input (`FITSHeaderScale(bscale=1)`,
+  `FITSHeaderNormalize` on a float header with `scale_floats=False`) still
+  returns its input untouched, mask included: it has no statistic to
+  exclude the pixel from and nothing was amplified.
+- Non-finite input is blanked on the same path, so `SigmaClip(fill="mean")` no
+  longer turns a `NaN`/`inf` pixel into the frame mean — the replacement value
+  is applied to pixels that had data.
+- `forward()` enforces the same double-scaling guard as `__call__`. The
+  `produces` state stamp was applied in `FITSTransform.__call__` only, and
+  `forward()` is public: `FITSHeaderScale(bscale=2.0).forward(...)` returned a
+  payload still labelled `stored`, so a second `forward()` scaled the data
+  again and raised nothing, while the identical call through `__call__` raised
+  `DataStateError`. `FITSHeaderScale`, `FITSScaleColumns` and every
+  `FITSHeaderNormalize` branch now stamp their own output.
+- The one-time `ivar` warning no longer crashes on a `@dataclass` transform.
+  The "already warned" set was a `weakref.WeakSet`, and a dataclass subclass
+  gets `__eq__` and therefore `__hash__ = None`, so `TypeError: unhashable
+  type` was raised exactly when the warning was due.
+
+### Fixed — CLI audit
+- `-j` / `--jobs` is no longer silently discarded. `run_file_jobs(..., torch_runtime=True)`
+  called `torch.set_num_threads(1)` in the *serial* branch as well as in every
+  worker, so the count `configure_torch_jobs` had just resolved was overwritten
+  before any file was read: `transform -j 8 in.fits out.fits` and the default
+  `-j 0` (all CPU cores) both ran single-threaded, on an 8-core machine. The cap
+  now applies only under real fan-out, where it is the documented
+  oversubscription guard — `-J 4` still runs 4 workers of 1 thread each, and
+  `-j 3 -J 1` now runs 3 threads. This was a regression introduced by the lazy
+  tensor-runtime refactor: the pre-refactor helper only capped inside the
+  `workers > 1` path.
+- A closed downstream pipe is exit `0` again, with no shutdown noise.
+  `main()` mapped `BrokenPipeError` to `EXIT_OK`, but stdout is block-buffered
+  whenever it is not a TTY, so the failing write happened during interpreter
+  shutdown instead: `torchfits info <300 files> | head -1` exited **120** — an
+  undocumented code, absent from the `docs/cli.md` table — and printed
+  `Exception ignored on flushing sys.stdout: BrokenPipeError` to stderr.
+  `main()` now flushes stdout itself and redirects the descriptor to
+  `os.devnull` on a broken pipe, so the documented contract actually holds. A
+  genuine error before the truncation point still wins: a missing input ahead
+  of a `| head -1` still exits `3`.
+- `convert --to png` band failures name the file and HDU. CFITSIO's bare
+  `Could not move to HDU` — or a `Could not open FITS file` that says nothing
+  about which band it was reading — is unattributable in a multi-band
+  invocation; errors now read `g.fits: HDU 1: Could not move to HDU`.
+- `table -n -1` is a usage error (exit `2`) instead of silently printing no
+  preview rows. A negative count is nonsense input, and every other numeric CLI
+  flag (`-j`, `-J`) already rejected it; `-n 0` remains the way to ask for the
+  schema alone.
+
+### Fixed — data layer audit
+- `shuffle=` and `shuffle_buffer_size=` now change the order every epoch.
+  Both were seeded from `seed + worker_id`, a constant for the life of the
+  dataset, so epoch 2 replayed epoch 1 exactly: a `shuffle=True` run over
+  8 files produced `[7, 0, 3, 4, 1, 5, 2, 6]` on every epoch, and
+  `FitsStagedCutoutIterableDataset` cut the byte-identical patches out of the
+  mosaic each epoch. Every `IterableDataset` in `torchfits.data` is affected
+  (tensor, image, cube, spectrum, staged cutout, table). The seed now mixes
+  a per-dataset epoch counter with `torch.initial_seed()` — measured to be
+  the only way to cover all three DataLoader configurations, since
+  `initial_seed()` is constant in the main process and under
+  `persistent_workers=True` but varies in a freshly forked worker. **Two
+  datasets built with the same `seed` still replay the same sequence of
+  epochs**, so a run stays reproducible; a run that relied on a *fixed* order
+  across epochs now gets a different one each epoch, which is what `shuffle`
+  is for.
+- `FitsTableDataset` reports the table's own row count. It derived the count
+  from a materialised column, so a zero-column `BinTableHDU` reported 0 rows
+  for a table torchfits itself opens as `num_rows = 6`, rejected a matching
+  6-element label list, and handed back an empty dict for `ds[0]` instead of
+  raising `IndexError`. Out-of-range indices now raise. A `where=` filter
+  still counts the *filtered* rows.
+- `FitsSpectrumDataset(column=..., ivar_hdu=...)` no longer silently discards
+  the inverse variance. `mask_hdu=` and `wavelength_hdu=` were already
+  rejected on that path with an actionable message; `ivar_hdu=` was missing
+  from the guard and was dropped without a word, so a spectrum came back with
+  no `ivar` at all. All three `*_hdu=` companions are now refused together.
+- An `ivar_hdu=`/`mask_hdu=` companion whose shape does not match its flux is
+  now rejected, naming both shapes and the HDU. `_stack_flux` already refuses
+  flux channels of differing shapes, so a mask one row shorter than the image
+  was the one mismatch that got through — and it did not fail, it
+  *broadcast*: a `(3, 4)` flux with a `(1, 4)` mask silently applied that
+  mask to all three rows.
+- `label_key=` on a spectrum dataset is read from the spectrum's own HDU, as
+  `FitsTensorDataset` already did. The spectrum datasets read HDU 0 whatever
+  `hdu=` said, so a table spectrum at `hdu=1` with the label in the table's
+  header raised a bare `KeyError`, and when the primary header happened to
+  carry the key it produced the primary's value with no complaint.
+
+### Fixed — tests audit
+- The documented `--stdin` input path is now covered
+  (`tests/test_cli_stdin_paths.py`). `docs/cli.md` lists `--stdin` in the
+  global-flag table and shows the `find . -name "*.fits" | torchfits info
+  --stdin -f jsonl` workflow, and seven subcommands route `args.stdin` into
+  `cli.common.resolve_paths` (`info`, `header`, `verify`, `stats`, `table`,
+  `probe`, `setkey`), but no test mentioned the flag at all. The tests pin
+  the explicit read, the implicit read the flag table also promises ("stdin is
+  also read implicitly when no paths are given and stdin is not a terminal"),
+  blank and whitespace-padded lines being skipped, argv and stdin paths
+  merging in order, an empty stdin staying the `no input paths (argv or
+  stdin)` usage error, and a path that arrived over stdin still being named
+  on failure. Every one of those seven mutations — ignore the flag, drop the
+  implicit branch, stop filtering blanks — now fails a test.
+- `Header.remove`'s missing-key contract is pinned on both sides. Only
+  `remove_all` was varied; nothing tested a key that is absent, so neither the
+  `KeyError` the default raises nor the no-op `ignore_missing=True` returns
+  was checked — and `_write_helpers._merged_write_header` calls
+  `remove(key, ignore_missing=True, remove_all=True)` for every overlay value
+  card, including keys the base header never had. The no-op must also return
+  before the version bump, so an overlay of entirely new keys leaves the
+  header version untouched; a mutation that lets it fall through now fails.
+- `make_loader(drop_last=False)` — the default — is now asserted. Only
+  `drop_last=True` was tested, so a loader that dropped the short final batch
+  unconditionally still passed. Over the 8-file fixture at `batch_size=6` the
+  kept tail is asserted to be a real 2-row batch, not a repeat of the first.
+
+### Fixed — tests audit, round 4
+- The three HTTP environment variables `docs/architecture.md` documents are now
+  tested (`tests/test_http_env_contracts.py`). `http_timeout` and
+  `auth_headers` had **no test at all**; the only reference to any of them under
+  `tests/` was one `monkeypatch.setenv("TORCHFITS_HTTP_TOKEN", ...)` that never
+  asserted the header that came out. The documented precedence — the full
+  `TORCHFITS_HTTP_AUTHORIZATION` value wins over `TORCHFITS_HTTP_TOKEN`, and a
+  whitespace-only value counts as unset — is now pinned, along with the
+  `Bearer ` prefix, the `120` default, and the *silent* fallback to the default
+  on an unparseable timeout (so `TORCHFITS_HTTP_TIMEOUT=30s` still yields 120 s,
+  now deliberately rather than by accident).
+- The VLA predicates in `torchfits.fits_schema` are now tested
+  (`tests/test_fits_schema.py`). `column_is_vla` had **no caller anywhere in the
+  repository** — not in `src/`, not in `tests/`, not in `docs/` — and no test,
+  while `selected_includes_vla` reimplemented the same question inline. Both are
+  now pinned, *including the case that distinguishes them*: a duplicated TTYPE at
+  two card indices, where the per-column form answers about the first card and
+  the projection form answers whether any wanted card is a VLA.
+- `selected_includes_vla`'s continue-scanning behaviour is now pinned. The cheap
+  gate `_tform_might_be_vla` (any of `PpQq` anywhere in the TFORM) and the
+  precise `parse_tform(...).vla` disagree for an incomplete or malformed code —
+  a bare `P`, a `P` with no element type, a negative repeat — and that gap is
+  the only place the scan-continues behaviour is observable. Folding the precise
+  check into the gate's `if` reads as an equivalent simplification and silently
+  stops at such a column, missing the real VLA column after it; that mutation
+  survived the first pass and is now caught.
+- `cache_subsystem_policy` is now tested (`tests/test_cache.py`). It is
+  documented in `docs/api-core-io.md` and decides which `clear_file_cache`
+  keywords a named subsystem clears, so it is the same *selective* contract
+  TS-002 pinned one layer down — and it was equally unpinned. All four
+  `fits_*` subsystems' flag sets, the `all` policy, the copy-not-reference
+  return, the valid-name list in the `KeyError`, and the fact that
+  `clear_cache_subsystem` does not forward the removed `handles` flag are now
+  asserted. A regression making `fits_header_metadata` clear `data` too, or
+  `fits_image_data` clear nothing, fails instead of passing silently.
+
+### Fixed — tests audit, round 6
+- The thread-local reader-cache **leak guard now runs on macOS**. It measured
+  live malloc bytes through glibc's `mallinfo2().uordblks`, so on any
+  non-glibc platform — every macOS developer and every macOS runner — it
+  skipped, leaving the regression it guards (an LRU list that kept a ghost node
+  per acquire) unverified exactly where a leak would be introduced. macOS has
+  no `mallinfo`, but `malloc_zone_statistics(malloc_default_zone()).size_in_use`
+  is the equivalent, and its noise was **measured before being trusted**: 12
+  consecutive idle readings and 6 on each side of a 20,000-read run all agreed
+  to the byte (spread 0). The reader cache itself is clean here — **−288 bytes
+  over 20,500 cached reads** — so the guard passes rather than skips.
+- A new **sensitivity control** pins the measurement itself: the probe must
+  detect a synthetic 64-byte-per-iteration leak over 20,000 iterations, and
+  that leak must exceed the threshold the leak test asserts. The old test had
+  no such control, so a probe that quietly stopped working — a struct-layout
+  change, a libc swap — would have left it reading a flat zero and passing
+  without having measured anything. Verified load-bearing: replacing the probe
+  with `lambda: 0` fails the control while the leak test still passes.
+- Two platform-gated tests in `tests/test_package_isolation.py` **skipped by
+  returning instead of skipping**, so on Linux and Windows CI they reported
+  `PASSED` having run nothing — invisible, and the second one's docstring even
+  promised a skip it never performed. They now raise `pytest.skip` with the
+  reason, so the report says `SKIPPED (Homebrew libomp is a macOS-only
+  scenario)` rather than a green tick that means nothing. Demonstrated: under a
+  simulated `sys.platform == "linux"`, the bare-`return` shape reports `PASSED`
+  and the  `pytest.skip` shape reports `SKIPPED (not darwin)`.
+- The **fpack byte-identity gate now finds a usable fpack** instead of skipping
+  all five compression-parity tests unless one hardcoded path exists.
+  `test_compression_matrix.py` accepted only `$TORCHFITS_FPACK` or
+  `/scratch/.tmp-sfabbro/opencode/cfitsio-full/fpack` — a path from the original
+  author's HPC scratch space, present on no other machine including CI — so the
+  suite's only check against CFITSIO's *own* compressor effectively ran for one
+  person. The old rule ("a random system fpack may link an unpatched CFITSIO")
+  conflated a *broken* fpack, which must be refused, with a *differently built*
+  one, whose bytes are worth checking. Resolution is now
+  `TORCHFITS_FPACK` → pinned reference → `PATH`, where a PATH hit must first
+  pass a capability probe (compress a 4×4 file, exit 0, `.fz` produced); an
+  fpack that cannot is "unavailable" rather than a collection error, and a stale
+  `TORCHFITS_FPACK` degrades to a skip instead of raising at import. Once
+  accepted it is held to the **same** byte-identity assertion. A build that
+  refuses one algorithm now skips that case with fpack's exit status instead of
+  disabling the other four: measured against Homebrew's fpack, RICE_1, GZIP_1,
+  GZIP_2 and HCOMPRESS_1 are byte-identical while PLIO_1 exits 202
+  (`required ZBITPIX compression keyword not found`), so four of the five run
+  everywhere instead of none.
+- Three torch-pin guards in `tests/test_check_torch_extra_pins.py` no longer
+  skip on macOS. Both flavor pins in `pyproject.toml` are marked
+  `sys_platform == 'linux'`, so `iter_torch_pins` yields nothing on macOS and
+  the doc-drift and pin-resolution guards skipped with "no torch flavor pins
+  resolve on this platform" — meaning **doc drift in the install index went
+  unchecked on every developer machine**, and only Linux CI could catch it. The
+  contracts those tests check are platform-independent:
+  `documented_claims()` and `check_doc_drift()` never read `sys.platform`, only
+  `iter_torch_pins`' marker evaluation does, and the module documents that
+  platform patches are honoured precisely so this works. A new `linux_pins`
+  fixture monkeypatches `sys.platform` to `"linux"` and **asserts** the pins
+  resolved instead of skipping if they do not, so a future `pyproject.toml`
+  that drops the markers fails loudly rather than quietly turning the three
+  guards back into no-ops. Verified load-bearing on macOS: dropping the
+  `cu129` index from `docs/install.md` makes both doc-drift tests fail.
+- **`TORCHFITS_HTTP_TIMEOUT` now rejects unusable values loudly instead of
+  failing somewhere unrelated.** The env-var audit recorded this as "a silent
+  fallback, pinned as-is", and that judgement was wrong once the consequence was
+  measured: only the *unparseable* case fell back. `0`, a negative, `nan` and
+  `inf` were all passed straight through to `urlopen(timeout=...)`, and against
+  a real socket each produced a raw low-level error that never mentions the
+  variable responsible —
+
+  | value | reached the transport as |
+  |---|---|
+  | `0` | `BlockingIOError: [Errno 36] Operation now in progress` (the socket goes non-blocking; the connection never establishes) |
+  | `-5` | `ValueError: Timeout value out of range` |
+  | `nan` | `ValueError: Invalid value NaN (not a number)` |
+  | `inf` | `OverflowError: timestamp out of range for C PyTime_t` |
+  | `30s` | nothing — a silent 120 s |
+
+  A value that is not a positive, finite number now yields the default **and**
+  raises a `UserWarning` naming the variable, the offending value and the
+  fallback in force, so `errno 36` from a remote read is no longer a mystery.
+  Unset and blank are still plain "use the default" and stay silent, as does a
+  valid value.
+- The five standalone C++ self-checks in `tests/cpp` are now runnable with one
+  command (`tests/cpp/run_all.sh`) and their two library-linked build
+  instructions no longer contain an unusable placeholder. Both link the
+  torch-free core library and CFITSIO, and **neither is installed into the pixi
+  environment** — they live in the per-build scratch tree
+  (`.pixi/bld/torchfits/<hash>/bld`), whose hash changes on every rebuild — so
+  their file headers carried a literal `<build>/libtorchfits_core.dylib` that
+  had to be hand-substituted before the documented command could be used at
+  all. The runner discovers the artifacts, writes the multi-extension MEF the
+  two file-based checks need (neither documented how to obtain one), builds and
+  runs all five, and exits non-zero if any fails. The three header-only checks
+  keep their copy-pasteable commands, verified to work verbatim. All five pass
+  on macOS arm64, and the runner is verified load-bearing in both directions: a
+  build failure and a broken NEON byte-reverse in `internal_utils.h` each make
+  it exit 1 with a `FAIL` naming the exact case and size.
+
+### Fixed — C++ self-check audit
+- Three of the five `tests/cpp` self-checks no longer verify themselves with
+  `assert`. `test_bracket_detection.cpp`, `test_parallel_for_nesting.cpp` and
+  `test_fitsreader_threads.cpp` expressed every check as `assert(...)`, and
+  `-DNDEBUG` compiles all of that away: with `core::parallel.cpp`'s
+  `run_chunks` reduced to doing nothing at all, the plain build aborted
+  (SIGABRT) while the `-DNDEBUG` build printed "all checks passed" and exited
+  0 at both 1 and 4 threads. They now count failures and return non-zero, the
+  pattern the other two checks already used, and report the same 7 (1 thread)
+  and 12 (4 threads) named failures with and without `-DNDEBUG`. This also
+  removed a missing `<cassert>` include that had been resolving by accident
+  through a transitive header in `test_fitsreader_threads.cpp`.
+- `tests/cpp/run_all.sh` bounds every check with a timeout
+  (`TORCHFITS_CPP_CHECK_TIMEOUT`, default 180 s) and reports a hung check as
+  `TIMEOUT` / `FAIL (exit 124)`. The timeout is not defensive: the regression
+  `test_parallel_for_nesting` guards *is* a deadlock, so a regression there
+  makes the check hang forever — measured, with the worker-inline branch in
+  `run_chunks` removed, it never returns at 2 or 4 threads and returns 0 at 1.
+  The file's header credited this timeout to "the pytest driver", which does
+  not exist for this file; the comment now says where the timeout really comes
+  from.
+- `test_parallel_for_nesting` now also checks that the outer chunks tile
+  `[0, 4096)` exactly once, by recording each `(lo, hi)` it is handed and
+  requiring them to partition the range. Its existing counter identity
+  (`nested_items == nested_bodies * 64`) cannot see a skipped or repeated
+  outer chunk — both counters move together — so the comment claiming it did
+  was wrong about the assertion it described; it is now true.
+- `test_bswap_helpers` compares against a reference that moves bytes one at a
+  time instead of `__builtin_bswap*`, which is what the helpers' own scalar
+  tails call (`internal::bswap_XX` is a one-line alias), so the old reference
+  shared code with the code under test. The builtin does agree with a
+  hand-written reversal — checked over all 65 536 16-bit values and 2M
+  32/64-bit samples — so nothing was broken; the check no longer depends on
+  that. It also pins the *direction*: a known big-endian FITS value must decode
+  to its numeric value in host order, which a byte-permutation-vs-byte-
+  permutation comparison cannot establish. That check caught two wrong
+  expectations of my own while it was being written.
+- `test_bswap_helpers` now runs every helper at four source/destination
+  alignments, including misaligned ones. The SIMD branches use
+  `vld1q`/`vst1q`/`loadu`/`storeu` and the tails use `memcpy`, all unaligned-
+  safe, but nothing pinned that — and
+  `SubsetReader::try_read_via_mmap` passes
+  `pixel_base_ + (y * naxis1 + x1) * elem_bytes_`, so a cutout at an odd `x1`
+  lands 2 or 6 bytes past a page-aligned base on a 2-byte frame (verified: an
+  int16 cutout at `x1=1` and `x1=3` reads back exactly). All 19 sizes × 5
+  helpers × 4 alignments pass, at `-O0`, `-O2` and `-O2 -DNDEBUG`.
+- `test_fitsreader_threads` compares the whole shape vector instead of only its
+  first axis, so a cursor race that returned the right width with another
+  HDU's height is no longer invisible.
+- `tests/test_byteswap.py` splits `CXX` with `shlex`, like
+  `tests/test_security.py` already did for the same job. With
+  `CXX="c++ -pipe"` — an ordinary value, since `CXX` may carry flags — the test
+  raised `FileNotFoundError: 'c++ -pipe'` while its sibling passed.
+  `tests/cpp/run_all.sh` had the same defect for the same reason and now reads
+  `CXX` the same way (quoting inside the value is still respected, so a
+  toolchain path with a space in it keeps working).
+- The **x86 byte-swap branches had never been executed or checked by
+  anything**. `internal_utils.h`'s five helpers have three `#if` branches —
+  NEON, AVX2, SSSE3 — and a native build compiles exactly one. `CMakeLists.txt`
+  adds `-mssse3` for `x86_64`, so the SSSE3 path is what every x86 user of the
+  mmap cutout path actually runs, yet on this repository's arm64 machines (and
+  in its CI) it is never compiled, let alone run: a wrong byte in those mask
+  tables would be silent for x86 and invisible here. Two new checks, and the
+  masks are correct:
+  - `tests/test_simd_shuffle_masks.py` verifies the tables **statically**,
+    against `_mm_shuffle_epi8`'s own semantics (`dst[i] = 0` if `mask[i] &
+    0x80`, else `src[mask[i] & 0x0F]`, per 128-bit lane), plus the loop bounds
+    and the BZERO add — 34 cases, no hardware needed, so the x86 branches are
+    now covered on any platform. Load-bearing in seven directions: one wrong
+    mask byte, a mask byte with the high bit set (which makes the instruction
+    emit a **zero** byte), a lane-crossing index, a short vector loop, a
+    dropped BZERO add, a mask transposed to the wrong element width, and a
+    mask one byte short of its register.
+  - `tests/cpp/run_all.sh` now also **runs** the SSSE3 branch on Apple Silicon
+    by building an `x86_64` variant and executing it under Rosetta, and
+    compiles the native bswap check with the project's own `-mssse3` baseline
+    so an x86 host does not silently degrade to the scalar tail. Verified both
+    ways: with an SSSE3 mask deliberately broken the native check passes (0
+    failing cases) while the Rosetta one reports 97, and the whole runner exits
+    1; `TORCHFITS_CPP_X86=0` skips it with a printed note. The AVX2 branch is
+    left to the static check — no shipped build enables it (`-march=native` is
+    deliberately avoided), and Rosetta here dies with `SIGILL` on a three-line
+    program using one AVX2 intrinsic.
+- The `parallel_for` deadlock regression now has **CI coverage**
+  (`tests/test_cpp_self_checks.py`). `test_parallel_for_nesting.cpp` needs only a
+  compiler and `core/parallel.cpp` — no built artifact — so it is compiled and
+  run at pool sizes 1, 2, 4 and 8 as part of `pytest tests/ -q`, with a timeout
+  because the regression it guards manifests as a **hang**, not a failure.
+  Verified by removing the worker-inline branch: 3 failed, 1 passed, each
+  failure naming the deadlock, and the bound is what turns a hang into a
+  report. Two more tests keep the harness honest — a self-check cannot be
+  dropped from `run_all.sh`'s case table without failing a test, and the two
+  CFITSIO-linked checks must stay documented as manual. Those two are
+  deliberately *not* wired into pytest: a skip that always fires reports
+  coverage that does not exist (the TS-015 shape), and they need a standalone
+  CFITSIO library, which the pixi environment does not install and a
+  `pip install -e .` CI job links statically into the extension instead.
+- `tests/cpp/README.md` now records that `test_bracket_detection.cpp`,
+  `test_bswap_helpers.cpp` and `test_parallel_for_nesting.cpp` *are* compiled
+  and run by `tests/test_security.py`, `tests/test_byteswap.py` and
+  `tests/test_cpp_self_checks.py`. The audit had previously described the
+  directory as unwired.
+
+### Fixed — tests audit, round 7
+- `TestTableReading` in `tests/test_table.py` now compares **values**. All five
+  of its tests unpacked the fixture's `expected_data` and never used it —
+  measured, `expected_data` appears on exactly the five assignment lines and in
+  no assertion — so the whole class checked column presence, row counts and
+  dtypes and nothing else. A reader returning correctly-shaped, correctly-typed
+  arrays of zeros passed all five. Each test now compares against the column it
+  wrote, including the streaming test (concatenated across batch boundaries) and
+  the row-window test, which pins that `start_row` is 1-based. Evidence, with a
+  control: hand the fixture back with `RA` reversed and the new assertions fail,
+  while **the original assertions pass — 14 passed**.
+- `test_compress_algorithm_gzip` now pins the algorithm it names. Its assertion
+  was `zimage in {"T","TRUE","1"} or "GZIP" in zcmptype`, and `ZIMAGE` is `T`
+  for *every* compressed image: measured against real CLI runs, a `RICE_1` and
+  an `HCOMPRESS_1` output both satisfy the first clause, so the test accepted
+  any compression at all. Both halves are asserted separately now, and the
+  probe confirms a `RICE_1` file passes the old assertion and fails the new one.
+- `test_blank_identity_promotes_to_nan_float32` now counts the NaN pixels
+  instead of ruling out an all-NaN image. `assert not np.isnan(got).sum() ==
+  got.size` parses as `not (X == Y)` — "not every pixel is NaN" — and its
+  comment claimed "only the blank pixels are NaN". Measured: 46 NaN pixels out
+  of 48 satisfies it; the assertion is now `== 2`, the two `BLANK` pixels the
+  fixture sets, so a `nulval` that leaked onto ordinary data fails.
 
 ### Docs
 - Transform docs cover the data-state contract, companion `ivar`/`mask`

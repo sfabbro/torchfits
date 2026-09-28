@@ -129,9 +129,10 @@ export WHEEL_URL MAX_WAIT_SECS POLL_SECS
 
 echo "=== CANFAR CUDA wheel verification (soft-fail, strict=${STRICT}) ==="
 echo "lanes=${LANES} jobs=${JOBS} ref=${GIT_REF} image=${IMAGE} results=${LOCAL_OUT}"
-echo "${LANES}" | tr ',' '\n' | xargs -P "${JOBS}" -I{} bash -c 'verify_lane "$1"' _ {}
-
 set +e
+# Soft-fail by contract (see the header): a failing lane must still reach the
+# summary below, so the runner may not abort the script under `set -e`.
+echo "${LANES}" | tr ',' '\n' | xargs -P "${JOBS}" -I{} bash -c 'verify_lane "$1"' _ {}
 FAILED="$(grep -h '^\[FAIL\]' "${LOCAL_OUT}"/*/canfar_logs.txt 2>/dev/null | wc -l)"
 set -e
 echo "=== summary: $(grep -rh '^\[ OK \]' "${LOCAL_OUT}" 2>/dev/null | wc -l) ok, ${FAILED} failed ==="

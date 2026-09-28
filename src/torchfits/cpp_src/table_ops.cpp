@@ -15,6 +15,7 @@
 #include "torchfits_torch.h"
 #include "fits_handle.h"
 #include "table_types.h"
+#include "nb_ndarray_utils.h"
 #include "table_reader.h"
 #include "security.h"
 #include "fits_rw.h"
@@ -45,6 +46,36 @@ void rollback_inserted_rows(fitsfile* fptr, long start_row, long num_rows) {
     int close_status = 0;
     fits_close_file(fptr, &close_status);
 }
+
+// ---------------------------------------------------------------------------
+// Column-name resolution policy for the mutation paths
+// ---------------------------------------------------------------------------
+//
+// append_rows, populate_rows (update_rows/insert_rows), rename_columns and
+// drop_columns all resolve a caller-supplied name with
+// fits_get_colnum(..., CASEINSEN, ...) -- CFITSIO's case-INsensitive match,
+// which is what the FITS standard asks of a TTYPE reference.
+//
+// Every torchfits READ path is exact-match instead: TableReader::read_columns
+// compares `columns_[i].name == name`, and TableReader::update_rows_mmap
+// builds its column_map from the same exact strings. So a name these four
+// functions accept can be invisible to read_fits_table_rows and to the mmap
+// writer. Measured on a legal table with TTYPE 'FLUX': _C.update_fits_table_rows
+// and _C.append_fits_table_rows both accept {'flux': ...} and write it into
+// FLUX, while _C.read_fits_table_rows(path, hdu, ['flux']) raises
+// "Column not found: flux. Available columns: FLUX, MAG".
+//
+// This is contained, not user-visible: all five Python entry points
+// (table.update_rows / append_rows / insert_rows / rename_columns /
+// drop_columns) validate the caller's names against the header first and
+// raise KeyError on a case mismatch -- _table/mutation.py:407 (update),
+// :575 (rename), :610 (drop), _table/_mutation_coerce.py:201 (append/insert)
+// -- so the supported API is case-sensitive on both sides and cannot reach
+// the mismatch.
+//
+// Do not "fix" this by switching these four to EXACT: the policies would still
+// disagree, only in the other direction. Any new name resolution here has to
+// pick a policy deliberately and say which one it picked.
 
 }  // namespace
 
@@ -166,6 +197,7 @@ void append_rows(const char* filename, int hdu_num, nb::dict tensor_dict) {
     for (auto item : tensor_dict) {
         std::string col_name = nb::cast<std::string>(item.first);
         int colnum = 0;
+        // CASEINSEN: see the name-resolution policy note above.
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &colnum, &status);
         if (status != 0) {
             rollback_inserted_rows(fptr, start_row, num_rows);
@@ -608,6 +640,10 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
     for (auto item : tensor_dict) {
         std::string col_name = nb::cast<std::string>(item.first);
         int colnum = 0;
+        // CASEINSEN: see the name-resolution policy note above. Note that the
+        // mmap writer this function falls back FROM (update_rows_mmap) is
+        // exact-match, so the two writers of the same API disagree on a
+        // case-mismatched name; the Python layer rejects those first.
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(col_name.c_str()), &colnum, &status);
         if (status != 0) {
             throw std::runtime_error("Column not found for update_rows: " + col_name);
@@ -1040,6 +1076,7 @@ void rename_columns(const char* filename, int hdu_num, nb::dict mapping) {
         }
 
         int colnum = 0;
+        // CASEINSEN: see the name-resolution policy note above.
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(old_name.c_str()), &colnum, &status);
         if (status != 0) {
             close_file_ignore_status(fptr);
@@ -1096,6 +1133,7 @@ void drop_columns(const char* filename, int hdu_num, nb::list columns) {
     for (auto name_obj : columns) {
         std::string name = nb::cast<std::string>(name_obj);
         int colnum = 0;
+        // CASEINSEN: see the name-resolution policy note above.
         fits_get_colnum(fptr, CASEINSEN, const_cast<char*>(name.c_str()), &colnum, &status);
         if (status != 0) {
             close_file_ignore_status(fptr);

@@ -159,7 +159,15 @@ CPU rerun pending. Deeper findings from today's fan-out experiment:
 - Broader `except Exception: pass` audit (soft fallthroughs in strategy probes;
   Round-2 glm notes: batch `read_images_batch` silent fallthrough, NAXIS2→0,
   tnull fill swallow, `update_rows` mmap=auto swallow)
-- ~~Wheels and pixi stay on PyTorch 2.10~~ — the wheel lane is PyTorch 2.13 (`scripts/torch_lanes.json`). Source builds still allow ≥2.10.
+- ~~Install: consider a **2.11+ / 2.13** wheel ABI lane only after scorecard
+  re-soak~~ — **landed.** The lane is **PyTorch 2.13.x**: `constraints-wheel.txt`,
+  `pyproject.toml` (runtime *and* `build-system.requires`), `pixi.toml`, the conda
+  recipe, and `src/torchfits/__init__.py` all pin `>=2.13,<2.14`, and
+  `pixi run check-lane` enforces it. This line previously read "today: wheels +
+  pixi stay on PyTorch 2.10; source builds allow ≥2.10" — both halves were stale,
+  and the source-build half is now *stricter* than ≥2.10: an isolated build
+  resolves the lane pin, so a plain `pip install .` can no longer compile against
+  a different torch minor than the one the extension's ABI stamp expects.
 
 ## Spectroscopy / continuum (not in torchfits)
 

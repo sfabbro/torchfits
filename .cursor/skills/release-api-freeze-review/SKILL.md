@@ -27,7 +27,9 @@ python .cursor/skills/release-api-freeze-review/scripts/inventory_public_api.py
 
 - Compare script output to `docs/api.md` Quick Paths and `src/torchfits/__init__.py` `__all__`
 - Flag: undocumented exports, documented-but-missing symbols, deprecated aliases without notice
-- Check lazy namespaces: `table`, `cache`, `cpp`
+- Check every lazy namespace in `_NAMESPACES` (`src/torchfits/__init__.py`) —
+  this list has grown (`transforms`, `data`, `where`, `hdu` are not in it),
+  so read it from the source rather than from this file
 
 ## Phase 2 — Docs contract
 
@@ -35,7 +37,7 @@ Read and cross-check:
 
 | Doc | Check |
 |---|---|
-| `README.md` | No out-of-scope claims; performance cites `docs/benchmarks.md` run ID |
+| `README.md` | No out-of-scope claims; performance claims link to `docs/benchmarks.md` rather than restating numbers |
 | `docs/api.md` | Every Quick Path entry resolves; env vars documented |
 | `docs/parity.md` | Each **Supported** row has test evidence |
 | `docs/examples.md` | Every example path exists and runs |
@@ -63,8 +65,12 @@ pixi run pytest tests/test_examples_runner.py -q
 
 ## Phase 5 — Benchmark claims
 
-- Latest snapshot in `docs/benchmarks.md` `BENCH_SNAPSHOT` matches a `benchmarks_results/<run-id>/` directory
-- README performance table uses same run ID
+- Every run ID cited in `docs/benchmarks.md` has a directory under
+  `docs/assets/bench/`, and every directory there belongs to a cited run ID.
+  The published CSVs live there, not in `benchmarks_results/` — that is local
+  scratch and is gitignored, so a clean clone has none of it.
+  (`tests/test_docs_integrity.py::test_benchmark_run_ids_match_published_assets`
+  enforces this; run it rather than eyeballing the tables.)
 - Deficit count documented honestly
 
 ## Phase 6 — Freeze verdict

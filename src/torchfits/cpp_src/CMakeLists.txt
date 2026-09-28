@@ -186,6 +186,16 @@ endif()
 message(STATUS "torchfits: building against PyTorch ${TORCHFITS_BUILD_TORCH_VERSION} (ABI ${TORCHFITS_TORCH_ABI})")
 list(APPEND CMAKE_PREFIX_PATH ${TORCH_CMAKE_PREFIX_PATH})
 
+# Identity of the torch-free core, stamped into the core, into _core, and into
+# _C. The three must agree at runtime: a wheel built by a half-finished build
+# can leave a stale libtorchfits_core beside a fresh _C, and the failure mode
+# for that is a segfault deep inside CFITSIO rather than an import error.
+string(TIMESTAMP _TORCHFITS_BUILD_STAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+string(REPLACE ";" ":" _TORCHFITS_BUILD_DIR "${CMAKE_BINARY_DIR}")
+set(TORCHFITS_CORE_BUILD_ID
+    "torchfits-core/1 build=${_TORCHFITS_BUILD_STAMP} type=${CMAKE_BUILD_TYPE} dir=${_TORCHFITS_BUILD_DIR}")
+message(STATUS "torchfits: core build id = ${TORCHFITS_CORE_BUILD_ID}")
+
 # CUDA-enabled PyTorch only: cuda.cmake expects CUDA::nvrtc before extension targets link. Conda
 # toolkits and CMake 4.x often omit that imported target; CPU-only PyTorch skips this path.
 set(TORCHFITS_PYTORCH_CUDA_VERSION "")
@@ -290,6 +300,7 @@ endif()
 
 # Find ZLIB (Required for compressed FITS support)
 find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
 set(_TORCHFITS_ZLIB_SELECTED "")
 if(DEFINED ZLIB_LIBRARY_RELEASE AND ZLIB_LIBRARY_RELEASE)
     set(_TORCHFITS_ZLIB_SELECTED "${ZLIB_LIBRARY_RELEASE}")
@@ -552,8 +563,136 @@ set(SOURCES
     fits_file.cpp
     table_bindings.cpp
     table_ops.cpp
+)
 
+# A dlopen'd Python extension is an MH_BUNDLE, and dyld does not expand
+# $ORIGIN in a bundle's LC_RPATH. @loader_path is the token that resolves
+# against the image carrying the dependency; on ELF the equivalent is $ORIGIN.
+if(APPLE)
+    set(TORCHFITS_SIBLING_RPATH "@loader_path")
+else()
+    set(TORCHFITS_SIBLING_RPATH "\$ORIGIN")
+endif()
+
+# ---------------------------------------------------------------------------
+# libtorchfits_core -- the torch-free half of the native stack.
+#
+# CFITSIO and the FITS inspection / metadata-cache code live here rather than
+# in _C, for two reasons:
+#
+#   1. `import torchfits._core` (metadata) must not dlopen libtorch. Loading it
+#      costs ~1 s on a cold process; `torchfits.read_header` should not pay that.
+#   2. There must be exactly one CFITSIO in the process. Its error stack and
+#      internal buffers are global, so two statically linked copies would let a
+#      status produced by one be resolved by the other. _C therefore resolves
+#      every fits_* against this library (see check_core_link.cmake, which fails
+#      the build if any of them is left undefined).
+#
+# The target links no Torch target and includes no ATen/torch header; the guard
+# below turns that from a convention into a build error.
+# ---------------------------------------------------------------------------
+add_library(torchfits_core SHARED
+    core/fits_core.cpp
+    core/metadata_api.cpp
+    core/parallel.cpp
     hardware.cpp
+)
+
+target_include_directories(torchfits_core
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CFITSIO_INCLUDE_DIR}"
+)
+if(CFITSIO_INCLUDE_DIRS)
+    target_include_directories(torchfits_core PRIVATE ${CFITSIO_INCLUDE_DIRS})
+endif()
+
+# The vendored CFITSIO target publishes its dependency include dirs as PUBLIC
+# usage requirements; demote them here for the same reason as the _C wiring
+# below (a build-prefix path would fail CMake generate and leak into the wheel).
+if(TARGET cfitsio)
+    get_target_property(_core_cfitsio_iface_inc cfitsio INTERFACE_INCLUDE_DIRECTORIES)
+    if(_core_cfitsio_iface_inc)
+        target_include_directories(torchfits_core PRIVATE ${_core_cfitsio_iface_inc})
+    endif()
+    target_link_libraries(torchfits_core PRIVATE cfitsio)
+    # A static archive only contributes the members something references, so
+    # the core would export just the subset its own sources happen to call --
+    # ffpcks/ffvcks (the checksum paths _C owns) would be missing and _C would
+    # fail to link. Force the whole archive in so the core really is *the*
+    # CFITSIO: one copy, fully exported, for both modules.
+    if(APPLE)
+        target_link_options(torchfits_core PRIVATE
+            "-Wl,-force_load,$<TARGET_FILE:cfitsio>")
+    else()
+        target_link_options(torchfits_core PRIVATE
+            "-Wl,--whole-archive" "$<TARGET_FILE:cfitsio>" "-Wl,--no-whole-archive")
+    endif()
+else()
+    target_link_libraries(torchfits_core PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
+    if(CFITSIO_LIBRARY_DIRS)
+        target_link_directories(torchfits_core PRIVATE ${CFITSIO_LIBRARY_DIRS})
+    endif()
+endif()
+target_link_libraries(torchfits_core PRIVATE ZLIB::ZLIB Threads::Threads)
+
+target_compile_definitions(torchfits_core PRIVATE
+    HAS_CFITSIO
+    TORCHFITS_CORE_BUILDING=1
+    TORCHFITS_CORE_BUILD_ID="${TORCHFITS_CORE_BUILD_ID}"
+)
+if(USE_BZIP2)
+    target_compile_definitions(torchfits_core PRIVATE TORCHFITS_HAVE_BZIP2=1)
+endif()
+target_compile_features(torchfits_core PRIVATE cxx_std_17)
+
+# IPO/LTO is deliberately off here. LTO is free to internalize a symbol the
+# extension still needs to bind against, and the failure would only show up as
+# an import-time "undefined symbol". The core does almost no arithmetic, so
+# there is nothing for it to lose.
+set_target_properties(torchfits_core PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE
+    POSITION_INDEPENDENT_CODE ON
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    # CFITSIO's C ABI relies on default visibility and interposition rules that
+    # must not be disturbed; hide nothing.
+    C_VISIBILITY_PRESET default
+    CXX_VISIBILITY_PRESET default
+    MACOSX_RPATH ON
+    INSTALL_RPATH "${TORCHFITS_SIBLING_RPATH}"
+    BUILD_WITH_INSTALL_RPATH ON
+)
+
+# No Torch target may appear in the core's link interface. Without this check a
+# future `target_link_libraries(torchfits_core ... torch)` would silently
+# reintroduce the libtorch load the split exists to avoid.
+get_target_property(_CORE_LINK_LIBS torchfits_core LINK_LIBRARIES)
+foreach(_lib IN LISTS _CORE_LINK_LIBS)
+    if(_lib MATCHES "^(torch|torch_python|c10|caffe2|Torch::|torch::|caffe2::)")
+        message(FATAL_ERROR
+            "torchfits_core must stay torch-free, but it links '${_lib}'")
+    endif()
+endforeach()
+
+# The _core module: the same library with nanobind/Python on top. No ATen.
+nanobind_add_module(_core core/core_bindings.cpp)
+target_link_libraries(_core PRIVATE torchfits_core)
+target_include_directories(_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CFITSIO_INCLUDE_DIR}")
+if(CFITSIO_INCLUDE_DIRS)
+    target_include_directories(_core PRIVATE ${CFITSIO_INCLUDE_DIRS})
+endif()
+target_compile_features(_core PRIVATE cxx_std_17)
+target_compile_definitions(_core PRIVATE TORCHFITS_CORE_BUILD_ID="${TORCHFITS_CORE_BUILD_ID}")
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_compile_options(_core PRIVATE -O3 -fno-semantic-interposition)
+endif()
+set_target_properties(_core PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    MACOSX_RPATH ON
+    INSTALL_RPATH "${TORCHFITS_SIBLING_RPATH}"
+    BUILD_WITH_INSTALL_RPATH ON
 )
 
 # Create python binding module
@@ -567,8 +706,20 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "MS
     target_compile_options(_C PRIVATE -O3 -fno-semantic-interposition -fvisibility=hidden)
 endif()
 
+set_target_properties(_C PROPERTIES
+    MACOSX_RPATH ON
+    INSTALL_RPATH "${TORCHFITS_SIBLING_RPATH}"
+    BUILD_WITH_INSTALL_RPATH ON
+)
+
 # Link libraries
 target_link_libraries(_C PRIVATE ${TORCH_LIBRARIES})
+# CFITSIO comes from the core (see the comment above the core target). Link the
+# core first so fits_* resolves against it.
+target_link_libraries(_C PRIVATE torchfits_core)
+# The core's headers (core/fits_core.h, core/metadata_api.h) are included by the
+# extension's own sources, so its include root has to be visible here too.
+target_include_directories(_C PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # Link torch_python for THPVariable_Wrap (bypasses DLPack overhead)
 execute_process(
@@ -593,16 +744,10 @@ else()
 endif()
 
 if(TARGET cfitsio)
-    target_link_libraries(_C PRIVATE cfitsio)
     target_include_directories(_C PRIVATE "${CFITSIO_INCLUDE_DIR}")
 else()
-    target_link_libraries(_C PRIVATE ${CFITSIO_LIBRARIES} ${CFITSIO_LIBRARY})
     target_include_directories(_C PRIVATE ${CFITSIO_INCLUDE_DIRS} ${CFITSIO_INCLUDE_DIR})
-    if(CFITSIO_LIBRARY_DIRS)
-        target_link_directories(_C PRIVATE ${CFITSIO_LIBRARY_DIRS})
-    endif()
 endif()
-target_link_libraries(_C PRIVATE ZLIB::ZLIB)
 
 if(DLPACK_INCLUDE_DIR)
     target_include_directories(_C PRIVATE ${DLPACK_INCLUDE_DIR})
@@ -620,11 +765,27 @@ endif()
 target_compile_definitions(_C PRIVATE VERSION_INFO="")
 target_compile_features(_C PRIVATE cxx_std_17)
 
+# Build identity. _C records the core's id so a mismatched pair fails loudly at
+# import (torchfits/__init__.py) instead of crossing an ABI boundary quietly.
+target_compile_definitions(_C PRIVATE TORCHFITS_CORE_BUILD_ID="${TORCHFITS_CORE_BUILD_ID}")
+
+# Prove the CFITSIO symbols actually bound to the core (see check_core_link.cmake).
+add_custom_command(TARGET _C POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DCMAKE_TARGET=$<TARGET_FILE:_C>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_core_link.cmake"
+    VERBATIM
+)
+add_custom_command(TARGET _core POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DCMAKE_TARGET=$<TARGET_FILE:_core>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_core_link.cmake"
+    VERBATIM
+)
+
 
 # Install the compiled module
 if(SKBUILD)
     # scikit-build-core (wheels): install to the package directory
-    install(TARGETS _C DESTINATION torchfits)
+    install(TARGETS _C _core torchfits_core DESTINATION torchfits)
 else()
     # Bare-cmake installs (conda packages via pixi-build-cmake / rattler-build)
     # skip scikit-build-core, so mirror its wheel layout: the compiled
@@ -644,7 +805,7 @@ else()
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
         if(_TORCHFITS_PURELIB)
-            install(TARGETS _C DESTINATION "${_TORCHFITS_PURELIB}/torchfits")
+            install(TARGETS _C _core torchfits_core DESTINATION "${_TORCHFITS_PURELIB}/torchfits")
             get_filename_component(_TORCHFITS_PKG_DIR
                 "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
             install(

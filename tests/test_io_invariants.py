@@ -6,6 +6,7 @@ import filecmp
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -394,6 +395,36 @@ def test_to_arrow_keeps_vector_column_rows() -> None:
     assert arr.type.list_size == 2
 
 
+@pytest.mark.parametrize("dtype", [torch.complex64, torch.complex128])
+def test_to_arrow_rejects_complex_tensors(dtype: torch.dtype) -> None:
+    from torchfits._tensor_buffer import tensor_to_arrow_array
+
+    pa = pytest.importorskip("pyarrow")
+    value = torch.tensor([1 + 2j, 3 + 4j], dtype=dtype)
+    with pytest.raises(ValueError, match="complex tensors"):
+        tensor_to_arrow_array(value, pa)
+
+
+@pytest.mark.parametrize("row_count", [0, 3])
+def test_to_arrow_rejects_zero_width_2d_tensors(row_count: int) -> None:
+    from torchfits._tensor_buffer import tensor_to_arrow_array
+
+    pa = pytest.importorskip("pyarrow")
+    value = torch.empty((row_count, 0), dtype=torch.float32)
+    with pytest.raises(ValueError, match="zero width"):
+        tensor_to_arrow_array(value, pa)
+
+
+def test_to_arrow_preserves_empty_tensor_shapes() -> None:
+    from torchfits._tensor_buffer import tensor_to_arrow_array
+
+    pa = pytest.importorskip("pyarrow")
+    assert len(tensor_to_arrow_array(torch.empty(0), pa)) == 0
+    empty_rows = tensor_to_arrow_array(torch.empty((0, 2)), pa)
+    assert len(empty_rows) == 0
+    assert empty_rows.type.list_size == 2
+
+
 def test_kmp_duplicate_lib_ok_set_on_import() -> None:
     # ``__init__`` uses setdefault on Darwin only: process-wide side effect
     # scoped to macOS. On Linux the import must not set KMP_DUPLICATE_LIB_OK;
@@ -590,3 +621,158 @@ def test_native_float_inf_and_signed_zero_survive(tmp_path: Path) -> None:
     assert np.isneginf(got[1, 1])
     subset = torchfits.read_subset(path.as_posix(), 0, 0, 0, 2, 2).numpy()
     np.testing.assert_array_equal(subset, data)
+
+
+def _multi_hdu_fixture(path: Path) -> list[tuple[int, ...]]:
+    """Write a MEF whose HDUs are pairwise distinguishable, return their shapes.
+
+    Built with astropy so the expectation does not depend on the writer under
+    test. Every HDU has a unique shape, and the pair (BSCALE/BZERO, compression)
+    differs too, so a metadata lookup that reads the wrong HDU cannot go unnoticed
+    the way it would on a file of same-shaped images.
+    """
+    from astropy.io import fits
+
+    shapes = [(4, 5), (7, 3), (9, 2, 6), (2, 11), (8, 8)]
+    primary = fits.PrimaryHDU()
+    hdus: list[fits.ImageHDU] = [primary]
+    for i, shape in enumerate(shapes):
+        data = np.full(shape, i + 1, dtype=np.float32)
+        if i == 1:
+            hdu = fits.ImageHDU(data)
+            hdu.header["BSCALE"] = 4.0
+            hdu.header["BZERO"] = 10.0
+        elif i == 3:
+            hdu = fits.CompImageHDU(data, compression_type="RICE_1")
+        else:
+            hdu = fits.ImageHDU(data)
+        hdus.append(hdu)
+    fits.HDUList(hdus).writeto(path, overwrite=True)
+    return shapes
+
+
+def test_hdu_metadata_is_not_confused_by_a_moved_cursor(tmp_path: Path) -> None:
+    """HDU-keyed metadata lookups must answer for the HDU they were asked about.
+
+    Regression guard for the CFITSIO current-HDU cursor. ``FITSFile`` caches
+    image info, scale and compression state in maps keyed by HDU number, but
+    CFITSIO itself answers from whichever HDU the handle is currently positioned
+    on. Reading a file's HDUs in a shuffled order exercises one shared handle
+    moving between HDUs, which is the situation where a lookup that trusted the
+    cursor position instead of its own key would report the neighbouring HDU's
+    shape.
+    """
+    path = tmp_path / "mef.fits"
+    shapes = _multi_hdu_fixture(path)
+
+    with torchfits.open(path) as hdul:
+        # Reverse order, and revisit early HDUs after later ones, so every read
+        # follows a cursor move except the first. Index 0 is the primary HDU, so
+        # image HDU k lives at hdul[k] and torchfits.read uses hdu=k as well.
+        for k in (5, 1, 4, 2, 3, 1, 5):
+            got = tuple(hdul[k].data.shape)
+            expected = shapes[k - 1]
+            assert got == expected, (
+                f"image HDU {k} reported shape {got}, expected {expected}"
+            )
+
+    # The same file, read one HDU per call, must agree with the shuffled pass.
+    for k, expected in enumerate(shapes, start=1):
+        assert tuple(torchfits.read(path, hdu=k).shape) == expected
+
+
+def test_hdu_keyed_caches_position_the_cursor_themselves() -> None:
+    """Structural gate: the three HDU-keyed lookups must call ensure_hdu_checked.
+
+    These three cache on ``hdu_num`` but read the CFITSIO current-HDU cursor on a
+    miss. Positioning was left to the caller, which is a precondition nothing
+    states and nothing enforces — every one of the twelve call sites happened to
+    satisfy it, so the suite passed either way. That is precisely the kind of
+    invariant a test should not rely on being true by convention, so the calls
+    are pinned here.
+
+    Structural rather than behavioural: ``FITSFile`` symbols are hidden in the
+    extension, so a C++ probe cannot link against it the way the core-library
+    probes link ``libtorchfits_core``. The behavioural test above guards the
+    observable contract; this one guards the enforcement.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "torchfits"
+        / "cpp_src"
+        / "fits_file.cpp"
+    ).read_text()
+
+    for method in (
+        "FITSFile::get_scale_info",
+        "FITSFile::is_compressed_image_cached",
+        "FITSFile::get_image_info",
+    ):
+        start = source.index(method)
+        body = source[start : source.index("\n}", start)]
+        assert "ensure_hdu_checked(" in body, (
+            f"{method} caches on hdu_num but reads the CFITSIO cursor on a miss; "
+            "it must position the cursor itself"
+        )
+
+
+def test_every_capsule_reader_binding_holds_the_reader_mutex() -> None:
+    """Any binding handed a TableReader capsule must hold its mutex.
+
+    ``TableReader::io_mutex_`` is declared in ``table_reader.h`` and acquired
+    nowhere in that header -- the bindings that hand out a *shared* reader take it
+    instead, because the only shared reader is the ``open_fits_mmap_reader``
+    capsule. That split is easy to misread: the header comment described the
+    serialization without saying where it happened, which is misleading enough
+    that reading the header alone suggests the mutex is dead code.
+
+    This gate makes the coupling explicit and keeps it true. A new binding that
+    accepts a capsule without locking would otherwise be a silent data race on
+    the CFITSIO cursor and on ``scratch_buffer_``, with the GIL released.
+    """
+    cpp_src = Path(__file__).resolve().parents[1] / "src" / "torchfits" / "cpp_src"
+    table_bindings = (cpp_src / "table_bindings.cpp").read_text()
+    table_reader = (cpp_src / "table_reader.h").read_text()
+
+    assert "mutable std::mutex io_mutex_;" in table_reader, (
+        "TableReader must keep a mutex for the shared-capsule path"
+    )
+
+    # Producer: open_fits_mmap_reader is the only thing that hands out a capsule.
+    producers = table_bindings.count("-> nb::capsule")
+    assert producers == 1, (
+        f"expected one capsule producer, found {producers}; a second sharing path "
+        "needs its own locking decision"
+    )
+
+    # Consumers: every lambda taking an nb::capsule parameter must lock. Matched
+    # by scanning for the parameter rather than by counting, so a new consumer is
+    # covered without editing this test.
+    consumers = 0
+    # A C++ lambda is [capture](params) -> ret: the capsule is a *parameter*, so
+    # it appears inside the parentheses, not the brackets.
+    pattern = r"\[\s*[^\]]*\]\s*\(([^)]*nb::capsule[^)]*)\)\s*->"
+    for match in re.finditer(pattern, table_bindings):
+        consumers += 1
+        body_start = table_bindings.index("{", match.end())
+        # The lambda body: brace-match from its opening brace.
+        depth, idx = 0, body_start
+        while idx < len(table_bindings):
+            if table_bindings[idx] == "{":
+                depth += 1
+            elif table_bindings[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            idx += 1
+        body = table_bindings[body_start : idx + 1]
+        assert "io_mutex_" in body, (
+            "a binding that accepts a TableReader capsule must hold io_mutex_ for "
+            "the whole call (GIL released), or the CFITSIO cursor and "
+            "scratch_buffer_ are raced"
+        )
+        assert "gil_scoped_release" in body, (
+            "the lock is only useful if the GIL is released around the read"
+        )
+    assert consumers >= 1, "no capsule consumers found -- has the binding moved?"

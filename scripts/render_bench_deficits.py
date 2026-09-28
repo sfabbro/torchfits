@@ -34,9 +34,11 @@ def _platform_label(host: str, metadata: str = "", case: str = "") -> str:
         return "macOS arm64 / MPS"
     if "cpu" in h:
         return "Linux x86_64 / CPU"
-    # Scorecard Mac hostname without device token in host field.
+    # Scorecard Mac hostname without device token in host field. Derive the
+    # arch the same way the fallback below does; hardcoding arm64 published a
+    # wrong architecture for any non-arm host matching the pattern.
     if h.startswith("nrc-") or "darwin" in h:
-        return f"macOS arm64 / {device}"
+        return f"macOS {platform.machine()} / {device}"
     system = platform.system()
     machine = platform.machine()
     if system == "Darwin":

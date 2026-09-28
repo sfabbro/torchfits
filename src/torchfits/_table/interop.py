@@ -71,11 +71,30 @@ def _materialize_arrow_table(data: str | Any | Iterable[Any], **kwargs: Any) -> 
     return pa.Table.from_batches(list(data))
 
 
+def _as_batch_iter(data: Any) -> Any:
+    """Return *data* as an iterator of :class:`pyarrow.RecordBatch`.
+
+    A ``pyarrow.Table`` is a documented input to every interop function here,
+    and it *is* iterable -- but iterating a Table yields its **columns**, not
+    record batches.  The streaming branches below write each item straight to
+    a writer, so a Table has to be converted first; a ``RecordBatch`` is not
+    iterable-as-batches either and is wrapped.  ``RecordBatchReader`` objects
+    and plain batch iterables are returned untouched, so a streaming FITS
+    reader still streams instead of being buffered.
+    """
+    pa = _require_pyarrow()
+    if hasattr(data, "to_batches"):
+        return iter(data.to_batches())
+    if isinstance(data, pa.RecordBatch):
+        return iter((data,))
+    return data
+
+
 # -- public interop functions ----------------------------------------------------
 
 
 def write_parquet(
-    where: str,
+    dest: str,
     data: str | Any | Iterable[Any],
     *,
     stream: bool = False,
@@ -87,7 +106,7 @@ def write_parquet(
     Write Arrow-native table data to parquet.
 
     Args:
-        where: Destination parquet file path.
+        dest: Destination parquet file path.
         data: FITS file path, Arrow Table, RecordBatchReader, or iterable of RecordBatch.
         stream: Enable streaming parquet writes (bounded memory).
     """
@@ -120,15 +139,19 @@ def write_parquet(
         else:
             table = pa.Table.from_batches(list(data_iter))
         pq.write_table(
-            table, where, compression=compression, row_group_size=row_group_size
+            table, dest, compression=compression, row_group_size=row_group_size
         )
         return
 
+    # The schema comes from the original input (a Table and a RecordBatch both
+    # expose one) so an empty source still produces a valid file, while the
+    # loop below iterates normalized record batches rather than columns.
+    schema = getattr(data, "schema", None)
+    data_iter = _as_batch_iter(data)
     writer = None
-    schema = getattr(data_iter, "schema", None)
     if schema is not None:
         # Eager writer so empty sources still produce a valid file.
-        writer = pq.ParquetWriter(where, schema, compression=compression)
+        writer = pq.ParquetWriter(dest, schema, compression=compression)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -138,14 +161,14 @@ def write_parquet(
                     break
                 if writer is None:
                     writer = pq.ParquetWriter(
-                        where, batch.schema, compression=compression
+                        dest, batch.schema, compression=compression
                     )
                 writer.write_batch(batch, row_group_size=row_group_size)
         else:
             for batch in data_iter:
                 if writer is None:
                     writer = pq.ParquetWriter(
-                        where, batch.schema, compression=compression
+                        dest, batch.schema, compression=compression
                     )
                 writer.write_batch(batch, row_group_size=row_group_size)
     finally:
@@ -154,7 +177,7 @@ def write_parquet(
 
 
 def write_csv(
-    where: str,
+    dest: str,
     data: str | Any | Iterable[Any],
     *,
     delimiter: str = ",",
@@ -164,7 +187,7 @@ def write_csv(
     """Write table data to CSV or TSV via PyArrow.
 
     Args:
-        where: Destination path.
+        dest: Destination path.
         data: FITS path, Arrow Table, reader, or batch iterable.
         delimiter: Field separator (``,`` for CSV, ``\\t`` for TSV).
         stream: Write batches without materializing the full table.
@@ -184,15 +207,18 @@ def write_csv(
 
     if not stream:
         table = _materialize_arrow_table(data)
-        pacsv.write_csv(table, where, write_options=write_options)
+        pacsv.write_csv(table, dest, write_options=write_options)
         return
 
-    data_iter: Any = data
+    # The schema comes from the original input (a Table and a RecordBatch both
+    # expose one) so an empty source still produces a valid file, while the
+    # loop below iterates normalized record batches rather than columns.
+    schema = getattr(data, "schema", None)
+    data_iter: Any = _as_batch_iter(data)
     writer = None
-    schema = getattr(data_iter, "schema", None)
     if schema is not None:
         # Eager writer so empty sources still produce a valid file.
-        writer = pacsv.CSVWriter(where, schema, write_options=write_options)
+        writer = pacsv.CSVWriter(dest, schema, write_options=write_options)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -202,14 +228,14 @@ def write_csv(
                     break
                 if writer is None:
                     writer = pacsv.CSVWriter(
-                        where, batch.schema, write_options=write_options
+                        dest, batch.schema, write_options=write_options
                     )
                 writer.write(batch)
         else:
             for batch in data_iter:
                 if writer is None:
                     writer = pacsv.CSVWriter(
-                        where, batch.schema, write_options=write_options
+                        dest, batch.schema, write_options=write_options
                     )
                 writer.write(batch)
     finally:
@@ -218,7 +244,7 @@ def write_csv(
 
 
 def write_ipc(
-    where: str,
+    dest: str,
     data: str | Any | Iterable[Any],
     *,
     stream: bool = False,
@@ -228,7 +254,7 @@ def write_ipc(
     """Write Arrow IPC / Feather V2 (``.arrow``) — native for Polars and Arrow.
 
     Args:
-        where: Destination path (typically ``.arrow`` or ``.feather``).
+        dest: Destination path (typically ``.arrow`` or ``.feather``).
         data: FITS path, Arrow Table, reader, or batch iterable.
         stream: Write batches without materializing the full table.
         compression: Feather/IPC compression (``zstd``, ``lz4``, or ``None``).
@@ -249,17 +275,20 @@ def write_ipc(
 
     if not stream:
         table = _materialize_arrow_table(data)
-        feather.write_feather(table, where, compression=compression)
+        feather.write_feather(table, dest, compression=compression)
         return
 
     write_options = ipc.IpcWriteOptions(compression=compression)
 
-    data_iter: Any = data
+    # The schema comes from the original input (a Table and a RecordBatch both
+    # expose one) so an empty source still produces a valid file, while the
+    # loop below iterates normalized record batches rather than columns.
+    schema = getattr(data, "schema", None)
+    data_iter: Any = _as_batch_iter(data)
     writer = None
-    schema = getattr(data_iter, "schema", None)
     if schema is not None:
         # Eager writer so empty sources still produce a valid file.
-        writer = ipc.new_file(where, schema, options=write_options)
+        writer = ipc.new_file(dest, schema, options=write_options)
     try:
         if hasattr(data_iter, "read_next_batch"):
             while True:
@@ -268,12 +297,12 @@ def write_ipc(
                 except StopIteration:
                     break
                 if writer is None:
-                    writer = ipc.new_file(where, batch.schema, options=write_options)
+                    writer = ipc.new_file(dest, batch.schema, options=write_options)
                 writer.write_batch(batch)
         else:
             for batch in data_iter:
                 if writer is None:
-                    writer = ipc.new_file(where, batch.schema, options=write_options)
+                    writer = ipc.new_file(dest, batch.schema, options=write_options)
                 writer.write_batch(batch)
     finally:
         if writer is not None:
@@ -318,13 +347,17 @@ def to_pandas(
             f"{', '.join(sorted(io_kwargs))}"
         )
 
-    if hasattr(data, "to_pandas"):
-        return data.to_pandas(**pandas_kwargs)
-
+    # stream=True is checked first: a Table/RecordBatch has `.to_pandas` too, and
+    # taking that shortcut would return one DataFrame instead of the documented
+    # iterator of per-batch DataFrames.
     if stream:
         return (
-            pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs) for batch in data
+            pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs)
+            for batch in _as_batch_iter(data)
         )
+
+    if hasattr(data, "to_pandas"):
+        return data.to_pandas(**pandas_kwargs)
 
     frames = [
         pa.Table.from_batches([batch]).to_pandas(**pandas_kwargs) for batch in data
@@ -370,7 +403,7 @@ def to_polars(
     _reject_detached_kwargs("to_polars", kwargs)
 
     if stream:
-        return (pl.from_arrow(batch, rechunk=rechunk) for batch in data)
+        return (pl.from_arrow(batch, rechunk=rechunk) for batch in _as_batch_iter(data))
 
     return pl.from_arrow(data, rechunk=rechunk)
 

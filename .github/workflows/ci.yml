@@ -134,9 +134,13 @@ jobs:
           pip install -e . --no-build-isolation
       - name: bench_cpp_backend
         run: python benchmarks/bench_cpp_backend.py
-      # Reporting only for now: the metadata entry points still load torch, so
-      # --strict (the boundary + budget gate) is wired up with the torch-free
-      # core. Until then this keeps the cold-start numbers visible in CI.
+      # Reporting only, deliberately: the metadata entry points no longer load
+      # torch (they go through libtorchfits_core), so the boundary assertion in
+      # --strict passes here -- but the *budgets* in that script are measured on
+      # the maintainer's machine and a shared 2-core runner is a coin flip on
+      # the 120 ms metadata rows. Wiring --strict into CI needs a pinned and
+      # otherwise-idle runner, so until then this keeps the cold-start numbers
+      # visible in the log instead of failing on someone else's hardware.
       - name: bench_import_boundary
         run: python benchmarks/bench_import_boundary.py --repeat 2
 

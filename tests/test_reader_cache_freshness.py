@@ -179,19 +179,115 @@ class _MallocInfo2(ctypes.Structure):
     ]
 
 
+_LEAK_THRESHOLD_BYTES = 512 * 1024
+
+
+class _MallocStatisticsDarwin(ctypes.Structure):
+    """``malloc_statistics_t`` -- the prefix macOS's malloc_zone_statistics fills."""
+
+    _fields_ = [
+        ("blocks_in_use", ctypes.c_uint32),
+        ("size_in_use", ctypes.c_size_t),
+        ("max_size_in_use", ctypes.c_size_t),
+        ("size_in_malloc_zone", ctypes.c_size_t),
+    ]
+
+
+def _live_alloc_bytes():
+    """Return a zero-arg callable reporting live malloc bytes, per platform.
+
+    glibc exposes exactly that as ``mallinfo2().uordblks``. macOS has no
+    ``mallinfo`` at all; the equivalent is
+    ``malloc_zone_statistics(malloc_default_zone()).size_in_use``.
+
+    The Darwin reading is documented as a *sampled* estimate in general, so its
+    noise was measured rather than assumed before being trusted: 12 consecutive
+    readings with no work between them, and 6 on each side of a 20,000-read run,
+    all agreed to the byte (spread 0) on macOS arm64. A platform with neither
+    probe skips here rather than silently measuring nothing.
+    """
+    libc = ctypes.CDLL(None)
+    if hasattr(libc, "mallinfo2"):
+        libc.mallinfo2.restype = _MallocInfo2
+        return lambda: libc.mallinfo2().uordblks
+    if hasattr(libc, "malloc_zone_statistics"):
+        libc.malloc_default_zone.restype = ctypes.c_void_p
+        libc.malloc_zone_statistics.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        libc.malloc_zone_statistics.restype = ctypes.c_void_p
+
+        def _darwin() -> int:
+            stats = _MallocStatisticsDarwin()
+            libc.malloc_zone_statistics(libc.malloc_default_zone(), ctypes.byref(stats))
+            return stats.size_in_use
+
+        return _darwin
+    pytest.skip(
+        "no live-allocation probe (neither mallinfo2 nor malloc_zone_statistics)"
+    )
+
+
+def test_live_alloc_probe_detects_a_known_leak():
+    """Pin the measurement itself, or the leak test below proves nothing.
+
+    A sensitivity control in two tiers. The second tier is the one that matters:
+    the regression this file guards against was a *ghost LRU list node per
+    acquire* -- tens of bytes per cached read, not a megabyte. A probe that
+    cannot see a 64-byte-per-iteration leak over 20k iterations would happily
+    report a flat zero for exactly that bug while still detecting a gross one,
+    so the control asserts the ghost-node magnitude is visible *and* that it
+    exceeds the threshold the leak test asserts.
+
+    Without this control, a probe that quietly stopped working -- a struct-layout
+    change, a ``size_in_use`` that stopped tracking, a different libc -- would
+    leave ``test_reader_cache_does_not_leak_per_cached_read`` reading zero and
+    passing without ever having measured anything, which is precisely the
+    failure mode of a guard that only runs on one platform.
+    """
+    libc = ctypes.CDLL(None)
+    if not hasattr(libc, "malloc"):
+        pytest.skip("no malloc(3) to build a synthetic leak with")
+    live = _live_alloc_bytes()
+    libc.malloc.restype = ctypes.c_void_p
+    libc.malloc.argtypes = [ctypes.c_size_t]
+
+    def leak(block: int, count: int) -> int:
+        before = live()
+        for _ in range(count):
+            libc.malloc(block)  # deliberately leaked: never free()d
+        return live() - before
+
+    # Tier 1: the probe is live at all.
+    gross = leak(256 * 1024, 1000)
+    assert gross >= 256 * 1024 * 1000 // 2, (
+        f"probe saw only {gross} bytes of a known 256 MiB leak"
+    )
+
+    # Tier 2: the ghost-node magnitude the real regression had. 64 B is above
+    # the 16-byte minimum malloc bucket granularity, so the request is served
+    # as asked rather than rounded away.
+    per_read, reads = 64, 20000
+    ghost = leak(per_read, reads)
+    assert ghost >= per_read * reads // 2, (
+        f"probe saw only {ghost} bytes of a known {per_read * reads}-byte leak"
+    )
+    assert ghost > _LEAK_THRESHOLD_BYTES, (
+        f"a ghost-node leak ({ghost} B) would not trip the "
+        f"{_LEAK_THRESHOLD_BYTES} B threshold the leak test asserts"
+    )
+
+
 def test_reader_cache_does_not_leak_per_cached_read(tmp_path):
     """Cache bookkeeping must not accumulate state per acquire/release (r8b).
 
     Each cached read exercises one acquire + release. Every cache-internal
     container must return to its steady state: a per-read growth of live
     malloc bytes is a deterministic leak (the LRU list used to keep a ghost
-    node per acquire). glibc's mallinfo2().uordblks counts exactly the live
-    malloc bytes, so the slope over 20k cached reads is deterministic.
+    node per acquire). The probe is glibc's ``mallinfo2().uordblks`` or macOS's
+    ``malloc_zone_statistics().size_in_use``; both are byte-exact enough that
+    the slope over 20k cached reads is deterministic (see
+    ``_live_alloc_bytes`` and its sensitivity control above).
     """
-    libc = ctypes.CDLL(None)
-    if not hasattr(libc, "mallinfo2"):
-        pytest.skip("glibc mallinfo2 unavailable (non-glibc platform)")
-    libc.mallinfo2.restype = _MallocInfo2
+    live = _live_alloc_bytes()
 
     m = importlib.import_module("torchfits._C")
     path = str(tmp_path / "leak.fits")
@@ -202,12 +298,12 @@ def test_reader_cache_does_not_leak_per_cached_read(tmp_path):
 
     for _ in range(500):  # warm every per-call allocator arena
         read_once()
-    before = libc.mallinfo2().uordblks
+    before = live()
     for _ in range(20000):
         read_once()
-    grew = libc.mallinfo2().uordblks - before
+    grew = live() - before
 
-    assert grew < 512 * 1024, (
+    assert grew < _LEAK_THRESHOLD_BYTES, (
         f"reader cache leaked {grew} live malloc bytes over 20000 cached reads"
     )
 

@@ -179,7 +179,7 @@ class MeshBackgroundSubtract(FITSTransform):
         return grid
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         if flux.ndim < 2:
             raise ValueError(
@@ -211,7 +211,7 @@ class MeshBackgroundSubtract(FITSTransform):
             raise RuntimeError(
                 "MeshBackgroundSubtract.inverse() requires a prior forward() pass."
             )
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         return view.replace(view.flux + self._last_bg)
 
     def __repr__(self) -> str:

@@ -187,16 +187,25 @@ class FITSHeaderScale(FITSTransform):
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         check_state(x, self.expects, type(self).__name__, state=self.state)
+        # Stamp here, not only in FITSTransform.__call__: this class exists to
+        # catch a payload that was scaled twice, and forward() is a public
+        # entry point (every transform test calls it directly). Stamping only
+        # on the __call__ path meant `scaler.forward(p)` returned a PHYSICAL
+        # payload still labelled STORED, so a second forward() scaled it again
+        # with no error -- the exact silent double-scaling this class guards.
         if self.bscale == 1.0 and self.bzero == 0.0:
-            return x
+            return stamp_state(x, self.produces)
         if is_payload(x):
-            view = self.view(x, state=self.state)
-            return view.replace(
-                _linear_apply(view.flux, self.bscale, self.bzero),
-                ivar=self.scale_ivar(view.ivar, self.bscale),
+            view = self.view(x, mask=mask, state=self.state)
+            return stamp_state(
+                view.replace(
+                    _linear_apply(view.flux, self.bscale, self.bzero),
+                    ivar=self.scale_ivar(view.ivar, self.bscale),
+                ),
+                self.produces,
             )
         # Functional ops: out-of-place arithmetic only.
-        return _linear_apply(x, self.bscale, self.bzero)
+        return stamp_state(_linear_apply(x, self.bscale, self.bzero), self.produces)
 
     def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
         # No state= prior here: the prior describes forward() inputs, while an
@@ -206,7 +215,7 @@ class FITSHeaderScale(FITSTransform):
         if self.bscale == 1.0 and self.bzero == 0.0:
             return stamp_state(x, DataState.STORED)
         if is_payload(x):
-            view = self.view(x, expects=self.inverse_expects())
+            view = self.view(x, mask=mask, expects=self.inverse_expects())
             return stamp_state(
                 view.replace(
                     _linear_remove(view.flux, self.bscale, self.bzero),
@@ -289,14 +298,14 @@ class FITSScaleColumns(FITSTransform):
         x = _require_columns(x, type(self).__name__)
         check_state(x, self.expects, type(self).__name__, state=self.state)
         if not self.scales:
-            return x
+            return cast("dict[str, torch.Tensor]", stamp_state(x, self.produces))
         out = dict(x)
         for name, (tscal, tzero) in self.scales.items():
             if name not in out:
                 continue
             # Functional ops: never mutate the caller's tensor.
             out[name] = _table_linear_apply(out[name], tscal, tzero)
-        return out
+        return cast("dict[str, torch.Tensor]", stamp_state(out, self.produces))
 
     def inverse(
         self, x: dict[str, torch.Tensor], mask: torch.Tensor | None = None
@@ -511,12 +520,12 @@ class FITSHeaderNormalize(FITSTransform):
         return cls(keys, scale_floats=scale_floats)
 
     def forward(self, x: Any, mask: torch.Tensor | None = None) -> Any:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         if self._is_integer or self._is_unsigned:
             vmin, vmax = self._in_range  # type: ignore[misc]
             if vmax == vmin:
-                return view.replace(torch.zeros_like(flux))
+                return stamp_state(view.replace(torch.zeros_like(flux)), self.produces)
             # float32 mantissa is 24 bits: int32/int64 counts above 2**24
             # round, so the [0, 1] map collapses neighboring integers.
             xf = (
@@ -526,20 +535,29 @@ class FITSHeaderNormalize(FITSTransform):
             )
             span = vmax - vmin
             out = (xf - vmin) / span
-            return view.replace(out, ivar=self.divide_ivar(view.ivar, span))
+            return stamp_state(
+                view.replace(out, ivar=self.divide_ivar(view.ivar, span)),
+                self.produces,
+            )
         if self.scale_floats:
             vmin = _amin(flux, tuple(range(flux.ndim)), mask=view.effective_mask(mask))
             vmax = _amax(flux, tuple(range(flux.ndim)), mask=view.effective_mask(mask))
             finite = bool(torch.isfinite(vmin) and torch.isfinite(vmax))
             if not finite:
-                return view.replace(torch.full_like(flux, float("nan")))
+                return stamp_state(
+                    view.replace(torch.full_like(flux, float("nan"))), self.produces
+                )
             self._fit_range = (float(vmin.item()), float(vmax.item()))
             if vmax == vmin:
-                return view.replace(torch.zeros_like(flux))
+                return stamp_state(view.replace(torch.zeros_like(flux)), self.produces)
             span = vmax - vmin
             out = (flux - vmin) / span
-            return view.replace(out, ivar=self.divide_ivar(view.ivar, span))
-        # Float types, no scaling requested — identity
+            return stamp_state(
+                view.replace(out, ivar=self.divide_ivar(view.ivar, span)),
+                self.produces,
+            )
+        # Float types, no scaling requested — identity. ``produces`` is None
+        # for this case (see __init__), so an identity pass does not relabel.
         return x
 
     def inverse(self, x: Any, mask: torch.Tensor | None = None) -> Any:
@@ -551,7 +569,7 @@ class FITSHeaderNormalize(FITSTransform):
                 "FITSHeaderNormalize.inverse() requires a prior forward() pass "
                 "on this thread when scale_floats=True."
             )
-        view = self.view(x, expects=self.inverse_expects())
+        view = self.view(x, mask=mask, expects=self.inverse_expects())
         vmin, vmax = limits
         span = vmax - vmin
         out = view.flux * span + vmin

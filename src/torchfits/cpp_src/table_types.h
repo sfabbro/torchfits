@@ -11,6 +11,7 @@
 #include <fitsio.h>
 
 #include "torchfits_torch.h"
+#include "internal_utils.h"
 #include "security.h"
 #include "fits_handle.h"
 
@@ -66,15 +67,22 @@ struct TableFilter {
     int type_idx = 0;
 };
 
-// Helper to check if buffered row reading is enabled
+// Helper to check if buffered row reading is enabled.
+//
+// This used to hand-roll the check against the first character of the value,
+// which disagreed with internal_utils.h's env_flag_default_true on five inputs
+// (measured): `off`/`OFF` read as *enabled* here but disabled there, and a bare
+// `n` or `f` read as disabled here but enabled there. Same variable, two
+// vocabularies, and one of them silently inverts what a caller asked for.
+//
+// The documented contract was always `0`/`1` (docs/architecture.md), which both
+// parsers honoured, so this is a consistency fix rather than a behaviour fix --
+// docs/compatibility.md already declares these knobs out of the public API.
+// env_flag_default_true is the canonical spelling and is the one
+// tests/test_docs_integrity.py checks for, so use it.
 inline bool table_buffered_read_enabled() {
-    static const bool enabled = []() {
-        const char* env = std::getenv("TORCHFITS_TABLE_BUFFERED");
-        if (!env || env[0] == '\0') {
-            return true;
-        }
-        return !(env[0] == '0' || env[0] == 'n' || env[0] == 'N' || env[0] == 'f' || env[0] == 'F');
-    }();
+    static const bool enabled =
+        internal::env_flag_default_true("TORCHFITS_TABLE_BUFFERED");
     return enabled;
 }
 

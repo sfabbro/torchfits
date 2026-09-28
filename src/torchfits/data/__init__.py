@@ -37,6 +37,7 @@ from .datasets import (
     FitsTensorDataset,
     FitsTensorIterableDataset,
     _buffered_shuffle,
+    _EpochSeed,
     _resolve_rank_and_world_size,
     discover_bands,
 )
@@ -107,11 +108,24 @@ class FitsTableDataset(Dataset[Any]):
             device=self.device,
             mmap=self.mmap,
         )
-        self._n_rows = 0
+        # Two authorities, and which one applies depends on the read:
+        #   * the data itself, when a ``where=`` filter or a projection means
+        #     the materialised columns are the whole truth;
+        #   * the table's own NAXIS2, when the read is unfiltered. A
+        #     zero-column BINTABLE materialises no columns at all, so the
+        #     data route reported 0 rows for a table torchfits itself opens
+        #     as ``num_rows = 6`` -- and ``ds[0]`` then handed back an empty
+        #     dict instead of raising IndexError.
+        import torchfits as _tf
+
+        data_rows = 0
         for v in self._data.values():
             if isinstance(v, (torch.Tensor, list)):
-                self._n_rows = len(v)
+                data_rows = len(v)
                 break
+        self._n_rows = (
+            data_rows if self._data else int(_tf.read_nrows(self.path, self.hdu))
+        )
 
         if labels is not None:
             if len(labels) != self._n_rows:
@@ -126,6 +140,8 @@ class FitsTableDataset(Dataset[Any]):
         return self._n_rows
 
     def __getitem__(self, idx: int) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        if not -self._n_rows <= idx < self._n_rows:
+            raise IndexError(f"index {idx} out of range for {self._n_rows} rows")
         row = {k: v[idx] for k, v in self._data.items()}
         if self.transform is not None:
             row = self.transform(row)
@@ -141,6 +157,17 @@ class FitsTableDataset(Dataset[Any]):
 
 
 def _resolve_table_mmap(mmap: bool | str) -> bool:
+    """Resolve the ``mmap=`` policy for a table read.
+
+    Kept as a named seam because the two call sites used to spell this
+    differently (``_resolve_table_mmap(self.mmap)`` on the ``scan_torch``
+    path, bare ``bool(self.mmap)`` on the ``scan`` path), which reads as a
+    difference when there is none: every value that reaches here is already
+    either a bool or a string, and a non-empty string -- ``"auto"`` included
+    -- is truthy. Verified equal to ``bool(mmap)`` over 11 probes (including
+    ``"auto"``, ``"never"``, ``""``, ``0``, ``None``). One function, so the
+    next reader is not left guessing what the other path was doing.
+    """
     return True if mmap == "auto" else bool(mmap)
 
 
@@ -326,6 +353,7 @@ class FitsTableIterableDataset(IterableDataset[Any]):
         self.mmap = mmap
         self.shuffle_buffer_size = shuffle_buffer_size
         self.seed = seed
+        self._epoch_seed = _EpochSeed(seed)
         self.rank = rank
         self.world_size = world_size
         self.as_batches = bool(as_batches)
@@ -419,7 +447,7 @@ class FitsTableIterableDataset(IterableDataset[Any]):
             row_slice=window,
             where=self.where,
             batch_size=self.batch_size,
-            mmap=bool(self.mmap),
+            mmap=_resolve_table_mmap(self.mmap),
         ):
             tensor_cols = _tensor_columns_from_record_batch(batch)
             if self.as_batches:
@@ -443,14 +471,16 @@ class FitsTableIterableDataset(IterableDataset[Any]):
                 yield row
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        stream = self._generate()
         if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
             if self.as_batches:
                 raise ValueError(
                     "shuffle_buffer_size requires per-row mode (as_batches=False)"
                 )
+        self._epoch = self._epoch_seed.next()
+        stream = self._generate()
+        if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
             stream = _buffered_shuffle(
-                stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
+                stream, buffer_size=self.shuffle_buffer_size, seed=self._epoch
             )
         return stream
 

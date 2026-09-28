@@ -895,15 +895,25 @@ class TestIntegerInputDtypes:
         assert abs(out[0, 0, 0].item() - 50.0) < 1.0
 
     def test_masked_int_minmax(self) -> None:
+        """A mask means *no data*: excluded pixels come back NaN, not scaled.
+
+        The 300 is masked out, so it is in neither the [5, 200] statistics nor
+        the result. That is the whole point of the mask: it kept a garbage
+        pixel out of the limits, and returning it as a huge finite value would
+        hand the caller back the very artefact they excluded.
+        """
         x = torch.tensor([[5, 200, 300]], dtype=torch.int16).unsqueeze(0)
         mask = torch.tensor([[[True, True, False]]])
         out = MinMaxNormalize()(x, mask=mask)
         assert out.dtype == torch.float32
-        # Masked pixel excluded from stats: valid range [5, 200] -> [0, 1],
-        # the 300 stays outside the normalized range (transform doesn't clip).
         assert abs(out[0, 0, 0].item() - 0.0) < 1e-5
         assert abs(out[0, 0, 1].item() - 1.0) < 1e-5
-        assert out[0, 0, 2].item() > 1.0
+        assert torch.isnan(out[0, 0, 2])
+        # Note the old third assertion here (`out[0, 0, 2] > 1.0`, "the
+        # transform doesn't clip") was only reachable *because* the masked
+        # pixel was still transformed: vmin/vmax come from the valid pixels,
+        # so an unmasked value is always inside [0, 1] and the property is
+        # now vacuous rather than violated.
 
     def test_estimate_background_uint16(self) -> None:
         if not hasattr(torch, "uint16"):
@@ -1358,10 +1368,15 @@ class TestAsymmetricSigmaClip:
         t = AsymmetricSigmaClip(n_low=3.0, n_high=3.0)
         out = t.forward(x.clone(), mask=mask)
 
-        # With mask, median=0.0, so the 100.0 pixels get clipped to ~0.0
-        assert out[0, 0].item() < 10.0, (
-            f"100.0 pixel not clipped to background: {out[0, 0].item()}"
-        )
+        # The mask reached estimate_background: unmasked, the 100.0 majority
+        # *is* the background and those pixels survive untouched.
+        unmasked = AsymmetricSigmaClip(n_low=3.0, n_high=3.0).forward(x.clone())
+        assert abs(unmasked[0, 0].item() - 100.0) < 1e-3
+        # Masked, those same pixels are no data at all rather than a value
+        # scaled by a background they were excluded from.
+        assert torch.isnan(out[0, 0])
+        assert torch.isfinite(out[3:, 1:]).all()
+        assert abs(out[4, 4].item()) < 1e-3
 
 
 # ---------------------------------------------------------------------------
@@ -1635,8 +1650,11 @@ class TestNonFiniteInputs:
         kept = out.flatten()[1:]
         assert torch.isfinite(kept).all()
         assert (kept - 50.0).abs().max().item() < 1e-4
-        # The infinite outlier is clipped and filled with the frame mean.
-        assert out[0, 0, 0].item() == pytest.approx(50.0, abs=1e-3)
+        # The infinite outlier is excluded from the statistics, so it does not
+        # wipe the frame -- and it is not data either, so it comes back NaN
+        # rather than as a plausible-looking frame mean. `fill=` applies to
+        # *clipped* pixels; a non-finite input keeps saying so.
+        assert torch.isnan(out[0, 0, 0])
 
     def test_sigma_clip_negative_infinite_pixel_does_not_wipe_frame(self) -> None:
         x = torch.full((1, 8, 8), 50.0)
@@ -1688,7 +1706,7 @@ class TestNonFiniteInputs:
         x = torch.full((1, 8, 8), 50.0)
         x[0, 0, 0] = float("inf")
         out = AsymmetricSigmaClip(fill="median")(x)
-        assert out[0, 0, 0].item() == pytest.approx(50.0)
+        assert torch.isnan(out[0, 0, 0])
         assert (out.flatten()[1:] - 50.0).abs().max().item() < 1e-4
 
 

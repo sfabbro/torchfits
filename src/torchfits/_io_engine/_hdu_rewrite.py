@@ -14,6 +14,8 @@ from .hdu_api import open_hdulist
 from .paths import guard_fits_path
 from ._write_helpers import (
     _COMMENTARY_HEADER_KEYS,
+    _COMPRESSION_CARD_KEYS,
+    _COMPRESSION_CARD_PREFIXES,
     _cpp_header_mapping,
     _hdu_with_header,
     _image_hdu_dict_for_fits_write,
@@ -97,6 +99,9 @@ def _sanitize_header_for_compressed_write(
         "ZTILE",
         "ZNAME",
         "ZVAL",
+        # CFITSIO computes the dither offset for the quantizer it picks;
+        # a replayed ZDITHER<n> would contradict the tiles it just wrote.
+        "ZDITHER",
         "TTYPE",
         "TFORM",
         "TDIM",
@@ -261,21 +266,11 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
     _invalidate_path_caches(path)
 
 
-_COMPRESSION_HEADER_KEYS = frozenset(
-    {
-        "ZIMAGE",
-        "ZCMPTYPE",
-        "ZBITPIX",
-        "ZNAXIS",
-        "ZPCOUNT",
-        "ZGCOUNT",
-        "ZCHECKSUM",
-        "ZDATASUM",
-        "ZQUANTIZ",
-        "ZBLANK",
-    }
-)
-_COMPRESSION_HEADER_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL")
+# Reuse the write-boundary CompImage drop sets instead of restating them here.
+# This private copy had already drifted by one card -- it lacked ZCHECKSUM,
+# which is exactly the class of stale keyword this module exists to prevent.
+_COMPRESSION_HEADER_KEYS = _COMPRESSION_CARD_KEYS
+_COMPRESSION_HEADER_PREFIXES = _COMPRESSION_CARD_PREFIXES
 
 
 def _strip_compression_cards(header: Header) -> Header:

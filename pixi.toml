@@ -1,5 +1,8 @@
 [workspace]
 preview = ["pixi-build"]
+# Keep the manager itself reproducible alongside pixi.lock. Update this pin
+# deliberately when the lockfile is regenerated with a newer Pixi release.
+requires-pixi = "==0.81.0"
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
@@ -91,7 +94,9 @@ duckdb = ">=1.5.5"
 # Development tasks
 dev = "pip install -e . --no-build-isolation"
 build = "pixi build"
-# test and release-gate run the full suite including performance markers; the GHA PR matrix excludes them.
+# Install exactly the checked-in lock before the complete local gate.
+current-source-gate = "pixi install --locked && pixi run preflight-push && pixi run ci-local"
+# test runs the full suite including performance markers; the GHA PR matrix excludes them. release-gate runs the curated release subset (no marker filter) and must stay in lockstep with the CI release-gate job's file list -- tests/test_docs_integrity.py enforces that.
 test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
 release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py tests/test_io_invariants.py -q && pixi run docs-contract && pixi run docs-links"
 lint = "ruff check . && ruff format ."
@@ -149,6 +154,13 @@ bench-cache = "pixi run -e bench bench-install && pixi run -e bench python bench
 bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
 # Pure-C CFITSIO (vendored) microbench + torchfits/fitsio peers on same fixtures
 bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
+# Cold/warm latency baseline for the metadata ("skinny") APIs. Its two
+# dimensions -- header size and cold vs warm -- are why no single number for
+# this family is meaningful; see the module docstring.
+bench-metadata = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_metadata.py"
+# MEF median stack: slice-streaming kernel shared by every method, so the
+# fitsio-vs-torchfits comparison is apples to apples. Needs CFHT MegaCam MEFs.
+bench-median-stack = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_median_stack.py"
 bench-megacam = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_megacam_cutouts.py"
 bench-denoise = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_denoise.py"
 bench-ml = 'bash -c "TS=$(date -u +%Y%m%d_%H%M%S); pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_ml_loader.py --output benchmarks_results/ml_${TS}/ml_results.csv --run-id ml_${TS}"'
@@ -194,7 +206,7 @@ cxx-compiler = ">=1.11.0,<2"
 
 [feature.gpu.tasks]
 gpu-bootstrap = "bash scripts/gpu-bootstrap.sh"
-bench-gpu-install = "bash -c 'source scripts/gpu-env-loader.sh && unset CC CXX CFLAGS CXXFLAGS LDFLAGS && rm -rf build src/torchfits.egg-info && find src/torchfits -name \"_C*.so\" -delete && python -m pip install -e . --no-build-isolation --no-deps'"
+bench-gpu-install = "bash -c 'source scripts/gpu-env-loader.sh && unset CC CXX CFLAGS CXXFLAGS LDFLAGS && rm -rf build src/torchfits.egg-info && find src/torchfits \\( -name \"_C*.so\" -o -name \"_core*.so\" -o -name \"libtorchfits_core*.so\" -o -name \"libtorchfits_core*.dylib\" \\) -delete && python -m pip install -e . --no-build-isolation --no-deps'"
 bench-gpu = "pixi run -e bench-gpu gpu-bootstrap && pixi run -e bench-gpu bench-gpu-install && pixi run -e bench-gpu gpu-env-check && pixi run -e bench-gpu python benchmarks/bench_all.py --profile user --scope all --run-id gpu_$(date -u +%Y%m%d_%H%M%S)"
 gpu-env-check = "bash -c 'source scripts/gpu-env-loader.sh && python -c \"import torch; assert torch.cuda.is_available(), \\\"gpu-env-check: CUDA not reachable from this env\\\"; print(\\\"torch=\\\", torch.__version__, \\\"cuda_available=\\\", torch.cuda.is_available()); print(\\\"cuda runtime=\\\", torch.version.cuda); print(\\\"device=\\\", torch.cuda.get_device_name(0), \\\"cap=\\\", torch.cuda.get_device_capability(0))\"'"
 
@@ -204,6 +216,11 @@ gpu-env-check = "bash -c 'source scripts/gpu-env-loader.sh && python -c \"import
 # time — they're dlopen-time only. The path is python-version dependent, so
 # bench-gpu tasks source scripts/gpu-env-loader.sh instead of hardcoding one
 # version here.
+#
+# bench-gpu-install deletes all three native artifacts before rebuilding, not
+# just _C: the torch-free library and the _core module are stamped with a build
+# id, so a _C from one build next to a libtorchfits_core from another turns
+# into an ImportError at the first metadata call rather than at link time.
 
 [activation.env]
 # Keep the project env hermetic: user-site packages (e.g. an older pyarrow or

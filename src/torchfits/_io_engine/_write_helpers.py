@@ -77,7 +77,12 @@ _COMPRESSION_CARD_KEYS = frozenset(
         "ZBLANK",
     }
 )
-_COMPRESSION_CARD_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL")
+# ZDITHER<n> is the subtractive-dither offset CFITSIO stamps for the
+# SUBTRACTIVE_DITHER_1 quantizer. It is neither in the exact set nor covered by
+# any other prefix, so reading a tile-compressed MEF and writing it back
+# uncompressed used to leave a ZDITHER0 card on an IMAGE extension that has no
+# tiles and no dither. Drop it as a prefix so every n is covered.
+_COMPRESSION_CARD_PREFIXES = ("ZNAXIS", "ZTILE", "ZNAME", "ZVAL", "ZDITHER")
 
 _WRITE_BOUNDARY_DROP_KEYS = (
     _STALE_CHECKSUM_KEYS | _TABLE_DERIVED_KEYS | _COMPRESSION_CARD_KEYS

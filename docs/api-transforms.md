@@ -125,6 +125,22 @@ Most transforms accept an optional boolean `mask` (`True` = valid).
 pipeline(image, mask=finite_mask)
 pipeline.inverse(normalized, mask=finite_mask)
 ```
+
+A mask means **there is no data there**, and every transform that touches the
+data acts on that reading twice over: the pixels are excluded from whatever
+statistics the transform computes, *and* they come back as `NaN` (with `ivar`
+set to `0`). Masking an outlier is the point — a masked pixel would otherwise
+be divided by limits computed without it, which is how a masked artefact of
+`900.0` on a flat `10.0` sky returned `8.9e11` from `RobustNormalize`. A
+payload's own `mask` field counts the same way, and non-finite input is always
+treated as no data.
+
+The exception is a transform that is a *declared* identity for its input:
+`FITSHeaderScale(bscale=1)` and `FITSHeaderNormalize` on a float header with
+`scale_floats=False` return their input untouched, mask included. They have no
+statistic to exclude the pixel from and nothing was amplified, so they do not
+invent one.
+
 ### Invertibility
 
 | Kind | `inverse()` |
@@ -281,7 +297,7 @@ image foundation-model papers actually use (AstroCLIP / AstroPT style
 per-frame robust scaling), and unlike `RobustNormalize` it does **not** shift
 the data by default:
 
-$$\sigma = \text{MAD} \times 1.4826 \quad (\text{or the population RMS about the median for } \texttt{stat="std"})$$
+$$\sigma = \text{MAD} \times 1.4826 \quad (\text{or the population RMS about the median for } \text{stat="std"})$$
 
 Zero-preserving mode (default):
 
@@ -517,10 +533,12 @@ Outliers replaced with median.
 ## Masks & robust statistics
 
 !!! warning "One mask convention everywhere"
-    A torchfits mask is a boolean tensor where **`True` means valid**. FITS
-    stores the opposite in two common shapes — a `DQ` integer extension where
-    set bits flag defects, and an `IVAR` extension where `0` means "no data" —
-    so convert before you combine.
+    A torchfits mask is a boolean tensor where **`True` means valid**, and
+    `False` means *no data* — a transform returns `NaN` there rather than a
+    value scaled by statistics that excluded it. FITS stores the opposite in
+    two common shapes — a `DQ` integer extension where set bits flag defects,
+    and an `IVAR` extension where `0` means "no data" — so convert before you
+    combine.
 
 | Function | Role |
 |---|---|

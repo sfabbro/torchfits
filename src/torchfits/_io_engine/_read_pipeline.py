@@ -217,7 +217,6 @@ def read_unified(
             cold_nocache=cold_nocache,
             read_exc_types=read_exc_types,
             logger=logger,
-            strict=bool(kwargs.get("strict", False)),
         )
 
     if not isinstance(path, str):
@@ -408,9 +407,16 @@ def _read_batch_paths(
     cold_nocache: bool,
     read_exc_types: tuple[type[BaseException], ...],
     logger: Any,
-    strict: bool = False,
 ) -> list[Any]:
-    """Dispatch a list of FITS paths through batch C++ or recursive reads."""
+    """Dispatch a list of FITS paths through batch C++ or recursive reads.
+
+    A batch-path failure always degrades to the per-file loop, which
+    attributes the error to a concrete path. There is no ``strict`` knob
+    here (unlike :func:`torchfits._io_engine.batch.read_batch`): ``read()``
+    takes no such option, and ``_parse_read_options`` rejects unknown
+    keywords before this point, so a ``strict`` forwarded through ``kwargs``
+    could never be anything but ``False``.
+    """
     hdu_batch = hdu
     if hdu_batch is None or (
         isinstance(hdu_batch, str) and hdu_batch.strip().lower() == "auto"
@@ -442,8 +448,6 @@ def _read_batch_paths(
                 data_list = batch_to_device(data_list, device)
             return cast(list[Any], data_list)
         except read_exc_types as exc:
-            if strict:
-                raise
             logger.debug(
                 "read_images_batch failed, falling back per file: %s",
                 exc,

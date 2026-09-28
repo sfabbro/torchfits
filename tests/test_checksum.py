@@ -17,6 +17,10 @@ def test_file_checksum_roundtrip_and_corruption(tmp_path):
     assert out["hdustatus"] == 0
     assert out["ok"] is True
     assert out["status"] == "no_checksums"
+    # Deep-review unit 10, TS-007: the no-checksums case also has to report
+    # `present=False`. Three other tests assert `present is True`, so
+    # flipping this one branch to True was completely silent.
+    assert out["present"] is False
 
     torchfits.write_checksums(str(path), hdu=0)
     out = torchfits.verify_checksums(str(path), hdu=0)

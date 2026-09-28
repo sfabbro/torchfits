@@ -255,16 +255,25 @@ def _resolve_hdu_index(
     autodetect_hdu: Callable[[str, int], int],
 ) -> int:
     """Resolve ``hdu`` to a 0-based index (supports ``None`` / ``\"auto\"`` / EXTNAME)."""
-    import torchfits._C as cpp
-
     path = coerce_fits_path(path)
     guard_fits_path(path)
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
         return int(autodetect_hdu(path, 16))
     if isinstance(hdu, int):
+        # Every sibling entry point (read, read_tensor, read_subset, read_table,
+        # read_fallback) rejects a negative index up front. Do the same here so
+        # a wrong HDU surfaces the same actionable ValueError instead of the
+        # CFITSIO "could not move to HDU" RuntimeError.
+        if hdu < 0:
+            raise ValueError("hdu must be a non-negative integer")
         return int(hdu)
     if not isinstance(hdu, str):
         raise TypeError(f"hdu must be int, str, None, or 'auto', got {type(hdu)!r}")
+
+    # Name resolution is the only branch that needs the torch-linked extension,
+    # so the import sits here rather than at the top: read_header(path, 0) must
+    # not pay a libtorch dlopen to reach the isinstance(hdu, int) branch above.
+    import torchfits._C as cpp
 
     if hasattr(cpp, "resolve_hdu_name_cached"):
         try:
@@ -281,10 +290,12 @@ def _resolve_hdu_index(
     # Missing EXTNAME (common on primary) must continue, not abort the scan.
     # File-level failures propagate: a missing/unreadable file must not be
     # reported as "HDU not found" after probing phantom HDUs.
-    n_hdus = int(cpp.read_num_hdus(path))
+    from .. import _core_api
+
+    n_hdus = _core_api.read_num_hdus(path)
     for i in range(max(0, n_hdus)):
         try:
-            keys = cpp.read_keys(path, i, ["EXTNAME"])
+            keys = _core_api.read_keys(path, i, ["EXTNAME"])
         except Exception:
             continue
         if keys.get("EXTNAME") == hdu:
@@ -297,11 +308,11 @@ def read_nrows(path: str, hdu: Union[int, str, None] = 1) -> int:
 
     Default ``hdu=1`` (first extension). Raises if the HDU is not a table.
     """
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    return int(cpp.read_nrows(path, hdu_index))
+    return _core_api.read_nrows(path, hdu_index)
 
 
 def read_keys(
@@ -313,14 +324,14 @@ def read_keys(
 
     Missing keys raise ``RuntimeError``. Default ``hdu=0`` matches ``read_header``.
     """
-    import torchfits._C as cpp
+    from .. import _core_api
 
     if not keys:
         raise ValueError("keys must be a non-empty sequence of keyword names")
     path = coerce_fits_path(path)
     key_list = [str(k) for k in keys]
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    return dict(cpp.read_keys(path, hdu_index, key_list))
+    return _core_api.read_keys(path, hdu_index, key_list)
 
 
 def read_shape(
@@ -330,39 +341,38 @@ def read_shape(
 
     ``shape`` is torch / row-major order (reversed NAXISn). Default ``hdu=0``.
     """
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    bitpix, shape = cpp.read_shape(path, hdu_index)
-    return int(bitpix), tuple(int(d) for d in shape)
+    return _core_api.read_shape(path, hdu_index)
 
 
 def read_hdu_type(path: str, hdu: Union[int, str, None] = 0) -> str:
     """Return HDU type string (``IMAGE`` / ``BINARY_TABLE`` / …) without full header."""
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    return str(cpp.read_hdu_type(path, hdu_index))
+    return _core_api.read_hdu_type(path, hdu_index)
 
 
 def read_num_hdus(path: str) -> int:
     """Return number of HDUs in the file (one open; no header dump)."""
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     guard_fits_path(path)
-    return int(cpp.read_num_hdus(path))
+    return _core_api.read_num_hdus(path)
 
 
 def read_colnames(path: str, hdu: Union[int, str, None] = 1) -> list[str]:
     """Return table column names (TTYPEn) without materializing the full header."""
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    return [str(n) for n in cpp.read_colnames(path, hdu_index)]
+    return _core_api.read_colnames(path, hdu_index)
 
 
 def read_extname(path: str, hdu: Union[int, str, None] = 0) -> str | None:
@@ -375,11 +385,11 @@ def read_extname(path: str, hdu: Union[int, str, None] = 0) -> str | None:
 
 def read_table_info(path: str, hdu: Union[int, str, None] = 1) -> dict[str, Any]:
     """One-open table metadata: ``nrows``, ``colnames``, ``tforms``."""
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
-    info = dict(cpp.read_table_info(path, hdu_index))
+    info = _core_api.read_table_info(path, hdu_index)
     info["nrows"] = int(info["nrows"])
     info["colnames"] = [str(n) for n in info["colnames"]]
     info["tforms"] = [str(t) for t in info["tforms"]]
@@ -393,7 +403,7 @@ def get_header(
     autodetect_hdu: Callable[[str, int], int],
 ) -> Header:
     """Get the header of a FITS file."""
-    import torchfits._C as cpp
+    from .. import _core_api
 
     path = coerce_fits_path(path)
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
@@ -410,10 +420,12 @@ def get_header(
             header_cards_cache.pop(cache_key, None)
 
     def _read_header(path: str, hdu_index: int) -> Header:
-        handle = None
+        # Both probes go through libtorchfits_core, which does not link
+        # libtorch: reading a header is the operation an interactive session
+        # runs first, and it should not pay a ~1 s dlopen to do it.
+        fast_failure: Exception | None = None
         try:
-            handle = cpp.open_fits_file(path, "r")
-            header_string = cpp.read_header_string(handle, hdu_index)
+            header_string = _core_api.read_header_string(path, hdu_index)
             if header_string:
                 cards = fast_parse_header_cards(header_string)
                 with cache_lock:
@@ -423,24 +435,25 @@ def get_header(
                         header_cards_cache.popitem(last=False)
                 return Header(cards)
         except Exception as exc:
-            warnings.warn(
-                f"get_header: fast path failed for {path!r} hdu={hdu_index}: {exc}; "
-                "falling back to read_header_dict",
-                RuntimeWarning,
-                stacklevel=3,
-            )
-        finally:
-            if handle is not None:
-                try:
-                    handle.close()
-                except Exception as exc:
-                    _log.debug("get_header: handle close failed: %s", exc)
+            fast_failure = exc
         try:
-            return Header(cpp.read_header_dict(path, hdu_index))
+            header = Header(_core_api.read_header_dict(path, hdu_index))
         except RuntimeError as exc:
             # read_header_dict propagates open/parse failures; surface them as
             # OSError so unreadable files match the documented read_header
             # contract that capability probes rely on.
             raise OSError(str(exc)) from exc
+        # Warn only when the fallback actually rescued the read, i.e. when the
+        # fast path was genuinely at fault. A plain user error (missing HDU,
+        # unreadable file) fails on both probes, and blaming the fast path for
+        # it emitted a misleading RuntimeWarning next to the real error.
+        if fast_failure is not None:
+            warnings.warn(
+                f"get_header: fast path failed for {path!r} hdu={hdu_index}: "
+                f"{fast_failure}; fell back to read_header_dict",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+        return header
 
     return _read_header(path, hdu_index)

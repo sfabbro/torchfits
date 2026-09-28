@@ -138,13 +138,13 @@ comparison target is listed in `docs/parity.md`.
 
 ## 7. Parity and docs contract
 
-- [ ] `docs/parity.md` marks every major FITS feature as supported, partial,
+- [x] `docs/parity.md` marks every major FITS feature as supported, partial,
       unsupported, or out of scope.
-- [ ] `benchmarks/replays/upstream_sources.json` references the parity tests
+- [x] `benchmarks/replays/upstream_sources.json` references the parity tests
       that justify comparator claims.
-- [ ] README and docs do not claim torchfits ownership of WCS, sphere geometry,
+- [x] README and docs do not claim torchfits ownership of WCS, sphere geometry,
       HEALPix, or sky-domain simulation.
-- [ ] Install docs still document CPU-only (no CUDA libs) and GPU torch index
+- [x] Install docs still document CPU-only (no CUDA libs) and GPU torch index
       recipes, and the `[cpu]` / `[cuda]` extra pins track the current wheel
       lane (`pixi run check-torch-pins` enforces this).
 
@@ -234,6 +234,9 @@ bash scripts/verify_wheel_cuda_canfar.sh     # CUDA torch vs the CPU-linked whee
 ```
 
 ## 11. Post-release verification
+
+These checks intentionally remain unchecked in a development checkout. Run
+them only after the tagged release and its package/docs deployments exist.
 
 - [ ] `pip install torchfits==X.Y.Z` works in a fresh environment.
 - [ ] `import torchfits; print(torchfits.__version__)` shows correct version.

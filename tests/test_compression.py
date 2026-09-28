@@ -244,5 +244,43 @@ def test_compress_empty_primary_mef_roundtrip():
                 os.unlink(p)
 
 
+def test_uncompressed_rewrite_strips_every_compimage_card(tmp_path):
+    """A compressed MEF written back uncompressed must carry no Z* cards.
+
+    ``ZIMAGE``/``ZCMPTYPE``/``ZBITPIX``/``ZNAXIS*``/``ZTILE*``/``ZQUANTIZ``/
+    ``ZNAME*``/``ZVAL*`` are already dropped at the write boundary, but
+    ``ZDITHER<n>`` -- the subtractive-dither offset CFITSIO stamps for the
+    SUBTRACTIVE_DITHER_1 quantizer -- was in neither drop set, so it survived
+    onto an IMAGE extension that has no tiles and no dither.
+    """
+    src = str(tmp_path / "comp.fits")
+    dst = str(tmp_path / "plain.fits")
+    img = torch.arange(4096, dtype=torch.float32).reshape(64, 64)
+    torchfits.write(src, img, compress=True, checksum=True, overwrite=True)
+
+    def z_cards(path: str) -> dict:
+        header = torchfits.read_header(path, hdu=1)
+        return {k: header[k] for k in header.keys() if str(k).upper().startswith("Z")}
+
+    source_cards = z_cards(src)
+    assert source_cards, "compressed write must produce CompImage cards"
+    assert "ZDITHER0" in source_cards, (
+        f"expected CFITSIO to stamp a dither offset, got {sorted(source_cards)}"
+    )
+
+    with torchfits.open(src) as hdul:
+        torchfits.write(dst, hdul, overwrite=True)
+
+    leaked = z_cards(dst)
+    assert leaked == {}, f"CompImage cards leaked onto an uncompressed HDU: {leaked}"
+    # The rewrite itself must still be correct, not merely card-free.
+    from astropy.io import fits
+
+    with fits.open(dst) as hdul:
+        assert hdul[1].header.get("XTENSION") == "IMAGE"
+        assert hdul[1].header.get("BITPIX") == -32
+        assert np.array_equal(np.asarray(hdul[1].data), img.numpy())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

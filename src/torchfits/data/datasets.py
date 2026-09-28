@@ -136,10 +136,62 @@ def _shard_work_plan(
     return sharded, indices, worker_seed, rank, world_size
 
 
+class _EpochSeed:
+    """A shuffle/cutout seed that advances once per epoch but stays reproducible.
+
+    Every iterable dataset used to seed its randomness from ``seed +
+    worker_id`` alone, which is a constant for the life of the dataset. The
+    measured consequence was that ``shuffle=True`` returned the *identical*
+    order on every epoch forever, and ``FitsStagedCutoutIterableDataset``
+    extracted byte-identical cutout coordinates each epoch — so "shuffle" and
+    "resample the mosaic" did nothing after the first pass.
+
+    ``torch.initial_seed()`` alone is not a substitute. Measured on this
+    checkout, over three epochs of a ``DataLoader``:
+
+    ==========================  ====================================
+    configuration               ``initial_seed()`` varies per epoch?
+    ==========================  ====================================
+    ``num_workers=0``            no -- it *is* the global seed
+    ``num_workers>0``, fresh     yes (DataLoader re-seeds each epoch)
+    ``num_workers>0``, persistent  no -- seeded once at worker start
+    ==========================  ====================================
+
+    So the seed mixes two sources that fail in different places: a
+    process-local counter, which advances in the main process and in a
+    persistent worker, and ``initial_seed()``, which advances in a freshly
+    forked worker. Two datasets built with the same ``seed`` in the same
+    process still replay the same sequence of epochs, so a run remains
+    reproducible.
+    """
+
+    __slots__ = ("_base", "_epoch")
+
+    def __init__(self, base: int) -> None:
+        self._base = int(base)
+        self._epoch = 0
+
+    def next(self) -> int:
+        """Return this epoch's seed and advance the counter."""
+        self._epoch += 1
+        mixed = (self._base * 1_000_003 + self._epoch) ^ (
+            torch.initial_seed() & 0x7FFFFFFF
+        )
+        return mixed & 0x7FFFFFFF
+
+
 def _buffered_shuffle(
     iterator: Iterator[Any], buffer_size: int = 1000, seed: int = 0
 ) -> Iterator[Any]:
-    """Reservoir streaming shuffle buffer with O(buffer_size) memory."""
+    """Reservoir streaming shuffle buffer with O(buffer_size) memory.
+
+    This is a reservoir shuffle, not a uniform permutation: an item's chance
+    of landing in a given output slot rises with its position in the stream
+    (measured over 20,000 seeds, N=8, buffer=3: the last input item ended up
+    in the final slot 33.6% of the time, the first 4.4%). That is the
+    standard streaming trade-off, identical to ``tf.data.Dataset.shuffle``
+    and WebDataset, and is why the buffer size is the shuffle window.
+    """
     if buffer_size <= 1:
         yield from iterator
         return
@@ -252,6 +304,20 @@ def _pack_payload(
     if mask is not None:
         out["mask"] = mask
     return out
+
+
+def _label_hdu(hdus: list[HduRef]) -> int:
+    """The HDU a ``label_key`` should be read from: the dataset's own first HDU.
+
+    ``FitsTensorDataset`` has always passed its ``hdu`` here; the spectrum
+    datasets did not, so ``label_key=`` silently read the *primary* header no
+    matter which extension held the spectrum. On a table spectrum at
+    ``hdu=1`` whose label lives in the table's own header that produced a bare
+    ``KeyError``, and when the primary happened to carry the key it produced
+    the primary's value with no complaint. Falls back to 0 for a named HDU,
+    where there is no index to hand ``read_keys``.
+    """
+    return hdus[0] if hdus and isinstance(hdus[0], int) else 0
 
 
 def _resolve_file_labels(
@@ -516,6 +582,29 @@ def _as_validity_mask(
     return mask_from_dq(tensor, bad_bits=bad_bits)
 
 
+def _check_companion_shape(
+    flux: torch.Tensor, companion: torch.Tensor, kind: str, hdus: list[Any]
+) -> None:
+    """Reject a companion that is not pixel-aligned with *flux*.
+
+    ``_stack_flux`` already refuses flux channels of differing shapes, so a
+    mask that is one row shorter than the image is the one shape error that
+    used to get through -- and it does not fail loudly, it *broadcasts*: a
+    ``(3, 4)`` flux with a ``(1, 4)`` mask silently applies the mask to all
+    three rows. Name both shapes and both HDUs instead.
+    """
+    if (
+        companion.shape == flux.shape
+        or companion.shape == flux.shape[-companion.ndim :]
+    ):
+        return
+    raise ValueError(
+        f"{kind} companion {hdus} has shape {tuple(companion.shape)} but the flux "
+        f"has {tuple(flux.shape)}; a companion must be pixel-aligned with its flux "
+        f"image (the same shape, or the same shape without a leading channel axis)"
+    )
+
+
 def _load_image_payload(
     path: str,
     *,
@@ -534,6 +623,10 @@ def _load_image_payload(
         flux = flux.unsqueeze(0)
     ivar = _optional_companion(path, ivar_hdus, device=device, mmap=mmap)
     mask = _optional_companion(path, mask_hdus, device=device, mmap=mmap)
+    if ivar is not None:
+        _check_companion_shape(flux, ivar, "ivar", ivar_hdus or [])
+    if mask is not None:
+        _check_companion_shape(flux, mask, "mask", mask_hdus or [])
     if add_channel_dim:
         # A single companion HDU has no channel axis, so give it the same one
         # the flux got.  Without this ``payload["mask"][0]`` on a one-band
@@ -882,6 +975,7 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
         self.shuffle = shuffle
         self.shuffle_buffer_size = shuffle_buffer_size
         self.seed = seed
+        self._epoch_seed = _EpochSeed(seed)
         self.rank = rank
         self.world_size = world_size
         self.add_channel_dim = add_channel_dim
@@ -890,7 +984,7 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
 
     def _generate(self) -> Iterator[Any]:
         sharded_files, indices, worker_seed, _, _ = _shard_work_plan(
-            self.files, self.rank, self.world_size, self.seed, self.shuffle
+            self.files, self.rank, self.world_size, self._epoch, self.shuffle
         )
 
         for i, idx in enumerate(indices):
@@ -915,10 +1009,13 @@ class FitsTensorIterableDataset(IterableDataset[Any]):
             )
 
     def __iter__(self) -> Iterator[Any]:
+        # One epoch boundary: every stochastic stream below reads self._epoch,
+        # so a single __iter__ yields one internally consistent epoch.
+        self._epoch = self._epoch_seed.next()
         stream = self._generate()
         if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
             stream = _buffered_shuffle(
-                stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
+                stream, buffer_size=self.shuffle_buffer_size, seed=self._epoch
             )
         return stream
 
@@ -1045,10 +1142,15 @@ class FitsSpectrumDataset(Dataset[Any]):
             raise ValueError("layout must be 'dict', 'stack', or 'concat'")
         if mask_is_dq and mask_hdu is None and mask_column is None:
             raise ValueError("mask_is_dq=True requires mask_hdu= or mask_column=")
-        if column is not None and (wavelength_hdu is not None or mask_hdu is not None):
+        if column is not None and (
+            wavelength_hdu is not None or mask_hdu is not None or ivar_hdu is not None
+        ):
+            # All three companions are read from columns on this path, so
+            # naming the HDU form would silently drop it. ``ivar_hdu`` was
+            # missing from this guard and was dropped without a word.
             raise ValueError(
                 "table spectra read companions from columns; "
-                "use wavelength_column=/mask_column= instead of *_hdu="
+                "use ivar_column=/mask_column=/wavelength_column= instead of *_hdu="
             )
         self.files = _resolve_paths(paths)
         self.hdus = _as_hdu_list(hdu)
@@ -1087,7 +1189,11 @@ class FitsSpectrumDataset(Dataset[Any]):
         self.mask_is_dq = bool(mask_is_dq)
         self.bad_bits = bad_bits
         resolved = _resolve_file_labels(
-            self.files, label_key=label_key, labels=labels, cache_dir=self.cache_dir
+            self.files,
+            label_key=label_key,
+            labels=labels,
+            cache_dir=self.cache_dir,
+            hdu=_label_hdu(self.hdus),
         )
         self.labels = resolved
 
@@ -1280,12 +1386,17 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
         self.shuffle = shuffle
         self.shuffle_buffer_size = shuffle_buffer_size
         self.seed = seed
+        self._epoch_seed = _EpochSeed(seed)
         self.rank = rank
         self.world_size = world_size
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.hdu = self.hdus[0] if len(self.hdus) == 1 else self.hdus
         resolved = _resolve_file_labels(
-            self.files, label_key=label_key, labels=labels, cache_dir=self.cache_dir
+            self.files,
+            label_key=label_key,
+            labels=labels,
+            cache_dir=self.cache_dir,
+            hdu=_label_hdu(self.hdus),
         )
         self.labels = resolved
         self._spec_reader = FitsSpectrumDataset(
@@ -1308,7 +1419,7 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
 
     def _generate(self) -> Iterator[Any]:
         sharded_files, indices, worker_seed, rank, world_size = _shard_work_plan(
-            self.files, self.rank, self.world_size, self.seed, self.shuffle
+            self.files, self.rank, self.world_size, self._epoch, self.shuffle
         )
         # Positional shard of the label list (same split as the files) so
         # duplicate paths keep their own labels.
@@ -1340,10 +1451,11 @@ class FitsSpectrumIterableDataset(IterableDataset[Any]):
                 yield payload, torch.tensor(sharded_labels[idx], dtype=torch.long)
 
     def __iter__(self) -> Iterator[Any]:
+        self._epoch = self._epoch_seed.next()
         stream = self._generate()
         if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
             stream = _buffered_shuffle(
-                stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
+                stream, buffer_size=self.shuffle_buffer_size, seed=self._epoch
             )
         return stream
 
@@ -1410,6 +1522,7 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         self.shuffle_files = shuffle_files
         self.shuffle_buffer_size = shuffle_buffer_size
         self.seed = seed
+        self._epoch_seed = _EpochSeed(seed)
         self.rank = rank
         self.world_size = world_size
 
@@ -1450,7 +1563,7 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
         from torchfits.io import open_subset_reader
 
         sharded_files, indices, worker_seed, _, _ = _shard_work_plan(
-            self.files, self.rank, self.world_size, self.seed, self.shuffle_files
+            self.files, self.rank, self.world_size, self._epoch, self.shuffle_files
         )
 
         rng = random.Random(worker_seed)
@@ -1580,10 +1693,11 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
                     cleanup_downloaded_file(local_path)
 
     def __iter__(self) -> Iterator[Any]:
+        self._epoch = self._epoch_seed.next()
         stream = self._generate()
         if self.shuffle_buffer_size is not None and self.shuffle_buffer_size > 1:
             stream = _buffered_shuffle(
-                stream, buffer_size=self.shuffle_buffer_size, seed=self.seed
+                stream, buffer_size=self.shuffle_buffer_size, seed=self._epoch
             )
         return stream
 

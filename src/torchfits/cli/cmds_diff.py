@@ -6,8 +6,6 @@ import argparse
 import sys
 from typing import Any
 
-import torch
-
 import torchfits
 
 from .common import EXIT_DIFF, EXIT_OK, IoError, hdu_type_name
@@ -32,6 +30,8 @@ def _header_map(header: Any) -> dict[str, Any]:
 
 
 def _image_record(path: str, index: int) -> dict[str, Any]:
+    import torch
+
     tensor = torchfits.read_tensor(path, hdu=index)
     if not isinstance(tensor, torch.Tensor):
         raise IoError(f"{path}:{index} read_tensor did not return a tensor")

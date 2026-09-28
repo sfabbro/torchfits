@@ -26,14 +26,19 @@ For every torch pin in every extra, this script:
    https://download.pytorch.org/whl/cuXXX) and fails if pip cannot.
 
 Pins whose marker is not active on the current platform (the ``cuda`` extra
-is Linux-only) are skipped, matching the extras' own semantics; if every pin
-is skipped, the check passes vacuously (e.g. macOS, which has no ``+cpu`` /
-``+cu128`` wheels).
+is Linux-only) are skipped, matching the extras' own semantics; the *resolution*
+checks are then vacuous (e.g. macOS, which has no ``+cpu`` / ``+cu128`` wheels).
+The install-docs drift checks below are platform-independent — they compare the
+docs against the extras' own pin strings and against ``constraints-wheel.txt`` —
+so they still run when every pin was marker-skipped.
 
 This script also guards against install-docs drift: every extra's index URL
 and exact pin string must appear in the docs/install.md / README.md
 one-liners, and the documented wheel-lane pin must match
-``constraints-wheel.txt``.
+``constraints-wheel.txt``. The prose form of the same claim -- the
+``**PyTorch 2.13.x**`` the README leads with, which is the first thing a
+reader sees -- is checked against the same lane, so a lane bump that updates
+the pins cannot leave the headline sentence naming the old minor.
 
 Exit code is non-zero when any pin fails. Run via ``pixi run check-torch-pins``
 (also wired into the CI lint job and scripts/ci_local.sh).
@@ -148,19 +153,34 @@ def index_for_local(local: str) -> str:
     )
 
 
-DOC_FILES = (ROOT / "docs" / "install.md", ROOT / "README.md")
+# docs/compatibility.md is the third place the lane is stated (a support matrix
+# row per install path), and it is the one a reader lands on when asking "which
+# torch do I have to be on?".
+DOC_FILES = (
+    ROOT / "docs" / "install.md",
+    ROOT / "docs" / "compatibility.md",
+    ROOT / "README.md",
+)
 _DOC_INDEX_RE = re.compile(
     r"--extra-index-url\s+(https://download\.pytorch\.org/whl/[a-zA-Z0-9]+)"
 )
 _DOC_LANE_RE = re.compile(r"torch(>=2\.\d+,<2\.\d+)")
 _DOC_PIN_RE = re.compile(r"torch==\d+\.\d+\.\d+\+[a-zA-Z0-9]+")
+# Prose form of the same claim: "**PyTorch 2.13.x**", and the matrix cell
+# "| **PyTorch** | **2.13.x** (ABI-matched wheels) |" where the minor stands
+# alone. Only the wheel lane is written this way -- a source build's torch
+# floor is written ">= 2.10" with no `.x`, because it is not a lane claim: a
+# `--no-build-isolation` build stamps whatever torch is installed, so any
+# minor at or above the floor is genuinely fine there.
+_DOC_MINOR_RE = re.compile(r"\b2\.(\d+)\.x\b")
 
 
-def documented_claims() -> tuple[set[str], list[str], set[str]]:
-    """Index URLs, lane pins, and exact torch pins the docs / README use."""
+def documented_claims() -> tuple[set[str], list[str], set[str], set[str]]:
+    """Index URLs, lane pins, exact torch pins, and prose lane minors."""
     indexes: set[str] = set()
     lane_specs: list[str] = []
     exact_pins: set[str] = set()
+    prose_minors: set[str] = set()
     for path in DOC_FILES:
         if not path.is_file():
             continue
@@ -168,7 +188,8 @@ def documented_claims() -> tuple[set[str], list[str], set[str]]:
         indexes.update(_DOC_INDEX_RE.findall(text))
         lane_specs.extend(_DOC_LANE_RE.findall(text))
         exact_pins.update(_DOC_PIN_RE.findall(text))
-    return indexes, lane_specs, exact_pins
+        prose_minors.update(_DOC_MINOR_RE.findall(text))
+    return indexes, lane_specs, exact_pins, prose_minors
 
 
 def check_doc_drift(
@@ -176,7 +197,7 @@ def check_doc_drift(
 ) -> list[str]:
     """Failures when documented one-liners drift from the extras / wheel lane."""
     failures: list[str] = []
-    doc_indexes, lane_specs, doc_pins = documented_claims()
+    doc_indexes, lane_specs, doc_pins, prose_minors = documented_claims()
     doc_locals = {url.rsplit("/", 1)[-1] for url in doc_indexes}
     for extra, entry, version in pins:
         local = "".join(version.local)
@@ -198,6 +219,30 @@ def check_doc_drift(
             failures.append(
                 f"[FAIL] docs pin torch{spec} but the wheel lane is {lane} "
                 "(constraints-wheel.txt)"
+            )
+    # The README's headline sentence and the compatibility matrix name the lane
+    # in prose, with no specifier to compare. Nothing else checks those, so a
+    # lane bump left them naming the previous minor and every doc-drift gate
+    # still reported OK.
+    # `lane` is the SpecifierSet read from constraints-wheel.txt; the lower
+    # bound is the lane minor, and the prose claim is written without a
+    # specifier so the two have to be compared on the minor alone.
+    bounds = [spec for spec in lane if spec.operator in {">=", "==", "~="}]
+    if not bounds:
+        failures.append(
+            f"[FAIL] wheel lane {lane} has no lower bound to compare against"
+        )
+    lane_minor = bounds[0].version.split(".")[1] if bounds else ""
+    if not prose_minors:
+        failures.append(
+            "[FAIL] install docs/README state no prose torch lane "
+            "(expected a 'PyTorch 2.13.x' claim)"
+        )
+    for minor in sorted(prose_minors):
+        if minor != lane_minor:
+            failures.append(
+                f"[FAIL] docs claim PyTorch 2.{minor}.x but the wheel lane is "
+                f"2.{lane_minor}.x (constraints-wheel.txt)"
             )
     return failures
 
@@ -247,6 +292,36 @@ def _iter_torch_entries(pyproject_text: str) -> Iterator[tuple[str, str]]:
                 yield extra, entry
 
 
+def _parse_pin(extra: str, entry: str) -> Version:
+    """The exact ``+local`` version an extras entry pins, or a hard failure."""
+    req = Requirement(entry)
+    match = re.fullmatch(r"==\s*(?P<version>[^;,\s]+)", str(req.specifier))
+    if match is None:
+        raise SystemExit(
+            f"{extra}: {entry} — torch pins must be exact (==) so the "
+            "build flavor resolves deterministically"
+        )
+    version = Version(match.group("version"))
+    if not version.local:
+        raise SystemExit(
+            f"{extra}: {entry} — torch pins must carry a +local segment "
+            "(e.g. +cpu / +cu128) so they resolve from the PyTorch "
+            "index, not PyPI"
+        )
+    return version
+
+
+def iter_all_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
+    """Yield (extra, entry, Version) for *every* torch pin, markers ignored.
+
+    Used by the install-docs checks, which must reach the Linux-only pins from a
+    macOS host too: the docs have to document every flavor the extras offer,
+    whether or not this machine can install it.
+    """
+    for extra, entry in _iter_torch_entries(pyproject_text):
+        yield extra, entry, _parse_pin(extra, entry)
+
+
 def iter_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
     """Yield (extra, entry, Version) for active torch pins in the extras."""
     for extra, entry in _iter_torch_entries(pyproject_text):
@@ -259,20 +334,7 @@ def iter_torch_pins(pyproject_text: str) -> Iterator[tuple[str, str, Version]]:
                 flush=True,
             )
             continue
-        match = re.fullmatch(r"==\s*(?P<version>[^;,\s]+)", str(req.specifier))
-        if match is None:
-            raise SystemExit(
-                f"{extra}: {entry} — torch pins must be exact (==) so the "
-                "build flavor resolves deterministically"
-            )
-        version = Version(match.group("version"))
-        if not version.local:
-            raise SystemExit(
-                f"{extra}: {entry} — torch pins must carry a +local segment "
-                "(e.g. +cpu / +cu128) so they resolve from the PyTorch "
-                "index, not PyPI"
-            )
-        yield extra, entry, version
+        yield extra, entry, _parse_pin(extra, entry)
 
 
 def resolve(specifier: str, index: str) -> subprocess.CompletedProcess[str]:
@@ -315,9 +377,26 @@ def main() -> int:
             print("no torch flavor extras found in pyproject.toml", flush=True)
             return 1
         # Every torch flavor pin was marker-skipped (e.g. macOS: both extras
-        # are Linux-only). Vacuous pass — the extras can never resolve there.
-        print("all torch flavor pins skipped by platform markers — OK", flush=True)
-        return 0
+        # are Linux-only), so the resolution checks below are vacuous. The
+        # install-docs checks are not platform-dependent, so they still run --
+        # otherwise `pixi run check-torch-pins` on the dev platform would
+        # silently stop guarding docs/install.md.
+        print(
+            "all torch flavor pins skipped by platform markers — "
+            "install docs still checked",
+            flush=True,
+        )
+        drift = check_doc_drift(lane, list(iter_all_torch_pins(pyproject_text)))
+        for line in drift:
+            print(line, flush=True)
+        if drift:
+            failed = True
+        else:
+            print(
+                "[ OK ] install one-liners match the extra pins and the wheel lane",
+                flush=True,
+            )
+        return 1 if failed else 0
 
     for extra, entry, version in pins:
         label = f"{extra}: {entry}"

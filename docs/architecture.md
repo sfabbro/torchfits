@@ -21,7 +21,9 @@ flowchart TB
 `io.py` is a thin re-export layer. All real work happens in `_io_engine/`
 (submodules: `_read_pipeline.py`, `table_api.py`, `caches.py`) which call
 into `torchfits._C`. The C++ extension is compiled via scikit-build-core +
-nanobind; it vendors CFITSIO statically.
+nanobind; it vendors CFITSIO statically. It still links libtorch, but importing
+the extension no longer imports the Python `torch` package: the ABI check is
+deferred until a tensor boundary is actually used.
 
 ---
 
@@ -32,9 +34,10 @@ return type is a `torch.Tensor`, or that takes `device=`.** Nothing before it.
 
 The rule exists because the cost of violating it is invisible to an
 operation-level benchmark: a header peek reads a 2880-byte block in
-microseconds, but `torchfits._C` links `TORCH_LIBRARIES` *and* imports `torch`
-in its module body for the ABI check, so the first native call in a process paid
-about a second for an image-size tensor runtime it never touched.
+microseconds, while importing the Python tensor runtime costs about a second.
+The old extension also imported `torch` in its module body for the ABI check;
+the current extension defers that import until a tensor conversion, while
+retaining an explicit ABI check before every tensor wrap.
 
 | Entry point | Loads torch | Why |
 |---|---|---|
@@ -46,16 +49,17 @@ about a second for an image-size tensor runtime it never touched.
 | `Header`, `Card`, `HDUList` metadata (`open`, `hdul[i].header`) | no | header cards are plain Python |
 | `verify_checksums`, `write_checksums` | no | byte arithmetic |
 | `insert_hdu` / `replace_hdu` / `delete_hdu`, header writes | no | file structure |
-| `table.read` → Arrow, `table.schema`, `table.scan` | no *(target)* | Arrow destination, no tensor needed |
+| `table.read` → Arrow, `table.schema`, `table.scan` | no | Arrow destination, no Python tensor needed |
 
-Completing the boundary means extracting a torch-free core library:
+The dynamic-dependency split has landed. The native stack is two libraries, and
+the metadata path never touches the one that links libtorch:
 
 ```mermaid
 flowchart TB
   py["torchfits.io / torchfits.hdu / torchfits.table"]
   meta["torchfits._core<br/>metadata bindings"]
   tensor["torchfits._C<br/>tensor bindings"]
-  core["libtorchfits_core<br/>CFITSIO + SharedReadMeta + arena"]
+  core["libtorchfits_core<br/>CFITSIO + SharedReadMeta + inspection + pool"]
   cfitsio["Vendored CFITSIO"]
   py -->|metadata path| meta
   py -->|tensor path| tensor
@@ -64,12 +68,26 @@ flowchart TB
   core --> cfitsio
 ```
 
-`libtorchfits_core` must be a single shared library rather than sources linked
-into both modules: CFITSIO carries process-wide state, and `SharedReadMeta` plus
-the handle registry have to be one instance, or the staleness and thread-safety
-properties below silently fork. The extension keeps its torch ABI guard; the
-core carries a build-id constant so a mismatched pair is rejected at import
-instead of misreading data.
+`libtorchfits_core` is a single shared library rather than sources linked into
+both modules, for three reasons:
+
+1. **CFITSIO carries process-wide state.** Its error stack and internal buffers
+   are global, so two statically linked copies would let a status code produced
+   by one be resolved by the other. The core links the *whole* CFITSIO archive
+   (`-force_load` / `--whole-archive`) and `_C` resolves every `fits_*` symbol
+   against it; `src/torchfits/cpp_src/check_core_link.cmake` fails the build if
+   any of them is left unbound.
+2. **`SharedReadMeta` and the handle registry must be one instance.** Two caches
+   would both return correct answers and quietly disagree after a file is
+   rewritten. `tests/test_core_library.py` asserts a single registry.
+3. **`_core` must load without libtorch.** Linking torch into it would defeat
+   the entire split, so the CMake target links no Torch target (enforced by a
+   configure-time guard) and the test suite reads the library's own dependency
+   list with `otool -L` / `ldd`.
+
+The extension keeps its torch ABI guard. The core carries a build-id constant
+stamped into the library, into `_core`, and into `_C`; a mismatched pair is
+rejected with an `ImportError` at the boundary instead of misreading data.
 
 ### Current status
 
@@ -78,12 +96,14 @@ instead of misreading data.
 | `import torchfits` stays runtime-light | done (pinned by `tests/test_package_isolation.py`) |
 | `import torchfits.hdu` / `import torchfits.io` without torch | done (883 ms → 2.6 ms / 34.6 ms) |
 | `Header` / `Card` usable without torch | done |
-| Metadata *calls* without torch | needs the core library (see above) |
-| Arrow table destinations without torch | needs the table transport change |
-
-`tests/test_torch_boundary.py` enforces the table above, one fresh interpreter
-per assertion with `import torch` blocked outright, and
-`benchmarks/bench_import_boundary.py` records the cost.
+| Metadata *calls* without Python torch | done (fresh-process blocker) |
+| Metadata calls without *libtorch at all* | done (`libtorchfits_core`; 337 ms → 53 ms cold) |
+| Core and extension agree on *real* observations | done (`tests/test_core_library_real_data.py`; 409 real (frame, HDU) records, 0 mismatches) |
+| Reads match `astropy` on *real* observations | done (`tests/test_reads_real_data.py`; decompressed frames, raw VLA tiles and 435 Mpix of mosaic all exact) |
+| Arrow table destinations without Python torch | done (native raw buffers; correctness-first staging remains) |
+| Zero-copy Arrow assembly | pending (the staging copy in the raw transport is still there) |
+| `torchfits.open()` handle on the torch-free path | pending (the `HDUList` handle is shared with the tensor readers) |
+| `torchfits.table` without numpy | pending (torch-free today; the staging step still imports numpy, and pyarrow does too) |
 
 ---
 
@@ -191,11 +211,11 @@ Caches sit in three places:
 | Python I/O metadata | engine caches (via `clear_file_cache`) | Path-keyed header / meta / data LRU |
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
-The Python metadata layer was made torch-free first (Phases 0–1 below):
-`io.py` resolves the extension lazily, the HDU classes are module attributes
-resolved on first access, and dtype tags in `_hdu/dataview.py` are names rather
-than `torch.dtype` objects. The remaining work moves the native inspection code
-behind a second module.
+The Python metadata layer is torch-free (Phases 0–1 below): `io.py` resolves the
+extension lazily, the HDU classes are module attributes resolved on first
+access, and dtype tags in `_hdu/dataview.py` are names rather than `torch.dtype`
+objects. The next architectural step moves the native inspection code behind a
+second module and removes the remaining dynamic libtorch dependency.
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
 `clear_file_cache(...)` clears the I/O metadata layers only.
@@ -277,9 +297,15 @@ back to sequential. Each thread opens its own `FITSFile` independently.
 
 ### Parallel byte-swapping
 
-All mmap byte-swapping and table column decoding use `at::parallel_for`
-(PyTorch's intra-op thread pool). Threshold for parallel sign-bit XOR:
-256 KB (`TORCHFITS_XOR_PARALLEL_MIN_BYTES`).
+Table column decoding and batch reads use `at::parallel_for` (PyTorch's intra-op
+thread pool). The sign-bit XOR for signed-byte columns runs in
+`libtorchfits_core`, which cannot use ATen, so it has its own pool
+(`core/parallel.cpp`): work smaller than one grain runs inline on the calling
+thread, and the caller keeps one chunk so a nested `parallel_for` cannot
+deadlock on workers the outer call owns. Threshold for taking the parallel
+branch at all: 256 KB (`TORCHFITS_XOR_PARALLEL_MIN_BYTES`); the grain is 1 MiB.
+`TORCHFITS_NUM_THREADS` sizes the core pool and is read by ATen too, so pinning
+it pins both.
 
 ### Handle / metadata thread safety
 
@@ -399,7 +425,7 @@ Variables a typical caller sets to point caching at a different disk location.
 | `TORCHFITS_CACHE_DIR` | `$XDG_CACHE_HOME/torchfits` or `~/.cache/torchfits` | Disk cache root (remotes + samples) |
 | `TORCHFITS_REMOTE_CACHE` | `{CACHE_DIR}/remote` | HTTP/vos Dataset prefetch directory |
 | `TORCHFITS_SAMPLE_CACHE` | `{CACHE_DIR}/samples` | Example/gallery sample downloads |
-| `TORCHFITS_HTTP_TIMEOUT` | `120` | HTTP(S) download / Range timeout (seconds) |
+| `TORCHFITS_HTTP_TIMEOUT` | `120` | HTTP(S) download / Range timeout in seconds. Must be a positive, finite number; anything else (a typo like `30s`, or `0`, a negative, `nan`, `inf`) is ignored with a `UserWarning` naming the value and the fallback |
 | `TORCHFITS_HTTP_AUTHORIZATION` | unset | Full `Authorization` header value for remotes (wins over `_TOKEN`) |
 | `TORCHFITS_HTTP_TOKEN` | unset | Sent as `Authorization: Bearer <token>` when `_AUTHORIZATION` is unset |
 
@@ -414,6 +440,7 @@ profiling or working around a specific bottleneck.
 | `TORCHFITS_SHARED_META_VALIDATE` | `1` | Enable SharedReadMeta validation |
 | `TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS` | `1000` | SharedReadMeta validation interval |
 | `TORCHFITS_XOR_PARALLEL_MIN_BYTES` | `262144` | Threshold for parallel sign-bit XOR |
+| `TORCHFITS_NUM_THREADS` | hardware concurrency (capped at 64) | Worker threads for `libtorchfits_core`'s own `parallel_for`. ATen reads the same variable, so pinning it also pins the ATen pool; set it when the two pools would otherwise oversubscribe |
 | `TORCHFITS_VLA_HEAP_PREAD` | `0` (off) | Contiguous-heap single-`pread` fast path for VLA table columns; off by default until THEAP/offset edge cases are fully proven vs CFITSIO |
 
 ### Debug / bench-only
@@ -426,7 +453,7 @@ during benchmarking.
 | `TORCHFITS_DEBUG_SCALE` | `0` | Print which BSCALE/BZERO branch `_read_pipeline` took |
 | `TORCHFITS_COLD_NOMMAP` | `0` | Force non-mmap image reads |
 | `TORCHFITS_COLD_NOCACHE` | `0` | Disable the in-process handle/metadata cache |
-| `TORCHFITS_EXAMPLE_FAST` | unset | `examples/` sample-data helper: skip network downloads and fail fast instead (used by CI, `examples/test_examples.py`) |
+| `TORCHFITS_EXAMPLE_FAST` | unset | `examples/` runner + sample-data helper: skip network downloads and fail fast, and bound the `example_megacam_cr_denoise.py` training run. `examples/test_examples.py` sets it for every example under CI and unconditionally for the denoise example; that runner also refuses to start under `PYTHONOPTIMIZE` |
 
 ### Build / docs / bench-only
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from astropy.io import fits
 
@@ -93,3 +95,59 @@ def test_resolve_extname_skips_primary_without_extname(tmp_path):
     # usually succeeds; this still asserts the public path works).
     assert torchfits.read_nrows(str(path), hdu="CAT") == 100
     assert torchfits.read_extname(str(path), hdu="CAT") == "CAT"
+
+
+def test_negative_hdu_is_rejected_consistently(tmp_path):
+    """Every public entry point must reject a negative HDU the same way.
+
+    ``_resolve_hdu_index`` used to pass a negative index straight to CFITSIO,
+    so the skinny helpers failed with "could not move to HDU" while read(),
+    read_tensor(), read_subset() and read_table() all raised the actionable
+    ``ValueError("hdu must be a non-negative integer")``.
+    """
+    import pytest
+
+    path = str(_write_sample(tmp_path))
+    calls = {
+        "read_shape": lambda: torchfits.read_shape(path, -1),
+        "read_hdu_type": lambda: torchfits.read_hdu_type(path, -1),
+        "read_nrows": lambda: torchfits.read_nrows(path, -1),
+        "read_colnames": lambda: torchfits.read_colnames(path, -1),
+        "read_table_info": lambda: torchfits.read_table_info(path, -1),
+        "read_keys": lambda: torchfits.read_keys(path, ["EXPTIME"], hdu=-1),
+        "read_header": lambda: torchfits.read_header(path, hdu=-1),
+        "read": lambda: torchfits.read(path, hdu=-1),
+        "read_tensor": lambda: torchfits.read_tensor(path, hdu=-1),
+    }
+    for name, call in calls.items():
+        with pytest.raises(ValueError, match="non-negative"):
+            call()
+
+
+def test_missing_hdu_does_not_blame_the_header_fast_path(tmp_path):
+    """A bad HDU index is a user error, not a fast-path failure.
+
+    get_header() warned that its fast path had failed whenever
+    read_header_string() raised -- including for a plain "no such HDU", which
+    the fallback cannot fix either. The RuntimeWarning must now appear only
+    when the fallback actually rescued the read.
+    """
+    import pytest
+
+    path = str(_write_sample(tmp_path))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        # A positive but out-of-range index is a file-level failure, not an
+        # argument error; read_header documents it as OSError.
+        with pytest.raises(OSError):
+            torchfits.read_header(path, hdu=99)
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)], (
+        f"unexpected fast-path warning: {[str(w.message) for w in caught]}"
+    )
+
+    # The documented read still works and warns about nothing.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        header = torchfits.read_header(path, hdu=0)
+    assert header["OBJECT"] == "demo"
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]

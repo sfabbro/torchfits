@@ -233,7 +233,12 @@ def test_blank_identity_promotes_to_nan_float32(parity_fixtures) -> None:
     got = np.asarray(cpp.read_full_numpy(parity_fixtures["blank_identity"], 0, True))
     assert got.dtype == np.float32
     assert np.isnan(got[2, 3]) and np.isnan(got[5, 1])
-    assert not np.isnan(got).sum() == got.size  # only the blank pixels are NaN
+    # Exactly the two BLANK pixels, (2,3) and (5,1), and no others. This used to
+    # read `assert not np.isnan(got).sum() == got.size`, which parses as
+    # "not every pixel is NaN" -- an image with 46 of 48 pixels NaN satisfied
+    # it, so a nulval that leaked onto ordinary data passed unnoticed.
+    nan_count = int(np.isnan(got).sum())
+    assert nan_count == 2, f"{nan_count} NaN pixels, expected exactly the 2 BLANK ones"
 
 
 def test_float32_ieee_inf_and_signed_zero_survive(parity_fixtures) -> None:

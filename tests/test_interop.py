@@ -21,6 +21,38 @@ def test_to_arrow_numeric_tensor_shares_buffer():
     assert arrow["value"][1].as_py() == 99
 
 
+@pytest.mark.parametrize("dtype", [torch.complex64, torch.complex128])
+def test_to_arrow_rejects_complex_tensor_at_public_boundary(dtype):
+    pytest.importorskip("pyarrow")
+
+    value = torch.tensor([1 + 2j, 3 + 4j], dtype=dtype)
+    with pytest.raises(ValueError, match="complex tensors"):
+        torchfits.to_arrow({"value": value})
+
+
+def test_to_arrow_rejects_zero_width_tensor_at_public_boundary():
+    pytest.importorskip("pyarrow")
+
+    with pytest.raises(ValueError, match="zero width"):
+        torchfits.to_arrow({"value": torch.empty((3, 0))})
+
+
+@pytest.mark.parametrize(
+    ("converter_name", "required_module"),
+    [("to_pandas", "pandas"), ("to_polars", "polars"), ("to_astropy", "astropy")],
+)
+def test_dataframe_wrappers_propagate_complex_tensor_error(
+    converter_name: str, required_module: str
+):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip(required_module)
+
+    with pytest.raises(ValueError, match="complex tensors"):
+        getattr(torchfits, converter_name)(
+            {"value": torch.tensor([1 + 2j], dtype=torch.complex64)}
+        )
+
+
 def test_to_pandas_decode_bytes():
     pytest.importorskip("pandas")
 
@@ -469,3 +501,62 @@ def test_to_arrow_keeps_tensor_storage_alive():
     gc.collect()
     assert ref() is not None, "Arrow buffer dropped the source tensor storage"
     assert arrow["v"].to_pylist() == [float(x) for x in range(64)]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_export_writers_accept_the_where_filter(tmp_path, stream):
+    """`where=` is an I/O kwarg, so the exporters must be able to pass it.
+
+    The destination parameter used to be named ``where`` as well, so Python
+    raised `TypeError: got multiple values for argument 'where'` before the
+    filter was ever applied -- the documented row filter was unreachable on
+    all three exporters. The destination is now `dest`.
+    """
+    pytest.importorskip("pyarrow")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from astropy.io import fits as afits
+
+    from torchfits.table import write_csv, write_ipc, write_parquet
+
+    path = tmp_path / "t.fits"
+    afits.BinTableHDU.from_columns(
+        [afits.Column(name="ID", format="J", array=np.arange(1, 6, dtype="<i4"))]
+    ).writeto(str(path))
+
+    pq_out = tmp_path / "f.parquet"
+    write_parquet(str(pq_out), str(path), hdu=1, where="ID > 3", stream=stream)
+    assert pq.read_table(str(pq_out))["ID"].to_pylist() == [4, 5]
+
+    csv_out = tmp_path / "f.csv"
+    write_csv(str(csv_out), str(path), hdu=1, where="ID > 3", stream=stream)
+    body = csv_out.read_text().strip().splitlines()[1:]
+    assert [int(line.split(",")[0]) for line in body] == [4, 5]
+
+    ipc_out = tmp_path / "f.arrow"
+    write_ipc(str(ipc_out), str(path), hdu=1, where="ID > 3", stream=stream)
+    with open(ipc_out, "rb") as handle:
+        assert pa.ipc.open_file(handle).read_all()["ID"].to_pylist() == [4, 5]
+
+
+def test_export_writers_combine_where_with_a_column_projection(tmp_path):
+    """`where=` and `columns=` must compose rather than shadow each other."""
+    pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    from astropy.io import fits as afits
+
+    path = tmp_path / "two.fits"
+    afits.BinTableHDU.from_columns(
+        [
+            afits.Column(name="ID", format="J", array=np.arange(1, 6, dtype="<i4")),
+            afits.Column(name="X", format="J", array=np.arange(101, 106, dtype="<i4")),
+        ]
+    ).writeto(str(path))
+
+    out = tmp_path / "proj.parquet"
+    torchfits.table.write_parquet(
+        str(out), str(path), hdu=1, columns=["X"], where="ID <= 2"
+    )
+    table = pq.read_table(str(out))
+    assert table.column_names == ["X"]
+    assert table["X"].to_pylist() == [101, 102]

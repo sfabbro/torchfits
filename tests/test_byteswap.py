@@ -11,6 +11,8 @@ verify the bytes are correctly decoded.
 from __future__ import annotations
 
 import os
+import shlex
+import subprocess
 import tempfile
 
 import numpy as np
@@ -368,3 +370,63 @@ def test_int64_large_values():
 
     finally:
         os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Direct test of the C++ helpers
+# ---------------------------------------------------------------------------
+
+
+def test_native_bswap_helpers_match_a_byte_wise_reference(tmp_path) -> None:
+    """The SIMD helpers themselves, not just what a FITS read produces with them.
+
+    The rest of this file checks byteswap *through the reader*, which means the
+    tests only ever see whatever the vector loops happened to produce. These
+    helpers had no direct test, and the real-observation suites cannot reach
+    them: the unsigned fast paths in ``read_tensor_canonical`` are gated on
+    ``!compressed``, while the CFHT corpus is Rice-compressed throughout. So
+    neither the unit tests nor the real-data tests could tell a correct shuffle
+    from a wrong one on an uncompressed unsigned frame -- and a wrong shuffle is
+    silent, producing plausible pixels that are simply byte-reversed.
+
+    A standalone C++ probe compares all five helpers against a byte-wise
+    reference at element counts straddling every vector width and the scalar
+    tail, and prints which SIMD branch was compiled in, because a branch that
+    silently did nothing would still pass a comparison built from it.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    source = os.path.join(repo_root, "tests", "cpp", "test_bswap_helpers.cpp")
+    include = os.path.join(repo_root, "src", "torchfits", "cpp_src")
+    executable = str(tmp_path / "test_bswap_helpers")
+    # CXX may carry flags as well as a program name ("ccache c++", "c++ -pipe"),
+    # so split it the way tests/test_security.py does for the same job: passing
+    # the raw string as one argv element raises FileNotFoundError on a perfectly
+    # ordinary value.
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+
+    subprocess.run(
+        [
+            *compiler,
+            "-std=c++17",
+            "-O2",
+            "-I",
+            include,
+            source,
+            "-o",
+            executable,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [executable], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert result.returncode == 0, (
+        f"a byteswap helper disagrees with the byte-wise reference:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert "match the byte-wise reference" in result.stdout, result.stdout
+    # Report which branch was exercised, so a run that silently fell through to
+    # the scalar tail is visible in CI output rather than mistaken for coverage.
+    print(result.stdout.splitlines()[0])

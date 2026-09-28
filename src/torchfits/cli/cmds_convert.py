@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import torchfits
-from torchfits import table as tf_table
-from torchfits.transforms.rgb import lupton_rgb, rgb as auto_rgb, write_rgb_image
 
 from .common import EXIT_OK, IoError, UsageError, add_hdu_arg, reject_same_path
 
@@ -237,6 +235,8 @@ def _arrow_to_column_dict(table: Any) -> dict[str, Any]:
 
 
 def _convert_table(args: argparse.Namespace, fmt: str) -> int:
+    from torchfits import table as tf_table
+
     if len(args.inputs) != 1:
         raise UsageError("table convert accepts one input FITS file")
     path = args.inputs[0]
@@ -274,7 +274,18 @@ def _convert_table(args: argparse.Namespace, fmt: str) -> int:
 
 
 def _read_band(path: str, hdu: int) -> object:
-    return torchfits.read_tensor(path, hdu=hdu).detach().cpu()
+    """Read one PNG band, naming the file and HDU in every failure.
+
+    CFITSIO's own text ("Could not move to HDU", "Could not open FITS file:
+    <path>") is unattributable in a multi-band invocation: the caller cannot
+    tell which of the inputs failed nor that the index came from ``--bands``.
+    """
+    try:
+        return torchfits.read_tensor(path, hdu=hdu).detach().cpu()
+    except (UsageError, IoError):
+        raise
+    except Exception as exc:
+        raise IoError(f"{path}: HDU {hdu}: {exc}") from exc
 
 
 def _load_png_bands(inputs: list[str], hdus: list[int]) -> list[Any]:
@@ -285,6 +296,12 @@ def _load_png_bands(inputs: list[str], hdus: list[int]) -> list[Any]:
 
 
 def _convert_png(args: argparse.Namespace) -> int:
+    from torchfits.transforms.rgb import (
+        lupton_rgb,
+        rgb as auto_rgb,
+        write_rgb_image,
+    )
+
     if args.where or args.columns:
         raise UsageError("--where / --columns apply only to table convert")
     if args.recipe == "lupton":

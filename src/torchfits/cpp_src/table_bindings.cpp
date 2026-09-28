@@ -4,6 +4,8 @@
 
 #include <string>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <vector>
 #include <list>
 #include <mutex>
@@ -198,6 +200,201 @@ nb::dict tensor_map_to_python(
     return result_dict;
 }
 
+const char* tensor_dtype_name(torch::ScalarType dtype) {
+    switch (dtype) {
+        case torch::kBool: return "bool";
+        case torch::kUInt8: return "uint8";
+        case torch::kInt8: return "int8";
+        case torch::kInt16: return "int16";
+        case torch::kInt32: return "int32";
+        case torch::kInt64: return "int64";
+        case torch::kFloat16: return "float16";
+        case torch::kFloat32: return "float32";
+        case torch::kFloat64: return "float64";
+        case torch::kBFloat16: return "bfloat16";
+        case torch::kUInt16: return "uint16";
+        case torch::kUInt32: return "uint32";
+        case torch::kUInt64: return "uint64";
+        case torch::kComplexFloat: return "complex64";
+        case torch::kComplexDouble: return "complex128";
+        default: return nullptr;
+    }
+}
+
+nb::list tensor_shape_to_python(const torch::Tensor& tensor) {
+    nb::list shape;
+    for (const auto dim : tensor.sizes()) {
+        shape.append(static_cast<int64_t>(dim));
+    }
+    return shape;
+}
+
+// Copy a decoded native tensor into a Python-owned writable buffer.  This is
+// deliberately below the Python-torch boundary: no THPVariable_Wrap call is
+// made, so Arrow-only callers can use the native engine with torch blocked.
+// PyArrow keeps the memoryview alive when it wraps the buffer.
+nb::object tensor_buffer_to_python(const torch::Tensor& tensor) {
+    if (!tensor.defined()) {
+        throw std::runtime_error("cannot transport an undefined table tensor");
+    }
+    const torch::Tensor contiguous = tensor.contiguous();
+    const size_t nbytes = static_cast<size_t>(contiguous.numel()) *
+                          static_cast<size_t>(contiguous.element_size());
+    if (nbytes > static_cast<size_t>(std::numeric_limits<Py_ssize_t>::max())) {
+        throw std::runtime_error("table column buffer exceeds Python addressable size");
+    }
+
+    PyObject* owner = PyByteArray_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(nbytes));
+    if (!owner) {
+        throw nb::python_error();
+    }
+    if (nbytes != 0) {
+        void* dst = PyByteArray_AsString(owner);
+        if (!dst) {
+            Py_DECREF(owner);
+            throw nb::python_error();
+        }
+        std::memcpy(dst, contiguous.const_data_ptr(), nbytes);
+    }
+    PyObject* view = PyMemoryView_FromObject(owner);
+    Py_DECREF(owner);
+    if (!view) {
+        throw nb::python_error();
+    }
+    return nb::steal(view);
+}
+
+nb::dict raw_fixed_column_to_python(const torch::Tensor& tensor) {
+    const char* dtype = tensor_dtype_name(tensor.scalar_type());
+    if (dtype == nullptr) {
+        throw std::runtime_error("unsupported tensor dtype in raw table transport");
+    }
+    nb::dict result;
+    result["kind"] = "fixed";
+    result["dtype"] = dtype;
+    result["shape"] = tensor_shape_to_python(tensor);
+    result["data"] = tensor_buffer_to_python(tensor);
+    return result;
+}
+
+nb::dict raw_vla_column_to_python(
+    const torchfits::TableReader::ColumnData& col_data
+) {
+    if (col_data.fixed_data.defined() && col_data.vla_offsets.defined()) {
+        const char* dtype_name = tensor_dtype_name(col_data.fixed_data.scalar_type());
+        if (dtype_name == nullptr) {
+            throw std::runtime_error("unsupported dtype in raw VLA table transport");
+        }
+        nb::dict result;
+        result["kind"] = "vla";
+        result["dtype"] = dtype_name;
+        nb::list shape;
+        shape.append(static_cast<int64_t>(col_data.vla_offsets.size(0) - 1));
+        result["shape"] = shape;
+        result["data"] = tensor_buffer_to_python(col_data.fixed_data);
+        result["offsets"] = tensor_buffer_to_python(col_data.vla_offsets);
+        return result;
+    }
+
+    // Compatibility fallback for any reader mode that still produces one
+    // tensor per VLA row. Normalize it here to the same flat values+offsets
+    // representation instead of leaking a list of tensor wrappers to Python.
+    if (col_data.vla_data.empty()) {
+        throw std::runtime_error("VLA table column has neither flat buffers nor row data");
+    }
+    const auto dtype = col_data.vla_data.front().scalar_type();
+    const char* dtype_name = tensor_dtype_name(dtype);
+    if (dtype_name == nullptr) {
+        throw std::runtime_error("unsupported dtype in raw VLA table transport");
+    }
+    size_t total_values = 0;
+    for (const auto& row : col_data.vla_data) {
+        if (row.scalar_type() != dtype) {
+            throw std::runtime_error("inconsistent dtypes in raw VLA table column");
+        }
+        total_values += static_cast<size_t>(row.numel());
+    }
+    const size_t value_bytes = total_values *
+                               static_cast<size_t>(col_data.vla_data.front().element_size());
+    if (value_bytes > static_cast<size_t>(std::numeric_limits<Py_ssize_t>::max())) {
+        throw std::runtime_error("VLA table values exceed Python addressable size");
+    }
+
+    PyObject* values_owner = PyByteArray_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(value_bytes));
+    if (!values_owner) {
+        throw nb::python_error();
+    }
+    std::vector<int64_t> offsets;
+    offsets.reserve(col_data.vla_data.size() + 1);
+    offsets.push_back(0);
+    size_t cursor = 0;
+    for (const auto& row : col_data.vla_data) {
+        const size_t row_bytes = static_cast<size_t>(row.numel()) *
+                                 static_cast<size_t>(row.element_size());
+        if (row_bytes != 0) {
+            std::memcpy(
+                static_cast<char*>(PyByteArray_AsString(values_owner)) + cursor,
+                row.const_data_ptr(),
+                row_bytes);
+        }
+        cursor += row_bytes;
+        offsets.push_back(static_cast<int64_t>(cursor / row.element_size()));
+    }
+
+    const size_t offset_bytes = offsets.size() * sizeof(int64_t);
+    if (offset_bytes > static_cast<size_t>(std::numeric_limits<Py_ssize_t>::max())) {
+        Py_DECREF(values_owner);
+        throw std::runtime_error("VLA table offsets exceed Python addressable size");
+    }
+    PyObject* offsets_obj = PyBytes_FromStringAndSize(
+        reinterpret_cast<const char*>(offsets.data()),
+        static_cast<Py_ssize_t>(offset_bytes));
+    if (!offsets_obj) {
+        Py_DECREF(values_owner);
+        throw nb::python_error();
+    }
+    PyObject* values_view = PyMemoryView_FromObject(values_owner);
+    Py_DECREF(values_owner);
+    if (!values_view) {
+        Py_DECREF(offsets_obj);
+        throw nb::python_error();
+    }
+
+    nb::dict result;
+    result["kind"] = "vla";
+    result["dtype"] = dtype_name;
+    nb::list shape;
+    shape.append(static_cast<int64_t>(col_data.vla_data.size()));
+    result["shape"] = shape;
+    result["data"] = nb::steal(values_view);
+    result["offsets"] = nb::steal(offsets_obj);
+    return result;
+}
+
+nb::dict table_result_to_raw_python(
+    const std::vector<std::pair<std::string, torchfits::TableReader::ColumnData>>& result_map
+) {
+    nb::dict result;
+    for (const auto& [key, column] : result_map) {
+        result[key.c_str()] = column.is_vla
+            ? raw_vla_column_to_python(column)
+            : raw_fixed_column_to_python(column.fixed_data);
+    }
+    return result;
+}
+
+nb::dict tensor_map_to_raw_python(
+    const std::vector<std::pair<std::string, torch::Tensor>>& result_map
+) {
+    nb::dict result;
+    for (const auto& [key, tensor] : result_map) {
+        result[key.c_str()] = raw_fixed_column_to_python(tensor);
+    }
+    return result;
+}
+
 nb::dict table_result_to_python(
     const std::vector<std::pair<std::string, torchfits::TableReader::ColumnData>>& result_map,
     bool as_numpy
@@ -284,6 +481,16 @@ void bind_table(nb::module_& m) {
             auto result_map = self.read_columns(column_names, start_row, num_rows, true);
             nb::gil_scoped_acquire acquire;
             return table_result_to_python(result_map, true);
+        }, nb::arg("column_names") = std::vector<std::string>(),
+           nb::arg("start_row") = 1, nb::arg("num_rows") = -1)
+        .def("read_rows_raw", [](torchfits::TableReader& self,
+                                 const std::vector<std::string>& column_names,
+                                 long start_row, long num_rows) -> nb::dict {
+            nb::gil_scoped_release release;
+            std::lock_guard<std::mutex> io_lock(self.io_mutex_);
+            auto result_map = self.read_columns(column_names, start_row, num_rows, true);
+            nb::gil_scoped_acquire acquire;
+            return table_result_to_raw_python(result_map);
         }, nb::arg("column_names") = std::vector<std::string>(),
            nb::arg("start_row") = 1, nb::arg("num_rows") = -1)
         .def_prop_ro("num_cols", &torchfits::TableReader::get_num_cols);
@@ -377,6 +584,40 @@ void bind_table(nb::module_& m) {
        nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
 
+    m.def("read_fits_table_rows_raw_from_handle", [](nb::object file_obj, int hdu_num,
+                                                     const std::vector<std::string>& column_names,
+                                                     long start_row, long num_rows) -> nb::dict {
+        fitsfile* fptr = reinterpret_cast<fitsfile*>(torchfits::get_fptr_from_python_object(file_obj));
+        nb::gil_scoped_release release;
+        torchfits::TableReader reader(fptr, hdu_num);
+        auto result_map = reader.read_columns(column_names, start_row, num_rows, true);
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_raw_python(result_map);
+    }, nb::arg("file"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
+
+    m.def("read_fits_table_raw", [](const std::string& filename, int hdu_num, const std::vector<std::string>& column_names, bool mmap) -> nb::dict {
+        nb::gil_scoped_release release;
+        ReaderCacheKey key{filename, hdu_num};
+        AcquiredReader handle = g_reader_cache.acquire(key);
+        if (!handle.reader) {
+            handle.reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        }
+        if (mmap) {
+            auto result = handle.reader->read_columns_mmap(column_names);
+            nb::gil_scoped_acquire acquire;
+            nb::dict out = tensor_map_to_raw_python(result);
+            g_reader_cache.release(key, std::move(handle));
+            return out;
+        }
+        auto result = handle.reader->read_columns(column_names, 1, -1, true);
+        g_reader_cache.release(key, std::move(handle));
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_raw_python(result);
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(), nb::arg("mmap") = false);
+
     m.def("read_fits_table", [](const std::string& filename, int hdu_num, const std::vector<std::string>& column_names, bool mmap) -> nb::object {
         nb::gil_scoped_release release;
         ReaderCacheKey key{filename, hdu_num};
@@ -419,6 +660,30 @@ void bind_table(nb::module_& m) {
             nb::object out = table_result_to_python(result_map, false);
             return out;
         }
+    }, nb::arg("filename"), nb::arg("hdu_num") = 1,
+       nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1, nb::arg("mmap") = false);
+
+    m.def("read_fits_table_rows_raw", [](const std::string& filename, int hdu_num,
+                                         const std::vector<std::string>& column_names,
+                                         long start_row, long num_rows, bool mmap) -> nb::dict {
+        nb::gil_scoped_release release;
+        ReaderCacheKey key{filename, hdu_num};
+        AcquiredReader handle = g_reader_cache.acquire(key);
+        if (!handle.reader) {
+            handle.reader = std::make_unique<torchfits::TableReader>(filename, hdu_num);
+        }
+        if (mmap) {
+            auto result = handle.reader->read_columns_mmap(column_names, start_row, num_rows);
+            nb::gil_scoped_acquire acquire;
+            nb::dict out = tensor_map_to_raw_python(result);
+            g_reader_cache.release(key, std::move(handle));
+            return out;
+        }
+        auto result = handle.reader->read_columns(column_names, start_row, num_rows, true);
+        g_reader_cache.release(key, std::move(handle));
+        nb::gil_scoped_acquire acquire;
+        return table_result_to_raw_python(result);
     }, nb::arg("filename"), nb::arg("hdu_num") = 1,
        nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("start_row") = 1, nb::arg("num_rows") = -1, nb::arg("mmap") = false);
@@ -500,6 +765,21 @@ void bind_table(nb::module_& m) {
         auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
         nb::gil_scoped_acquire acquire;
         return tensor_map_to_python(result);
+    }, nb::arg("reader"), nb::arg("column_names") = std::vector<std::string>(),
+       nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
+
+    m.def("read_fits_table_rows_mmap_from_reader_raw", [](nb::capsule reader_cap,
+                                                          const std::vector<std::string>& column_names,
+                                                          long start_row, long num_rows) -> nb::dict {
+        auto* reader = static_cast<torchfits::TableReader*>(reader_cap.data());
+        if (reader == nullptr) {
+            throw std::runtime_error("Invalid mmap reader capsule");
+        }
+        nb::gil_scoped_release release;
+        std::lock_guard<std::mutex> io_lock(reader->io_mutex_);
+        auto result = reader->read_columns_mmap(column_names, start_row, num_rows);
+        nb::gil_scoped_acquire acquire;
+        return tensor_map_to_raw_python(result);
     }, nb::arg("reader"), nb::arg("column_names") = std::vector<std::string>(),
        nb::arg("start_row") = 1, nb::arg("num_rows") = -1);
 

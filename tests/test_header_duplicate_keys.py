@@ -95,6 +95,59 @@ def test_remove_first_duplicate_falls_back_to_next(tmp_path):
     assert [c.value for c in header.cards if c.key == "DUP"] == [2]
 
 
+def test_remove_missing_key_raises_by_default():
+    """TS-010: the default (ignore_missing=False) rejects an absent key.
+
+    ``Header.remove`` had no test for a missing key on either side of the
+    flag: only ``remove_all`` was varied. The strict branch raises KeyError
+    naming the key that was asked for.
+    """
+    header = Header()
+    header["KEY"] = 1
+
+    with pytest.raises(KeyError) as err:
+        header.remove("NOPE")
+
+    assert err.value.args[0] == "NOPE"
+    # The failed remove must not have disturbed the header.
+    assert header["KEY"] == 1
+    assert [c.key for c in header.cards] == ["KEY"]
+
+
+def test_remove_missing_key_is_a_no_op_when_ignored():
+    """TS-010: ignore_missing=True is load-bearing, not decorative.
+
+    ``_io_engine/_write_helpers._merged_write_header`` calls
+    ``merged.remove(key, ignore_missing=True, remove_all=True)`` for every
+    overlay value card, including keys the base header never had. That
+    production merge depends on this early return, and on it returning
+    *before* the version bump so an all-new overlay leaves the version alone.
+    """
+    header = Header()
+    header["KEY"] = 1
+    before = header._version
+
+    header.remove("NOPE", ignore_missing=True)
+
+    assert header._version == before
+    assert [c.key for c in header.cards] == ["KEY"]
+
+    # ... and it still removes a key that is present.
+    header.remove("KEY", ignore_missing=True)
+    assert "KEY" not in header
+    assert header._version == before + 1
+
+
+def test_merged_write_header_overlay_may_introduce_new_keys():
+    """TS-010: the ignore_missing=True caller exercises a real new-key merge."""
+    from torchfits._io_engine._write_helpers import _merged_write_header
+
+    merged = _merged_write_header({"OBJECT": "M13", "EXPTIME": 60.0}, {"FILTER": "r"})
+    assert merged["OBJECT"] == "M13"
+    assert merged["EXPTIME"] == 60.0
+    assert merged["FILTER"] == "r"
+
+
 def test_insert_ahead_becomes_the_reported_value(tmp_path):
     """Inserting before existing cards makes the new card the first occurrence."""
     header = Header()

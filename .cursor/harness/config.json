@@ -1,7 +1,11 @@
 {
   "verify_fast": ["pixi run preflight-push"],
-  "verify": ["pixi run ci-local"],
-  "verify_full": ["pixi run pre-commit"],
+  "verify": ["pixi run preflight-push", "pixi run ci-local"],
+  "verify_full": [
+    "pixi run preflight-push",
+    "pixi run ci-local",
+    "pixi run pre-commit"
+  ],
   "reflect_min_turns": 5,
   "reflect_min_minutes": 45
 }

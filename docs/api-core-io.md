@@ -91,6 +91,7 @@ torchfits.read_tensor(
 | `bf16` | `bool` | `False` | Read as bfloat16 |
 | `raw_scale` | `bool` | `False` | Skip BSCALE/BZERO, return native storage dtype |
 | `return_header` | `bool` | `False` | Return `(tensor, Header)` |
+| `fallback_get_header` | `Callable` or `None` | `None` | Internal: replaces the reader used to build the returned `Header` objects. Present so `read_hdus()` can share one header reader; not for application code |
 
 **Returns:** `torch.Tensor` (or tuple if `return_header=True`).
 
@@ -232,10 +233,11 @@ Read the same HDU from multiple FITS files.
 torchfits.read_batch(file_paths, hdu=0, device="cpu", *, strict=False)
 ```
 
-**Returns:** `list[torch.Tensor]` — one tensor per successfully read file (not a
-stacked batch). With the default ``strict=False``, files that fail to read are
-skipped with a ``RuntimeWarning``; pass ``strict=True`` to raise on the first
-failure.
+**Returns:** `list[torch.Tensor]` — one tensor per input file (not a stacked
+batch), in input order. A path that cannot be read always raises, so the result
+list is never silently short: with the default ``strict=False`` the failure
+surfaces as a `RuntimeError` naming the path and how many files read before it;
+``strict=True`` lets the original exception propagate unchanged.
 
 ```python
 tensors = torchfits.read_batch(["img1.fits", "img2.fits"], hdu=0)

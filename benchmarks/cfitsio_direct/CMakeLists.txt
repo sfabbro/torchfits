@@ -23,7 +23,8 @@ get_filename_component(TORCHFITS_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." A
 set(CFITSIO_SOURCE_DIR "${TORCHFITS_REPO_ROOT}/extern/cfitsio")
 if(NOT EXISTS "${CFITSIO_SOURCE_DIR}/CMakeLists.txt")
   message(FATAL_ERROR
-    "Vendored CFITSIO missing at ${CFITSIO_SOURCE_DIR}. Run: ./extern/vendor.sh")
+    "Vendored CFITSIO missing at ${CFITSIO_SOURCE_DIR}. Run: "
+    "./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt")
 endif()
 
 # Match torchfits cpp_src vendored build flags (static, no utils/tests).

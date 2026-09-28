@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import functools
 import logging
+import sys
 from typing import TYPE_CHECKING, Any, Optional
-
-import torch
 
 if TYPE_CHECKING:
     import numpy as np
+    import torch
 
 from .. import fits_schema
 from .._table.cache import _acquire_cpp_reader
@@ -25,6 +25,8 @@ from .._table.arrow_convert import (
     _tensor_to_arrow_array,
 )
 from ._read_schema import (
+    _all_table_columns,
+    _attach_fits_metadata,
     _can_use_mmap_row_path_for_full_read,
     _column_tforms_for_decode,
     _empty_table_with_schema,
@@ -83,6 +85,8 @@ def _compile_where_to_simple_predicates(
 
 
 def _torch_cmp_mask(tensor: torch.Tensor, op: str, literal: Any) -> torch.Tensor:
+    import torch
+
     # PyTorch wraps an out-of-range Python int scalar to the tensor's dtype
     # (e.g. comparing an int16 column against 40000 becomes `> -25536`), which
     # silently flips the predicate. Promote the tensor to int64 so the literal
@@ -140,6 +144,7 @@ def _try_torch_tensor_where_filter(
     strip: bool,
     header: Any | None,
     apply_fits_nulls: bool = False,
+    include_fits_metadata: bool = False,
 ) -> Any | None:
     """Buffered/mmap tensor read + torch mask + Arrow for simple numeric WHERE.
 
@@ -152,19 +157,31 @@ def _try_torch_tensor_where_filter(
     if predicates is None:
         return None
 
+    # This is an optimisation: the caller falls through to the Arrow-side
+    # filter when we return None. In a torch-free environment the Arrow filter
+    # is the only one that can run, so an ImportError here would turn a
+    # supported `where=` read into a hard failure instead of a slower success.
+    try:
+        import torch
+    except ImportError:
+        return None
     import torchfits._C as cpp
 
     output_cols = columns
     if output_cols is None:
         if header is not None:
-            output_cols = [col.name for col in fits_schema.iter_table_columns(header)]
+            # _all_table_columns, not iter_table_columns: the latter skips
+            # TTYPE-less columns, so this path used to return fewer columns
+            # than the same read without a filter -- and fewer than the C++
+            # pushdown, making the result backend-dependent (TE-007).
+            output_cols = [col.name for col in _all_table_columns(header)]
         else:
             return None
 
     # decode_bytes only matters for string/bit columns; numeric WHERE paths stay eligible.
     if decode_bytes and header is not None:
         selected = set(output_cols)
-        for col in fits_schema.iter_table_columns(header, selected=selected):
+        for col in _all_table_columns(header, selected):
             if col.tform_info.is_string or col.tform_info.is_bit:
                 return None
     elif decode_bytes and header is None:
@@ -282,12 +299,29 @@ def _try_torch_tensor_where_filter(
             else:
                 # Non-tensor column (string/bit) — fall back to header schema.
                 return _empty_table_with_schema(
-                    pa, path, hdu, output_cols, decode_bytes
+                    pa,
+                    path,
+                    hdu,
+                    output_cols,
+                    decode_bytes,
+                    include_fits_metadata,
                 )
-        return pa.Table.from_arrays(empty, names=list(output_cols))
-    return pa.Table.from_arrays(
-        arrays, names=names_out
-    )  # FITS writes logical values as T/F, and users reasonably also type TRUE/1.
+        # Preserve the projected schema *and* its FITS metadata: the
+        # projected columns have no data rows, so the header is the only
+        # place that metadata can come from (TE-005).
+        return _empty_table_with_schema(
+            pa, path, hdu, output_cols, decode_bytes, include_fits_metadata
+        )
+    # FITS writes logical values as T/F, and users reasonably also type
+    # TRUE/1. Field metadata is attached afterwards: `from_arrays(names=...)`
+    # alone would leave a zero-row result describing its columns less
+    # completely than a result with rows (TE-005).
+    return _attach_fits_metadata(
+        pa,
+        pa.Table.from_arrays(arrays, names=names_out),
+        header,
+        include_fits_metadata,
+    )
 
 
 # Arrow has no bool-vs-string kernel, so an uncoerced literal used to escape as a
@@ -427,13 +461,20 @@ def _where_mask_for_table(
 
         if has_null:
             mask = pc.or_(pc.fill_null(mask, False), pc.is_null(column))
+        # ``pc.is_in`` is a membership test rather than a comparison: it
+        # answers a non-null False for a null input (unlike pc.equal, which
+        # answers null). Left as-is, a surrounding `not` inverts that False
+        # back into a match, so NOT (A IN (...)) would select the very rows
+        # A NOT IN excludes. Re-mark the null rows as null -- not as False --
+        # so the mask stays correct in both directions and the null is
+        # resolved once, at the top of _where_mask_for_table.
+        mask = pc.if_else(pc.is_valid(column), mask, pa.nulls(len(column), pa.bool_()))
+        # NaN is a non-null value that IEEE calls "not in" every finite set;
+        # SQL three-valued logic makes that match unknown, so exclude it in the
+        # negated direction too.
         if negate:
-            # Invert BEFORE null-fill so NULL rows stay excluded on negation
-            # (SQL three-valued logic): NOT IN must not resurrect NULLs.
-            # IEEE makes NaN "not in" every finite set; that match is unknown.
-            mask = pc.invert(mask)
-            return _exclude_float_nan(column, mask)
-        return pc.fill_null(mask, False)
+            return _exclude_float_nan(column, pc.invert(mask))
+        return mask
 
     def _between_mask(column_name: str, low: Any, high: Any, negate: bool) -> Any:
         column = _get_predicate_column(column_name)
@@ -444,12 +485,12 @@ def _where_mask_for_table(
         ge = pc.greater_equal(column, low_s)
         le = pc.less_equal(column, high_s)
         mask = pc.and_(ge, le)
+        # Nullable in both directions, for the same reason as _in_mask: the
+        # null is resolved once, at the top, not here. A NaN is not inside the
+        # interval under IEEE, so negation must drop it as well.
         if negate:
-            # Null-propagating inversion: NOT BETWEEN excludes NULLs.
-            # A NaN is not inside the interval under IEEE; that is unknown.
-            mask = pc.invert(mask)
-            return _exclude_float_nan(column, mask)
-        return pc.fill_null(mask, False)
+            return _exclude_float_nan(column, pc.invert(mask))
+        return mask
 
     def _isnull_mask(column_name: str, negate: bool) -> Any:
         column = _get_predicate_column(column_name)
@@ -470,25 +511,34 @@ def _where_mask_for_table(
         return False
 
     def _eval(node: Any) -> Any:
+        """Evaluate one AST node under SQL three-valued logic.
+
+        Every level returns a **nullable** mask and the single
+        ``fill_null(..., False)`` below the tree is the only place nulls are
+        resolved: an unknown (null) row is not selected. pyarrow's ``and_`` /
+        ``or_`` already implement Kleene logic, so the tree needs no null
+        handling of its own.
+
+        Resolving nulls *inside* each node instead -- what this used to do --
+        destroyed the information ``not`` needs: ``fill_null(equal, False)``
+        turns "unknown" into "false", so ``NOT (X == 5)`` then selected the
+        null row that ``X != 5`` excluded, and the NumPy reference evaluator
+        disagreed. The dialect is unchanged (a null is excluded from every
+        negated form, as announced in 1.1.0); only the engine now follows it.
+        """
         kind = node[0]
         if kind == "cmp":
-            return pc.fill_null(_cmp_mask(node[1], node[2], node[3]), False)
+            return _cmp_mask(node[1], node[2], node[3])
         if kind == "in":
-            return pc.fill_null(_in_mask(node[1], node[2], bool(node[3])), False)
+            return _in_mask(node[1], node[2], bool(node[3]))
         if kind == "between":
-            return pc.fill_null(
-                _between_mask(node[1], node[2], node[3], bool(node[4])), False
-            )
+            return _between_mask(node[1], node[2], node[3], bool(node[4]))
         if kind == "isnull":
-            return pc.fill_null(_isnull_mask(node[1], bool(node[2])), False)
+            return _isnull_mask(node[1], bool(node[2]))
         if kind == "and":
-            left = pc.fill_null(_eval(node[1]), False)
-            right = pc.fill_null(_eval(node[2]), False)
-            return pc.and_(left, right)
+            return pc.and_(_eval(node[1]), _eval(node[2]))
         if kind == "or":
-            left = pc.fill_null(_eval(node[1]), False)
-            right = pc.fill_null(_eval(node[2]), False)
-            return pc.or_(left, right)
+            return pc.or_(_eval(node[1]), _eval(node[2]))
         if kind == "not":
             # Comparisons already fill unknown to False, so a bare invert would
             # select the NaN rows (NOT false). Drop rows whose referenced
@@ -528,7 +578,16 @@ def _try_cpp_where_pushdown(
     strip: bool,
     header: Any = None,
     apply_fits_nulls: bool = False,
+    include_fits_metadata: bool = False,
 ) -> Any | None:
+    # This legacy pushdown returns torch tensors. Arrow-only callers stay on
+    # the streaming Arrow filter unless another operation has already paid the
+    # explicit tensor boundary; importing torch merely to optimize WHERE would
+    # violate that contract.
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return None
+
     import torchfits._C as cpp
 
     if not hasattr(cpp, "read_fits_table_filtered"):
@@ -540,9 +599,12 @@ def _try_cpp_where_pushdown(
         target_cols = columns
         if target_cols is None:
             if header is not None:
-                target_cols = [
-                    col.name for col in fits_schema.iter_table_columns(header)
-                ]
+                # _all_table_columns, like the torch path above: iter_table_columns
+                # skips TTYPE-less columns, so this path returned a different
+                # column set than the torch path for the same query -- and which
+                # one you got depended on whether torch was already imported
+                # (TE-007).
+                target_cols = [col.name for col in _all_table_columns(header)]
             else:
                 target_cols = list(schema(path, hdu=hdu, backend="cpp").names)
 
@@ -627,9 +689,14 @@ def _try_cpp_where_pushdown(
 
         if not arrays:
             return _empty_table_with_schema(
-                pa, path, hdu, columns, decode_bytes, include_fits_metadata=False
+                pa, path, hdu, columns, decode_bytes, include_fits_metadata
             )
-        return pa.Table.from_arrays(arrays, names=names_out)
+        return _attach_fits_metadata(
+            pa,
+            pa.Table.from_arrays(arrays, names=names_out),
+            header,
+            include_fits_metadata,
+        )
     except (RuntimeError, OSError, ValueError, TypeError) as exc:
         logger.debug("CPP WHERE pushdown read failed; falling back: %s", exc)
         return None
@@ -708,6 +775,7 @@ def _read_table_with_where(
                 strip=strip,
                 header=hdr if header_ok else None,
                 apply_fits_nulls=apply_fits_nulls,
+                include_fits_metadata=include_fits_metadata,
             )
             if pushed is not None:
                 return pushed
@@ -726,6 +794,7 @@ def _read_table_with_where(
         strip=strip,
         header=hdr if header_ok else None,
         apply_fits_nulls=apply_fits_nulls,
+        include_fits_metadata=include_fits_metadata,
     )
     if torch_filtered is not None:
         return torch_filtered

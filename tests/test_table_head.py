@@ -80,3 +80,41 @@ def test_tablehdu_head_composes():
     narrowed = hdu.head(6).head(2)
     assert narrowed["x"].shape[0] == 2
     assert narrowed["x"].tolist() == [0.0, 1.0]
+
+
+def test_head_truncates_a_zero_column_table():
+    """A 0-column table has no column data, but num_rows still reads NAXIS2.
+
+    head() returned self unchanged in that case, so head(2) on a 6-row
+    zero-column BINTABLE handed back 6 rows: the same call on the TableHDURef
+    it was materialized from reported 2.
+    """
+    header = Header({"TFIELDS": 0, "NAXIS2": 6})
+    table = TableHDU({}, None, header)
+
+    assert table.num_rows == 6
+    assert table.head(2).num_rows == 2
+    assert table.head(0).num_rows == 0
+    # A request wider than the table is still the whole table.
+    assert table.head(99).num_rows == 6
+    # And the source table is untouched.
+    assert table.num_rows == 6
+
+
+def test_head_truncates_a_zero_column_table_read_from_a_file(tmp_path):
+    afits = pytest.importorskip("astropy.io.fits")
+    import torchfits
+
+    path = str(tmp_path / "zerocol.fits")
+    afits.HDUList(
+        [afits.PrimaryHDU(), afits.BinTableHDU.from_columns([], nrows=6)]
+    ).writeto(path, overwrite=True)
+
+    with torchfits.open(path) as hdul:
+        ref = hdul[1]
+        assert ref.num_rows == 6
+        assert ref.head(2).num_rows == 2
+        materialized = ref.materialize()
+        assert materialized.num_rows == 6
+        assert materialized.head(2).num_rows == 2
+        assert materialized.head(2).columns == []

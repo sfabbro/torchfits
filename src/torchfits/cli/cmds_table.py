@@ -16,6 +16,7 @@ from .common import (
     CliError,
     IoError,
     _json_safe,
+    UsageError,
     add_emit_format_args,
     add_hdu_arg,
     emit_records,
@@ -41,7 +42,7 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         type=int,
         default=5,
         dest="preview",
-        help="preview row count (default: 5)",
+        help="preview row count (default: 5; 0 = schema only)",
     )
     add_emit_format_args(parser)
     parser.set_defaults(func=run)
@@ -66,6 +67,10 @@ def _preview_rows(path: str, hdu: int, limit: int) -> list[dict[str, Any]]:
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.preview < 0:
+        # Every other numeric flag (-j, -J) rejects negatives; -n silently
+        # rendering zero rows would read as "this table has no rows".
+        raise UsageError(f"--rows must be >= 0 (0 = schema only), got {args.preview}")
     paths = resolve_paths(args.paths, use_stdin=args.stdin)
     records: list[dict[str, Any]] = []
     for path in paths:

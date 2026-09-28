@@ -37,6 +37,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Metadata no longer touches the torch-linked extension at all: it goes
+# through libtorchfits_core, which has no libtorch in its dependency list. These
+# budgets are the real cold-start numbers for that path plus a margin; see
+# docs/benchmarks.md for the measured table they are derived from.
+#
+# ``_core`` itself is the floor: a bare dlopen of the library plus the probe.
+# Anything above it is Python-level overhead, which is what these gate.
+_METADATA_BUDGET_MS = 120.0
+# Measured 461-515 ms minimum across runs (5 repeats, macOS arm64), with
+# medians up to 541 ms. Budget is set from the slow end of that spread, not the
+# fastest sample: a gate that only passes on a good day is not a gate.
+_ARROW_BUDGET_MS = 600.0
+# Bare ``import torchfits._core`` plus one query: a dlopen of
+# libtorchfits_core with no torch anywhere in the process.
+_CORE_BUDGET_MS = 80.0
+
+
 @dataclass(frozen=True)
 class Entry:
     """One cold-start measurement target."""
@@ -137,55 +154,76 @@ def build_entries(image: Path, table: Path) -> list[Entry]:
             "read_header",
             f"import torchfits; torchfits.read_header({tab}, 1)",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
             "read_keys",
             f"import torchfits; torchfits.read_keys({tab}, ['NAXIS2'], 1)",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
             "read_colnames",
             f"import torchfits; torchfits.read_colnames({tab}, 1)",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
             "read_num_hdus",
             f"import torchfits; torchfits.read_num_hdus({tab})",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
             "read_shape",
             f"import torchfits; torchfits.read_shape({img}, 0)",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
             "read_table_info",
             f"import torchfits; torchfits.read_table_info({tab}, 1)",
             False,
-            250.0,
+            _METADATA_BUDGET_MS,
         ),
         Entry(
+            # torchfits.open returns an HDUList that owns a native handle, and
+            # that handle is the same object the tensor readers take, so this
+            # path cannot avoid the torch-linked extension yet. Budgeted from
+            # the measured cost rather than pretending otherwise; routing it
+            # through the core means making the handle lazy, which is tracked
+            # in docs/roadmap.md.
             "open + header",
             f"import torchfits\nwith torchfits.open({tab}) as h:\n    h[1].header",
             False,
             250.0,
         ),
+        # The native core on its own: no torchfits Python package, no cache
+        # machinery, just the library and one query. This is the floor the
+        # metadata entries above are measured against.
+        Entry(
+            "_core.read_colnames",
+            f"import torchfits._core as c; c.read_colnames({tab}, 1)",
+            False,
+            _CORE_BUDGET_MS,
+        ),
+        Entry(
+            "_core.read_header_dict",
+            f"import torchfits._core as c; c.read_header_dict({tab}, 1)",
+            False,
+            _CORE_BUDGET_MS,
+        ),
         Entry(
             "table.read (Arrow)",
             f"import torchfits.table; torchfits.table.read({tab}, 1)",
             False,
-            600.0,
+            _ARROW_BUDGET_MS,
         ),
         Entry(
             "table.schema",
             f"import torchfits.table; torchfits.table.schema({tab}, hdu=1)",
             False,
-            600.0,
+            _ARROW_BUDGET_MS,
         ),
         # --- the converse: tensor destinations must still pay for torch -------
         Entry(
@@ -255,10 +293,22 @@ def render(results: list[dict[str, object]]) -> None:
             f"  {'yes' if row['torch_loaded'] else 'no ':5}  {budget_text}"
         )
     print()
+    print("Budgets are compared against the median column (--strict).")
+    print()
 
 
 def check(results: list[dict[str, object]]) -> list[str]:
-    """Return the list of gate failures (empty means the boundary holds)."""
+    """Return the list of gate failures (empty means the boundary holds).
+
+    Budgets are compared against ``median_ms``, not ``min_ms``. The budgets are
+    calibrated from the slow end of the measured spread (see
+    ``_ARROW_BUDGET_MS``), so comparing the best of N cold starts would spend
+    roughly half the margin that calibration exists to provide: measured here,
+    ``table.read (Arrow)`` runs 491.6 ms at its minimum and 545.9 ms at its
+    median against a 600 ms budget -- 108 ms of headroom on the minimum, 54 ms
+    on the median. Spawn-to-exit latency is what users feel, and a median is
+    what they feel; ``min_ms`` is still reported so the spread stays visible.
+    """
     failures: list[str] = []
     for row in results:
         name = str(row["name"])
@@ -267,9 +317,10 @@ def check(results: list[dict[str, object]]) -> list[str]:
         if not row["expects_torch"] and row["torch_loaded"]:
             failures.append(f"{name}: metadata entry point loaded torch")
         budget = row["budget_ms"]
-        if isinstance(budget, float) and float(row["min_ms"]) > budget:
+        if isinstance(budget, float) and float(row["median_ms"]) > budget:
             failures.append(
-                f"{name}: {float(row['min_ms']):.0f} ms exceeds the {budget:.0f} ms budget"
+                f"{name}: median {float(row['median_ms']):.0f} ms exceeds the "
+                f"{budget:.0f} ms budget (min was {float(row['min_ms']):.0f} ms)"
             )
     return failures
 
@@ -307,7 +358,7 @@ def main() -> int:
             print(f"FAIL {failure}")
         if args.strict:
             return 1
-        print("(informational: metadata entry points above still load torch)")
+        print("(informational: strict mode gates boundary and timing budgets)")
     return 0
 
 

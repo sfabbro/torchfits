@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Optional, Union
-
-import torch
-from torch import Tensor
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Union
 
 from ._repr import render_html_table
 from .card import _reassemble_longstr_cards
 from .header import Header
-from .table_hdu import TableHDU
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
+    from .table_hdu import TableHDU
 
 
 class _TableHDURefDataWrapper:
@@ -205,6 +206,8 @@ class TableHDURef:
         )
 
     def materialize(self, *, mmap: bool = True, device: str = "cpu") -> "TableHDU":
+        from .table_hdu import TableHDU
+
         data = self.read(mmap=mmap, device=device)
         return TableHDU(
             data,
@@ -253,6 +256,8 @@ class TableHDURef:
     def get_string_column(
         self, name: str, encoding: str = "ascii", strip: bool = True
     ) -> List[str]:
+        import torch
+
         value = self[name]
         if not isinstance(value, torch.Tensor):
             raise KeyError(f"Column '{name}' is not a tensor string column")
@@ -271,6 +276,8 @@ class TableHDURef:
         raise KeyError(f"Column '{name}' is not a VLA list")
 
     def get_vla_lengths(self, name: str) -> List[int]:
+        import torch
+
         values = self.get_vla_column(name)
         lengths: List[int] = []
         for item in values:

@@ -78,6 +78,114 @@ def test_security_cve_cfitsio_command_injection(filename):
         native.open_fits_file(filename, "r")
 
 
+# Every native entry point in torchfits._cpp._PATH_FIRST -- i.e. every symbol
+# whose FIRST positional argument is a FITS path -- called directly on
+# torchfits._C so the C++ check_fits_filename_security guard is what is under
+# test (torchfits._cpp additionally wraps these in the Python SSRF guard,
+# which is a different layer with a different error).
+#
+# The CVE test above pins exactly two of them (the Python façade and
+# native.open_fits_file). This table pins the whole surface, so dropping the
+# guard from any one C++ entry point -- or adding a new path-taking one and
+# forgetting it -- fails here instead of silently reopening the hole.
+#
+# The trailing-argument tuples are the minimum each binding needs to reach its
+# open call. They are deliberately NON-trivial: insert_rows, update_rows and
+# delete_rows all `return` early on an empty payload / zero row count *before*
+# the security check, so a no-op call never reaches the guard. That ordering is
+# benign (the early return happens before any file is opened, so nothing can be
+# executed), but it means a no-op argument tuple would make this gate pass
+# vacuously. insert/update/delete therefore get a one-row payload.
+_PATH_FIRST_GUARD_ARGS = {
+    "append_fits_table_rows": (1, {"A": torch.zeros(1, dtype=torch.float32)}),
+    "delete_fits_table_rows": (1, 1, 1),
+    "delete_hdu_header_key": (1, "KEY"),
+    "drop_fits_table_columns": (1, []),
+    "insert_fits_table_rows": (1, {"A": torch.zeros(1, dtype=torch.float32)}, 1),
+    "open_and_read_headers": (0,),
+    "open_fits_file": ("r",),
+    "read_colnames": (0,),
+    "read_fits_table": (),
+    "read_fits_table_filtered": (1, [], []),
+    "read_fits_table_rows": (),
+    "read_fits_table_rows_numpy": (),
+    "read_full": (0,),
+    "read_full_cached": (0, False),
+    "read_full_nocache": (0, False),
+    "read_full_numpy": (0,),
+    "read_full_numpy_cached": (0,),
+    "read_full_raw": (0,),
+    "read_full_raw_with_scale": (0,),
+    "read_full_scaled_cpu": (0,),
+    "read_full_unmapped": (0,),
+    "read_full_unmapped_raw": (0,),
+    "read_hdus_batch": ([1],),
+    "read_hdus_sequence_last": ([1],),
+    "read_header_dict": (0,),
+    "read_hdu_type": (0,),
+    "read_keys": (0, []),
+    "read_nrows": (0,),
+    "read_num_hdus": (),
+    "read_shape": (0,),
+    "read_table_info": (0,),
+    "rename_fits_table_columns": (1, {}),
+    "resolve_hdu_name_cached": ("SCI",),
+    "update_fits_table_rows": (1, {"A": torch.zeros(1, dtype=torch.float32)}, 1, 1),
+    "update_fits_table_rows_mmap": (
+        1,
+        {"A": torch.zeros(1, dtype=torch.float32)},
+        1,
+        1,
+    ),
+    "verify_hdu_checksums": (),
+    "write_fits_file": ([], False),
+    "write_fits_file_compressed_images": ([], False),
+    "write_fits_table": ({}, {}, False),
+    "write_hdu_checksums": (),
+    "write_hdu_header_cards": (0, []),
+}
+
+
+def test_path_first_native_entry_points_are_all_classified():
+    """No path-taking native entry point may escape the guard table below.
+
+    Keeps the table honest when _cpp.__all__/_PATH_FIRST grows: an unclassified
+    name fails here rather than being silently untested.
+    """
+    from torchfits._cpp import _PATH_FIRST
+
+    assert set(_PATH_FIRST_GUARD_ARGS) == set(_PATH_FIRST), (
+        "torchfits._cpp._PATH_FIRST and _PATH_FIRST_GUARD_ARGS disagree; "
+        f"unclassified={sorted(set(_PATH_FIRST) - set(_PATH_FIRST_GUARD_ARGS))} "
+        f"stale={sorted(set(_PATH_FIRST_GUARD_ARGS) - set(_PATH_FIRST))}"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_PATH_FIRST_GUARD_ARGS))
+@pytest.mark.parametrize(
+    "filename", ["| echo pwned", "sh://echo pwned", "valid.fits |", "!| echo pwned"]
+)
+def test_native_path_entry_points_reject_command_injection(
+    name, filename, tmp_path, monkeypatch
+):
+    """Every path-first native entry point rejects CFITSIO command-injection syntax.
+
+    Runs with the CWD inside tmp_path: if a guard were ever removed from a
+    write-capable entry point, the call would try to create the hostile
+    filename and this test must not leave that behind in the repo.
+    """
+    import torchfits._C as native
+
+    monkeypatch.chdir(tmp_path)
+    entry = getattr(native, name, None)
+    assert entry is not None, f"{name} is no longer exported by torchfits._C"
+
+    with pytest.raises(RuntimeError, match="Security Error"):
+        entry(filename, *_PATH_FIRST_GUARD_ARGS[name])
+
+    assert os.listdir(tmp_path) == [], f"{name} created a file for a rejected filename"
+
+
 def test_native_cfitsio_bracket_detector_probe_runs(tmp_path: Path):
     """Compile and run the direct C++ detector regression in CI."""
     compiler = shlex.split(os.environ.get("CXX", "c++"))
@@ -106,14 +214,15 @@ def test_native_cfitsio_bracket_detector_probe_runs(tmp_path: Path):
 
 def test_forced_overwrite_prefix_allowed():
     """Leading '!' is valid CFITSIO overwrite syntax and must not bypass pipe checks."""
-    try:
+    # A bare `except Exception: pass` used to guard this, which made the test
+    # unfailable: the guard raises HttpBlockedError (an OSError, not a
+    # RuntimeError), so a block landed in the swallowing branch and passed.
+    # Assert the *failure shape* instead -- CFITSIO's open error, not a block.
+    with pytest.raises(Exception) as excinfo:  # noqa: B017 - type is asserted below
         torchfits.read("!nonexistent_file.fits")
-    except RuntimeError as e:
-        assert "Security Error" not in str(e)
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    message = str(excinfo.value)
+    assert "security" not in message.lower(), f"path was blocked, not opened: {message}"
+    assert "Could not open FITS file" in message, message
 
 
 @pytest.mark.performance
@@ -132,15 +241,20 @@ def test_header_large_dict_construction_fast():
 
 
 def test_valid_filenames_allowed():
-    """Test that normal filenames are still allowed."""
-    try:
+    """Test that normal filenames are still allowed.
+
+    Regression (deep-review unit 10): this was
+    ``try: ... except RuntimeError: assert ... except FileNotFoundError: pass
+    except Exception: pass``. HttpBlockedError subclasses OSError, so a guard
+    that blocked *every* path fell into the final branch and the test still
+    passed -- verified by forcing every guard to raise. It now asserts the
+    failure shape: CFITSIO's open error, with no security text anywhere.
+    """
+    with pytest.raises(Exception) as excinfo:  # noqa: B017 - type is asserted below
         torchfits.read("nonexistent_file.fits")
-    except RuntimeError as e:
-        assert "Security Error" not in str(e)
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    message = str(excinfo.value)
+    assert "security" not in message.lower(), f"path was blocked, not opened: {message}"
+    assert "Could not open FITS file" in message, message
 
 
 def test_read_blocks_private_cfitsio_http_url():

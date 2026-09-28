@@ -61,7 +61,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BRANCH="chore/bench-report-${RUN_ID}"
           git checkout -b "$BRANCH"
-          git add docs/benchmarks.md
+          # The page now cites $RUN_ID, so the CSVs have to be committed next to
+          # it: the artifacts uploaded above expire, and
+          # tests/test_docs_integrity.py::
+          # test_benchmark_run_ids_match_published_assets requires every cited
+          # run to have a docs/assets/bench/<run-id>/ directory. Without this the
+          # PR fails the docs-contract job the moment it is opened.
+          mkdir -p "docs/assets/bench/${RUN_ID}"
+          cp "benchmarks_results/${RUN_ID}/results.csv" \
+             "benchmarks_results/${RUN_ID}/torchfits_deficits.csv" \
+             "docs/assets/bench/${RUN_ID}/"
+          git add docs/benchmarks.md "docs/assets/bench/${RUN_ID}"
           git diff --staged --quiet && echo "No doc changes" && exit 0
           git commit -m "chore: benchmark report ${RUN_ID}"
           git push -u origin "$BRANCH"

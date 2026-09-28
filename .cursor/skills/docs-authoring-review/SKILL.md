@@ -27,7 +27,7 @@ Use when authoring new documentation pages, updating existing guides, or conduct
 - **Mermaid Diagrams:**
   - Quote all node labels containing special characters, brackets, or equations: `node_id["Label Text (Extra Info)"]`.
   - Prefer clean, structured flowcharts (`flowchart LR` or `flowchart TD`) and sequence diagrams.
-- **Code Blocks:** Use fenced code blocks with appropriate language tags (`python`, `bash`, `text`, `yaml`, `mermaid`). All Python snippets in docstrings and Markdown are formatted and verified via Ruff.
+- **Code Blocks:** Use fenced code blocks with appropriate language tags (`python`, `bash`, `text`, `yaml`, `mermaid`). Ruff does not touch Markdown and `[tool.ruff.format]` has no `docstring-code-format`, so **nothing formats your snippets for you** — match the surrounding style by hand. What does check them is `tests/test_docs_code_snippets.py`, which `ast.parse`s every Python block and executes the runnable ones; keep that file green rather than assuming a formatter ran.
 
 ---
 

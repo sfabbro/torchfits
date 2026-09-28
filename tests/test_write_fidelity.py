@@ -787,6 +787,66 @@ def test_table_write_int8_column_tbyte_convention(tmp_path):
         _assert_column_faithful(torchfits.read(path, hdu=1)["I8"], want)
 
 
+def test_strided_logical_and_bit_payloads_write_the_caller_s_values(tmp_path):
+    """A strided bool/uint8 payload must land as ITS values, not the base's.
+
+    The logical/BIT write branch reads the payload with a flat index over
+    nelements. For a non-contiguous view (a column slice, an every-N-th
+    selection) the logical elements sit at t.stride(k), not at consecutive
+    addresses from t.data(), so the flat read took the base pointer's own
+    stride-1 order: a stride-2 view of [T,F,T,F,T,F,T,F] -- i.e. four Trues --
+    was written as [T,F,T,F]. astropy is the ground truth for what is actually
+    on disk, and every case is paired with the contiguous write of the same
+    values so a broken fixture cannot masquerade as a stride bug.
+    """
+    from astropy.io import fits
+
+    base = torch.zeros(8, dtype=torch.bool)
+    base[::2] = True
+    strided_logical = base[::2]  # [T,T,T,T], stride 2
+    contiguous_logical = strided_logical.clone()
+    assert not strided_logical.is_contiguous()
+
+    def disk_values(path: str, column: str) -> list:
+        with fits.open(path) as hdul:
+            return np.asarray(hdul[1].data[column]).reshape(-1).tolist()
+
+    for label, payload, want in (
+        ("contiguous", contiguous_logical, [True] * 4),
+        ("strided", strided_logical, [True] * 4),
+    ):
+        path = str(tmp_path / f"logical_{label}.fits")
+        torchfits.table.write(path, {"flag": payload}, overwrite=True)
+        assert disk_values(path, "flag") == want, label
+        got = torchfits.table.read(path, hdu=1)["flag"]
+        assert [bool(v) for v in np.asarray(got).reshape(-1)] == want, label
+
+    # Same defect on the TBIT branch, which shares the flat read: a
+    # stride-2 uint8 view of four [1,0,1,0] rows. The base is laid out so the
+    # view is [1,0,1,0] per row while the base's own stride-1 order is
+    # [1,0,0,0,1,0,0,0] -- the two orders differ, which is what makes this
+    # case able to detect the flat read.
+    bits_base = torch.zeros((4, 8), dtype=torch.uint8)
+    bits_base[:, 0] = 1
+    bits_base[:, 4] = 1
+    strided_bits = bits_base[:, 0:8:2]
+    assert [int(v) for v in strided_bits[0]] == [1, 0, 1, 0]
+    assert [int(v) for v in bits_base[0]] == [1, 0, 0, 0, 1, 0, 0, 0]
+    assert not strided_bits.is_contiguous()
+    for label, payload in (
+        ("contiguous", strided_bits.clone()),
+        ("strided", strided_bits),
+    ):
+        path = str(tmp_path / f"bits_{label}.fits")
+        torchfits.table.write(
+            path,
+            {"bits": payload},
+            schema={"bits": {"format": "4X"}},
+            overwrite=True,
+        )
+        assert disk_values(path, "bits") == [1, 0, 1, 0] * 4, label
+
+
 def test_dict_image_extra_keys_rejected_not_silently_dropped(tmp_path):
     """A dict-HDU payload accepts only 'data'/'header'; extra keys must raise
     by name, never vanish from the written file."""

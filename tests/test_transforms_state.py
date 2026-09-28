@@ -180,17 +180,29 @@ class TestPayloadSupport:
         mask[0, 0, :] = False
         flux[0, 0, :] = 1e6  # masked garbage
         out = BackgroundSubtract()({"flux": flux, "mask": mask})
-        # The masked row must not drag the background estimate.
-        assert out["flux"].median().abs().item() < 1e-3
+        # The masked row must not drag the background estimate ...
+        assert out["flux"].flatten()[8:].median().abs().item() < 1e-3
+        # ... and it is no data, so it does not come back as a finite 1e6.
+        assert torch.isnan(out["flux"][0, 0, :]).all()
 
     def test_explicit_mask_wins_over_payload_mask(self) -> None:
+        """An explicit ``mask=`` replaces the payload's own, in both directions.
+
+        The pixel the explicit mask excludes is the only one that becomes
+        no-data; the all-True payload mask excludes nothing, so nothing else in
+        the frame is blanked.
+        """
         flux = torch.ones(1, 8, 8) * 10.0
         masked = torch.ones(1, 8, 8, dtype=torch.bool)
         mask = torch.ones(1, 8, 8, dtype=torch.bool)
         mask[0, 0, 0] = False
         flux[0, 0, 0] = 500.0
         out = BackgroundSubtract()({"flux": flux, "mask": masked}, mask=mask)
-        assert out["flux"][0, 0, 0].abs().item() > 400.0  # outlier kept out of stats
+        assert torch.isnan(out["flux"][0, 0, 0])  # excluded by the explicit mask
+        # The payload mask excluded nothing, so every other pixel is finite.
+        assert torch.isfinite(out["flux"].flatten()[1:]).all()
+        # The 500.0 outlier was kept out of the background estimate.
+        assert out["flux"].flatten()[1:].median().abs().item() < 1e-3
 
 
 # ---------------------------------------------------------------------------
@@ -726,11 +738,29 @@ class TestMeshBackgroundSubtract:
         assert torch.equal(out["ivar"], payload["ivar"])
 
     def test_fully_masked_tile_falls_back_continuously(self) -> None:
+        """A fully masked tile falls back to the frame background, not to a hole.
+
+        The masked quadrant is no data (so it comes back NaN), but the
+        *background* it was estimated from is still continuous: the fallback
+        keeps the unmasked pixels finite and keeps the correction smooth across
+        the tile boundary rather than dropping the tile.
+        """
         image = self._gradient()
         mask = torch.ones_like(image, dtype=torch.bool)
         mask[:16, :16] = False
-        out = MeshBackgroundSubtract(mesh=(4, 4))(image, mask=mask)
-        assert torch.isfinite(out).all()
+        transform = MeshBackgroundSubtract(mesh=(4, 4))
+        out = transform(image, mask=mask)
+
+        assert torch.isnan(out[:16, :16]).all()
+        assert torch.isfinite(out[16:, 16:]).all()
+        # The fallback background is finite everywhere, including over the
+        # masked tiles, so the map has no hole to interpolate across.
+        assert torch.isfinite(transform._last_bg).all()
+        # ... and the correction is continuous across the boundary: adjacent
+        # unmasked rows either side of the tile edge differ by far less than
+        # the image's own gradient across the frame.
+        jump = (out[16, 32] - out[15 + 1, 32]).abs().item()
+        assert jump < float(out[16:, 32].max() - out[16:, 32].min())
 
     def test_requires_two_spatial_dims(self) -> None:
         with pytest.raises(ValueError, match="at least 2 dims"):
@@ -1404,3 +1434,172 @@ class TestAsModuleStamping:
         wrapped = as_module(FITSHeaderScale(bscale=2.0))
         out = wrapped({"flux": torch.ones(4), "state": "stored"})
         assert out["state"] == DataState.PHYSICAL
+
+
+# ---------------------------------------------------------------------------
+# A mask means "no data here"
+# ---------------------------------------------------------------------------
+
+_MASKED_OUTLIER = [
+    ZScaleNormalize,
+    RobustNormalize,
+    MinMaxNormalize,
+    PercentileClipNormalize,
+    SigmaNormalize,
+    GlobalScalarNorm,
+    BackgroundSubtract,
+]
+
+
+def _flat_sky_with_masked_outlier() -> tuple[torch.Tensor, torch.Tensor]:
+    """A flat sky with one masked-out bright artefact at (1, 1)."""
+    flux = torch.full((4, 4), 10.0)
+    flux[1, 1] = 900.0
+    mask = torch.ones_like(flux, dtype=torch.bool)
+    mask[1, 1] = False
+    return flux, mask
+
+
+@pytest.mark.parametrize("factory", _MASKED_OUTLIER, ids=lambda f: f.__name__)
+def test_masked_pixels_come_back_as_no_data(factory) -> None:
+    """A mask is not a statistics hint -- it is a statement about the data.
+
+    The mask kept the 900.0 artefact out of the statistics, which removed it
+    from the very min/max/median the transform then divides by, so the
+    artefact itself came back *amplified*: 8.9e11 under RobustNormalize and
+    8.9e7 under MinMaxNormalize. ``mask_from_nan`` -- the library's own
+    validity helper -- then reported the pixel as valid.
+    """
+    flux, mask = _flat_sky_with_masked_outlier()
+    out = factory()(flux, mask=mask)
+
+    assert torch.isnan(out[1, 1]), f"{factory.__name__} returned {out[1, 1]!r}"
+    # Nothing else may be blanked: the sky is data.
+    assert torch.isnan(out).sum().item() == 1
+    assert torch.isfinite(out[0, 0])
+    assert torch.isfinite(out[3, 3])
+
+
+@pytest.mark.parametrize("factory", _MASKED_OUTLIER, ids=lambda f: f.__name__)
+def test_a_mask_is_honoured_by_the_payload_and_by_the_argument(factory) -> None:
+    """The payload's own mask counts exactly like an explicit ``mask=``."""
+    flux, mask = _flat_sky_with_masked_outlier()
+    from_payload = factory()({"flux": flux.clone(), "mask": mask.clone()})
+    from_argument = factory()(flux.clone(), mask=mask.clone())
+    assert torch.isnan(from_payload["flux"][1, 1])
+    assert torch.equal(
+        torch.nan_to_num(from_payload["flux"], nan=-1.0),
+        torch.nan_to_num(from_argument, nan=-1.0),
+    )
+
+
+def test_masked_pixels_get_zero_ivar() -> None:
+    """No data means no information, in the companion channel too.
+
+    Leaving a finite ``ivar`` on a pixel whose flux is NaN is the same claim in
+    the other direction: that the pixel has a known uncertainty.
+    """
+    flux, mask = _flat_sky_with_masked_outlier()
+    ivar = torch.full((4, 4), 3.0)
+    out = RobustNormalize()({"flux": flux, "ivar": ivar}, mask=mask)
+    assert torch.isnan(out["flux"][1, 1])
+    assert out["ivar"][1, 1].item() == 0.0
+    assert out["ivar"][0, 0].item() != 0.0
+
+
+@pytest.mark.parametrize(
+    "factory", [SigmaClip, AsymmetricSigmaClip], ids=lambda f: f.__name__
+)
+def test_a_non_finite_input_pixel_stays_non_finite(factory) -> None:
+    """``fill=`` replaces *clipped* pixels; a NaN input is not data to clip.
+
+    Both clippers ran the fill over non-finite positions too, so a NaN (or an
+    infinite saturated core) came back as the background level -- a plausible
+    number for a pixel that holds no measurement.
+    """
+    flux = torch.full((1, 8, 8), 50.0)
+    flux[0, 0, 0] = float("nan")
+    flux[0, 0, 1] = float("inf")
+    out = factory()(flux)
+    assert torch.isnan(out[0, 0, 0])
+    assert torch.isnan(out[0, 0, 1])
+    assert torch.isnan(out).sum().item() == 2
+    assert torch.isfinite(out[0, 0, 2:]).all()
+
+
+def test_integer_flux_masked_pixels_are_promoted_not_silently_kept() -> None:
+    """A NaN sentinel needs a float: the promotion rule is apply_mask's."""
+    flux = torch.tensor([[5, 200, 300]], dtype=torch.int16)
+    mask = torch.tensor([[[True, True, False]]])
+    out = MinMaxNormalize()(flux, mask=mask)
+    assert out.dtype == torch.float32
+    assert torch.isnan(out[0, 0, 2])
+
+
+# ---------------------------------------------------------------------------
+# The state guard must not depend on which entry point was used
+# ---------------------------------------------------------------------------
+
+
+def test_forward_stamps_the_produced_state_like_call_does() -> None:
+    """``FITSTransform.__call__`` stamped; ``forward()`` did not.
+
+    ``forward()`` is public and is what the test suite (and users writing a
+    custom pipeline) calls, so a payload could be scaled twice through it with
+    no error -- the exact silent double-scaling the state contract exists to
+    prevent.
+    """
+    scaler = FITSHeaderScale(bscale=2.0)
+    payload = Payload(flux=torch.tensor([1.0, 2.0]), state=DataState.STORED)
+    assert scaler(payload).state == DataState.PHYSICAL
+    assert scaler.forward(payload).state == DataState.PHYSICAL
+
+
+@pytest.mark.parametrize("scale", [2.0, 1.0], ids=["scaling", "identity"])
+def test_the_double_scaling_guard_fires_through_forward(scale) -> None:
+    scaler = FITSHeaderScale(bscale=scale)
+    payload = Payload(flux=torch.tensor([1.0, 2.0]), state=DataState.STORED)
+    with pytest.raises(DataStateError, match="physical"):
+        scaler.forward(scaler.forward(payload))
+
+
+def test_fit_scale_columns_forward_stamps_state() -> None:
+    columns = FITSScaleColumns({"X": (2.0, 0.0)})
+    out = columns.forward({"flux": torch.tensor([1.0, 2.0]), "state": "stored"})
+    assert out["state"] == DataState.PHYSICAL
+
+
+# ---------------------------------------------------------------------------
+# The ivar warning must not require a hashable instance
+# ---------------------------------------------------------------------------
+
+
+def test_an_unhashable_transform_can_still_warn_about_ivar() -> None:
+    """A ``@dataclass`` subclass is unhashable, and the warning set was a WeakSet.
+
+    The membership test raised ``TypeError: unhashable type`` at exactly the
+    moment the warning was due, turning a one-off advisory into a crash for
+    the most natural way of declaring a transform's parameters.
+    """
+    from dataclasses import dataclass
+
+    from torchfits.transforms.base import FITSTransform
+
+    @dataclass
+    class Doubler(FITSTransform):
+        factor: float = 2.0
+
+        def forward(self, x, mask=None):
+            view = self.view(x, mask=mask)
+            if view.ivar is not None:
+                self._warn_ivar_not_propagated()
+            return view.replace(view.flux * self.factor)
+
+        def inverse(self, x, mask=None):
+            view = self.view(x, mask=mask)
+            return view.replace(view.flux / self.factor)
+
+    transform = Doubler()
+    with pytest.warns(UserWarning, match="nonlinear"):
+        out = transform({"flux": torch.tensor([1.0, 2.0]), "ivar": torch.ones(2)})
+    assert torch.equal(out["flux"], torch.tensor([2.0, 4.0]))

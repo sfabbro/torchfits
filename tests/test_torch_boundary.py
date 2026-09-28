@@ -16,19 +16,25 @@ Two mechanisms, both needed:
   a visible failure and also proves the statement survives torch being
   unimportable at all.
 
-Statements the torch-free-core plan has not delivered yet carry
-``xfail(strict=True)`` naming the phase that will deliver them.  ``strict=True``
-makes an unexpected pass a *failure*, so finishing a phase turns its markers red
-until they are deleted — the marker is the todo entry.  Deleting a marker is
-therefore part of implementing its phase, not optional cleanup.
+Arrow table transport and metadata CLI statements are part of this contract,
+not optional probes. They run in fresh interpreters with an import blocker so
+an eager import, lazy import, or tensor-returning native call cannot pass by
+merely inspecting ``sys.modules``.
+
+The native metadata half (``libtorchfits_core``, exposed as ``torchfits._core``)
+gets its own cases for a second reason: it is the only part of the extension
+that can be checked for a *link-level* libtorch dependency. ``_C`` links
+libtorch by design; the core is what makes ``read_header`` cheap, and that only
+holds if the library has no libtorch in its dependency list.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +47,33 @@ import torchfits
 PHASE_IMPORT_HYGIENE = (
     "import torchfits.hdu",
     "import torchfits.io",
+)
+
+# The torch-free native core. `libtorchfits_core` links CFITSIO and nothing
+# else, so these must survive torch being unimportable -- including the read
+# paths, not just the import. If any of them ever needs a tensor, the core has
+# grown a libtorch dependency and the split is no longer a split.
+PHASE_CORE_LIBRARY = (
+    "import torchfits._core; torchfits._core.thread_count()",
+    "import torchfits._core; torchfits._core.read_num_hdus(__FITS__)",
+    "import torchfits._core; torchfits._core.read_hdu_type(__FITS__, 1)",
+    "import torchfits._core; torchfits._core.read_nrows(__FITS__, 1)",
+    "import torchfits._core; torchfits._core.read_colnames(__FITS__, 1)",
+    "import torchfits._core; torchfits._core.read_table_info(__FITS__, 1)",
+    "import torchfits._core; torchfits._core.read_keys(__FITS__, 1, ['NAXIS2'])",
+    "import torchfits._core; torchfits._core.read_shape(__IMG__, 0)",
+    "import torchfits._core; len(torchfits._core.read_header_dict(__FITS__, 1))",
+    "import torchfits._core; len(torchfits._core.read_header_string(__FITS__, 1))",
+    (
+        "import torchfits._core\n"
+        "with torchfits._core.Metadata(__FITS__) as md:\n"
+        "    assert md.num_hdus() == 2 and md.hdu_type(1) == 'BINARY_TABLE'\n"
+        "    assert md.nrows(1) == 3 and md.colnames(1)[0] == 'RA'\n"
+        "    assert md.header(1) and md.image_info(0)[0] == 16\n"
+        "with torchfits._core.Metadata(__IMG__) as md:\n"
+        "    assert md.shape(0) == [4, 4] and md.bitpix(0) == -32\n"
+        "    assert md.header_text(0) and md.keywords(0, ['NAXIS1'])['NAXIS1'] == 4\n"
+    ),
 )
 
 PHASE_CORE_MODULE = (
@@ -61,6 +94,21 @@ PHASE_CORE_MODULE = (
 PHASE_TABLE_TRANSPORT = (
     "import torchfits.table; torchfits.table.read(__FITS__, 1)",
     "import torchfits.table; torchfits.table.schema(__FITS__, hdu=1)",
+    "import torchfits.table; next(torchfits.table.scan(__FITS__, 1))",
+    # A `where=` filter has a torch-accelerated fast path that is tried first
+    # and is supposed to return None (letting the Arrow filter take over) when
+    # it does not apply. Importing torch unguarded there turned a supported
+    # filtered Arrow read into an ImportError in a torch-free environment.
+    (
+        "import torchfits.table\n"
+        "t = torchfits.table.read(__FITS__, 1, where='MAG < 20.0')\n"
+        "assert t.num_rows == 1, t.num_rows\n"
+        "assert t.column('MAG').to_pylist() == [19.5]\n"
+    ),
+)
+
+PHASE_TABLE_RICH_TRANSPORT = (
+    "import torchfits.table; torchfits.table.read(__RICH__, 1)",
 )
 
 # The converse contract: these *must* pay for torch, and must keep working.
@@ -188,12 +236,35 @@ def fits_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         overwrite=True,
         extname="MY_TABLE",
     )
-    return {"root": root, "image": image, "table": table}
+    rich = root / "rich-table.fits"
+    names = torch.tensor(
+        [
+            [ord("A"), ord("L"), ord("P"), ord("H"), ord("A"), 0, 0, 0],
+            [ord("B"), ord("E"), ord("T"), ord("A"), 0, 0, 0, 0],
+            [ord("G"), ord("A"), ord("M"), ord("M"), ord("A"), 0, 0, 0],
+        ],
+        dtype=torch.uint8,
+    )
+    torchfits.table.write(
+        str(rich),
+        {
+            "NAME": names,
+            "V": [
+                torch.tensor([1, 2], dtype=torch.int32),
+                torch.tensor([], dtype=torch.int32),
+                torch.tensor([3, 4, 5], dtype=torch.int32),
+            ],
+        },
+        overwrite=True,
+        extname="RICH_TABLE",
+    )
+    return {"root": root, "image": image, "table": table, "rich": rich}
 
 
 def _substitute(statement: str, files: dict[str, Path]) -> str:
     return (
         statement.replace("__FITS__", repr(str(files["table"])))
+        .replace("__RICH__", repr(str(files["rich"])))
         .replace("__IMG__", repr(str(files["image"])))
         .replace("__CHK__", repr(str(files["image"])))
     )
@@ -202,17 +273,6 @@ def _substitute(statement: str, files: dict[str, Path]) -> str:
 def _assert_torch_free(statement: str) -> None:
     probe = _run_probe(statement, block_torch=True)
     assert not probe.torch_loaded, f"torch was imported by: {statement}"
-
-
-def _pending(statements: Iterable[str], phase: str) -> list[object]:
-    """Mark statements the named phase has not delivered yet."""
-    return [
-        pytest.param(
-            statement,
-            marks=pytest.mark.xfail(strict=True, reason=f"delivered by {phase}"),
-        )
-        for statement in statements
-    ]
 
 
 def _label(statement: str) -> str:
@@ -226,9 +286,99 @@ def test_import_hygiene_is_torch_free(statement: str) -> None:
     _assert_torch_free(statement)
 
 
-@pytest.mark.parametrize(
-    "statement", _pending(PHASE_CORE_MODULE, "Phase 2"), ids=_label
-)
+def test_native_extension_import_is_torch_free() -> None:
+    """The native metadata extension must not initialize Python torch."""
+    _assert_torch_free("import torchfits._C")
+
+
+@pytest.mark.parametrize("statement", PHASE_CORE_LIBRARY, ids=_label)
+def test_torch_free_core_library_is_usable(
+    statement: str, fits_files: dict[str, Path]
+) -> None:
+    """The metadata core must do real work with torch unimportable.
+
+    Not just "imports cleanly": each case performs the query it is named after,
+    so a core that quietly fell back to the torch-linked extension (or grew a
+    libtorch dependency of its own) fails here rather than in production.
+    """
+    _assert_torch_free(_substitute(statement, fits_files))
+
+
+def test_core_library_does_not_link_libtorch() -> None:
+    """``libtorchfits_core`` must not have libtorch in its dependency list.
+
+    ``sys.modules`` proves the *Python* ``torch`` module was not imported, which
+    is what the other cases check. It cannot see a libtorch that the dynamic
+    loader mapped into the process: linking libtorch costs ~1 s of relocation
+    and a few hundred MB of RSS even when nothing calls it. Read the platform's
+    own dependency listing, which is the only thing that can see it.
+
+    macOS and Linux are the two platforms torchfits ships wheels for, so this
+    is a hard requirement there rather than a best-effort probe.
+    """
+    if sys.platform == "darwin":
+        tool = ["otool", "-L"]
+    elif sys.platform.startswith("linux"):
+        tool = ["ldd"]
+    else:
+        pytest.skip(f"no dependency lister for {sys.platform!r}")
+
+    import torchfits._core as core
+
+    core_lib = Path(core.__file__).resolve().parent / _core_library_name()
+    assert core_lib.is_file(), f"libtorchfits_core not found next to {core.__file__}"
+
+    proc = subprocess.run(
+        [*tool, str(core_lib)], capture_output=True, text=True, check=True
+    )
+    # `otool -L` prints the inspected path first and the dylib's own install
+    # name second; `ldd` prints only dependencies. Drop anything that names the
+    # core itself -- its path contains "torchfits", which is not a libtorch
+    # dependency -- and match library *names* on what is left.
+    lines = [
+        ln.strip()
+        for ln in proc.stdout.splitlines()[1:]
+        if ln.strip() and "libtorchfits_core" not in ln
+    ]
+    offenders = [
+        line for line in lines if re.search(r"lib(torch|c10|c10_cuda|caffe2|omp)", line)
+    ]
+    assert not offenders, (
+        f"{core_lib.name} links libtorch: {offenders}. The metadata core exists so "
+        "importing it does not pull libtorch into the process."
+    )
+
+
+def _core_library_name() -> str:
+    """Platform-specific file name of ``libtorchfits_core``."""
+    if sys.platform == "darwin":
+        return "libtorchfits_core.dylib"
+    if sys.platform.startswith("linux"):
+        return "libtorchfits_core.so"
+    if os.name == "nt":  # pragma: no cover - torchfits ships no Windows wheels
+        return "torchfits_core.dll"
+    raise AssertionError(f"unknown core library name for {sys.platform!r}")
+
+
+def test_core_build_ids_agree() -> None:
+    """The module, the library it loaded, and _C must be one build.
+
+    A half-rebuilt checkout can leave a fresh ``_C``/``_core`` beside a stale
+    ``libtorchfits_core``. Every compile-time check accepts that; only the
+    runtime comparison catches it, and the consequence of not catching it is a
+    struct-layout mismatch inside a C library.
+    """
+    import torchfits._core as core
+
+    library_id = core.core_library_build_id()
+    assert core.__build_id__ == library_id, (
+        "torchfits._core and the libtorchfits_core it loaded disagree: "
+        f"{core.__build_id__!r} vs {library_id!r}"
+    )
+    assert core.TORCH_FREE is True
+
+
+@pytest.mark.parametrize("statement", PHASE_CORE_MODULE, ids=_label)
 def test_metadata_calls_are_torch_free(
     statement: str, fits_files: dict[str, Path]
 ) -> None:
@@ -236,13 +386,19 @@ def test_metadata_calls_are_torch_free(
     _assert_torch_free(_substitute(statement, fits_files))
 
 
-@pytest.mark.parametrize(
-    "statement", _pending(PHASE_TABLE_TRANSPORT, "Phase 3"), ids=_label
-)
+@pytest.mark.parametrize("statement", PHASE_TABLE_TRANSPORT, ids=_label)
 def test_arrow_table_reads_are_torch_free(
     statement: str, fits_files: dict[str, Path]
 ) -> None:
     """Phase 3: Arrow destinations must not load torch."""
+    _assert_torch_free(_substitute(statement, fits_files))
+
+
+@pytest.mark.parametrize("statement", PHASE_TABLE_RICH_TRANSPORT, ids=_label)
+def test_raw_string_and_vla_transport_is_torch_free(
+    statement: str, fits_files: dict[str, Path]
+) -> None:
+    """String matrices and VLA offsets use the same torch-free native path."""
     _assert_torch_free(_substitute(statement, fits_files))
 
 
@@ -267,7 +423,6 @@ def _cli_probe_statement(command: str, target: Path) -> str:
 @pytest.mark.parametrize(
     "command", list(_CLI_METADATA_COMMANDS), ids=list(_CLI_METADATA_COMMANDS)
 )
-@pytest.mark.xfail(strict=True, reason="delivered by Phase 2")
 def test_metadata_cli_commands_are_torch_free(
     command: str, fits_files: dict[str, Path]
 ) -> None:

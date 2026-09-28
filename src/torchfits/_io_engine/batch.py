@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
-
-from torch import Tensor
+from typing import TYPE_CHECKING, Any, Callable
 
 from .device import batch_to_device, validate_device
 from .paths import coerce_fits_path
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
 def read_batch(
@@ -22,7 +23,14 @@ def read_batch(
     *,
     strict: bool = False,
 ) -> list[Tensor]:
-    """Read multiple FITS files in batch."""
+    """Read multiple FITS files in batch.
+
+    Every path is attempted and the returned list is always one tensor per
+    input path, in input order. A path that cannot be read raises: with
+    ``strict=False`` (the default) the failure is re-raised as a
+    ``RuntimeError`` naming the path and how many files read before it; with
+    ``strict=True`` the original exception propagates unchanged.
+    """
     file_paths = coerce_fits_path(file_paths)
     if not file_paths:
         return []

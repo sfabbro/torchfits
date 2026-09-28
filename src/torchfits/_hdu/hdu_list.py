@@ -223,18 +223,41 @@ class HDUList:
         self._hdus.append(hdu)
 
     def validate(self) -> bool:
+        """Whether every HDU in this list can still be read.
+
+        A file-backed HDU is checked by actually reaching its data: one whose
+        handle has been detached (``close()`` / ``TensorHDU.mark_closed()``),
+        or whose source file has gone away, is not valid. An HDU holding its
+        data in memory, or one with nothing to read, is checked on its header
+        alone.
+        """
+        tensor_hdu_type = _hdu_class("TensorHDU")
+        table_hdu_type, table_ref_type = _table_hdu_types()
         try:
-            for i, hdu in enumerate(self._hdus):
+            for hdu in self._hdus:
                 if not hdu.header:
                     return False
 
-                if isinstance(hdu, _hdu_class("TensorHDU")):
-                    if hdu._file_handle:
+                if isinstance(hdu, tensor_hdu_type):
+                    if hdu._data is not None:
+                        _ = hdu._data.shape
+                        _ = hdu._data.dtype
+                    elif hdu._file_handle is not None:
                         _ = hdu.data.shape
                         _ = hdu.data.dtype
-                elif isinstance(hdu, _hdu_class("TableHDU")):
+                    elif hdu._source_path:
+                        # File-backed with no handle left: mark_closed() ran.
+                        return False
+                elif isinstance(hdu, (table_hdu_type, table_ref_type)):
                     _ = hdu.columns
                     _ = hdu.num_rows
+                    if isinstance(hdu, table_ref_type) and hdu._source_path:
+                        # One row: the cheapest read that still opens the file
+                        # and parses the HDU. A file-backed table HDU is always
+                        # a TableHDURef, which the TableHDU-only isinstance
+                        # check skipped, so nothing about a table was ever
+                        # validated.
+                        hdu.read(row_slice=slice(0, 1))
 
             return True
         except Exception:

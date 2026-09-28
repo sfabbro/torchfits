@@ -44,7 +44,7 @@ class ArcsinhStretch(FITSTransform):
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         out = safe_arcsinh(view.flux, self.a).div_(self._norm)
         if view.ivar is None:
             return cast(torch.Tensor, view.replace(out))
@@ -62,7 +62,7 @@ class ArcsinhStretch(FITSTransform):
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         return cast(
             torch.Tensor,
@@ -121,7 +121,7 @@ class LogStretch(FITSTransform):
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         # Upcast BEFORE 1 + a*x: in float16, a*x overflows to inf for x > ~65
         # (a=1000) before safe_log's internal upcast could take effect.
@@ -149,7 +149,7 @@ class LogStretch(FITSTransform):
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         orig_dtype = _stretch_dtype(flux)
         x_up = _upcast_for_precision(flux)
@@ -196,7 +196,7 @@ class SqrtStretch(FITSTransform):
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         out = torch.sqrt(torch.clamp_min(_upcast_for_precision(flux), 0.0)).to(
             _stretch_dtype(flux)
@@ -219,7 +219,7 @@ class SqrtStretch(FITSTransform):
     def inverse(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
-        view = self.view(x)
+        view = self.view(x, mask=mask)
         flux = view.flux
         val = torch.square(_upcast_for_precision(flux))
         return cast(torch.Tensor, view.replace(val.to(_stretch_dtype(flux))))

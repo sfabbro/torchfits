@@ -889,7 +889,14 @@ def test_compress_algorithm_gzip(image_fits, tmp_path):
     hdr = torchfits.read_header(str(out), 1)
     zimage = str(hdr.get("ZIMAGE", "")).upper()
     zcmptype = str(hdr.get("ZCMPTYPE", "")).upper()
-    assert zimage in {"T", "TRUE", "1"} or "GZIP" in zcmptype
+    # Both halves are asserted separately on purpose. This used to be
+    # `zimage in {...} or "GZIP" in zcmptype`, and ZIMAGE is T for *every*
+    # compressed image -- measured, RICE_1 and HCOMPRESS_1 both satisfied the
+    # first clause -- so the test named for GZIP accepted any algorithm at all.
+    assert zimage in {"T", "TRUE", "1"}, f"ZIMAGE={zimage!r} (not compressed?)"
+    assert zcmptype == "GZIP_1", (
+        f"ZCMPTYPE={zcmptype!r}, --algorithm GZIP_1 was asked for"
+    )
 
 
 def test_header_keyword_wildcard(image_fits):

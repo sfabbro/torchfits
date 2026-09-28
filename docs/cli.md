@@ -65,12 +65,21 @@ Shared flags (availability varies by subcommand):
 
 The CLI provides two orthogonal parallelism knobs:
 
-1. **`-j` / `--jobs` (Intra-file parallelism):** Controls the number of PyTorch internal threads used for array computations (e.g. image arithmetic reductions, statistics calculations).
-2. **`-J` / `--file-jobs` (Inter-file batch parallelism):** Spawns a thread pool to process multiple independent FITS files concurrently. When batching files with `-J`, each worker automatically sets intra-op threads to 1 to prevent CPU oversubscription.
+1. **`-j` / `--jobs` (Intra-file parallelism):** Controls the number of PyTorch internal threads used for array computations (e.g. image arithmetic reductions, statistics calculations). This is the setting that applies whenever a single file (or `-J 1`) is processed.
+2. **`-J` / `--file-jobs` (Inter-file batch parallelism):** Spawns a thread pool to process multiple independent FITS files concurrently. When batching files with `-J`, each worker automatically sets intra-op threads to 1 to prevent CPU oversubscription — under fan-out the `-j` value yields to that cap, because `-J` alone already occupies the cores.
+
+So `-j 8 one.fits out.fits` runs with 8 intra-op threads, while `-j 8 -J 4 a.fits b.fits c.fits d.fits --out-dir out/` runs 4 workers of 1 thread each.
 
 ### Performance: Shell CLI vs Python API
 
-Each command invocation starts the Python interpreter and loads the PyTorch runtime. For shell automation, scripting, and file management, this startup overhead is negligible. For tight computational loops (such as dataset iterators and deep learning training pipelines), use the in-process Python API ([Python workflows](python-workflows.md)).
+Metadata commands (`info`, `header`, `probe`, `verify`, `table`, `copy`, and
+`setkey`) start without importing Python `torch`. Commands that read or write
+pixel/tensor payloads initialize the tensor runtime when they need it, so
+startup cost is intentionally paid only by the operation that uses tensors.
+For shell automation, scripting, and file management, this distinction keeps
+metadata checks lightweight; for tight computational loops (such as dataset
+iterators and deep learning training pipelines), use the in-process Python API
+([Python workflows](python-workflows.md)).
 
 ---
 
@@ -85,6 +94,8 @@ Each command invocation starts the Python interpreter and loads the PyTorch runt
 | `4` | Checksum verification failure | `torchfits verify` detected invalid `DATASUM` or `CHECKSUM` |
 | `5` | Internal error | Unexpected exception; traceback printed to stderr |
 | `130` | Interrupted | `KeyboardInterrupt` / Ctrl-C |
+
+A downstream consumer that closes the pipe early (`torchfits info many.fits | head -1`) is **not** an error: the output is truncated and the command still exits `0`. Without this, a block-buffered stdout would only fail during interpreter shutdown, which CPython reports as an undocumented exit `120` plus `Exception ignored on flushing sys.stdout` noise on stderr.
 
 ---
 
@@ -210,7 +221,12 @@ torchfits table catalog.fits -e 1 -n 5
 
 # Output rows in JSON format
 torchfits table catalog.fits -e 1 -n 5 -f json
+
+# Schema only, no preview rows
+torchfits table catalog.fits -e 1 -n 0
 ```
+
+`-n` / `--rows` takes a non-negative count; a negative value is a usage error (exit `2`).
 
 ---
 
@@ -268,6 +284,8 @@ torchfits convert r.fits g.fits b.fits -o preview.png --to png --recipe lupton -
 # Cube or MEF: HDU list is shortest → longest
 torchfits convert multi_band.fits -o preview.png --bands 0,1,2 --to png
 ```
+
+With several input files, `--bands` is one HDU index **per input file** and its length must match the number of inputs. A band read that fails names the file and HDU it was reading (for example `g.fits: HDU 1: Could not move to HDU`), so a bad index is attributable.
 
 ---
 
@@ -371,9 +389,18 @@ torchfits transform *.fits --name LogStretch --out-dir /tmp/log_images -J 0
 
 Inserts, updates, renames, or deletes header keywords in place via CFITSIO card updates. Preserves tile compression on compressed files.
 
+!!! note "Card comments"
+    `setkey` writes the value only; there is no `--comment` flag. Use a full
+    header edit (`torchfits header`, or `HDUList` / `Header` in Python) when
+    the card's comment text matters.
+
 ```bash
 # Set or update keyword
 torchfits setkey science.fits -k OBJECT --value "NGC 1234"
+
+# Values are coerced: true/false become booleans, numeric strings become int or float
+torchfits setkey science.fits -k OKFLAG --value true
+torchfits setkey science.fits -k EXPTIME --value 300.0
 
 # Set HIERARCH / long keyword
 torchfits setkey science.fits -k "ESO DET CHIP1 ID" --value "42"

@@ -104,16 +104,27 @@ class TestCaching:
         try:
             # Read file to populate cache
             torchfits.read(filepath)
+            torchfits.get_cache_performance()
 
             # Clear cache
             torchfits.clear_file_cache()
 
-            # Verify cache is cleared
-            torchfits.get_cache_performance()
-            # After clearing, stats should be reset or show no cached entries.
+            # Verify cache is cleared. This test previously made no assertion
+            # at all (deep-review unit 10, TE-003): the comment said "stats
+            # should be reset" and nothing checked it, so a clear_file_cache
+            # that did nothing would have passed.
+            stats = torchfits.get_cache_performance()
+            assert stats["total_requests"] == 0, stats
+            assert stats["hits"] == 0, stats
+            assert stats["misses"] == 0, stats
+
+            # And a read after the clear is served cold, not from the cache.
+            torchfits.read(filepath)
+            assert torchfits.get_cache_performance()["misses"] >= 1
 
         finally:
             os.unlink(filepath)
+            torchfits.clear_file_cache()
 
     def test_concurrent_python_lru_access_preserves_outputs(self):
         """Concurrent metadata/LRU access must not corrupt read results."""
@@ -810,3 +821,199 @@ class TestDeprecatedNoOpContract:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ---------------------------------------------------------------------------
+# Deep-review unit 10, TE-002: the selective contract of clear_file_cache
+# ---------------------------------------------------------------------------
+#
+# `clear_file_cache` takes six keyword-only flags -- the entire reason it
+# accepts arguments at all -- and `docs/api-core-io.md` documents each one.
+# Nothing pinned them. Verified by breaking the implementation: making
+# `clear_python_caches` ignore all five Python-side keywords, and making
+# `cpp=False` still clear the native cache, each left the whole cache-related
+# test selection green (122 passed, 1 skipped).
+#
+# The caches are module-level OrderedDicts, so the flag -> cache mapping is
+# asserted directly. That is deliberately implementation-coupled: the contract
+# under test *is* which store each flag clears.
+
+
+def _fill_all_caches() -> None:
+    from torchfits._io_engine import caches
+
+    caches.file_cache[("data",)] = None
+    caches.image_meta_cache[("meta", 0)] = None
+    caches.header_cards_cache[("meta", 0)] = None
+    caches.cold_nommap_cache[("meta", 0)] = None
+    caches.auto_mmap_cache[("meta", 0)] = None
+    caches.hdu_type_cache[("hdu", 0)] = None
+    caches.auto_hdu_cache[("auto",)] = None
+    caches.cache_stats["hits"] += 7
+
+
+_ALL_CACHES = (
+    "file_cache",
+    "image_meta_cache",
+    "header_cards_cache",
+    "cold_nommap_cache",
+    "auto_mmap_cache",
+    "hdu_type_cache",
+    "auto_hdu_cache",
+)
+
+
+@pytest.mark.parametrize(
+    ("flags", "preserved"),
+    [
+        ({"data": False}, ("file_cache",)),
+        (
+            {"meta": False},
+            (
+                "image_meta_cache",
+                "header_cards_cache",
+                "cold_nommap_cache",
+                "auto_mmap_cache",
+            ),
+        ),
+        ({"hdu_types": False}, ("hdu_type_cache", "auto_hdu_cache")),
+    ],
+)
+def test_clear_file_cache_preserves_only_the_named_caches(flags, preserved):
+    """Each keyword must gate exactly the caches it is documented to gate."""
+    from torchfits._io_engine import caches
+
+    torchfits.clear_file_cache()
+    _fill_all_caches()
+    torchfits.clear_file_cache(cpp=False, **flags)
+
+    for name in _ALL_CACHES:
+        size = len(getattr(caches, name))
+        if name in preserved:
+            assert size == 1, f"{flags}: {name} must be preserved, has {size} entries"
+        else:
+            assert size == 0, f"{flags}: {name} must be cleared, has {size} entries"
+    # `stats` was not named, so it is reset.
+    assert caches.cache_stats["hits"] == 0, f"{flags}: stats must reset"
+
+
+def test_clear_file_cache_stats_false_keeps_counters():
+    """``stats=False`` is the one flag that preserves rather than clears."""
+    from torchfits._io_engine import caches
+
+    torchfits.clear_file_cache()
+    _fill_all_caches()
+    torchfits.clear_file_cache(cpp=False, stats=False)
+
+    assert caches.cache_stats["hits"] == 7, "stats=False must keep the counters"
+    for name in _ALL_CACHES:
+        assert len(getattr(caches, name)) == 0, f"{name} must still be cleared"
+
+
+def test_clear_file_cache_cpp_flag_is_honoured():
+    """``cpp=False`` must not touch the native cache, ``cpp=True`` must."""
+    from unittest import mock
+
+    fake_cpp = mock.MagicMock()
+
+    torchfits.clear_file_cache(cpp=False, cpp_module=fake_cpp)
+    fake_cpp.clear_shared_read_meta_cache.assert_not_called()
+
+    torchfits.clear_file_cache(cpp=True, cpp_module=fake_cpp)
+    fake_cpp.clear_shared_read_meta_cache.assert_called_once()
+
+
+# --------------------------------------------------------------------------
+# TS-014: `cache_subsystem_policy` is documented in `docs/api-core-io.md` and
+# had no test. TS-002 pinned `clear_file_cache`'s *selective* keyword contract;
+# this is the same contract one layer up -- the policy table that decides which
+# keywords a named subsystem clears -- and it was equally unpinned. A regression
+# that made `fits_header_metadata` clear `data` too, or clear nothing, would
+# have been silent.
+# --------------------------------------------------------------------------
+
+# The measured table: subsystem name -> the flags it actually enables.
+_POLICY_FLAGS = {
+    "fits_image_data": {"data"},
+    "fits_table_data": {"data"},
+    "fits_header_metadata": {"meta", "hdu_types"},
+    "fits_header_hdu_metadata": {"meta", "hdu_types"},
+}
+
+
+def _enabled(flags: dict) -> set:
+    return {name for name, on in flags.items() if on}
+
+
+@pytest.mark.parametrize("name, expected", sorted(_POLICY_FLAGS.items()))
+def test_each_subsystem_enables_exactly_its_own_flags(name, expected):
+    """The selective part: clearing `fits_image_data` must not touch metadata."""
+    from torchfits.io import cache_subsystem_policy
+
+    flags = cache_subsystem_policy(name)
+    assert _enabled(flags) == expected, flags
+    # `handles` is never enabled: the handle cache was removed, and
+    # `clear_cache_subsystem` deliberately does not forward it.
+    assert flags["handles"] is False
+
+
+def test_all_subsystem_enables_every_flag():
+    from torchfits.io import cache_subsystem_policy
+
+    flags = cache_subsystem_policy("all")
+    assert all(flags.values()), flags
+    assert set(flags) == {"data", "handles", "meta", "hdu_types", "stats", "cpp"}
+
+
+def test_policy_returns_a_copy_not_the_shared_table():
+    """Mutating the result must not corrupt the policy for the next caller."""
+    from torchfits.io import cache_subsystem_policy
+
+    first = cache_subsystem_policy("fits_image_data")
+    first["data"] = False
+    first["injected"] = True
+
+    second = cache_subsystem_policy("fits_image_data")
+    assert second["data"] is True
+    assert "injected" not in second
+
+
+def test_unknown_subsystem_lists_the_valid_names():
+    """The error is the only place the four non-"all" names are discoverable."""
+    from torchfits.io import cache_subsystem_policy
+
+    with pytest.raises(KeyError) as err:
+        cache_subsystem_policy("bogus")
+    message = str(err.value)
+    assert "bogus" in message
+    for name in ["all", *_POLICY_FLAGS]:
+        assert name in message, f"{name} missing from the error message"
+
+
+@pytest.mark.parametrize("flag_name", ["data", "meta", "hdu_types", "handles"])
+def test_clear_file_cache_flag_names_are_not_subsystem_names(flag_name):
+    """A namespace trap worth pinning: the *keyword* names are not *subsystems*.
+
+    `clear_file_cache(data=...)` takes these words as keywords, so
+    `cache_subsystem_policy("data")` is the natural-looking call -- and it
+    raises. The valid names are the `fits_*` ones.
+    """
+    from torchfits.io import cache_subsystem_policy
+
+    with pytest.raises(KeyError):
+        cache_subsystem_policy(flag_name)
+
+
+def test_clear_cache_subsystem_forwards_the_policy_flags():
+    """The policy is only useful if `clear_cache_subsystem` actually applies it."""
+    from unittest import mock
+
+    from torchfits._io_engine import caches
+
+    with mock.patch.object(caches, "clear_file_cache") as clear:
+        caches.clear_cache_subsystem("fits_header_metadata")
+    kwargs = clear.call_args.kwargs
+    assert kwargs["meta"] is True
+    assert kwargs["hdu_types"] is True
+    assert kwargs["data"] is False
+    assert "handles" not in kwargs, "the removed handle cache must not be forwarded"

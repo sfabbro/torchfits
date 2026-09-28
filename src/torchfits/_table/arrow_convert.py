@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any, Optional
-
-import torch
 
 if TYPE_CHECKING:
     import numpy as np
@@ -12,21 +11,99 @@ if TYPE_CHECKING:
 # -- imported from the parent table module (resolved via bottom-of-file import) -----
 
 from .._table.utils import _fits_tform_is_bit, _parse_tform, _require_pyarrow  # noqa: E402
-from .._tensor_buffer import tensor_to_arrow_array  # noqa: E402
 
-# Dtypes supported by the numpy-free buffer-protocol fast path.
-_BUFFER_SUPPORTED_DTYPES = frozenset(
+# Dtypes supported by the torch buffer-protocol fast path. Tensor values keep
+# their explicit torch boundary; raw native columns use the string map below.
+_BUFFER_SUPPORTED_TORCH_DTYPES = frozenset(
+    {"float32", "float64", "float16", "int8", "int16", "int32", "int64", "uint8"}
+)
+_RAW_NUMPY_DTYPES = frozenset(
     {
-        torch.float32,
-        torch.float64,
-        torch.float16,
-        torch.int8,
-        torch.int16,
-        torch.int32,
-        torch.int64,
-        torch.uint8,
+        "bool",
+        "uint8",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "float16",
+        "float32",
+        "float64",
+        "uint16",
+        "uint32",
+        "uint64",
     }
 )
+
+
+def _is_torch_tensor(value: Any) -> bool:
+    """True only for a tensor when torch was already loaded by another path.
+
+    Arrow-only callers must not probe for torch by importing it. A native raw
+    column is a dict, so it remains distinguishable without loading the tensor
+    runtime.
+    """
+    torch = sys.modules.get("torch")
+    return torch is not None and isinstance(value, torch.Tensor)
+
+
+def _is_raw_column(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("kind") in {"fixed", "vla"}
+        and isinstance(value.get("dtype"), str)
+        and isinstance(value.get("data"), memoryview)
+    )
+
+
+def _raw_column_to_numpy(value: dict[str, Any]) -> Any:
+    """Materialize one native raw column as an owned NumPy array/tuple.
+
+    The native side returns a Python-owned writable memoryview. NumPy provides
+    the torch-free typed view used by the established Arrow conversion rules.
+    We copy before returning so the result never depends on the lifetime of a
+    temporary native result dictionary; the VLA offsets remain exact int64.
+    """
+    import numpy as np
+
+    dtype_name = str(value.get("dtype", ""))
+    if dtype_name not in _RAW_NUMPY_DTYPES:
+        raise TypeError(f"unsupported raw table dtype: {dtype_name!r}")
+    shape = tuple(int(dim) for dim in value.get("shape", ()))
+    data = value.get("data")
+    if not isinstance(data, memoryview):
+        raise TypeError("raw table column data must be a memoryview")
+    dtype = np.dtype(dtype_name)
+    kind = value.get("kind")
+    if kind == "fixed":
+        expected = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+        if data.nbytes != expected:
+            raise ValueError(
+                f"raw table column buffer has {data.nbytes} bytes; expected {expected}"
+            )
+        return np.frombuffer(data, dtype=dtype).copy().reshape(shape)
+
+    offsets_data = value.get("offsets")
+    if not isinstance(offsets_data, memoryview):
+        raise TypeError("raw VLA table column offsets must be a memoryview")
+    if offsets_data.nbytes % np.dtype(np.int64).itemsize:
+        raise ValueError("raw VLA offsets buffer is not int64-aligned")
+    offsets = np.frombuffer(offsets_data, dtype=np.int64).copy()
+    if len(shape) != 1 or offsets.size != shape[0] + 1:
+        raise ValueError("raw VLA offsets do not match the declared row count")
+    if offsets.size == 0 or int(offsets[0]) != 0:
+        raise ValueError("raw VLA offsets must start at zero")
+    if np.any(offsets[1:] < offsets[:-1]):
+        raise ValueError("raw VLA offsets are not monotonic")
+    expected_values = int(offsets[-1])
+    expected = expected_values * dtype.itemsize
+    if data.nbytes != expected:
+        raise ValueError(
+            f"raw VLA values buffer has {data.nbytes} bytes; expected {expected}"
+        )
+    flat = np.frombuffer(data, dtype=dtype).copy()
+    if expected_values != flat.size:
+        raise ValueError("raw VLA offsets do not match the values buffer")
+    return flat, offsets
 
 
 # -- low-level Arrow array constructors --------------------------------------------
@@ -238,7 +315,7 @@ def _numpy_to_arrow_array(
 
 def _tensor_to_arrow_array(
     pa: Any,
-    tensor: torch.Tensor,
+    tensor: Any,
     decode_bytes: bool,
     encoding: str,
     strip: bool,
@@ -247,13 +324,15 @@ def _tensor_to_arrow_array(
     fits_tform: str | None = None,
     unsigned_dtype: str | None = None,
 ) -> Any:
+    from .._tensor_buffer import tensor_to_arrow_array
+
     # Numpy-free fast path: 1D contiguous CPU tensor with no null/unsigned/
-    # multi-dim handling needed.  Uses the shared buffer-protocol helper.
+    # multi-dim handling needed. Uses the shared buffer-protocol helper.
     if (
         null_sentinel is None
         and unsigned_dtype is None
         and tensor.dim() <= 1
-        and tensor.dtype in _BUFFER_SUPPORTED_DTYPES
+        and str(tensor.dtype).removeprefix("torch.") in _BUFFER_SUPPORTED_TORCH_DTYPES
     ):
         return tensor_to_arrow_array(tensor, pa)
 
@@ -291,7 +370,18 @@ def _column_value_to_arrow_array(
     """Convert one C++ table column value to a PyArrow array."""
     import numpy as np
 
-    if isinstance(value, torch.Tensor):
+    if _is_raw_column(value):
+        return _raw_column_to_arrow_array(
+            pa,
+            value,
+            decode_bytes,
+            encoding,
+            strip,
+            null_sentinel=null_sentinel,
+            fits_tform=fits_tform,
+            unsigned_dtype=unsigned_dtype,
+        )
+    if _is_torch_tensor(value):
         return _tensor_to_arrow_array(
             pa,
             value,
@@ -316,7 +406,7 @@ def _column_value_to_arrow_array(
     if isinstance(value, list):
         converted = []
         for item in value:
-            if isinstance(item, torch.Tensor):
+            if _is_torch_tensor(item):
                 t = item.detach()
                 if t.device.type != "cpu":
                     t = t.cpu()
@@ -329,6 +419,35 @@ def _column_value_to_arrow_array(
     if _is_vla_tuple(value):
         return _vla_tuple_to_arrow_array(pa, value, null_sentinel=null_sentinel)
     return _pa_array(pa, value)
+
+
+# -- native raw-column and VLA helpers ---------------------------------------------
+
+
+def _raw_column_to_arrow_array(
+    pa: Any,
+    value: dict[str, Any],
+    decode_bytes: bool,
+    encoding: str,
+    strip: bool,
+    null_sentinel: Any = None,
+    *,
+    fits_tform: str | None = None,
+    unsigned_dtype: str | None = None,
+) -> Any:
+    materialized = _raw_column_to_numpy(value)
+    if value["kind"] == "vla":
+        return _vla_tuple_to_arrow_array(pa, materialized, null_sentinel=null_sentinel)
+    return _numpy_to_arrow_array(
+        pa,
+        materialized,
+        decode_bytes,
+        encoding,
+        strip,
+        null_sentinel=null_sentinel,
+        fits_tform=fits_tform,
+        unsigned_dtype=unsigned_dtype,
+    )
 
 
 # -- VLA helpers -------------------------------------------------------------------
@@ -421,7 +540,18 @@ def _chunk_to_record_batch(
             null_sentinel = (
                 _column_tnull_from_meta(null_meta, name) if apply_fits_nulls else None
             )
-            if isinstance(value, torch.Tensor):
+            if _is_raw_column(value):
+                pydict[name] = _raw_column_to_arrow_array(
+                    pa,
+                    value,
+                    decode_bytes,
+                    encoding,
+                    strip,
+                    null_sentinel=null_sentinel,
+                    fits_tform=_tform_for(name),
+                    unsigned_dtype=_unsigned_dtype_for(name),
+                )
+            elif _is_torch_tensor(value):
                 pydict[name] = _tensor_to_arrow_array(
                     pa,
                     value,
@@ -446,7 +576,7 @@ def _chunk_to_record_batch(
             elif isinstance(value, list):
                 converted = []
                 for item in value:
-                    if isinstance(item, torch.Tensor):
+                    if _is_torch_tensor(item):
                         t = item.detach()
                         if t.device.type != "cpu":
                             t = t.cpu()
@@ -481,7 +611,18 @@ def _chunk_to_record_batch(
         null_sentinel = (
             _column_tnull_from_meta(null_meta, name) if apply_fits_nulls else None
         )
-        if isinstance(value, torch.Tensor):
+        if _is_raw_column(value):
+            arr = _raw_column_to_arrow_array(
+                pa,
+                value,
+                decode_bytes,
+                encoding,
+                strip,
+                null_sentinel=null_sentinel,
+                fits_tform=_tform_for(name),
+                unsigned_dtype=_unsigned_dtype_for(name),
+            )
+        elif _is_torch_tensor(value):
             arr = _tensor_to_arrow_array(
                 pa,
                 value,
@@ -506,7 +647,7 @@ def _chunk_to_record_batch(
         elif isinstance(value, list):
             converted = []
             for item in value:
-                if isinstance(item, torch.Tensor):
+                if _is_torch_tensor(item):
                     t = item.detach()
                     if t.device.type != "cpu":
                         t = t.cpu()

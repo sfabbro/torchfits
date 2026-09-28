@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .hdu import HDUList, Header
 
-# Nothing below imports ``torch`` or the native extension at module scope.  Both
-# cost about a second, and metadata entry points must not pay for either: the
-# extension is resolved by :func:`_cpp_module`, and the data modules (image
-# payloads, the read pipeline, subset/table readers, writes) are imported inside
-# the functions that need them.  ``import torchfits.io`` is therefore cheap even
-# though most of its calls are not.
+# Nothing below imports ``torch`` or the native extension at module scope.  The
+# extension is linked to libtorch and may be loaded lazily by metadata calls,
+# but it must not initialize the Python ``torch`` module on that path.  The data
+# modules (image payloads, the read pipeline, subset/table readers, writes) are
+# imported inside the functions that need them.  ``import torchfits.io`` is
+# therefore cheap even though most of its calls are not.
 from ._io_engine.caches import (
     cache_subsystem_policy as _cache_subsystem_policy_impl,
     clear_cache_subsystem as _clear_cache_subsystem_impl,
@@ -68,10 +68,10 @@ _READ_EXC_TYPES = (
 class _LazyNativeModule:
     """Stand-in for ``torchfits._C`` that imports it on first attribute use.
 
-    Importing the extension maps libtorch and imports the ``torch`` package
-    (its module body checks the ABI against ``torch.__version__``), so it must
-    not happen at module scope.  Keeping the ``cpp`` *name* means callers — and
-    ``mock.patch("torchfits.io.cpp")`` — keep working unchanged.
+    Importing the extension maps libtorch, but the extension defers importing
+    the Python ``torch`` package until a tensor boundary is used.  It must not
+    happen at module scope regardless, so keeping the ``cpp`` *name* means
+    callers — and ``mock.patch("torchfits.io.cpp")`` — keep working unchanged.
     """
 
     def __getattr__(self, name: str) -> Any:
@@ -94,8 +94,9 @@ def _invalidate_path_caches(path: str) -> None:
 def _cpp_module() -> Any:
     """Return the handle to the native extension used by the read pipelines.
 
-    Resolving it is deferred to attribute access, so metadata calls that never
-    touch a tensor never load it.
+    Resolving it is deferred to attribute access, so importing this module does
+    not initialize native state.  Individual metadata operations may still
+    resolve the extension for their CFITSIO access, but not Python torch.
     """
     return cpp
 
@@ -443,20 +444,41 @@ def read_table_info(path: str, hdu: Any = 1) -> dict[str, Any]:
     return _read_table_info_impl(path, hdu)
 
 
-def _write_header_cards_if_supported(*args: Any, **kwargs: Any) -> None:
-    from ._io_engine.write_api import (  # type: ignore[attr-defined]
-        _write_header_cards_if_supported as _impl,
-    )
+def _write_header_cards_if_supported(
+    path: str,
+    hdu: int,
+    header: dict[str, Any] | Header | None,
+    *,
+    invalidate: bool = True,
+) -> None:
+    """Replay selected header cards through the torch-free CFITSIO boundary."""
+    if not header:
+        return
+    from .hdu import Header as _Header
 
-    return _impl(*args, **kwargs)
+    header_obj = header if isinstance(header, _Header) else _Header(header)
+    if not header_obj.cards:
+        return
+
+    writer = getattr(cpp, "write_hdu_header_cards", None)
+    if writer is None:
+        return
+    if invalidate:
+        _invalidate_path_caches(path)
+        writer(path, int(hdu), list(header_obj.cards))
+        _invalidate_path_caches(path)
+        return
+    writer(path, int(hdu), list(header_obj.cards))
 
 
-def _delete_header_key_if_supported(*args: Any, **kwargs: Any) -> None:
-    from ._io_engine.write_api import (  # type: ignore[attr-defined]
-        _delete_header_key_if_supported as _impl,
-    )
-
-    return _impl(*args, **kwargs)
+def _delete_header_key_if_supported(path: str, hdu: int, key: str) -> None:
+    """Delete one header key through the torch-free CFITSIO boundary."""
+    deleter = getattr(cpp, "delete_hdu_header_key", None)
+    if deleter is None:
+        raise RuntimeError("delete_hdu_header_key is unavailable in this build")
+    _invalidate_path_caches(path)
+    deleter(path, int(hdu), str(key))
+    _invalidate_path_caches(path)
 
 
 def read_batch(
@@ -468,11 +490,13 @@ def read_batch(
 ) -> Any:
     """Read the same HDU from multiple FITS files.
 
-    Returns a ``list`` of tensors containing only the successfully read
-    files, in input order (with ``strict=False``, the default, failures are
-    skipped with a warning naming each failed path — so result positions do
-    not map 1:1 onto ``file_paths`` when any read fails). Pass
-    ``strict=True`` to raise on the first failure instead.
+    Returns a ``list`` of tensors, one per input path and in input order.
+
+    A path that cannot be read always raises: the result list is never
+    silently short, so positions always map 1:1 onto ``file_paths``. With
+    ``strict=False`` (the default) the failure is re-raised as a
+    ``RuntimeError`` naming the path and how many files preceded it; with
+    ``strict=True`` the original exception propagates unchanged.
     """
     from ._io_engine.batch import read_batch as _read_batch_impl
 
@@ -538,9 +562,9 @@ def _shutdown_fits_io_caches() -> None:
     """Best-effort cache cleanup at interpreter exit.
 
     The native cache is cleared only when the extension was actually imported.
-    Importing it *here* would run its torch ABI check at shutdown, which warns
-    at best and fails at worst in a process that never loaded the extension —
-    and there is nothing native to clear in that case anyway.
+    Importing it *here* would initialize native state at shutdown, which is
+    unnecessary in a process that never loaded the extension — and there is
+    nothing native to clear in that case anyway.
     """
     cpp_module = sys.modules.get("torchfits._C")
     if cpp_module is None:

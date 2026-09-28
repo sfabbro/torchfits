@@ -50,7 +50,10 @@ benchmarks/bench_results/
 benchmark_results/
 benchmark_results_*/
 benchmarks/benchmark_results/
-benchmarks/replays/
+# `replays/*` not `replays/`: git never descends into an excluded directory,
+# so excluding the directory itself makes the `!` line below unreachable and
+# every tracked file under it un-re-addable after a delete/restore cycle.
+benchmarks/replays/*
 !benchmarks/replays/upstream_sources.json
 *.log
 *.log*
