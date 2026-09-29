@@ -4,23 +4,40 @@ State as of the commit that landed the uncommitted `core`-library work on top of
 `origin/main` (`f22c122`). The two bodies of work that were in flight have now
 been merged; the items below were **not** done and are the next things to pick up.
 
-## 1. The C++ build and the test suite have not been run against this tree
+## 1. The merge was verified, and it found three real defects
 
-This is the big one. The merged tree changes `cpp_src/` substantially on both
-sides (the new `cpp_src/core/` library, the `table_reader.h` zero-repeat guard,
-the first-wins duplicate-TTYPE guard), but no compiled extension existed for it:
+The first version of this note said the suite could not be run. That was true
+when the `core` split was first committed and is now obsolete: the extension has
+since been built and the full suite run. Keeping the record because *how* it was
+verified is the useful part.
 
-- the `_C` extension installed in `.pixi/envs/test` is dated **Sep 7**, which
-  predates both bodies of work;
-- `torchfits._core`, the new torch-free core library, had **never been compiled**
-  at all, so every code path through it raised
-  `ImportError: cannot import name '_core' from 'torchfits'`.
+The tree arrived with no usable extension — the `_C` in `.pixi/envs/test` was
+dated **Sep 7** (predating both bodies of work) and `torchfits._core` had never
+been compiled, so every path through it raised `ImportError: cannot import name
+'_core'`. After `pixi run dev`, `pytest tests/` is green (2877 passed, 2 skipped
+— the skips are the un-fetched CFHT corpus, see item 3), and
+`check_core_link` passes, so the core library really does resolve every CFITSIO
+symbol without libtorch.
 
-So `pixi run preflight-push`, `pixi run ci-local`, and `pytest tests/` could not
-be run before this commit. `ruff check .` passes. **Build the extension and run
-the suite before tagging a release.**
+That run caught three defects that **the merge created**, each invisible from
+either side alone:
 
-## 2. One conflict was resolved by hand and needs a real test run
+- **The `core` split silently disabled the duplicate-TTYPE fix.** It rerouted
+  `table.read` from `read_fits_table` (which guards first-wins) onto
+  `read_fits_table_rows_raw` / `reader.read_rows_raw`, whose dict builders had
+  no such guard, so a repeated `TTYPE` resolved to the *second* column again.
+  Fixed by adding the `seen` guard to `table_result_to_raw_python` and
+  `tensor_map_to_raw_python`.
+- **`.agents/` was committed while gitignored.** `f22c122` added `.agents/` to
+  `.gitignore` as installed tooling; the `core`-split work added tracked files
+  under it, which `git add` refuses after a delete/restore cycle. `.agents/` and
+  `.codex/` are now untracked and gitignored, and their stale local copies were
+  re-synced from the canonical `.cursor/`.
+- **A docs/`--comment` collision.** The new `setkey` note named a flag the
+  session's gate forbids in that section; reworded rather than relaxing the
+  test.
+
+## 2. The one hand-resolved conflict (now covered by a passing test)
 
 `src/torchfits/_table/_read_where.py` had two independent NULL-handling fixes
 applied to the same three functions, and they disagreed on the mechanism:
@@ -37,14 +54,12 @@ on the negated `IN` / `BETWEEN` paths, plus the `NOT`-over-comparison column wal
 that excludes null and NaN rows. `docs/api-tables.md` was updated to state the
 NaN rule alongside the `TNULL` rule.
 
-This resolution is a judgement call and was **not** verified by a test run
-(see item 1). The contract to confirm is the one pinned by
-`tests/test_where_matrix.py::test_float_neq_and_not_exclude_nan_on_every_strategy`
-and `tests/test_where_semantics.py`: `X != v`, `NOT (X == v)`, and
-`NOT (X IN (...))` must agree and must leave NaN and null rows out, on **all
-three** backends (`auto`, `cpp`, `torch`), for both `mmap=True` and
-`mmap=False`. If that matrix passes, the union is good; if it fails, the two
-mechanisms are not composable and one has to give.
+The union holds: `tests/test_where_semantics.py` (56 tests) and
+`tests/test_where_matrix.py` both pass, which covers the contract that matters —
+`X != v`, `NOT (X == v)`, and `NOT (X IN (...))` agree and leave NaN and null
+rows out on **all three** backends (`auto`, `cpp`, `torch`) and for both
+`mmap=True` and `mmap=False`. The two mechanisms are composable, so no
+follow-up is needed here.
 
 ## 3. The real-data corpus is not on this machine
 

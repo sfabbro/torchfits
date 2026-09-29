@@ -96,6 +96,8 @@ examples/output/
 docs/published-examples/
 docs/assets/gallery/_rgb_demo/
 
-# Agent tooling (installed skills and per-batch scratch notes), not project code
+# Agent tooling (installed skills and per-batch scratch notes), not project code.
+# .cursor/ is the canonical tracked tree; the agent-home installer fans these out.
 .agents/
+.codex/
 skills-lock.json

@@ -390,9 +390,9 @@ torchfits transform *.fits --name LogStretch --out-dir /tmp/log_images -J 0
 Inserts, updates, renames, or deletes header keywords in place via CFITSIO card updates. Preserves tile compression on compressed files.
 
 !!! note "Card comments"
-    `setkey` writes the value only; there is no `--comment` flag. Use a full
-    header edit (`torchfits header`, or `HDUList` / `Header` in Python) when
-    the card's comment text matters.
+    `setkey` writes the value only; it cannot set a card's comment text. Use a
+    full header edit (`torchfits header`, or `HDUList` / `Header` in Python)
+    when the card's comment matters.
 
 ```bash
 # Set or update keyword

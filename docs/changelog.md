@@ -89,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - data: Spectra companions, IFU windows, table sharding and bands
 - transforms: Add data-state contract, IVAR/mask awareness and ML transforms
 - types: Check the native extension boundary instead of assuming it
+- core: Split a torch-free core library out of the torch-linked extension
 ### Fixed
 - `torchfits._core.Metadata` is now safe to share across threads. CFITSIO keeps
   one mutable current-HDU cursor per `fitsfile`, and the accessors locked only

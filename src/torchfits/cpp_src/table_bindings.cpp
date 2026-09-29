@@ -377,7 +377,14 @@ nb::dict table_result_to_raw_python(
     const std::vector<std::pair<std::string, torchfits::TableReader::ColumnData>>& result_map
 ) {
     nb::dict result;
+    // A repeated TTYPE keeps the first column, matching tensor_map_to_python
+    // and table_result_to_python: name lookup and row updates both resolve a
+    // repeated TTYPE to the first card, so a read must agree with them.
+    std::unordered_set<std::string> seen;
     for (const auto& [key, column] : result_map) {
+        if (!seen.insert(key).second) {
+            continue;
+        }
         result[key.c_str()] = column.is_vla
             ? raw_vla_column_to_python(column)
             : raw_fixed_column_to_python(column.fixed_data);
@@ -389,7 +396,12 @@ nb::dict tensor_map_to_raw_python(
     const std::vector<std::pair<std::string, torch::Tensor>>& result_map
 ) {
     nb::dict result;
+    // First TTYPE wins here too; see table_result_to_raw_python.
+    std::unordered_set<std::string> seen;
     for (const auto& [key, tensor] : result_map) {
+        if (!seen.insert(key).second) {
+            continue;
+        }
         result[key.c_str()] = raw_fixed_column_to_python(tensor);
     }
     return result;
