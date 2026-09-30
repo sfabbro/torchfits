@@ -45,6 +45,11 @@ chat scrollback. Deferred product work: [`.cursor/post-1.0-backlog.md`](.cursor/
   - **Verification:** Run `pixi run docs-contract`, `pixi run docs-links`, and `pixi run preflight-push` on any docs change.
 - Prefer smallest correct diffs; no new dependencies without a clear need.
 - Pre-tag public-API audit: [`.cursor/skills/release-api-freeze-review/SKILL.md`](.cursor/skills/release-api-freeze-review/SKILL.md).
+- `.cursor/skills/` and `.cursor/hooks/` are canonical and tracked. `.agents/`
+  and `.codex/` are installed copies that `.gitignore` excludes; after editing
+  the canonical tree run `pixi run agent-home` so a client never loads a stale
+  skill or hook under the same name. `pixi run agent-home-check` is the gate,
+  and a pre-commit hook runs the sync for you.
 
 ## Jules / autonomous PR agents
 

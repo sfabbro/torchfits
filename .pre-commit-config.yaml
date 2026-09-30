@@ -29,6 +29,20 @@ repos:
         files: ^src/torchfits/cpp_src/.*\.cpp$
         pass_filenames: false
         always_run: false
+      - id: docs-integrity
+        name: Docs claims match the code
+        entry: python3 -m pytest tests/test_docs_integrity.py -q
+        language: system
+        files: ^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|src/.*|scripts/.*|pyproject\.toml|pixi\.toml|\.gitignore)$
+        pass_filenames: false
+        always_run: false
+      - id: agent-home-sync
+        name: Agent-home copies match .cursor
+        entry: python3 scripts/sync_agent_home.py
+        language: system
+        files: ^\.cursor/(skills|hooks)/
+        pass_filenames: false
+        always_run: false
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.7

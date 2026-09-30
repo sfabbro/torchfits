@@ -1,0 +1,56 @@
+name: Docs drift
+
+# Documentation drift is as much a function of wall-clock time as of edits: a
+# dependency raises its minimum version, renames a flag, ships a new default, or
+# drops a wheel, and nothing in this repository moves. The push- and
+# PR-triggered guards in `ci.yml` are therefore only as current as the last
+# commit that triggered them -- they cannot notice that NumPy 1.27 turned
+# `>=1.20` into a stale claim unless someone is editing a file at the time.
+#
+# This workflow re-asserts the same claims on a schedule. It is deliberately a
+# separate file from `ci.yml`: drift is cheap to check and must not be bundled
+# into a multi-minute matrix that only runs when someone pushes.
+on:
+  schedule:
+    # 06:23 UTC daily. Off the hour on purpose -- the top of the hour is when
+    # every scheduled workflow on GitHub fires at once.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-drift:
+    name: Docs claims vs the code (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Resolve torch ABI lane
+        run: echo "TORCH_PIN=$(python scripts/release_lane.py --print-pins | sed 's/.*torch=//')" >> "$GITHUB_ENV"
+      - name: Vendor CFITSIO
+        run: bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install -e . --no-build-isolation
+      # Same guards `ci.yml` runs on every push, re-asserted on a calendar. A
+      # failure here means the code moved under the documentation, not that
+      # somebody wrote a bad sentence.
+      - name: Docs integrity
+        run: pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q
+      # `.agents/` and `.codex/` are installed, gitignored copies of the
+      # tracked `.cursor/` tree; drift means a client would load a stale skill.
+      - name: Agent-home copies match .cursor
+        run: python scripts/sync_agent_home.py --check
+      - name: Docs links
+        run: python scripts/check_docs_links.py

@@ -109,6 +109,11 @@ check-stub = "python scripts/gen_native_stub.py --check"
 wheel-smoke = "python -m pip wheel . --no-build-isolation --no-deps -w dist && python scripts/check_wheel_contents.py dist/*.whl"
 # Verify the committed release-lane pins match scripts/torch_lanes.json.
 check-lane = "python scripts/release_lane.py --check"
+# `.cursor/skills` and `.cursor/hooks` are canonical and tracked; `.agents/` and
+# `.codex/` are installed copies that .gitignore excludes. Run this after editing
+# the canonical tree so a client never loads a stale skill under the same name.
+agent-home = "python scripts/sync_agent_home.py"
+agent-home-check = "python scripts/sync_agent_home.py --check"
 # Resolve the [cpu] / [cuda] torch extra pins against download.pytorch.org
 # indexes (guards the published-wheel ABI lane). Requires network.
 check-torch-pins = "python scripts/check_torch_extra_pins.py"

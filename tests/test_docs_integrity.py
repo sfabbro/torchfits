@@ -1592,6 +1592,96 @@ def test_every_gallery_image_is_linked_from_a_docs_page() -> None:
     )
 
 
+# A repository path written as inline code in a page: `scripts/foo.sh`. Anchored
+# on a top-level directory we own so prose like `src/` or a URL fragment cannot
+# match. The trailing class excludes a trailing slash (a directory reference)
+# and a colon (a `file.py:42` citation), both of which are not path claims.
+_DOC_PATH_IN_CODE = re.compile(
+    r"`((?:src|scripts|tests|docs|examples|benchmarks|extern|packaging|"
+    r"pixi|pyproject)[A-Za-z0-9_./+-]*/?[A-Za-z0-9_+.-]*)`"
+)
+
+# References that are patterns or placeholders rather than one real path.
+_NOT_A_CLAIMED_PATH = ("*", "?", "[", "]", "{", "}", "<", ">", "...", " ")
+
+
+def _doc_pages_citing_paths() -> list[Path]:
+    pages = [ROOT / "docs" / page for page in sorted((ROOT / "docs").glob("*.md"))]
+    pages += [ROOT / name for name in ("README.md", "AGENTS.md", "CLAUDE.md")]
+    return [page for page in pages if page.is_file()]
+
+
+def test_every_documented_repository_path_is_tracked_or_ignored() -> None:
+    """A file the docs cite must be either tracked or explicitly ignored.
+
+    ``test_docs_reference_existing_local_files`` checks a hand-kept list of
+    paths against the *filesystem*, which is exactly the wrong question. On the
+    day this guard was written, ``docs/architecture.md`` and
+    ``scripts/check_wheel_contents.py`` both described
+    ``src/torchfits/cpp_src/core/`` and ``torchfits._core.pyi`` as shipped, and
+    the local clone had them on disk -- untracked, and not ignored either,
+    because the branch had drifted 25 commits behind its own upstream. A fresh
+    clone of that commit could not build the core library the documentation
+    promised. Filesystem existence said yes; ``git ls-files`` said no; nothing
+    in the repository noticed.
+
+    So the rule is the stronger of the two states: a cited path that exists on
+    disk must be tracked, or it must be deliberately ignored (generated output
+    such as ``docs/published-examples/`` is a legitimate reason). Being neither
+    is the incoherence this catches.
+    """
+    cited: dict[str, set[str]] = {}
+    for page in _doc_pages_citing_paths():
+        for match in _DOC_PATH_IN_CODE.finditer(page.read_text(encoding="utf-8")):
+            raw = match.group(1)
+            if any(token in raw for token in _NOT_A_CLAIMED_PATH):
+                continue
+            path = raw.rstrip(":,.")
+            if not (ROOT / path).is_file():  # not a claim about this checkout
+                continue
+            cited.setdefault(path, set()).add(page.name)
+
+    if not cited:
+        pytest.fail(
+            "no documented repository paths found; the pattern stopped matching"
+        )
+
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\0")
+    )
+    untracked = sorted(p for p in cited if p not in tracked)
+    # `git check-ignore` exits 0 for an ignored path, 1 for a tracked-or-unlisted
+    # one. One batched call: a subprocess per path would dominate the test.
+    ignored: set[str] = set()
+    if untracked:
+        result = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            cwd=ROOT,
+            input="\n".join(untracked) + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        ignored = {line for line in result.stdout.splitlines() if line}
+    unignored = [path for path in untracked if path not in ignored]
+    details = "\n".join(
+        f"  {path}  (cited by {', '.join(sorted(cited[path]))})" for path in unignored
+    )
+    assert not unignored, (
+        f"documented files that git does not track and does not ignore: "
+        f"{len(unignored)}\n{details}\n\nThese exist in this working tree but "
+        f"would be absent from a fresh clone, so the documentation describes a "
+        f"repository nobody else has. `git add` them if they are project code, "
+        f"or add a .gitignore entry if they are generated."
+    )
+
+
 # A fenced block may be indented (docs/index.md puts its CLI block inside an
 # indented "Shell CLI Tool" section), so the fence is matched with a leading
 # indent and the body is dedented before it is split into command segments.

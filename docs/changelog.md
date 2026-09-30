@@ -427,6 +427,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     same rows. Filtered and unfiltered reads now agree on every backend and
     across repeated calls.
 
+- table,agents: Restore first-wins TTYPE and the agent-tree ignore
 ### Changed
 - The wheel now ships three native artifacts: `_C` (torch-linked), `_core` (the
   torch-free metadata module) and `libtorchfits_core` itself. `_C` resolves its
