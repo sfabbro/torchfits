@@ -10,21 +10,15 @@ VOS_BASE="${TORCHFITS_VOS_BASE:-vos:sfabbro/torchfits-gpu-bench}"
 VOS_URI="${VOS_BASE}/${RUN_ID}"
 LOCAL_DIR="${ROOT_DIR}/benchmarks_results/${RUN_ID}"
 
-if ! command -v vcp >/dev/null; then
-  cat >&2 <<EOF
-vcp not found. Install VOS tools locally:
-
-  pip install vos
-  cadc-get-cert -u <user>   # or use canfar x509 if already configured for vcp
-
-Then re-run:
-  bash scripts/fetch_canfar_bench_vos.sh ${RUN_ID}
-EOF
-  exit 1
+if command -v vcp >/dev/null; then
+  VCP=(vcp)
+else
+  # vos is a pixi pypi-dependency; the script is not on PATH outside the env.
+  VCP=(pixi run vcp)
 fi
 
 mkdir -p "${LOCAL_DIR}"
-vcp "${VOS_URI}/" "${LOCAL_DIR}/"
+"${VCP[@]}" "${VOS_URI}/" "${LOCAL_DIR}/"
 # ponytail: pre-fix uploads nested <run-id>/ inside dest; flatten for patch scripts
 nested="${LOCAL_DIR}/${RUN_ID}"
 if [[ -d "${nested}" ]]; then

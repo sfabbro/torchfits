@@ -177,9 +177,14 @@ dataset = FitsImageDataset(
 # Build high-performance DataLoader
 loader = make_loader(dataset, batch_size=32, num_workers=4, shuffle=True)
 
-for images, labels in loader:
-    # Train step
-    pass
+# Multi-worker loaders need the `__main__` guard: macOS (and any `spawn`
+# start method) re-imports this module in each worker, so an unguarded
+# top-level loop builds a second loader there and the workers die with
+# "DataLoader worker exited unexpectedly".
+if __name__ == "__main__":
+    for images, labels in loader:
+        # Train step
+        pass
 ```
 
 ---

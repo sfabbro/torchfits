@@ -83,7 +83,7 @@ else
     INCONTAINER="scripts/canfar_gpu_bench_incontainer.sh"
   fi
   if [[ -n "${TORCHFITS_VOS_BUNDLE:-}" ]]; then
-    REMOTE_PLAIN="vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
+    REMOTE_PLAIN="/opt/astroai/venv/cadc/bin/vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   else
     REMOTE_PLAIN="git clone --depth 1 --branch ${GIT_REF} ${REPO_URL} ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   fi
@@ -288,7 +288,7 @@ canfar logs "${SESSION_ID}" > "${LOCAL_OUT}/canfar_logs.txt" 2>&1 || true
 canfar events "${SESSION_ID}" > "${LOCAL_OUT}/canfar_events.txt" 2>&1 || true
 
 if [[ "${STATUS}" == "Succeeded" || "${STATUS}" == "Completed" ]]; then
-  if command -v vcp >/dev/null && bash scripts/fetch_canfar_bench_vos.sh "${RUN_ID}"; then
+  if bash scripts/fetch_canfar_bench_vos.sh "${RUN_ID}"; then
     echo "fetched benchmarks_results/${RUN_ID} from ${VOS_DEST}" | tee -a "${LOCAL_OUT}/launcher.log"
   elif pixi run python scripts/import_canfar_bench_artifacts.py "${LOCAL_OUT}/canfar_logs.txt" "${RUN_ID}" --dest "${ROOT_DIR}/benchmarks_results" 2>/dev/null; then
     echo "imported benchmarks_results/${RUN_ID} from session logs (vcp fallback)" | tee -a "${LOCAL_OUT}/launcher.log"

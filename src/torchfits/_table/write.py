@@ -84,19 +84,28 @@ def write(
 
     if schema or unsigned_converted or quantized or table_kind == "ascii":
         import torchfits._C as cpp
+        from .._io_engine.write_api import atomic_write_target
 
         _invalidate_path_caches(path)
         data = _normalize_cpp_table_data(data)
-        cpp.write_fits_table(
-            path,
-            data,
-            hdr if hdr else {},
-            overwrite,
-            schema if schema else None,
-            table_kind,
-        )
-        if hdr:
-            _write_header_cards_if_supported(path, 1, hdr)
+        # This branch talks to cpp.write_fits_table directly, so it never passes
+        # through write()'s temp-file-and-rename wrapper -- and the C++ writer
+        # reaches fits_create_file("!path"), which unlinks the target before the
+        # payload is validated. A rejected overwrite therefore destroyed the
+        # caller's file (R2-013). Same wrapper, same protection.
+        with atomic_write_target(path, overwrite) as write_path:
+            cpp.write_fits_table(
+                write_path,
+                data,
+                hdr if hdr else {},
+                # The temp path does not exist; asking CFITSIO to overwrite it
+                # would be meaningless, and False fails loudly if one ever does.
+                False,
+                schema if schema else None,
+                table_kind,
+            )
+            if hdr:
+                _write_header_cards_if_supported(write_path, 1, hdr)
         _invalidate_path_caches(path)
         return
 
@@ -259,9 +268,11 @@ def _rewrite_table_hdu_with_schema(
 ) -> None:
     import torchfits
 
-    # Always use a temp-file + os.replace() so the rewrite is atomic and
-    # never races with CFITSIO's internal file-locking when another handle
-    # (e.g. torchfits.open()) is open on the same path.
+    # Stage the single-HDU file in a temp path so building it never races with
+    # CFITSIO's internal file-locking on the real file when another handle
+    # (e.g. torchfits.open()) is open on the same path. The atomic replace is
+    # replace_hdu's, not this temp file's: `path` is rewritten in place by
+    # _atomic_rewrite_hdus, and this scratch file is discarded either way.
     tmp = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
     tmp_path = tmp.name
     tmp.close()

@@ -762,3 +762,113 @@ def test_contiguous_copy_helper_rejects_count_larger_than_the_array():
         "ensure_c_contiguous_ndarray must validate nelements against the array "
         "size before returning the contiguous pointer"
     )
+
+
+def test_rejected_mmap_update_leaves_every_column_untouched(tmp_path):
+    """A rejected ``update_rows_mmap`` must not leave the file half-updated.
+
+    The mmap update validates each column as it reaches it, and its bail-outs
+    only ``munmap``/``close``. That does not undo the columns already written
+    into the mapping: ``MAP_SHARED`` dirty pages are written back by the kernel
+    whether or not ``msync`` is ever called. So a call that raised on the second
+    column still left the first one holding the new values -- and the exception
+    is the only signal the caller has that anything went wrong.
+
+    Measured before the fix: a two-column update whose second column had the
+    wrong dtype raised ``update_rows mmap dtype mismatch`` and left the first
+    column rewritten. Every check now runs before the file is mapped writable.
+    """
+    from astropy.io import fits as astropy_fits
+
+    import torchfits._C as cpp
+
+    path = str(tmp_path / "partial_update.fits")
+    nrows = 6
+    astropy_fits.BinTableHDU.from_columns(
+        [
+            astropy_fits.Column(
+                name="A", format="J", array=np.arange(nrows, dtype=np.int32)
+            ),
+            astropy_fits.Column(
+                name="B", format="J", array=np.arange(nrows, dtype=np.int32) * 100
+            ),
+        ],
+        name="T",
+    ).writeto(path, overwrite=True)
+
+    def column(name):
+        return np.asarray(astropy_fits.getdata(path, "T")[name]).copy()
+
+    before_a, before_b = column("A"), column("B")
+
+    # A is the right dtype for its 'J' column and would be written; B is float64
+    # where int32 is required, which the update rejects.
+    with pytest.raises(Exception, match="dtype mismatch"):
+        cpp.update_fits_table_rows_mmap(
+            path,
+            1,
+            {
+                "A": np.arange(nrows, dtype=np.int32) + 1000,
+                "B": np.arange(nrows, dtype=np.float64) + 7.0,
+            },
+            1,
+            nrows,
+        )
+
+    assert np.array_equal(column("A"), before_a), (
+        "the rejected update still rewrote column A: "
+        f"{column('A').tolist()} != {before_a.tolist()}"
+    )
+    assert np.array_equal(column("B"), before_b)
+
+
+def test_rejected_cfitsio_update_leaves_every_column_untouched(tmp_path):
+    """A rejected CFITSIO-path ``update_rows`` must not leave the file half-updated.
+
+    ``update_rows(mmap="auto")`` runs the mmap writer first and, when it
+    rejects the payload for a reason that is not a truncation, deliberately
+    retries the *same* payload through the CFITSIO writer -- which validates
+    each column as it reaches it and writes the ones before it. CFITSIO has no
+    rollback and the handle is closed on the error path, so the exception
+    reached the caller with column A already rewritten. The exception is the
+    only signal the caller has, so "it raised" has to mean "nothing happened".
+
+    Measured before the fix: ``update_rows`` of ``{A: 2x1 int32, B: 2x5 int32}``
+    onto two ``'J'`` columns raised ``repeat mismatch for B`` and left A holding
+    ``[100, 200, 3]``. The writer now resolves, converts and validates every
+    column first and writes nothing until all of them are known good.
+    """
+    from astropy.io import fits as astropy_fits
+
+    path = str(tmp_path / "partial_cfitsio_update.fits")
+    torchfits.table.write(
+        path,
+        {
+            "A": np.array([1, 2, 3], dtype=np.int32),
+            "B": np.array([10, 20, 30], dtype=np.int32),
+        },
+        overwrite=True,
+    )
+
+    def column(name):
+        return np.asarray(astropy_fits.getdata(path)[name]).copy()
+
+    before = {name: column(name) for name in ("A", "B")}
+
+    # A is accepted (2 rows of width 1, matching its repeat); B's payload is
+    # 5 wide where its column holds 1, which both C++ writers reject.
+    with pytest.raises(Exception, match="repeat mismatch"):
+        torchfits.table.update_rows(
+            path,
+            {
+                "A": np.array([[100], [200]], dtype=np.int32),
+                "B": np.full((2, 5), 999, dtype=np.int32),
+            },
+            row_slice=slice(0, 2),
+        )
+
+    for name in ("A", "B"):
+        assert np.array_equal(column(name), before[name]), (
+            f"the rejected update still rewrote column {name}: "
+            f"{column(name).tolist()} != {before[name].tolist()}"
+        )

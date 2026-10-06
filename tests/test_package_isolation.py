@@ -397,6 +397,22 @@ def test_torchfits_source_does_not_reference_torchsky() -> None:
 
 def test_torchfits_contains_only_fits_native_sources() -> None:
     native_root = PACKAGE_ROOT / "cpp_src"
+    # Positive half first. "Contains only FITS native sources" is a
+    # containment claim, so the container itself has to be asserted: with the
+    # four absence checks alone the test is satisfied by an empty package, and
+    # deleting or renaming cpp_src/ wholesale left it green. The positive
+    # anchor is the house style here -- test_check_duplicate_cpp.py carries
+    # `assert files, "the real cpp_src tree must not be empty"` for the
+    # same tree.
+    assert native_root.is_dir(), f"native source root is missing: {native_root}"
+    sources = sorted(
+        p.name for p in native_root.rglob("*") if p.suffix in {".cpp", ".h"}
+    )
+    assert sources, f"cpp_src must not be empty: {native_root}"
+    assert "fits_file.cpp" in sources, (
+        "the FITS native sources are what this package is allowed to contain; "
+        f"found {sources}"
+    )
     assert not (native_root / "wcs.cpp").exists()
     assert not (native_root / "healpix.cpp").exists()
     assert not (PACKAGE_ROOT / "wcs").exists()

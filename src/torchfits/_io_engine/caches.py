@@ -168,13 +168,36 @@ def set_cached_hdu_type(path: str, hdu: int, hdu_type: str | None) -> None:
     signature_cached_set(hdu_type_cache, (path, hdu), hdu_type, 512)
 
 
-def signature_cached_get(cache: Any, key: tuple[str, int]) -> Any:
+def signature_cached_get(cache: Any, key: tuple[str, Any]) -> Any:
     """Get an entry validated against the file's current stat signature.
+
+    ``key`` is ``(path, discriminator)``: an HDU index for the per-HDU caches,
+    or the ``"payload"`` sentinel auto_hdu_cache keys its whole-file answer by.
+    Only ``key[0]`` is stat'ed.
 
     Policy/meta caches must not outlive the file state they describe: a
     rewrite that swaps payloads in place would otherwise keep serving stale
     dispatch decisions. Entries store ``(signature, value)``; a mismatch
     drops the entry and reports a miss.
+
+    The whole rule is ``stored != current``. ``path_signature`` returns
+    ``None`` both for a path that has gone and for one that was never
+    stat-able -- a CFITSIO extended-syntax path such as ``mef.fits[1]`` cannot
+    be stat'ed by construction -- so the None cases have to be separated or
+    they read as "fresh" and the cache answers for files that no longer exist.
+    Comparing the two directly does that with no extra syscall and no
+    filter-sniffing:
+
+    * both ``None`` -- the path is permanently unstattable, so there is
+      nothing to validate against and the entry stays live (this is what
+      keeps ``mef.fits[1]`` cached at all);
+    * stored only -- the entry was written while the path was missing (a
+      probe that failed may still store a policy default), so it must not
+      survive the file coming back;
+    * current only -- the file was unlinked, renamed away, or lost access
+      through its parent directory. This is the case that used to be served:
+      read_header, read_shape, read_hdu_type, read_colnames, read_nrows and
+      read_num_hdus all answered for a deleted file.
     """
     with cache_lock:
         entry = cache.get(key)
@@ -182,19 +205,14 @@ def signature_cached_get(cache: Any, key: tuple[str, int]) -> Any:
             return None
         cache.move_to_end(key)
         stored_sig, value = entry
-        current_sig = path_signature(key[0])
-        if (
-            stored_sig is not None
-            and current_sig is not None
-            and stored_sig != current_sig
-        ):
+        if stored_sig != path_signature(key[0]):
             del cache[key]
             return None
         return value
 
 
 def signature_cached_set(
-    cache: Any, key: tuple[str, int], value: Any, max_size: int
+    cache: Any, key: tuple[str, Any], value: Any, max_size: int
 ) -> None:
     """Store ``(signature, value)`` for :func:`signature_cached_get`."""
     with cache_lock:
@@ -290,11 +308,10 @@ def _check_read_cache_locked(
                     cached_sig = None
 
                 cur_sig = path_signature(path)
-                stale_cache_entry = (
-                    cached_sig is not None
-                    and cur_sig is not None
-                    and cached_sig != cur_sig
-                )
+                # Same rule as signature_cached_get (stored != current), and
+                # worse here: this cache hands back the *bytes* of a file that
+                # is no longer on disk.
+                stale_cache_entry = cached_sig != cur_sig
                 if stale_cache_entry:
                     invalidate_path(path)
                     cache_stats["misses"] += 1

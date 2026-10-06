@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import warnings
 from typing import Any, Callable, Dict, Iterator, List, Optional, cast
 
@@ -264,8 +263,20 @@ class TableHDU:
 
     # ⚡ Bolt: Cache row count extraction to prevent scanning all column tensors
     # and re-evaluating shapes on every length check.
-    @functools.cached_property
+    @property
     def num_rows(self) -> int:
+        # Cached through _cached so it is keyed on the header exactly like every
+        # other header-derived accessor on this class. As a
+        # functools.cached_property it was frozen for the object's lifetime, and
+        # a columnless table reads its row count from the header's NAXIS2 -- so
+        # a later header edit (setkey-style) left num_rows/len()/repr() on the
+        # pre-edit value while head() disagreed with all three.
+        return cast(
+            int,
+            self._cached("_num_rows_cache", self._compute_num_rows),
+        )
+
+    def _compute_num_rows(self) -> int:
         if hasattr(self, "_raw_data") and self._raw_data:
             import numpy as np
 
@@ -645,6 +656,12 @@ class TableHDU:
         return {str(k): v for k, v in squeezed.items() if isinstance(v, torch.Tensor)}
 
     def iter_rows(self, batch_size: int = 1000) -> Iterator[dict[str, Any]]:
+        # range(0, n, -1) is empty, so a non-positive batch size silently
+        # yielded *no rows at all*; the lazy sibling TableHDURef.iter_rows
+        # refuses the same argument with this message (stream_table's guard).
+        if batch_size < 1:
+            raise ValueError("batch_size must be > 0")
+
         from .._io_engine.table_api import _squeeze_scalar_columns
 
         if self._raw_data:

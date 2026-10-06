@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import stat
-import tempfile
 from typing import Any, Dict, List, Optional, Union
 
 from torch import Tensor
@@ -16,10 +14,12 @@ from ._write_helpers import (
     _COMMENTARY_HEADER_KEYS,
     _COMPRESSION_CARD_KEYS,
     _COMPRESSION_CARD_PREFIXES,
+    _atomic_replace_target,
     _cpp_header_mapping,
     _hdu_with_header,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
+    _invalidate_written_target,
     _is_skippable_empty_primary,
     _merge_fits_write_header,
     _normalize_cpp_table_data,
@@ -218,25 +218,25 @@ def _write_hdus_uncompressed(path: str, hdus: List[Any], overwrite: bool) -> Non
     import torchfits._C as cpp
 
     guard_fits_path(path)
+    if not hdus:
+        # A FITS file must contain at least a primary HDU. The C++ writer
+        # accepts an empty payload and writes a 2880-byte file whose only card
+        # is END -- not a FITS file, which no reader can open. Measured: this
+        # is what delete_hdu(path, 0) did to a single-HDU file (5760 valid
+        # bytes replaced by 2880 unreadable ones, no error raised), and what
+        # write(path, HDUList([])) left behind. The atomic-rename wrapper
+        # faithfully replaced a good file with an invalid one, so the refusal
+        # belongs here, below the rewrite paths rather than in each caller.
+        #
+        # write()'s image branch already refused an empty payload with
+        # "At least one writable HDU is required"; this is the same contract
+        # for the branches that had drifted past it.
+        raise ValueError("At least one writable HDU is required")
     if overwrite and os.path.isfile(path):
-        target = os.path.realpath(path)
-        target_dir = os.path.dirname(target) or "."
-        original_mode = stat.S_IMODE(os.stat(target).st_mode)
-        fd, temp_path = tempfile.mkstemp(
-            prefix=f".{os.path.basename(target)}.", suffix=".tmp.fits", dir=target_dir
-        )
-        os.close(fd)
-        os.unlink(temp_path)
-        try:
+        with _atomic_replace_target(path) as temp_path:
             _write_hdus_uncompressed(temp_path, hdus, overwrite=False)
-            os.chmod(temp_path, original_mode)
-            os.replace(temp_path, target)
-            _invalidate_path_caches(path)
-            if target != path:
-                _invalidate_path_caches(target)
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+        # After the block: that is when the new bytes become visible.
+        _invalidate_written_target(path)
         return
 
     payload: List[Any] = []
@@ -362,32 +362,21 @@ def _atomic_rewrite_hdus(
     restamp_checksums: bool = False,
 ) -> None:
     """Rewrite an existing HDU sequence without exposing a partial file."""
-    target = os.path.realpath(path)
-    target_dir = os.path.dirname(target) or "."
-    original_mode = stat.S_IMODE(os.stat(target).st_mode)
-    fd, temp_path = tempfile.mkstemp(
-        prefix=f".{os.path.basename(target)}.", suffix=".tmp.fits", dir=target_dir
-    )
-    os.close(fd)
-    os.unlink(temp_path)
-    try:
+    with _atomic_replace_target(path) as temp_path:
         from . import write_api
 
         write_api._write_hdus_with_optional_compression(  # type: ignore[attr-defined]
             temp_path, hdus, compress=compress
         )
-        os.chmod(temp_path, original_mode)
-        os.replace(temp_path, target)
-        _invalidate_path_caches(path)
-        if target != path:
-            _invalidate_path_caches(target)
-        if restamp_checksums:
-            from .write_api import _write_all_checksums
+    # Both steps below mutate the now-current file, so they belong after the
+    # rename: invalidating before it would let a concurrent reader cache the
+    # old contents, and restamping before it would stamp a file about to be
+    # replaced.
+    _invalidate_written_target(path)
+    if restamp_checksums:
+        from .write_api import _write_all_checksums
 
-            _write_all_checksums(path)
-    finally:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        _write_all_checksums(path)
 
 
 def insert_hdu(
@@ -511,6 +500,16 @@ def delete_hdu(
             raise KeyError(f"HDU '{hdu}' not found")
     else:
         raise TypeError("hdu must be an int index or EXTNAME string")
+
+    if len(hdus) == 1:
+        # Refuse before touching anything, so the caller gets an actionable
+        # message instead of a file that used to be readable and no longer is.
+        # _write_hdus_uncompressed refuses the empty payload as a backstop;
+        # this is the same rule stated where the request is made.
+        raise ValueError(
+            "Cannot delete the last HDU: a FITS file must contain at least "
+            "one HDU. Write an empty primary instead if that is what you want."
+        )
 
     del hdus[target]
     _atomic_rewrite_hdus(path, hdus, compress=compress, restamp_checksums=restamp)

@@ -88,20 +88,18 @@ def test_compressed_float_specials_match_astropy_everywhere(tmp_path, algorithm)
 
 
 def test_all_image_paths_agree_on_blank_promotion(tmp_path):
-    """BLANK present promotes integer storage to float32 with NaN at the
-    undefined pixels (blank-nulval) on every path; the float32 result dtype
-    pins today's float32 scale accumulation so the 2.0 float64 switch must be
-    deliberate (A-06)."""
+    """BLANK present promotes integer storage to float64 with NaN at the
+    undefined pixels. float32 rounded every integer above 2^24."""
     path = tmp_path / "blank_i16.fits"
     raw = np.array([[1, 2, -32768, 4], [5, -32768, 7, 8]], dtype=np.int16)
     hdu = afits.ImageHDU(data=raw)
     hdu.header["BLANK"] = -32768
     afits.HDUList([afits.PrimaryHDU(), hdu]).writeto(path)
 
-    want = np.array([[1, 2, np.nan, 4], [5, np.nan, 7, 8]], dtype=np.float32)
+    want = np.array([[1, 2, np.nan, 4], [5, np.nan, 7, 8]], dtype=np.float64)
     for name, fn in _image_read_paths(path, 1, 4, 2).items():
         got = fn()
-        assert got.dtype == np.float32, f"{name}: dtype {got.dtype} != float32"
+        assert got.dtype == np.float64, f"{name}: dtype {got.dtype} != float64"
         _assert_bits_equal(got, want, name)
 
 

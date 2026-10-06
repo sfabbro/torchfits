@@ -227,7 +227,11 @@ class TestTableReading:
         try:
             table = torchfits.read(path, hdu=1)
             assert "Z" in table
-            assert len(table["Z"]) == 3
+            z = table["Z"]
+            assert len(z) == 3
+            torch.testing.assert_close(
+                torch.as_tensor(z), torch.tensor([1 + 2j, 3 + 4j, 5 + 6j])
+            )
         finally:
             os.unlink(path)
 
@@ -535,6 +539,58 @@ def test_read_torch_where_returns_all_columns(tmp_path) -> None:
         str(path), hdu=1, columns=["A"], where="B > 50"
     )
     assert list(projected.keys()) == ["A"]
+
+
+def test_complex_tscal_is_applied(tmp_path):
+    from astropy.io import fits
+
+    path = tmp_path / "cz.fits"
+    col = fits.Column(
+        name="Z", format="C", array=np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+    )
+    hdu = fits.BinTableHDU.from_columns([col])
+    hdu.header["TSCAL1"] = 2.0
+    hdu.header["TZERO1"] = 10.0
+    hdu.writeto(path)
+    got = torchfits.table.read_torch(str(path), hdu=1)["Z"]
+    assert got.dtype.is_complex
+    torch.testing.assert_close(got, torch.tensor([12 + 14j, 16 + 18j]))
+
+
+def test_unsigned_update_rows_stores_raw_not_physical(tmp_path):
+    from astropy.io import fits
+
+    path = str(tmp_path / "u16.fits")
+    raw = np.array([100 - 32768, 200 - 32768], dtype=np.int16)
+    hdu = fits.BinTableHDU.from_columns([fits.Column(name="V", format="I", array=raw)])
+    hdu.header["TZERO1"] = 32768
+    hdu.header["TSCAL1"] = 1.0
+    hdu.writeto(path)
+    torchfits.table.update_rows(
+        path, {"V": np.array([100], dtype=np.int16)}, slice(0, 1), hdu=1
+    )
+    got = torchfits.table.read_torch(path, hdu=1)["V"]
+    assert got[0].item() == 100
+    assert got[1].item() == 200
+
+
+def test_unsigned_tnull_does_not_wrap_onto_32768(tmp_path):
+    from astropy.io import fits
+
+    path = str(tmp_path / "tn.fits")
+    raw = np.array([-32768, 0, 1], dtype=np.int16)
+    hdu = fits.BinTableHDU.from_columns([fits.Column(name="V", format="I", array=raw)])
+    hdu.header["TZERO1"] = 32768
+    hdu.header["TSCAL1"] = 1.0
+    hdu.header["TNULL1"] = -32768
+    hdu.writeto(path)
+    assert torchfits.table.read(path, hdu=1, where="V == 32768").column("V").to_pylist() == [
+        32768
+    ]
+    assert torchfits.table.read(path, hdu=1, where="V == 32769").column("V").to_pylist() == [
+        32769
+    ]
+    assert torchfits.table.read(path, hdu=1, where="V IS NULL").num_rows == 1
 
 
 def test_table_write_quantize_no_qualifying_column_raises(tmp_path):

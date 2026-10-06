@@ -23,13 +23,24 @@ last_gen=""
 min_turns=$DEFAULT_MIN_TURNS
 min_minutes=$DEFAULT_MIN_MINUTES
 
+# A malformed config.json must not take the hook down. `read` gets no input
+# when the subshell dies, returns non-zero, and `set -e` then aborts -- before
+# the state write below, so `lastProcessedGenerationId` stops advancing and
+# harness-reflect never fires again until someone hand-repairs the file.
+# Measured: a config with a trailing comma, and a config that is not JSON at
+# all, each exited 1 and left the state frozen; a *missing* config was fine.
+# This is the same failure the generation_id comment below describes, one
+# stanza earlier, so it is guarded the same way the state read is.
 if [[ -f "$HARNESS/config.json" ]]; then
   read -r min_turns min_minutes < <(python3 -c "
 import json
-with open('$HARNESS/config.json') as f:
+try:
+  with open('$HARNESS/config.json') as f:
     c=json.load(f)
+except Exception:
+  c={}
 print(c.get('reflect_min_turns',$DEFAULT_MIN_TURNS), c.get('reflect_min_minutes',$DEFAULT_MIN_MINUTES))
-")
+") || true
 fi
 
 if [[ -f "$STATE" ]]; then

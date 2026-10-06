@@ -95,7 +95,9 @@ CASES=(
   "test_bracket_detection|no||"
   "test_bswap_helpers|no|$X86_BASELINE||"
   "test_parallel_for_nesting|no|$CPP_SRC/core/parallel.cpp -lpthread|4"
+  "test_fork_after_pool|no|$CPP_SRC/core/parallel.cpp -lpthread||"
   "test_open_for_write_conflict|yes||@FIXTURE"
+  "test_raw_fd_retry|yes||@FIXTURE"
   "test_fitsreader_threads|yes||@FIXTURE"
 )
 

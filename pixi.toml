@@ -129,7 +129,7 @@ pre-commit = "pre-commit run --all-files"
 docs-build = "bash scripts/sync_docs_examples.sh && zensical build --clean"
 docs-build-pages = "bash scripts/build_docs_pages.sh --root-from-head"
 docs-serve = "zensical serve"
-docs-contract = "bash scripts/sync_docs_examples.sh && zensical build --clean && pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q"
+docs-contract = "bash scripts/sync_docs_examples.sh && zensical build --clean && pytest tests/test_docs_integrity.py tests/test_docs_snippets.py tests/test_package_isolation.py -q"
 # Assumes site/ already exists (docs-contract or docs-build ran first).
 docs-links = "pixi run python scripts/check_docs_links.py"
 
@@ -276,3 +276,4 @@ bench-gpu-py314 = { features = ["bench", "gpu", "py314"] }
 
 [pypi-dependencies]
 zensical = ">=0.0.61"
+vos = ">=3.7, <4"

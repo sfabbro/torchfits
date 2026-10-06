@@ -190,7 +190,7 @@ inline torch::Tensor read_tensor_canonical(
         } else if (unsigned_long) {
             dtype = torch::kUInt32; datatype = TUINT;
         } else {
-            dtype = torch::kFloat32; datatype = TFLOAT;
+            dtype = torch::kFloat64; datatype = TDOUBLE;
         }
     } else {
         switch (bitpix) {

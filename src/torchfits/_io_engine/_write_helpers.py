@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import stat
+import tempfile
+from collections.abc import Iterator
 from typing import Any, Dict, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -247,6 +252,66 @@ def _invalidate_path_caches(path: str) -> None:
     clear_meta = getattr(cpp, "clear_shared_read_meta_cache", None)
     if clear_meta is not None:
         clear_meta()
+
+
+@contextlib.contextmanager
+def _atomic_replace_target(path: str) -> Iterator[str]:
+    """Yield a temp path that is ``os.replace``d over ``path`` on clean exit.
+
+    Every whole-file writer here reaches CFITSIO's ``fits_create_file("!path")``,
+    whose leading ``!`` unlinks the target before a single byte of the payload is
+    validated -- even a *successful* rewrite changes the inode. So the payload
+    goes to a hidden temp file in the same directory (same filesystem, so the
+    rename is atomic) and the target is replaced only once the write is known
+    good: a rejected, failed or crashed write leaves any existing file
+    byte-identical, and no reader ever observes a partial file at ``path``.
+
+    ``path`` must already exist -- otherwise there is nothing to protect, and a
+    caller that may be creating a new file should yield ``path`` directly. The
+    temp file is created in the realpath's directory and renamed onto the
+    realpath, so a symlinked target keeps its symlink and only the file it
+    points to is replaced; the target's mode is carried over.
+
+    This is the single copy of the recipe:
+    ``write_api.atomic_write_target``, ``_hdu_rewrite._write_hdus_uncompressed``
+    and ``_hdu_rewrite._atomic_rewrite_hdus`` all route through it, so a fix to
+    the window cannot reach one site and miss the others.
+
+    Callers must invalidate the path caches *after* the block -- see
+    ``_invalidate_written_target``. Inside the block the rename has not happened
+    yet, and invalidating early lets a concurrent reader cache the old contents
+    under the path and keep serving them after the rename.
+    """
+    target = os.path.realpath(path)
+    target_dir = os.path.dirname(target) or "."
+    original_mode = stat.S_IMODE(os.stat(target).st_mode)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(target)}.", suffix=".tmp.fits", dir=target_dir
+    )
+    os.close(fd)
+    # CFITSIO creates the file itself, so hand it a path that does not exist.
+    os.unlink(temp_path)
+    try:
+        yield temp_path
+        os.chmod(temp_path, original_mode)
+        os.replace(temp_path, target)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def _invalidate_written_target(path: str) -> None:
+    """Invalidate the caches a just-renamed temp file has made stale.
+
+    ``path`` and its realpath are the two spellings a reader can hold a cached
+    handle under, and they differ whenever the target is a symlink, so both are
+    invalidated. Must be called *after* ``_atomic_replace_target``'s block
+    exits; see there for why.
+    """
+    target = os.path.realpath(path)
+    _invalidate_path_caches(path)
+    if target != path:
+        _invalidate_path_caches(target)
 
 
 def _host_tensor_for_fits_write(tensor: Tensor) -> Tensor:

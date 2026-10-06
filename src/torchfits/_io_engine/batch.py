@@ -84,18 +84,24 @@ def get_batch_info(file_paths: list[str]) -> dict[str, Any]:
     """Get information about a batch of FITS files.
 
     ``existing_files`` counts paths present on disk (``os.path.exists``); it does
-    not open or validate FITS structure. Network URLs are never counted as
-    existing (CFITSIO opens them separately). Private/loopback network URLs are
-    rejected before the exists scan.
+    not open or validate FITS structure. CFITSIO extended-syntax spellings are
+    counted by their base file -- ``read``/``read_batch`` both succeed on
+    ``frame.fits[1]``, so ``paths.cfitsio_base_path`` ("Existence checks must
+    use the base file, not the filter") applies here too. Network URLs are never
+    counted as existing (CFITSIO opens them separately). Private/loopback
+    network URLs are rejected before the exists scan.
     """
-    from .paths import guard_fits_path
+    from .paths import cfitsio_base_path, guard_fits_path
 
     file_paths = coerce_fits_path(file_paths)
     existing_files = 0
     for path in file_paths:
         guard_fits_path(path)
         try:
-            if os.path.exists(path):
+            # cfitsio_base_path, not path: a filter spelling such as
+            # "frame.fits[1]" is not a filesystem entry, so os.path.exists
+            # reported 0 existing for files that read fine (r2-026).
+            if os.path.exists(cfitsio_base_path(path)):
                 existing_files += 1
         except OSError:
             continue

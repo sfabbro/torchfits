@@ -109,7 +109,7 @@ def test_median_matches_numpy_for_even_counts():
 def test_tensorhdu_chunks_match_full_read(tmp_path):
     """chunks() must work and equal the full read, band by band."""
     data = torch.arange(64, dtype=torch.float32).reshape(8, 8)
-    path = tmp_path / "cube.fits"
+    path = tmp_path / "image.fits"
     torchfits.write(str(path), data, overwrite=True)
     with torchfits.open(str(path)) as hdul:
         hdu = hdul[0]
@@ -117,6 +117,20 @@ def test_tensorhdu_chunks_match_full_read(tmp_path):
         assert len(bands) == 3
         assert [b.shape[0] for b in bands] == [3, 3, 2]
     torch.testing.assert_close(torch.cat(bands, dim=0), data)
+
+
+def test_cube_chunks_and_slice_follow_torch_axes(tmp_path):
+    """A 2D stand-in named cube.fits cannot see a NAXIS3 slab or a spatial window."""
+    data = torch.arange(120, dtype=torch.float32).reshape(4, 5, 6)
+    path = tmp_path / "cube.fits"
+    torchfits.write(str(path), data, overwrite=True)
+    with torchfits.open(str(path)) as hdul:
+        bands = list(hdul[0].chunks((2,)))
+        assert [tuple(b.shape) for b in bands] == [(2, 5, 6), (2, 5, 6)]
+        torch.testing.assert_close(torch.cat(bands, dim=0), data)
+        assert torch.equal(hdul[0].data[:, :], data)
+        assert tuple(hdul[0].data[0:2, 0:3].shape) == (4, 2, 3)
+        assert torch.equal(hdul[0].data[0:2, 0:3], data[:, 0:2, 0:3])
 
 
 def test_tensorhdu_chunks_in_memory(tmp_path):

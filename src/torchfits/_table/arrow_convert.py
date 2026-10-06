@@ -135,6 +135,14 @@ def _coerce_null_sentinel(value: "np.ndarray", sentinel: Any) -> Any:
             return np.array(sentinel, dtype=arr.dtype).item()
         return float(sentinel)
     except (TypeError, ValueError, OverflowError):
+        # Unsigned columns are stored as the physical value (raw + 2**(bits-1)).
+        # A negative TNULL does not fit in that dtype; the value in the tensor
+        # is the offset one, not the wrapped bit pattern.
+        if arr.dtype.kind == "u":
+            bits = int(arr.dtype.itemsize) * 8
+            physical = int(sentinel) + (1 << (bits - 1))
+            if 0 <= physical < (1 << bits):
+                return np.array(physical, dtype=arr.dtype).item()
         return None
 
 

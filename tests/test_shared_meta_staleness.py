@@ -15,6 +15,10 @@ interval, which is the only mechanism that can notice.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
 import time
 
 import numpy as np
@@ -160,3 +164,125 @@ def test_extname_resolution_fails_when_name_disappears(tmp_path):
 
     with pytest.raises(Exception):
         torchfits.read(rewritten, hdu="SCI")
+
+
+# The descriptor cache is per-process state that outlives the read, so it can
+# only be measured in a child: this process has to keep its own descriptors.
+_FD_PROBE = textwrap.dedent(
+    """
+    import os, sys, tempfile
+    import numpy as np
+    from astropy.io import fits
+    import torchfits
+
+    n_files = int(sys.argv[1])
+    cap = int(os.environ["TORCHFITS_MAX_CACHED_FDS"])
+
+    def open_fds():
+        d = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+        return len([e for e in os.listdir(d) if e.isdigit()])
+
+    tmp = tempfile.mkdtemp(prefix="torchfits-fd-")
+    data = np.arange(64, dtype=np.int16).reshape(8, 8)
+    paths = []
+    for i in range(n_files):
+        p = os.path.join(tmp, "f%04d.fits" % i)
+        fits.PrimaryHDU(data).writeto(p, overwrite=True)
+        paths.append(p)
+
+    before = open_fds()
+    for p in paths:
+        torchfits.read(p, hdu=0)
+    retained = open_fds() - before
+    print("read %d paths, retained %d descriptors (cap %d)" % (n_files, retained, cap))
+    sys.exit(0 if retained <= cap else 1)
+    """
+)
+
+
+def test_shared_read_cache_does_not_retain_one_descriptor_per_path():
+    """Reading N paths must not leave N descriptors open in the process.
+
+    SharedReadMeta memoises each path's raw descriptor so a repeat read skips
+    an ``open()``, and the memo had no bound: a loop over N files left N
+    descriptors open for the life of the process. The table is per-process, so
+    the cost lands on everything else sharing it -- measured on macOS with
+    ``RLIMIT_NOFILE=64``, 90 reads left 64/64 descriptors held and 199 of 200
+    further opens failing with EMFILE, while ``clear_all_caches()`` gave all
+    of them back.
+
+    The cap is asserted through ``TORCHFITS_MAX_CACHED_FDS`` rather than a
+    hardcoded number, so this pins the contract (the knob bounds retention)
+    instead of the default value chosen for it.
+    """
+    cap = 8
+    env = {**os.environ, "TORCHFITS_MAX_CACHED_FDS": str(cap)}
+    result = subprocess.run(
+        [sys.executable, "-c", _FD_PROBE, "60"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
+    )
+    assert result.returncode == 0, (
+        f"the shared read cache kept more than TORCHFITS_MAX_CACHED_FDS={cap} "
+        f"descriptors open (exit {result.returncode}):\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
+def test_stale_open_handle_does_not_republish_into_the_shared_cache(tmp_path):
+    """A handle opened before a rewrite must not write its header into the cache.
+
+    ``SharedReadMeta`` is shared with every other reader, whose handles describe
+    the file as it is *now*; a ``FITSFile`` (what ``open_subset_reader`` and any
+    reused handle hold) describes the file as it was when it opened. It published
+    its header view unconditionally, so after an out-of-band rewrite the
+    validator would clear the slot and rotate the generation -- and the stale
+    handle would put the replaced file's shape straight back, leaving the next
+    fresh read to resolve an ``(8, 8)`` shape for a ``(32, 32)`` image and
+    return its first 64 pixels as if that were the answer.
+
+    ``use_cache=False`` is the read that consults ``image_info_cache``; the
+    default path resolves the header from its own fresh handle, which is why
+    this needs the option to be visible at all.
+
+    Timing: the validator re-stats a path at most once per interval (1000 ms),
+    so the sleep makes the middle read validate, and the last two calls have to
+    land inside the following interval. The failure mode of missing that window
+    is a false green, never a false red -- a slower machine revalidates and sees
+    the correct file.
+    """
+    from torchfits import _C
+
+    path = str(tmp_path / "stale_handle.fits")
+    fits.PrimaryHDU(np.arange(64, dtype=np.int16).reshape(8, 8)).writeto(
+        path, overwrite=True
+    )
+
+    handle = _C.FITSFile(path, 0)
+    assert list(handle.get_shape(0)) == [8, 8]
+    assert tuple(torchfits.read(path, use_cache=False).shape) == (8, 8)
+
+    # Out-of-band rewrite: a new inode, so the validator can see it.
+    fits.PrimaryHDU(np.full((32, 32), 7, dtype=np.int16)).writeto(path, overwrite=True)
+    time.sleep(_VALIDATE_INTERVAL_S)
+
+    # This read clears the caches and rotates the generation, so the shared slot
+    # now belongs to the rewritten file.
+    fresh = torchfits.read(path, use_cache=False)
+    assert tuple(fresh.shape) == (32, 32), (
+        f"the rewrite was not picked up at all: {tuple(fresh.shape)}"
+    )
+
+    # The handle predates the rewrite and still reads the old bytes -- that is
+    # what a pinned handle means. It must not publish them.
+    stale = handle.read_tensor(0, False)
+    assert tuple(stale.shape) == (8, 8)
+
+    after = torchfits.read(path, use_cache=False)
+    assert tuple(after.shape) == (32, 32), (
+        "a handle opened before the rewrite republished its header: a fresh "
+        f"read resolved {tuple(after.shape)} for a (32, 32) image"
+    )
+    assert after.flatten()[0].item() == 7

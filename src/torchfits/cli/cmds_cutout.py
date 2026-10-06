@@ -68,6 +68,51 @@ def _parse_box(raw: str) -> tuple[int, int, int, int]:
     return x1, y1, x2, y2
 
 
+def _plane_shape(header: object) -> tuple[int, int] | None:
+    """Trailing ``(height, width)`` plane of an image header, if it has one.
+
+    ``--box`` addresses the last two axes (see ``read_subset`` on 3D+ cubes),
+    so a cube is checked on its trailing plane. HDUs without a 2-D plane
+    return ``None`` and are left to the reader, rather than being refused
+    here on a shape this check cannot vouch for.
+    """
+    try:
+        if int(header.get("NAXIS", 0)) < 2:  # type: ignore[attr-defined]
+            return None
+        width = int(header.get("NAXIS1", 0))  # type: ignore[attr-defined]
+        height = int(header.get("NAXIS2", 0))  # type: ignore[attr-defined]
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return height, width
+
+
+def _check_box_intersects_image(
+    box: tuple[int, int, int, int], header: object, *, path: str, hdu: int
+) -> None:
+    """Refuse a ``--box`` that lands wholly outside the image.
+
+    A box running off one edge is documented to clamp to the overlap, but a
+    box with no overlap at all would otherwise write a valid-looking 0x0
+    image and exit 0 -- the same "selects no pixels" condition ``_parse_box``
+    already refuses for a degenerate box. ``stats`` renders such a file as
+    all-NaN, so the empty product would flow downstream silently.
+    """
+    plane = _plane_shape(header)
+    if plane is None:
+        return
+    height, width = plane
+    x1, y1, _x2, _y2 = box
+    # _parse_box already guaranteed x1 < x2, y1 < y2 and x1, y1 >= 0, so a
+    # non-empty intersection reduces to the box starting inside the plane.
+    if x1 >= width or y1 >= height:
+        raise UsageError(
+            f"{path}:{hdu}: --box {box[0]},{box[1]},{box[2]},{box[3]} lies "
+            f"outside the {width}x{height} image (selects no pixels)"
+        )
+
+
 def _cutout_one(
     pair: tuple[str, str],
     *,
@@ -86,13 +131,16 @@ def _cutout_one(
             "(e.g. image.fits[10:100,20:200]) or --box x1,y1,x2,y2"
         )
     try:
+        header = torchfits.read_header(input_path, hdu)
         if sectioned:
             tensor = torchfits.read_tensor(input_path, hdu=hdu)
         else:
             assert box is not None  # guarded above
             x1, y1, x2, y2 = _parse_box(box)
+            _check_box_intersects_image(
+                (x1, y1, x2, y2), header, path=input_path, hdu=hdu
+            )
             tensor = torchfits.read_subset(input_path, hdu, x1, y1, x2, y2)
-        header = torchfits.read_header(input_path, hdu)
         torchfits.write_tensor(output_path, tensor, header=header, overwrite=True)
     except UsageError:
         raise

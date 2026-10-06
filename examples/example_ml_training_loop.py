@@ -63,7 +63,7 @@ SEED = 7
 # ---------------------------------------------------------------------------
 
 
-def _image_cube(rng: np.random.Generator, bright: bool) -> dict[str, np.ndarray]:
+def _band_cutout(rng: np.random.Generator, bright: bool) -> dict[str, np.ndarray]:
     """One 3-band cutout: a Gaussian source on a drifting, noisy sky."""
     y, x = np.mgrid[0:SIZE, 0:SIZE]
     cy, cx = rng.integers(8, SIZE - 8, size=2)
@@ -95,7 +95,7 @@ def write_images(root: str) -> list[str]:
     for i in range(N_IMAGES):
         path = os.path.join(root, f"cutout_{i:03d}.fits")
         hdus = [fits.PrimaryHDU()]
-        for name, value in _image_cube(rng, bright=bool(i % 2)).items():
+        for name, value in _band_cutout(rng, bright=bool(i % 2)).items():
             hdu = fits.ImageHDU(value, name=name)
             if not name.endswith(("_IVAR", "_DQ")):
                 hdu.header["ZP"] = 26.0

@@ -401,7 +401,7 @@ def update_rows(
     if row_slice is None:
         raise ValueError("row_slice is required for update_rows")
 
-    target_hdu, _header, columns, tform_map = _resolve_table_hdu_index_and_columns(
+    target_hdu, header_map, columns, tform_map = _resolve_table_hdu_index_and_columns(
         path, hdu
     )
     unknown = sorted({str(name) for name in rows} - set(columns))
@@ -513,6 +513,37 @@ def update_rows(
             f"row_slice expects {num_rows} rows, but update payload has {expected_rows}"
         )
 
+    # update_rows updates existing rows; it never creates them. Checked up
+    # front, before the cache barrier and either writer, because the two
+    # writers disagree here: the mmap writer refuses a window that runs past
+    # the end ("Row range exceeds table length") while the CFITSIO writer
+    # grows NAXIS2 and writes the payload past the last row. Before this
+    # check the refusal below was caught by the layout fallback and retried
+    # through the writer that grows, so on a 6-row table
+    # update_rows(..., slice(4, 10)) with 6 rows of payload silently produced
+    # 10 rows and overwrote the last real value (r2-028). insert_rows and
+    # delete_rows already refuse the same mistake.
+    total_rows = _naxis2_row_count(header_map, path)
+    # Two branches, one condition: for every reachable window num_rows >= 1
+    # here (num_rows == 0 returned earlier), so `start_row > total_rows`
+    # implies `start_row - 1 + num_rows > total_rows`. The start check is
+    # therefore *subsumed* by the end check and is kept only to name the
+    # mistake; break-it BI-51a confirms dropping it changes nothing, while
+    # BI-51b (dropping the end check) turns 8 guards red.
+    if start_row > total_rows:
+        raise ValueError(
+            "row_slice start is out of range for update "
+            f"(start={start_row - 1}, num_rows={total_rows}); "
+            "use append_rows to add rows"
+        )
+    if start_row - 1 + num_rows > total_rows:
+        raise ValueError(
+            "row_slice end is out of range for update "
+            f"(start={start_row - 1}, end={start_row - 1 + num_rows - 1}, "
+            f"num_rows={total_rows}); update_rows never extends a table, "
+            "use append_rows to add rows"
+        )
+
     import torchfits._C as cpp
 
     _mutation_cache_barrier(path)
@@ -540,8 +571,15 @@ def update_rows(
                 # condition warrants a non-mmap fallback; IO and other
                 # non-RuntimeError exceptions are re-raised above this handler,
                 # and truncation is re-raised below rather than masked by a
-                # fallback that could corrupt the file.
-                if forced_mmap or "truncat" in str(exc).lower():
+                # fallback that could corrupt the file. A row range past the end
+                # is re-raised for the same reason: the fallback writer does not
+                # refuse it, it grows the table (r2-028).
+                lowered = str(exc).lower()
+                if (
+                    forced_mmap
+                    or "truncat" in lowered
+                    or "exceeds table length" in lowered
+                ):
                     raise
 
     cpp.update_fits_table_rows(path, target_hdu, normalized, start_row, num_rows)

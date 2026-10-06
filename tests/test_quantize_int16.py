@@ -159,7 +159,7 @@ def test_image_write_quantize_1d_and_3d(tmp_path):
         assert _bulk_rms(data.numpy(), r_rt) < 0.25 * _bulk_rms(data.numpy(), m_rt)
 
         out = torchfits.read(path, hdu=0)
-        assert out.dtype == torch.float32
+        assert out.dtype == torch.float64
         assert _bulk_rms(data.numpy(), out.numpy()) < 1.0
 
 

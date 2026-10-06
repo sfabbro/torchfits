@@ -163,7 +163,7 @@ jobs:
           pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow tomli
           pip install -e . --no-build-isolation
       - name: Docs integrity
-        run: pytest tests/test_docs_integrity.py tests/test_package_isolation.py -q
+        run: pytest tests/test_docs_integrity.py tests/test_docs_snippets.py tests/test_package_isolation.py -q
       - name: Zensical build
         run: |
           pip install "zensical>=0.0.61"

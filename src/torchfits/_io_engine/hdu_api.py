@@ -19,6 +19,7 @@ from .caches import (
     header_cards_cache,
     path_signature,
     set_cached_hdu_type,
+    signature_cached_get,
 )
 from .paths import (
     cfitsio_base_path,
@@ -123,14 +124,14 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
     path = coerce_fits_path(path)
     sig = path_signature(path)
     cache_key = (path, "payload")
-    with cache_lock:
-        cached = auto_hdu_cache.get(cache_key)
-        if cached is not None:
-            cached_sig, cached_hdu = cached
-            if sig is None or cached_sig is None or cached_sig == sig:
-                auto_hdu_cache.move_to_end(cache_key)
-                return int(cached_hdu)
-            auto_hdu_cache.pop(cache_key, None)
+    # Signature validation (stored != current) lives in exactly one place:
+    # signature_cached_get. auto_hdu_cache stores the same (signature, value)
+    # shape it validates, so this used to be a fourth hand-written copy of a
+    # rule that has to tell a permanently-unstattable extended-syntax path
+    # from a file that no longer exists.
+    cached_hdu = signature_cached_get(auto_hdu_cache, cache_key)
+    if cached_hdu is not None:
+        return int(cached_hdu)
 
     resolved = find_first_hdu(path, handle_cache_capacity=handle_cache_capacity)
     # Cache the negative answer too (no payload HDU -> 0): uncached, every call
@@ -180,11 +181,18 @@ def _reassemble_longstr_cards(cards: Any) -> list[Any] | None:
             # Any non-CONTINUE card ends the chain: the '&' is content again.
             restore_marker()
             out.append(card)
-            if isinstance(card.value, str) and _is_string_typed(card.key, card.value):
-                if card.value.endswith("&"):
-                    out[-1] = card._replace(value=card.value[:-1])
-                    marker = len(out) - 1
-                    changed = True
+            if not isinstance(card.value, str):
+                continue
+            if card.value.endswith("&"):
+                # A trailing '&' is the quoted-chain signal (see _hdu/card.py):
+                # judge the card, not the shape of the unquoted value, so a
+                # chain like KEY = '(1.5,2.5)...&' or a run of digits is still
+                # joined to itself instead of to the preceding keyword.
+                out[-1] = card._replace(value=card.value[:-1])
+                marker = len(out) - 1
+                changed = True
+                target = len(out) - 1
+            elif _is_string_typed(card.key, card.value):
                 target = len(out) - 1
             continue
         field = (
@@ -409,15 +417,15 @@ def get_header(
     hdu_index = _resolve_hdu_index(path, hdu, autodetect_hdu=autodetect_hdu)
     sig = path_signature(path)
     cache_key = (path, hdu_index)
-    with cache_lock:
-        cached = header_cards_cache.get(cache_key)
-        if cached is not None:
-            cached_sig, cards = cached
-            if sig is None or cached_sig is None or cached_sig == sig:
-                header_cards_cache.move_to_end(cache_key)
-                # Fresh Header so callers can mutate without poisoning the cache.
-                return Header(list(cards))
-            header_cards_cache.pop(cache_key, None)
+    # Signature validation (stored != current) lives in exactly one place:
+    # signature_cached_get. header_cards_cache stores the same (signature, cards)
+    # shape it validates, so this used to be a third hand-written copy of a rule
+    # that has to tell a permanently-unstattable extended-syntax path from a file
+    # that no longer exists -- and it used to answer for the deleted one.
+    cached_cards = signature_cached_get(header_cards_cache, cache_key)
+    if cached_cards is not None:
+        # Fresh Header so callers can mutate without poisoning the cache.
+        return Header(list(cached_cards))
 
     def _read_header(path: str, hdu_index: int) -> Header:
         # Both probes go through libtorchfits_core, which does not link

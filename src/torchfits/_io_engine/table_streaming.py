@@ -87,7 +87,13 @@ def stream_table(
     # Scaled columns (TSCALn/TZEROn beyond the unsigned conventions) cannot be
     # decoded from raw mmap bytes; route to the buffered CFITSIO reader, which
     # applies scaling in-memory (same fallback as the non-streaming read).
+    #
+    # VLA (variable-length) columns have no fixed row layout for the raw mmap
+    # reader, which rejects them outright ("VLA columns not supported for
+    # mmap"), aborting the whole stream even though the handle reader below
+    # serves them. They join the ASCII / scaled cases on the buffered side.
     scaled_columns = False
+    vla_columns = False
     if mmap and not ascii_table and not probe_failed:
         try:
             from ..fits_schema import iter_table_columns
@@ -99,6 +105,9 @@ def stream_table(
                 hdr = _tf.read_header(file_path, hdu)
             selected = set(col_list) if col_list else None
             for col in iter_table_columns(hdr, selected=selected):
+                if col.tform_info.vla:
+                    vla_columns = True
+                    break
                 tscal = col.tscal if col.tscal is not None else 1.0
                 tzero = col.tzero if col.tzero is not None else 0.0
                 is_unsigned = (tscal == 1.0) and (
@@ -120,6 +129,7 @@ def stream_table(
         mmap
         and not ascii_table
         and not scaled_columns
+        and not vla_columns
         and not probe_failed
         and hasattr(cpp, "read_fits_table_rows")
     ):

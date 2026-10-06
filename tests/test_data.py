@@ -68,6 +68,39 @@ def temp_table_file():
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _sample_keys(samples):
+    """Identify each yielded sample by one of its own values.
+
+    The ``temp_image_dir`` fixture writes unseeded random pixels, so a sample
+    cannot be matched back to its file by index. Its top-left pixel is stable
+    across reads (the same float32 bytes come back through both routes), which
+    is enough to say *which* file arrived in *which* position -- the question
+    ordering tests actually ask.
+
+    Full float precision on purpose. Rounding these keys would reintroduce a
+    birthday-collision flake: eight uniform float32 values rounded to six
+    decimals collide about 3% of runs, and a collision here reads as "the
+    shuffle did nothing".
+    """
+    return [float(t.reshape(-1)[0]) for t in samples]
+
+
+def _file_order_keys(files):
+    """``_sample_keys`` for the files in their given order, read via astropy."""
+    from astropy.io import fits as _fits
+
+    keys = []
+    for path in files:
+        with _fits.open(path) as hdul:
+            keys.append(float(np.asarray(hdul[0].data)[0][0]))
+    return keys
+
+
+# ---------------------------------------------------------------------------
 # Test: fits_collate_fn
 # ---------------------------------------------------------------------------
 
@@ -167,8 +200,13 @@ class TestFitsImageDataset:
 
     def test_auto_mmap_policy(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
-        image, _label = FitsImageDataset(files, mmap="auto")[0]
+        ds = FitsImageDataset(files, mmap="auto")
+        assert ds.mmap == "auto"
+        image, _label = ds[0]
         assert image.shape == (1, 32, 32)
+        assert FitsImageDataset(files, mmap=False).mmap is False
+        with pytest.raises(ValueError, match="mmap"):
+            FitsImageDataset(files, mmap="false")[0]
 
     def test_3d_cube_no_channel_added(self, temp_image_dir):
         from astropy.io import fits
@@ -243,19 +281,62 @@ class TestFitsImageIterableDataset:
         assert sample.ndim == 2
 
     def test_shuffle_deterministic(self, temp_image_dir):
+        """Same seed -> same permutation; a *different* seed -> a different one.
+
+        The equality below only means something because of the negative half.
+        R2-050: this test asserted only that two same-seeded datasets agreed,
+        so a ``shuffle=True`` that never shuffled satisfied it -- both runs
+        returned the file order and matched. The permutation of ``seed=43`` is
+        a fixed function of the seed, not a random draw, so the difference is
+        structural rather than a one-in-40320 chance.
+        """
         _tmpdir, files = temp_image_dir
         ds1 = FitsImageIterableDataset(files, shuffle=True, seed=42)
         ds2 = FitsImageIterableDataset(files, shuffle=True, seed=42)
         out1 = list(ds1)
         out2 = list(ds2)
+        # Lengths first: ``zip`` compares only the common prefix, so a dataset
+        # that yielded 3 of its 8 files would still pass the loop below.
+        assert len(out1) == len(out2) == len(files)
         for a, b in zip(out1, out2):
             assert torch.equal(a, b)
 
+        file_order = _file_order_keys(files)
+        assert _sample_keys(out1) != file_order, (
+            "shuffle=True returned the file order verbatim, so nothing was shuffled"
+        )
+        out3 = list(FitsImageIterableDataset(files, shuffle=True, seed=43))
+        assert len(out3) == len(files)
+        assert _sample_keys(out3) != _sample_keys(out1), (
+            "seed=43 produced the same permutation as seed=42; the seed is "
+            "not reaching the shuffle"
+        )
+        # ...and the shuffled order is still a permutation of the same files,
+        # so the two checks above cannot be satisfied by dropping or duplicating.
+        assert sorted(_sample_keys(out1)) == sorted(file_order)
+
     def test_no_shuffle_follows_file_order(self, temp_image_dir):
+        """The order *is* the contract, not merely the count.
+
+        R2-050: this asserted ``len(out) == 8`` while its name announced file
+        order, so a dataset that yielded its files reversed passed it.
+        """
+        from astropy.io import fits as _fits
+
         _tmpdir, files = temp_image_dir
         ds = FitsImageIterableDataset(files, shuffle=False)
         out = list(ds)
         assert len(out) == 8
+        # Each sample must be the image at the *matching* position in ``files``,
+        # read independently through astropy -- an oracle, not a re-read of the
+        # dataset under test.
+        for path, sample in zip(files, out):
+            with _fits.open(path) as hdul:
+                expected = torch.from_numpy(np.asarray(hdul[0].data, dtype=np.float32))[
+                    None, :, :
+                ]
+            assert sample.shape == expected.shape
+            assert torch.equal(sample, expected), f"wrong image at position for {path}"
 
     def test_transform_applied(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
@@ -473,9 +554,24 @@ class TestMakeLoader:
         assert isinstance(batch, torch.Tensor)
 
     def test_optimize_cache_no_files_attribute(self, temp_table_file):
+        """A dataset with no ``files`` makes the cache warm-up a no-op.
+
+        R2-051: this asserted only ``isinstance(loader, DataLoader)``, so
+        ``make_loader`` could warm the cache for a dataset that exposes nothing
+        to warm and the test still passed -- measured, that change took
+        ``optimize_for_dataset`` from 0 calls to 1.
+        """
+        from unittest import mock as _mock
+
         ds = FitsTableDataset(temp_table_file)
-        loader = make_loader(ds, batch_size=4)
+        assert not getattr(ds, "files", None), (
+            "this guard is measured against a dataset with no `files`; if the "
+            "attribute appears the assertion below stops meaning anything"
+        )
+        with _mock.patch("torchfits.cache.optimize_for_dataset") as tune:
+            loader = make_loader(ds, batch_size=4)
         assert isinstance(loader, DataLoader)
+        tune.assert_not_called()
 
     def test_remote_files_download_once(self, tmp_path, monkeypatch):
         """Prefetch and resolve share one fetch per remote URL (no double GET)."""
@@ -702,3 +798,48 @@ class TestMultiWorkerDataLoader:
             """
         )
         assert report["count"] == len(files)
+
+
+def test_filtered_table_dataset_forwards_mmap_false(tmp_path, monkeypatch):
+    """where= used to call table.read without mmap, so mmap=False still mapped."""
+    import torchfits
+    from astropy.io import fits
+
+    path = tmp_path / "cat.fits"
+    col = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    fits.BinTableHDU.from_columns(
+        [fits.Column(name="V", format="E", array=col)]
+    ).writeto(path)
+    seen: dict[str, object] = {}
+    real = torchfits.table.read
+
+    def spy(*args, **kwargs):
+        seen["mmap"] = kwargs.get("mmap")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("torchfits.table.read", spy)
+    FitsTableDataset(str(path), hdu=1, where="V > 0", mmap=False)
+    assert seen["mmap"] is False
+
+
+def test_table_spectrum_forwards_mmap_false(tmp_path, monkeypatch):
+    import torchfits
+    from astropy.io import fits
+    from torchfits.data.datasets import FitsSpectrumDataset
+
+    path = tmp_path / "spec.fits"
+    col = np.arange(4, dtype=np.float32)
+    fits.BinTableHDU.from_columns(
+        [fits.Column(name="FLUX", format="E", array=col)]
+    ).writeto(path)
+    seen: dict[str, object] = {}
+    real = torchfits.table.read_torch
+
+    def spy(*args, **kwargs):
+        seen["mmap"] = kwargs.get("mmap")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("torchfits.table.read_torch", spy)
+    ds = FitsSpectrumDataset(str(path), hdu=1, column="FLUX", mmap=False)
+    ds[0]
+    assert seen["mmap"] is False

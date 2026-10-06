@@ -8,32 +8,16 @@ from typing import Any, cast
 
 from .caches import (
     auto_mmap_cache,
-    cache_lock,
     cold_nommap_cache,
     image_meta_cache,
     signature_cached_get,
     signature_cached_set,
 )
+from .paths import cfitsio_base_path
 from ..hdu import Header
 
 
 ImageMeta = tuple[int, int, tuple[int, ...], float, float, bool]
-
-
-def _cache_get(cache: Any, key: Any) -> Any:
-    with cache_lock:
-        value = cache.get(key)
-        if value is not None:
-            cache.move_to_end(key)
-        return value
-
-
-def _cache_set(cache: Any, key: Any, value: Any, max_size: int) -> None:
-    with cache_lock:
-        cache[key] = value
-        cache.move_to_end(key)
-        while len(cache) > max_size:
-            cache.popitem(last=False)
 
 
 def _sig_get(cache: Any, key: tuple[str, int]) -> Any:
@@ -182,7 +166,14 @@ def should_use_cold_nommap(
         return bool(cached)
 
     try:
-        file_size = os.path.getsize(path)
+        # cfitsio_base_path, not path: a CFITSIO extended-syntax path such as
+        # "mef.fits[1]" names an HDU of a file that *is* stat-able, but
+        # os.path.getsize raises on the whole string, so the size gate below
+        # reported "small file" for every such path and the policy came out
+        # opposite to the one the same HDU gets when named without a filter
+        # (r2-024). paths.cfitsio_base_path says so itself: "Existence checks
+        # must use the base file, not the filter."
+        file_size = os.path.getsize(cfitsio_base_path(path))
         if file_size < (1 << 20):
             _sig_set(cold_nommap_cache, (path, hdu), False, 512)
             return False

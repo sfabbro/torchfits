@@ -36,6 +36,26 @@ from ._read_schema import (
 
 logger = logging.getLogger(__name__)
 
+
+def _tnull_in_tensor(tensor: Any, sentinel: Any) -> Any:
+    """TNULL as stored in ``tensor``.
+
+    Unsigned columns hold the physical value. A negative raw TNULL does not
+    fit; comparing against it wraps (uint16 ``-32768`` becomes ``32768``) and
+    drops the real row instead of the null.
+    """
+    import torch
+
+    if not isinstance(sentinel, int) or sentinel >= 0 or tensor.dtype.is_floating_point:
+        return sentinel
+    if tensor.dtype == torch.uint16:
+        return sentinel + 32768
+    if tensor.dtype == torch.uint32:
+        return sentinel + 2147483648
+    if tensor.dtype == torch.uint8:
+        return sentinel + 128
+    return sentinel
+
 # NOTE: ceiling — full-table torch WHERE materializes all selected columns before
 # masking; above this row count fall through to chunked Arrow-filter instead.
 _TORCH_WHERE_MAX_ROWS = 1_000_000
@@ -251,7 +271,7 @@ def _try_torch_tensor_where_filter(
             part = _torch_cmp_mask(tensor, op, literal)
             sentinel = tnull_map.get(pred_col)
             if sentinel is not None:
-                part = part & torch.ne(tensor, sentinel)
+                part = part & torch.ne(tensor, _tnull_in_tensor(tensor, sentinel))
             mask = part if mask is None else (mask & part)
     except (RuntimeError, TypeError, ValueError) as exc:
         logger.debug("torch WHERE mask build failed; falling back: %s", exc)
@@ -630,7 +650,7 @@ def _try_cpp_where_pushdown(
                 # Predicate column not in the projection: cannot verify
                 # sentinel matches here — defer to the Arrow engine.
                 return None
-            valid = torch.ne(col_tensor, sentinel)
+            valid = torch.ne(col_tensor, _tnull_in_tensor(col_tensor, sentinel))
             keep = valid if keep is None else (keep & valid)
         if keep is not None:
             if bool(keep.any()):

@@ -249,6 +249,7 @@ repeated header probing for hot files without sharing CFITSIO CHDU state.
 |---|---|---|
 | `TORCHFITS_SHARED_META_VALIDATE` | `1` | Enable validation |
 | `TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS` | `1000` | Validation interval |
+| `TORCHFITS_MAX_CACHED_FDS` | `32` | Raw descriptors kept open across reads (LRU); `0` keeps one per path, which is unbounded |
 
 ### L2 — Thread-local metadata
 
@@ -440,6 +441,7 @@ profiling or working around a specific bottleneck.
 | `TORCHFITS_SHARED_META_VALIDATE` | `1` | Enable SharedReadMeta validation |
 | `TORCHFITS_SHARED_META_VALIDATE_INTERVAL_MS` | `1000` | SharedReadMeta validation interval |
 | `TORCHFITS_XOR_PARALLEL_MIN_BYTES` | `262144` | Threshold for parallel sign-bit XOR |
+| `TORCHFITS_MAX_CACHED_FDS` | `32` | Raw descriptors SharedReadMeta keeps open across reads, LRU-evicted. The table is per-process, so an unbounded cache starves every other library in it (measured: 90 reads at `RLIMIT_NOFILE=64` left 64/64 descriptors held and 199/200 further opens failing with EMFILE). `0` restores unbounded retention |
 | `TORCHFITS_NUM_THREADS` | hardware concurrency (capped at 64) | Worker threads for `libtorchfits_core`'s own `parallel_for`. ATen reads the same variable, so pinning it also pins the ATen pool; set it when the two pools would otherwise oversubscribe |
 | `TORCHFITS_VLA_HEAP_PREAD` | `0` (off) | Contiguous-heap single-`pread` fast path for VLA table columns; off by default until THEAP/offset edge cases are fully proven vs CFITSIO |
 

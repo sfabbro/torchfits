@@ -5,7 +5,6 @@ from __future__ import annotations
 import filecmp
 import gzip
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -425,18 +424,16 @@ def test_to_arrow_preserves_empty_tensor_shapes() -> None:
     assert empty_rows.type.list_size == 2
 
 
-def test_kmp_duplicate_lib_ok_set_on_import() -> None:
-    # ``__init__`` uses setdefault on Darwin only: process-wide side effect
-    # scoped to macOS. On Linux the import must not set KMP_DUPLICATE_LIB_OK;
-    # it is set via pixi activation env if needed.
-    if sys.platform == "darwin":
-        assert os.environ.get("KMP_DUPLICATE_LIB_OK") is not None
-    else:
-        # On Linux, importing torchfits should not force the variable; the test env may have it via activation,
-        # but we verify the import is side-effect free by checking that unsetting then re-importing does not set it.
-        # For this run, just verify the variable is either unset or TRUE (activation) – not required by import.
-        val = os.environ.get("KMP_DUPLICATE_LIB_OK")
-        assert val in (None, "TRUE", "true", "1")
+# NOTE (R2-056): a ``test_kmp_duplicate_lib_ok_set_on_import`` used to live here
+# and has been removed. It asserted only what the ambient environment already
+# guaranteed -- pixi's activation env exports ``KMP_DUPLICATE_LIB_OK=TRUE`` for
+# every task, and CI sets it explicitly on the release-gate job -- so deleting the
+# ``setdefault`` in ``src/torchfits/__init__.py`` left this file fully green
+# (51 passed). Its Linux branch could not fail either: the only values reachable
+# under pixi were the ones it listed. The real guard is
+# ``tests/test_package_isolation.py::test_import_sets_kmp_duplicate_lib_ok``,
+# which pops the variable and imports in a subprocess; the same mutation fails
+# there, and in ``test_duplicate_libomp_survives_after_import``.
 
 
 def test_hdulist_write_same_path_does_not_corrupt(tmp_path: Path) -> None:
@@ -600,7 +597,7 @@ def test_dataview_dtype_blank_is_float(tmp_path: Path) -> None:
     hdu.writeto(path.as_posix(), overwrite=True)
     with torchfits.open(path.as_posix()) as hdul:
         view = hdul[0].data
-        assert view.dtype == torch.float32
+        assert view.dtype == torch.float64
         sl = view[:2, :2]
         assert sl.dtype.is_floating_point
         assert bool(torch.isnan(sl[1, 0]))

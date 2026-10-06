@@ -35,7 +35,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 - **Apple Silicon (MPS):** Native `arm64` wheels for macOS leverage Metal Performance Shaders (`device="mps"`).
 - **Graceful Fallback:** CUDA-built environments run seamlessly on CPU-only machines via automatic CPU fallback.
 - **MPS dtype handling:** `device="mps"` (and `mps:N`) downcasts `float64 → float32` and `complex128 → complex64` before the host-to-device transfer because MPS has no native 64-bit float/complex. Each downcast emits a `UserWarning` (Python's default filter shows it once per call site): `MPS does not support float64; downcasting to float32 (precision loss)` and `MPS does not support complex128; downcasting to complex64 (precision loss)`. The result keeps its shape and lands on the requested device; CPU and CUDA paths keep 64-bit.
-- **Scale precision note:** Image BSCALE/BZERO scaling is applied in `float32` (`read_full_scaled_cpu`), while table `TSCAL/TZERO` scaling uses `float64`. No divergence vs astropy has been observed for integer storage, but fractional-scaled `LONGLONG` (`BITPIX=64`) images lose precision relative to the table path. A `float64` accumulation for images is planned for 2.0.
+- **Scale precision note:** Image BSCALE/BZERO scaling and `BLANK` promotion accumulate in `float64`. Values above 2^53 (and `BITPIX=64` magnitudes near 2^63) still cannot be exact in that dtype. Table `TSCAL`/`TZERO` on real columns is also `float64`. Native `BITPIX=-32` images stay `float32`.
 
 ### Known limitations
 

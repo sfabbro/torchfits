@@ -150,9 +150,16 @@ class SubsetReader:
                 hdu = self._http_hdu
                 if isinstance(hdu, str):
                     hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
+                # Build the replacement *before* clearing any state: this open
+                # is the one step that can fail, and committing early used to
+                # leave the reader with _reader=None and no remote URL, so
+                # every later call raised "AttributeError: 'NoneType' object
+                # has no attribute 'read'" instead of the real error and the
+                # HTTP route it could still retry was gone for good (r2-027).
+                reader = cpp.SubsetReader(path, int(hdu))
                 self._http_url = None
                 self._http_meta = None
-                self._reader = cpp.SubsetReader(path, int(hdu))
+                self._reader = reader
                 self._shape = None
                 out = cast(
                     Tensor, self._reader.read(int(x1), int(y1), int(x2), int(y2))

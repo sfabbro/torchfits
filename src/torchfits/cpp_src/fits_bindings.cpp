@@ -621,7 +621,7 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
             } else if (unsigned_long) {
                 dtype = torch::kUInt32; datatype = TUINT;
             } else {
-                dtype = torch::kFloat32; datatype = TFLOAT;
+                dtype = torch::kFloat64; datatype = TDOUBLE;
             }
         } else {
             switch (bitpix) {
@@ -943,6 +943,19 @@ double table_schema_to_double(const nb::object& obj) {
         }
     }
     throw std::runtime_error("schema numeric value must be a number or a numeric string");
+}
+
+// Which FITS card type a caller-supplied header value maps to, or 0 when this
+// writer will not accept it at all. Stated once so the up-front validation in
+// write_table_hdu (which must run before fits_create_tbl creates anything) and
+// the card-writing loop itself cannot disagree about what is acceptable. The
+// order of the tests is the loop's original precedence: bool, str, int, float.
+static int fits_header_value_type(nb::handle value) {
+    if (nb::isinstance<bool>(value)) return TLOGICAL;
+    if (nb::isinstance<nb::str>(value)) return TSTRING;
+    if (PyLong_Check(value.ptr())) return TLONGLONG;
+    if (nb::isinstance<double>(value) || nb::isinstance<float>(value)) return TDOUBLE;
+    return 0;
 }
 
 void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::object schema_obj, bool is_ascii) {
@@ -1325,6 +1338,41 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
         } else {
             col.tform = std::to_string(col.repeat) + code.first;
         }
+        // Decide here everything the write loop below would reject about this
+        // payload, because at this point nothing exists on disk yet. Raising
+        // from the loop instead left a table that reads back cleanly with the
+        // rejected column silently all-zero -- worse than no file, since the
+        // call *did* raise and the caller believes nothing was written (R2-012).
+        // A schema TFORM of 'rX' forces col.datatype = TBIT for any payload
+        // dtype and can override col.repeat, so both checks below can fire on
+        // a payload that passed everything above. The loop keeps its own copies
+        // as a second line of defence; they are now unreachable.
+        if (num_rows > 0 && col.repeat > 0 &&
+            static_cast<uint64_t>(num_rows) >
+                static_cast<uint64_t>(std::numeric_limits<long>::max()) /
+                    static_cast<uint64_t>(col.repeat)) {
+            throw std::runtime_error("table column element count overflows long");
+        }
+        const long nelements = num_rows * col.repeat;
+        if (col.datatype == TLOGICAL || col.datatype == TBIT) {
+            const nb::dlpack::dtype dt = tensor.dtype();
+            const bool is_bool =
+                dt.code == (uint8_t)nb::dlpack::dtype_code::Bool && dt.bits == 8;
+            const bool is_uint8 =
+                dt.code == (uint8_t)nb::dlpack::dtype_code::UInt && dt.bits == 8;
+            if (!is_bool && !is_uint8) {
+                throw std::runtime_error(
+                    "Bit/logical table writes require bool or uint8 data");
+            }
+        }
+        // The invariant ensure_c_contiguous_ndarray enforces for the flat read
+        // below, stated with the same wording so a payload that trips it here
+        // reports what it reported there.
+        if (static_cast<uint64_t>(nelements) > static_cast<uint64_t>(tensor.size())) {
+            throw std::runtime_error(
+                "element count " + std::to_string(nelements) +
+                " exceeds array size " + std::to_string(tensor.size()));
+        }
         columns.push_back(std::move(col));
     }
 
@@ -1333,6 +1381,37 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     }
     if (columns.empty()) {
         throw std::runtime_error("write_table_hdu requires at least one column");
+    }
+
+    // The card loop below runs *after* the data, so anything it rejects arrived
+    // with a complete table already on disk: measured, a header value this
+    // writer refuses left an 8640-byte file whose table read back perfectly and
+    // carried none of the caller's cards (R2-012). Decide all of it here, while
+    // nothing exists yet. Both checks read only the Python objects.
+    for (auto item : header) {
+        const std::string header_key =
+            d::sanitize_fits_key(nb::cast<std::string>(item.first));
+        const int card_type = fits_header_value_type(item.second);
+        if (card_type == 0) {
+            throw std::runtime_error(
+                "Unsupported FITS header value type for key '" + header_key +
+                "': expected str, bool, int, or float"
+            );
+        }
+        if (card_type == TLONGLONG) {
+            int overflow = 0;
+            PyLong_AsLongLongAndOverflow(item.second.ptr(), &overflow);
+            if (overflow != 0 || PyErr_Occurred()) {
+                PyErr_Clear();
+                throw std::runtime_error(
+                    "FITS header integer out of long long range: " + header_key);
+            }
+        }
+        if (card_type == TSTRING) {
+            // Same check the loop performs before choosing fits_update_key vs
+            // fits_update_key_longstr, so a non-ASCII value is rejected here.
+            d::require_fits_ascii(nb::cast<std::string>(item.second), "header value");
+        }
     }
 
     int num_cols = static_cast<int>(columns.size());
@@ -1468,10 +1547,11 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
     for (auto item : header) {
         std::string key = nb::cast<std::string>(item.first);
         key = d::sanitize_fits_key(key);
-        if (nb::isinstance<bool>(item.second)) {
+        const int card_type = fits_header_value_type(item.second);
+        if (card_type == TLOGICAL) {
             int val = nb::cast<bool>(item.second) ? 1 : 0;
             fits_update_key(fptr, TLOGICAL, key.c_str(), &val, nullptr, &status);
-        } else if (nb::isinstance<nb::str>(item.second)) {
+        } else if (card_type == TSTRING) {
             std::string val = nb::cast<std::string>(item.second);
             val = d::require_fits_ascii(val, "header value");
             if (val.size() > 68) {
@@ -1479,7 +1559,7 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
             } else {
                 fits_update_key(fptr, TSTRING, key.c_str(), (void*)val.c_str(), nullptr, &status);
             }
-        } else if (PyLong_Check(item.second.ptr())) {
+        } else if (card_type == TLONGLONG) {
             int overflow = 0;
             long long val = PyLong_AsLongLongAndOverflow(item.second.ptr(), &overflow);
             if (overflow != 0 || PyErr_Occurred()) {
@@ -1487,10 +1567,12 @@ void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::
                 throw std::runtime_error("FITS header integer out of long long range: " + key);
             }
             fits_update_key(fptr, TLONGLONG, key.c_str(), &val, nullptr, &status);
-        } else if (nb::isinstance<double>(item.second) || nb::isinstance<float>(item.second)) {
+        } else if (card_type == TDOUBLE) {
             double val = nb::cast<double>(item.second);
             fits_update_key(fptr, TDOUBLE, key.c_str(), &val, nullptr, &status);
         } else {
+            // Unreachable: the pre-pass above rejected every value that lands
+            // here. Kept as the backstop the loop had before it.
             throw std::runtime_error(
                 "Unsupported FITS header value type for key '" + key +
                 "': expected str, bool, int, or float"
@@ -1744,9 +1826,9 @@ void bind_fits(nb::module_& m) {
                 datatype = TUINT;
                 out = arr.cast();
             } else {
-                auto arr = alloc_numpy_array<float>(shape);
+                auto arr = alloc_numpy_array<double>(shape);
                 dst = (void*) arr.data();
-                datatype = TFLOAT;
+                datatype = TDOUBLE;
                 out = arr.cast();
             }
         } else {
@@ -1962,7 +2044,7 @@ void bind_fits(nb::module_& m) {
             scale_info = file.get_scale_info_for_hdu(hdu_num);
         }
         if (scale_info.scaled) {
-            tensor = tensor.to(torch::kFloat32);
+            tensor = tensor.to(torch::kFloat64);
             if (scale_info.bscale != 1.0) {
                 tensor.mul_(scale_info.bscale);
             }

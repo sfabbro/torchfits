@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-import stat
-import tempfile
+from collections.abc import Iterator
 from typing import Any, Dict, List, Optional, Union
 
 import torch
@@ -23,6 +23,7 @@ from ._write_helpers import (
     UInt64WriteError,
     _TableHDUWriteProxy,
     _apply_image_quantize,
+    _atomic_replace_target,
     _can_use_cpp_table_writer,
     _coerce_compressed_hdu_item,
     _cpp_header_mapping,
@@ -30,6 +31,7 @@ from ._write_helpers import (
     _hdu_with_header,
     _image_hdu_dict_for_fits_write,
     _invalidate_path_caches,
+    _invalidate_written_target,
     _merge_fits_write_header,
     _merged_write_header,
     _normalize_cpp_table_data,
@@ -82,6 +84,27 @@ def _write_all_checksums(path: str) -> None:
         _write_checksums_impl(str(path), hdu=hdu)
 
 
+@contextlib.contextmanager
+def atomic_write_target(path: str, overwrite: bool) -> Iterator[str]:
+    """Yield the path to write to, replacing ``path`` only on clean exit.
+
+    Yields ``path`` unchanged when there is no existing file to protect, which is
+    the only case where nothing can be lost. Otherwise the caller writes to a
+    temp path that ``_atomic_replace_target`` renames over ``path`` once the
+    write returns cleanly.
+
+    Callers must invalidate the path caches *after* the block, not inside it;
+    ``_atomic_replace_target`` documents why, and ``_table/write.py`` and
+    ``write()`` here both follow it.
+    """
+    if not overwrite or not os.path.exists(path):
+        yield path
+        return
+
+    with _atomic_replace_target(path) as temp_path:
+        yield temp_path
+
+
 def write(
     path: str | os.PathLike[str],
     data: Any,
@@ -129,15 +152,7 @@ def write(
         if os.path.isdir(path):
             raise IsADirectoryError(path)
 
-        target = os.path.realpath(path)
-        target_dir = os.path.dirname(target) or "."
-        original_mode = stat.S_IMODE(os.stat(target).st_mode)
-        fd, temp_path = tempfile.mkstemp(
-            prefix=f".{os.path.basename(target)}.", suffix=".tmp.fits", dir=target_dir
-        )
-        os.close(fd)
-        os.unlink(temp_path)
-        try:
+        with atomic_write_target(path, overwrite) as temp_path:
             write(
                 temp_path,
                 data,
@@ -147,14 +162,8 @@ def write(
                 quantize=quantize,
                 checksum=checksum,
             )
-            os.chmod(temp_path, original_mode)
-            os.replace(temp_path, target)
-            _invalidate_path_caches(path)
-            if target != path:
-                _invalidate_path_caches(target)
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+        # After the rename, never before: see atomic_write_target.
+        _invalidate_written_target(path)
         return
 
     # The unified C++ cache and the Python-side handle cache can otherwise return

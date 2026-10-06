@@ -241,9 +241,11 @@ class PercentileClipNormalize(FITSTransform):
     Parameters
     ----------
     lower_pct : float
-        Lower percentile (0–100).
+        Lower percentile (0–100).  Must satisfy
+        ``0.0 <= lower_pct <= upper_pct <= 100.0``.
     upper_pct : float
-        Upper percentile (0–100).
+        Upper percentile (0–100).  Equal to *lower_pct* is allowed and gives a
+        constant frame (the degenerate-span divisor fallback).
     dim :
         Dimensions along which percentiles are computed jointly.
     weighted : bool
@@ -263,6 +265,21 @@ class PercentileClipNormalize(FITSTransform):
         *,
         weighted: bool = False,
     ) -> None:
+        # The in-package precedent is InterquantileScale's quantile check, but
+        # here the inputs are percentiles and ``lower_pct == upper_pct`` is a
+        # *supported* degenerate span -- forward() substitutes 1.0 for the
+        # divisor when upper == lower so a constant frame stays finite -- so
+        # the ordering test stays ``<=`` rather than InterquantileScale's
+        # strict ``<``. Without a check, an inverted pair (99, 1) made
+        # ``torch.clamp`` collapse every pixel onto the upper quantile and the
+        # frame came back constant with no error, while an out-of-range pair
+        # leaked a raw torch RuntimeError from quantile() instead of the
+        # package's own ValueError.
+        if not (0.0 <= lower_pct <= upper_pct <= 100.0):
+            raise ValueError(
+                "Expected 0.0 <= lower_pct <= upper_pct <= 100.0, got "
+                f"lower_pct={lower_pct!r}, upper_pct={upper_pct!r}"
+            )
         self.lower_pct = lower_pct / 100.0
         self.upper_pct = upper_pct / 100.0
         self.dim = tuple(dim)

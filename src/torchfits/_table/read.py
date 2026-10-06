@@ -16,6 +16,7 @@ from ._read_scan import (
     _read_table_from_scan_batches,
     _scan_iter,
     _scan_torch_iter,
+    _validate_scan_request,
 )
 from ._read_schema import schema
 from ._read_schema import (  # noqa: F401  # re-export private but keep internal use
@@ -143,6 +144,7 @@ def scan(
     # Eager guard: a generator body would defer this until first next().
     path = coerce_fits_path(path)
     guard_fits_path(path)
+    _validate_scan_request(row_slice=row_slice, batch_size=batch_size, backend=backend)
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
     header, columns = _read_prelude(path, hdu, columns, where)
@@ -317,6 +319,7 @@ def scan_torch(
     # Eager guard: a generator body would defer this until first next().
     path = coerce_fits_path(path)
     guard_fits_path(path)
+    _validate_scan_request(row_slice=row_slice, batch_size=batch_size, device=device)
     if isinstance(hdu, str):
         hdu = _resolve_table_hdu_index_and_columns(path, hdu)[0]
     # Torch dict scans serve complex columns, so only the projection is

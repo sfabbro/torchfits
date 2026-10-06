@@ -212,6 +212,17 @@ def read_table(
     else:
         raise TypeError(f"hdu must be int or str, got {type(hdu)!r}")
 
+    # Validate every per-request parameter *before* the where= branch. That
+    # branch wraps its thin read in a broad ``except``, so a parameter
+    # ValueError was caught and re-read as "thin path unavailable"; the
+    # fallback then re-derived the answer by a different route and returned
+    # rows for a request the non-where path rejects (r2-018).
+    if int(start_row) < 1:
+        raise ValueError("start_row must be >= 1 (FITS uses 1-based indexing)")
+    if int(num_rows) < -1:
+        raise ValueError("num_rows must be > 0 or -1 for all rows")
+    _resolve_mmap(mmap)  # raises on an unknown mmap mode; the value is unused
+
     if where is not None and str(where).strip():
         from torchfits._table.read import _compile_where_to_simple_predicates  # type: ignore[attr-defined]
 
@@ -349,7 +360,12 @@ def read_table(
             mask = part if mask is None else (mask & part)
         assert mask is not None
         keep_cols = list(columns) if columns is not None else list(data.keys())
-        filtered = {}
+        filtered: dict[str, Any] = {}
+        # Row-aligned list payloads (VLA / string lists) are gathered by index,
+        # exactly as the row window slices them in _apply_row_window: leaving
+        # them whole handed back a dict whose columns had different lengths
+        # (r2-019), which silently misaligns any downstream zip/stack.
+        keep_idx: list[int] = mask.nonzero().flatten().tolist()
         for k, v in data.items():
             if k not in keep_cols:
                 continue
@@ -360,6 +376,8 @@ def read_table(
                 # mask (numpy fancy indexing is several× slower for the same
                 # work) and keep read_torch's tensor contract.
                 filtered[k] = torch.as_tensor(v)[mask]
+            elif isinstance(v, list):
+                filtered[k] = [v[i] for i in keep_idx]
             else:
                 filtered[k] = v
         data = _move_table_dict(filtered, device)

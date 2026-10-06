@@ -79,7 +79,10 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
         }
         throw std::runtime_error("Could not open FITS file: " + filename_);
     }
-    if (mode == 0) shared_meta_ = detail::get_shared_meta_for_path(filename_);
+    if (mode == 0) {
+        shared_meta_ = detail::get_shared_meta_for_path(filename_);
+        capture_open_identity();
+    }
     const bool has_extension = has_cfitsio_extended_filename_syntax(filename_);
     if (!has_extension) {
         // Private handle owns its own CHDU — do not seed from shared_meta_.
@@ -92,6 +95,54 @@ FITSFile::FITSFile(const char* filename, int mode) : filename_(filename), mode_(
 }
 
 FITSFile::~FITSFile() { close(); }
+
+void FITSFile::capture_open_identity() {
+    struct stat st {};
+    if (::stat(filename_.c_str(), &st) != 0) return;
+    open_identity_valid_ = true;
+    open_inode_ = st.st_ino;
+    open_size_ = st.st_size;
+    open_mtime_ns_ = internal::mtime_ns_from_stat(st);
+}
+
+// A FITSFile may outlive the file it opened -- open_subset_reader and a reused
+// handle both do -- and SharedReadMeta is shared with every other reader, whose
+// handles describe the file as it is *now*. Publishing unconditionally meant a
+// handle opened before an out-of-band rewrite wrote the replaced file's header
+// into the slot the rewrite owns: the validator had already cleared it and
+// rotated the generation, and the stale write put the old shape back, so the
+// next fresh read resolved an (8, 8) shape for a (32, 32) image and returned its
+// first 64 pixels with no error. Publishing only while this handle still matches
+// the generation the cache names keeps the handle's own (pinned-file) answers
+// and stops it corrupting everyone else's.
+bool FITSFile::owns_current_generation_locked() const {
+    return shared_meta_ && open_identity_valid_ && shared_meta_->has_stat &&
+           shared_meta_->inode == open_inode_ && shared_meta_->size == open_size_ &&
+           shared_meta_->mtime_ns == open_mtime_ns_;
+}
+
+void FITSFile::publish_image_info(
+    int hdu_num, const std::tuple<int, int, std::array<LONGLONG, 9>>& info) const {
+    if (!shared_meta_ || !open_identity_valid_) return;
+    std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
+    if (!owns_current_generation_locked()) return;
+    shared_meta_->image_info_cache[hdu_num] = info;
+}
+
+void FITSFile::publish_scale(int hdu_num, const ScaleInfo& info) const {
+    if (!shared_meta_ || !open_identity_valid_) return;
+    std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
+    if (!owns_current_generation_locked()) return;
+    shared_meta_->scale_cache[hdu_num] = std::make_tuple(
+        info.scaled, info.trusted, info.bscale, info.bzero);
+}
+
+void FITSFile::publish_compressed(int hdu_num, bool compressed) const {
+    if (!shared_meta_ || !open_identity_valid_) return;
+    std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
+    if (!owns_current_generation_locked()) return;
+    shared_meta_->compressed_cache[hdu_num] = compressed;
+}
 
 void FITSFile::close() {
     std::lock_guard<std::recursive_mutex> lock(io_mutex_);
@@ -147,11 +198,7 @@ const FITSFile::ScaleInfo& FITSFile::get_scale_info(int hdu_num, int bitpix) {
     info.scaled = detected.scaled; info.trusted = detected.trusted;
     info.bscale = detected.bscale; info.bzero = detected.bzero;
     auto inserted = scale_cache_.emplace(hdu_num, info);
-    if (shared_meta_) {
-        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        shared_meta_->scale_cache[hdu_num] = std::make_tuple(
-            info.scaled, info.trusted, info.bscale, info.bzero);
-    }
+    publish_scale(hdu_num, inserted.first->second);
     return inserted.first->second;
 }
 
@@ -178,10 +225,7 @@ bool FITSFile::is_compressed_image_cached(int hdu_num) {
     int is_compressed = fits_is_compressed_image(fptr_, &status);
     bool result = (status == 0 && is_compressed);
     compressed_cache_[hdu_num] = result;
-    if (shared_meta_) {
-        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        shared_meta_->compressed_cache[hdu_num] = result;
-    }
+    publish_compressed(hdu_num, result);
     return result;
 }
 
@@ -206,10 +250,7 @@ const std::tuple<int, int, std::array<LONGLONG, 9>>& FITSFile::get_image_info(in
     detail::read_image_params_9d(fptr_, &bitpix, &naxis, naxes_ll, &status);
     if (status != 0) throw std::runtime_error("Could not read image parameters");
     auto inserted = image_info_cache_.emplace(hdu_num, std::make_tuple(bitpix, naxis, naxes_ll));
-    if (shared_meta_) {
-        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        shared_meta_->image_info_cache[hdu_num] = inserted.first->second;
-    }
+    publish_image_info(hdu_num, inserted.first->second);
     return inserted.first->second;
 }
 
@@ -256,10 +297,7 @@ torch::Tensor FITSFile::read_tensor(int hdu_num, bool use_mmap) {
     }
 
     image_info_cache_[hdu_num] = std::make_tuple(bitpix, naxis, naxes_ll);
-    if (shared_meta_) {
-        std::unique_lock<std::shared_mutex> lock(shared_meta_->mutex);
-        shared_meta_->image_info_cache[hdu_num] = image_info_cache_[hdu_num];
-    }
+    publish_image_info(hdu_num, image_info_cache_[hdu_num]);
 
     const auto& scale_info = get_scale_info(hdu_num, bitpix);
     meta.scaled = scale_info.scaled;
@@ -514,7 +552,7 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
     if (signed_byte_scaled) { dtype = torch::kInt8;  datatype = TSBYTE; }
     else if (unsigned_short) { dtype = torch::kUInt16; datatype = TUSHORT; }
     else if (unsigned_long) { dtype = torch::kUInt32; datatype = TUINT; }
-    else if (scaled) { dtype = torch::kFloat32; datatype = TFLOAT; }
+    else if (scaled) { dtype = torch::kFloat64; datatype = TDOUBLE; }
     else {
         switch (bitpix) {
             case BYTE_IMG:     dtype = torch::kUInt8;  datatype = TBYTE;      break;
@@ -956,7 +994,7 @@ void SubsetReader::init_from_hdu() {
         dtype_ = torch::kUInt32; datatype_ = TUINT; elem_bytes_ = 4;
         mmap_conv_ = MmapConv::UInt32;
     } else if (scale.scaled) {
-        dtype_ = torch::kFloat32; datatype_ = TFLOAT; return;
+        dtype_ = torch::kFloat64; datatype_ = TDOUBLE; return;
     } else {
         switch (bitpix) {
             case BYTE_IMG:     dtype_ = torch::kUInt8;  datatype_ = TBYTE;      elem_bytes_ = 1; break;

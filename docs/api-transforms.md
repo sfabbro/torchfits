@@ -382,8 +382,8 @@ $$\text{output} = \frac{\text{clamp}(x,\ \text{lower},\ \text{upper}) - \text{lo
 
 | Param | Default | Description |
 |---|---|---|
-| `lower_pct` | `1.0` | Lower percentile |
-| `upper_pct` | `99.0` | Upper percentile |
+| `lower_pct` | `1.0` | Lower percentile. Must satisfy `0.0 <= lower_pct <= upper_pct <= 100.0` |
+| `upper_pct` | `99.0` | Upper percentile (same constraint; equal to `lower_pct` gives a constant frame) |
 | `dim` | `(-2, -1)` | Dimensions for quantile computation |
 
 !!! info "When to use"
@@ -497,8 +497,8 @@ Iterative sigma-clipping with mean or median fill.
 
 | Param | Default | Description |
 |---|---|---|
-| `n_sigma` | `3.0` | Clipping threshold |
-| `max_iter` | `5` | Max iterations |
+| `n_sigma` | `3.0` | Clipping threshold; must be > 0 |
+| `max_iter` | `5` | Max iterations; must be >= 1 |
 | `dim` | `(-2, -1)` | Dimensions for statistics |
 | `fill` | `"mean"` | `"mean"` or `"median"` replacement |
 
@@ -600,7 +600,7 @@ $$\text{output} = \text{BSCALE} \cdot x + \text{BZERO}$$
 
 | Param | Default | Description |
 |---|---|---|
-| `bscale` | `1.0` | FITS BSCALE keyword |
+| `bscale` | `1.0` | FITS BSCALE keyword; must be non-zero |
 | `bzero` | `0.0` | FITS BZERO keyword |
 
 Factory: `FITSHeaderScale.from_header(header)` — extracts BSCALE/BZERO from
@@ -616,7 +616,7 @@ $$\text{output}[c] = \text{TSCAL}_c \cdot x[c] + \text{TZERO}_c$$
 
 | Param | Default | Description |
 |---|---|---|
-| `scales` | *(required)* | `dict[str, (TSCAL, TZERO)]` |
+| `scales` | *(required)* | `dict[str, (TSCAL, TZERO)]`; a zero TSCAL is rejected |
 
 Factory: `FITSScaleColumns.from_header(header)`.
 

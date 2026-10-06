@@ -491,6 +491,19 @@ public:
         }
     }
 
+    // A real scalar added to a complex tensor touches only the real part.
+    // TZERO has to move both components.
+    static void scale_complex_inplace(torch::Tensor& tensor, double tscale, double tzero) {
+        if (tscale != 1.0) tensor.mul_(tscale);
+        if (tzero == 0.0) return;
+        if (tensor.scalar_type() == torch::kComplexFloat) {
+            tensor.add_(c10::complex<float>(
+                static_cast<float>(tzero), static_cast<float>(tzero)));
+        } else {
+            tensor.add_(c10::complex<double>(tzero, tzero));
+        }
+    }
+
     // FITS TSCAL/TZERO applied in-memory (float64) with TNULL mapped to NaN
     // after the linear map. Shared by the fixed-width post-process and the VLA
     // decode so both obey one convention: raw integer TNULL without
@@ -840,8 +853,12 @@ public:
             // are scaled too — only complex/string/logical/VLA are exempt
             // (BIT is NOT exempt: it scales here, coerces below).
             if (col.scaled &&
-                col.type != FITSColumnType::COMPLEX_FLOAT &&
-                col.type != FITSColumnType::COMPLEX_DOUBLE &&
+                (col.type == FITSColumnType::COMPLEX_FLOAT ||
+                 col.type == FITSColumnType::COMPLEX_DOUBLE)) {
+                // apply_scale_and_nulls casts to float64 and would drop the
+                // imaginary part. Scale both components in the complex dtype.
+                scale_complex_inplace(it->second.fixed_data, col.tscale, col.tzero);
+            } else if (col.scaled &&
                 col.type != FITSColumnType::STRING &&
                 col.type != FITSColumnType::LOGICAL &&
                 col.type != FITSColumnType::VARIABLE) {
@@ -1058,11 +1075,15 @@ public:
         if (fd == -1) {
             throw std::runtime_error("Failed to open file for mmap");
         }
+        // Adopt the descriptor immediately: the two statements below can both
+        // throw, and a raw int on the stack is not closed by unwinding. A
+        // truncated table used to leak one descriptor per rejected call
+        // (R2-011) -- exactly the case this check exists to catch.
+        MMapHandle fd_owner(nullptr, 0, fd);
 
         // Get file size
         struct stat sb;
         if (fstat(fd, &sb) == -1) {
-            close(fd);
             throw std::runtime_error("Failed to stat file");
         }
         ensure_extent_within_file(sb.st_size, data_offset, start_row - 1, num_rows);
@@ -1070,14 +1091,13 @@ public:
         // Map the whole file
         void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
         if (map_ptr == MAP_FAILED) {
-            close(fd);
             throw std::runtime_error("Failed to mmap file");
         }
 
         // RAII mmap guard — tensors are copies (not views) so the mmap only
         // needs to survive for the duration of this function.
         // size must match the original mmap() length (full file) passed to munmap().
-        MMapHandle mmap_guard(map_ptr, sb.st_size, fd);
+        MMapHandle mmap_guard(map_ptr, sb.st_size, fd_owner.detach_fd());
 
         std::unordered_map<int, torch::Tensor> result;
         const uint8_t* base_ptr = static_cast<const uint8_t*>(map_ptr) + data_offset;
@@ -1255,6 +1275,11 @@ public:
                     });
                 }
 
+                if (col.scaled &&
+                    (col.type == FITSColumnType::COMPLEX_FLOAT ||
+                     col.type == FITSColumnType::COMPLEX_DOUBLE)) {
+                    scale_complex_inplace(tensor, col.tscale, col.tzero);
+                }
                 // Apply unsigned-int coercion before storing.
                 if (col.is_unsigned_int) {
                     tensor = tensor.to(torch::kInt64);
@@ -1925,6 +1950,37 @@ public:
     }
 
 
+    // The dtype policy update_rows_mmap accepts, in one place so the up-front
+    // validation and the write dispatch cannot disagree: each case below mirrors
+    // the guard in the matching arm of the write loop.
+    static bool mmap_update_dtype_accepted(
+        const ColumnInfo& col, const nb::dlpack::dtype& dt) {
+        using code = nb::dlpack::dtype_code;
+        const auto is = [&](code c, int bits) {
+            return dt.code == static_cast<uint8_t>(c) && dt.bits == static_cast<uint8_t>(bits);
+        };
+        // A column that has no arm in the write loop's switch cannot be written
+        // at all; rejecting it here turns what would be a late "unsupported
+        // column type" throw into the same up-front decision as every other
+        // rejection.
+        switch (col.type) {
+            case FITSColumnType::BYTE:
+                return col.fits_typecode == TSBYTE ? is(code::Int, 8) : is(code::UInt, 8);
+            case FITSColumnType::LOGICAL:
+            case FITSColumnType::BIT:
+                return is(code::Bool, 8) || is(code::UInt, 8);
+            case FITSColumnType::SHORT: return is(code::Int, 16);
+            case FITSColumnType::INT: return is(code::Int, 32);
+            case FITSColumnType::LONG: return is(code::Int, 64);
+            case FITSColumnType::FLOAT: return is(code::Float, 32);
+            case FITSColumnType::DOUBLE: return is(code::Float, 64);
+            case FITSColumnType::STRING: return is(code::UInt, 8);
+            case FITSColumnType::COMPLEX_FLOAT: return is(code::Complex, 64);
+            case FITSColumnType::COMPLEX_DOUBLE: return is(code::Complex, 128);
+            default: return false;
+        }
+    }
+
     void update_rows_mmap(nb::dict tensor_dict, long start_row, long num_rows) {
         if (num_rows == -1) {
             num_rows = nrows_ - start_row + 1;
@@ -1996,23 +2052,78 @@ public:
                 "in-place mmap updates require an uncompressed local file "
                 "(whole-file compressed inputs like .bz2 are read-only)");
         }
+
+        // Validate every column BEFORE the file is mapped writable.
+        //
+        // The write loop below validates each column as it reaches it, and its
+        // bail-outs only munmap/close -- which does not undo what is already in
+        // the mapping. MAP_SHARED dirty pages are written back by the kernel
+        // whether or not msync is ever called, so a call that raised on the
+        // third column still left the first two rewritten on disk: measured, a
+        // two-column update whose second column had the wrong dtype raised
+        // "update_rows mmap dtype mismatch" and left the first column holding
+        // the new values. The exception is the only signal the caller has, and
+        // it said the update failed.
+        //
+        // Nothing here needs the mapping -- every check reads the tensor and the
+        // column descriptor -- so the whole operation is decided before the
+        // first byte can be touched. The per-column checks in the write loop
+        // stay as a second line of defence.
+        for (auto item : tensor_dict) {
+            const std::string name = nb::cast<std::string>(item.first);
+            const ColumnInfo* col = column_map.at(name);
+            const nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(item.second);
+            long rows = 1;
+            long repeat = 1;
+            if (tensor.ndim() == 1) {
+                rows = static_cast<long>(tensor.shape(0));
+            } else if (tensor.ndim() == 2) {
+                rows = static_cast<long>(tensor.shape(0));
+                repeat = static_cast<long>(tensor.shape(1));
+            } else if (tensor.ndim() != 0) {
+                throw std::runtime_error(
+                    "update_rows mmap only supports 1D/2D columns for " + name);
+            }
+            const long expected_repeat = (col->repeat > 0) ? col->repeat : 1;
+            if (col->type == FITSColumnType::STRING) {
+                if (repeat == 0 || repeat > expected_repeat) {
+                    throw std::runtime_error(
+                        "update_rows mmap string width must be 1.." +
+                        std::to_string(expected_repeat) + " for " + name);
+                }
+            } else if (repeat != expected_repeat) {
+                throw std::runtime_error("update_rows mmap repeat mismatch for " + name);
+            }
+            if (rows != num_rows) {
+                throw std::runtime_error("update_rows mmap row count mismatch for " + name);
+            }
+            if (!mmap_update_dtype_accepted(*col, tensor.dtype())) {
+                throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
+            }
+        }
+
         int fd = open(filename_.c_str(), O_RDWR);
         if (fd == -1) {
             throw std::runtime_error("Failed to open file for mmap update");
         }
+        // Adopt the descriptor before the extent check, which rejects truncated
+        // files: unwinding does not close a raw int (R2-011).
+        MMapHandle fd_owner(nullptr, 0, fd);
 
         struct stat sb;
         if (fstat(fd, &sb) == -1) {
-            close(fd);
             throw std::runtime_error("Failed to stat file for mmap update");
         }
         ensure_extent_within_file(sb.st_size, data_offset, start_row - 1, num_rows);
 
         void* map_ptr = mmap(nullptr, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (map_ptr == MAP_FAILED) {
-            close(fd);
             throw std::runtime_error("Failed to mmap file for update");
         }
+        // From here on every bail-out arm in the loop below closes fd itself,
+        // so take the descriptor back out of the guard before entering that
+        // regime; `fd` keeps its value and the arms stay correct.
+        fd_owner.detach_fd();
 
         uint8_t* base_ptr = static_cast<uint8_t*>(map_ptr) + data_offset;
         size_t row_start_offset = static_cast<size_t>(start_row - 1) * row_width_bytes_;
@@ -2130,8 +2241,13 @@ public:
                                 close(fd);
                                 throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
                             }
+                            int32_t phys = src_i16[idx];
+                            if (col->is_unsigned_int) {
+                                phys -= static_cast<int32_t>(col->unsigned_offset);
+                            }
+                            const int16_t stored = static_cast<int16_t>(phys);
                             uint16_t v;
-                            std::memcpy(&v, &src_i16[idx], sizeof(uint16_t));
+                            std::memcpy(&v, &stored, sizeof(uint16_t));
                             v = bswap_16(v);
                             std::memcpy(dest, &v, sizeof(uint16_t));
                             break;
@@ -2142,8 +2258,13 @@ public:
                                 close(fd);
                                 throw std::runtime_error("update_rows mmap dtype mismatch for " + name);
                             }
+                            int64_t phys = src_i32[idx];
+                            if (col->is_unsigned_int) {
+                                phys -= col->unsigned_offset;
+                            }
+                            const int32_t stored = static_cast<int32_t>(phys);
                             uint32_t v;
-                            std::memcpy(&v, &src_i32[idx], sizeof(uint32_t));
+                            std::memcpy(&v, &stored, sizeof(uint32_t));
                             v = bswap_32(v);
                             std::memcpy(dest, &v, sizeof(uint32_t));
                             break;

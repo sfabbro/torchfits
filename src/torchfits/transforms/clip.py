@@ -33,9 +33,13 @@ class SigmaClip(FITSTransform):
     Parameters
     ----------
     n_sigma : float
-        Number of standard deviations for the clipping threshold.
+        Number of standard deviations for the clipping threshold.  Must be
+        > 0: a non-positive or NaN threshold inverts the acceptance interval,
+        so every pixel counts as an outlier and the frame comes back as the
+        fill value.
     max_iter : int
-        Maximum number of clipping iterations.
+        Maximum number of clipping iterations.  Must be >= 1 (0 iterations is
+        a silent no-op, not "clip nothing but tell me").
     dim :
         Dimensions along which stats are computed independently.
     fill : str
@@ -61,6 +65,19 @@ class SigmaClip(FITSTransform):
         self.n_sigma = float(n_sigma)
         self.max_iter = int(max_iter)
         self.dim = tuple(dim)
+        # A non-positive or NaN threshold inverts the acceptance interval: no
+        # pixel can satisfy ``mean - n*std <= x <= mean + n*std``, so *every*
+        # pixel counts as clipped and forward() replaces the whole frame with
+        # the fill value (0.0 for "mean"/"median", NaN for "nan") with no
+        # error at all. ``AsymmetricSigmaClip`` refuses the same mistake; this
+        # class is the more-used one, so it must refuse it too.
+        if not (self.n_sigma > 0.0):
+            raise ValueError(f"n_sigma must be > 0, got {n_sigma!r}")
+        # max_iter < 1 makes the iteration loop empty, so no threshold is ever
+        # computed and forward() returns its input unchanged: a silent no-op
+        # that still reports every pixel as kept in ``_last_mask``.
+        if self.max_iter < 1:
+            raise ValueError(f"max_iter must be >= 1, got {max_iter!r}")
         if fill not in ("mean", "median", "nan"):
             raise ValueError("fill must be 'mean', 'median', or 'nan'")
         self.fill = fill
@@ -208,10 +225,10 @@ class AsymmetricSigmaClip(FITSTransform):
     ----------
     n_low : float
         Number of std deviations below median to clip (default 3.0).
-        Set higher to preserve more faint pixels.
+        Set higher to preserve more faint pixels.  Must be > 0 and not NaN.
     n_high : float
         Number of std deviations above median to clip (default 3.0).
-        Set higher to preserve more bright pixels.
+        Set higher to preserve more bright pixels.  Must be > 0 and not NaN.
     dim :
         Dimensions along which stats are computed independently.
         Default ``(-2, -1)`` for per-image clipping.
@@ -245,7 +262,12 @@ class AsymmetricSigmaClip(FITSTransform):
         *,
         weighted: bool = False,
     ) -> None:
-        if n_low <= 0 or n_high <= 0:
+        # ``not (> 0)`` rather than ``<= 0``: NaN fails the comparison the
+        # other way round, so ``n_low <= 0`` used to wave a NaN threshold
+        # through and every ``x >= median - nan`` comparison is False, which
+        # replaced the whole frame with the median and claimed nothing was
+        # kept.
+        if not (n_low > 0.0) or not (n_high > 0.0):
             raise ValueError("n_low and n_high must be > 0")
         if fill not in ("median", "nan"):
             raise ValueError("fill must be 'median' or 'nan'")

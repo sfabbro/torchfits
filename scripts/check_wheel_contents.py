@@ -38,6 +38,20 @@ FORBIDDEN_SUBSTRINGS = (
 # Symbols the stub must declare, so a truncated or empty stub fails here.
 STUB_REQUIRED_SYMBOLS = ("class FITSFile", "class TableReader", "def read_full(")
 
+# Stems of the two importable extension modules. These are the two
+# `nanobind_add_module` targets in src/torchfits/cpp_src/CMakeLists.txt and are
+# the same on every platform, so they are what distinguishes a module from the
+# core library. The *suffix* does not: on Linux the core library is
+# `libtorchfits_core.so`, which ends in an extension module's own suffix, so
+# classifying by suffix filed all three artifacts as modules and rejected every
+# Linux wheel (see tests/test_check_wheel_contents.py).
+EXTENSION_MODULE_STEMS = ("_C", "_core")
+
+# Prefix of the single non-module library the wheel must carry. Prefixed, not
+# equality-matched, so a second copy left over from an earlier build is still
+# recognised as a (duplicate) core library and reported.
+CORE_LIBRARY_PREFIX = "libtorchfits_core"
+
 
 def _fail(problems: list[str]) -> int:
     for problem in problems:
@@ -80,13 +94,17 @@ def check(wheel: Path) -> int:
         all(n.startswith("torchfits/") for n in native),
         f"native artifacts must all live under torchfits/, got {native}",
     )
-    # Classify by the interpreter-extension suffix, not by substring: the core
-    # *library* is libtorchfits_core.{so,dylib}, which also contains "_core".
-    modules = sorted(n for n in native if n.endswith((".so", ".pyd")))
+    # Classify by stem, not by substring and not by suffix: the core *library*
+    # is libtorchfits_core.{so,dylib}, which contains "_core" and, on Linux,
+    # ends in the extension-module suffix. Both former classifiers got macOS
+    # right by luck and Linux wrong.
+    modules = sorted(
+        n for n in native if Path(n).name.split(".")[0] in EXTENSION_MODULE_STEMS
+    )
     libraries = sorted(n for n in native if n not in modules)
     module_stems = {Path(n).name.split(".")[0] for n in modules}
     require(
-        module_stems == {"_C", "_core"},
+        module_stems == set(EXTENSION_MODULE_STEMS),
         f"expected the _C and _core extension modules, got {modules}",
     )
     require(
@@ -94,10 +112,11 @@ def check(wheel: Path) -> int:
         f"expected exactly two extension modules (_C, _core), got {modules}",
     )
     require(
-        len(libraries) == 1 and Path(libraries[0]).name.startswith("libtorchfits_core"),
-        f"expected libtorchfits_core as the only non-module library, got {libraries}. "
-        "The extension resolves its CFITSIO symbols against it, so _C cannot "
-        "import without it.",
+        len(libraries) == 1 and Path(libraries[0]).name.startswith(CORE_LIBRARY_PREFIX),
+        f"expected {CORE_LIBRARY_PREFIX} as the only non-module library, "
+        f"got {libraries}. The extension resolves its CFITSIO symbols against "
+        "it, so _C cannot import without it, and a second copy left over from "
+        "an earlier build is a mismatched-pair ImportError waiting to happen.",
     )
 
     # --- typing support (PEP 561 + the generated native stub) ---------------

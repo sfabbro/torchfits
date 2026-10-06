@@ -129,13 +129,12 @@ def test_uint64_image_bzero_2_63_is_detected(tmp_path):
     fits.HDUList([fits.PrimaryHDU(data)]).writeto(path, overwrite=True)
 
     out = torchfits.read(path)
-    # Scaled LONGLONG -> float32 conversion (no exact uint64 dtype exists yet).
-    assert out.dtype == torch.float32
-    # Regressing to the old bug: unscaled raw int64 values (~ -9.2e18) would
-    # fail this by 20+ orders of magnitude.
-    np.testing.assert_allclose(
-        out.numpy().astype(np.float64), data.astype(np.float64), rtol=1e-6
-    )
+    # Scaled LONGLONG accumulates in float64. 2**40 is exact there and was
+    # not in float32; 2**63-1 is the nearest float64, not the integer.
+    assert out.dtype == torch.float64
+    np.testing.assert_array_equal(out.numpy(), data.astype(np.float64))
+    with torchfits.open(path) as hdul:
+        assert hdul[0].data.dtype == torch.float64
 
 
 # ---------------------------------------------------------------------------
@@ -858,6 +857,119 @@ def test_dict_image_extra_keys_rejected_not_silently_dropped(tmp_path):
         assert not path.exists(), label
 
 
+@pytest.mark.parametrize("rejection", ["bit-dtype", "header-value"])
+def test_rejected_overwrite_leaves_the_original_file_intact(tmp_path, rejection):
+    """A rejected overwrite must not destroy the file it was overwriting.
+
+    ``table.write`` has two paths. The plain one goes through
+    ``_io_engine/write_api.py``, which writes ``.{name}.XXXX.tmp.fits`` in the same
+    directory and ``os.replace``s it over the target only on success. The other
+    -- taken whenever a ``schema``, an unsigned conversion, a quantization or an
+    ASCII table is involved -- called ``cpp.write_fits_table`` directly and so
+    never saw that wrapper. The C++ writer reaches ``fits_create_file("!path")``,
+    whose leading ``!`` *unlinks* the target before a byte of the payload is
+    validated, so a rejected overwrite destroyed the caller's file: measured, a
+    good 5-row table was replaced by a 2880-byte stub that no longer read as a
+    table at all. The same window exposed a missing or partial file to any
+    concurrent reader, and a crash or a full disk mid-write had the same effect.
+
+    Both branches now share one ``atomic_write_target`` wrapper, so this asserts
+    the file is untouched -- same bytes, same inode, no temp file left behind.
+    """
+    path = tmp_path / "precious.fits"
+    torchfits.table.write(
+        str(path), {"A": np.arange(5, dtype=np.int32)}, overwrite=True
+    )
+    before_bytes = path.read_bytes()
+    before_stat = path.stat()
+
+    if rejection == "bit-dtype":
+        payload = {
+            "A": np.arange(4, dtype=np.int32),
+            "FLAGS": np.arange(4, dtype=np.float32),
+        }
+        kwargs = {"schema": {"FLAGS": {"format": "8X"}}}
+    else:
+        payload = {"A": np.arange(4, dtype=np.int32)}
+        kwargs = {"header": {"X": [1, 2]}, "schema": {"A": {"format": "J"}}}
+
+    with pytest.raises(RuntimeError):
+        torchfits.table.write(str(path), payload, overwrite=True, **kwargs)
+
+    assert path.read_bytes() == before_bytes, "the rejected overwrite modified the file"
+    assert path.stat().st_ino == before_stat.st_ino, (
+        "the file was replaced rather than left alone (st_ino changed)"
+    )
+    assert [v.as_py() for v in torchfits.table.read(str(path))["A"]] == [0, 1, 2, 3, 4]
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "precious.fits"]
+    assert leftovers == [], f"temp files left behind: {leftovers}"
+
+
+def test_rejected_table_write_leaves_no_readable_table(tmp_path):
+    """A payload ``table.write`` rejects must not leave a readable table.
+
+    ``write_table_hdu`` built and validated every column *before*
+    ``fits_create_tbl``, but three rejections lived in the loop that writes the
+    data — so they arrived with the HDU already created and the earlier columns
+    written. Measured before the fix: a two-column write whose second column
+    was rejected raised and left an 8640-byte file that read back cleanly, with
+    the rejected column silently all-zero. A caller that trusts the exception
+    is left holding a plausible-looking table full of fabricated values.
+
+    A schema TFORM of ``8X`` is what makes this reachable with an ordinary
+    payload: it forces ``col.datatype = TBIT`` whatever the payload dtype is,
+    and overrides ``col.repeat``, so the loop-side checks can fire on data that
+    passed everything above them. All three are pure payload checks and now run
+    where the other ones already did, before the HDU exists.
+
+    The ``header`` case is the same contract one loop further on: the card
+    writing happens after *all* the data, so a header value this writer refuses
+    used to leave a complete table carrying none of the caller's cards.
+
+    Both need the in-place path (``schema=`` present routes to
+    ``cpp.write_fits_table``; the plain path deletes the file itself). The
+    image-path twin of this contract is
+    ``test_dict_image_extra_keys_rejected_not_silently_dropped`` above.
+    """
+    path = tmp_path / "rejected_table.fits"
+    with pytest.raises(RuntimeError, match="bool or uint8"):
+        torchfits.table.write(
+            str(path),
+            {
+                "A": np.arange(4, dtype=np.int32),
+                "FLAGS": np.arange(4, dtype=np.float32),
+            },
+            schema={"FLAGS": {"format": "8X"}},
+            overwrite=True,
+        )
+    with pytest.raises(Exception):
+        torchfits.table.read(str(path))
+
+    path = tmp_path / "rejected_header.fits"
+    with pytest.raises(RuntimeError, match="Unsupported FITS header value type"):
+        torchfits.table.write(
+            str(path),
+            {"A": np.arange(4, dtype=np.int32)},
+            header={"GOOD": "yes", "X": [1, 2]},
+            schema={"A": {"format": "J"}},
+            overwrite=True,
+        )
+    with pytest.raises(Exception):
+        torchfits.table.read(str(path))
+
+    # The header pre-pass must not change what a *valid* header writes.
+    ok = tmp_path / "accepted_header.fits"
+    torchfits.table.write(
+        str(ok),
+        {"A": np.arange(4, dtype=np.int32)},
+        header={"GOOD": "yes", "N": 5, "F": 1.5, "B": True, "LONG": "x" * 100},
+        schema={"A": {"format": "J"}},
+        overwrite=True,
+    )
+    cards = set(torchfits.read_header(str(ok), hdu=1))
+    assert {"GOOD", "N", "F", "B", "LONG"} <= cards
+
+
 def test_copied_table_header_cannot_forge_rows_or_relabel_columns(tmp_path):
     """A header read from another table must not override data-derived cards
     (NAXIS2/TFORM/TTYPE): row count, names and values stay true (astropy)."""
@@ -940,3 +1052,136 @@ def test_quantized_dict_table_compressed_matches_plain(tmp_path):
     assert bool(torch.isnan(got_plain["FLUX"][7]))
     finite = ~torch.isnan(got_plain["FLUX"])
     assert torch.equal(got_plain["FLUX"][finite], got_comp["FLUX"][finite])
+
+
+def test_atomic_overwrite_recipe_has_exactly_one_implementation():
+    """The temp-file + ``os.replace`` recipe must be written out once, not thrice.
+
+    It was written out three times -- ``write_api.atomic_write_target`` plus two
+    inline copies in ``_hdu_rewrite`` -- and that is how R2-013 happened: the
+    ``_table/write.py`` schema branch turned out to be a *fourth* whole-file
+    writer with no copy of the protection to inherit. Copies had already drifted
+    (one guarded the temp dance on ``os.path.isfile`` and recursed, one assumed
+    the file existed), so a fix applied to one was not applied to the others. All
+    three now route through ``_write_helpers._atomic_replace_target``, and this
+    keeps a fourth from being written from scratch.
+
+    Parsed with ``ast`` rather than grepped: docstrings and comments discuss
+    ``os.replace`` constantly, and prose must be unable to satisfy or trip this.
+    """
+    import ast
+    from pathlib import Path
+
+    package = Path(torchfits.__file__).parent
+    recipe_calls = {"os.replace", "tempfile.mkstemp"}
+    sites: list[tuple[str, int]] = []
+    for source in sorted(package.rglob("*.py")):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and f"{func.value.id}.{func.attr}" in recipe_calls
+            ):
+                sites.append((source.relative_to(package).as_posix(), node.lineno))
+
+    assert [rel for rel, _ in sites] == ["_io_engine/_write_helpers.py"] * len(sites), (
+        "the atomic-write recipe is implemented outside "
+        f"_write_helpers._atomic_replace_target: {sites}"
+    )
+    assert len(sites) == len(recipe_calls), (
+        f"expected exactly {len(recipe_calls)} recipe calls (one per primitive), got {sites}"
+    )
+
+    # The rename happens when the ``with`` block *exits*, so cache invalidation
+    # and checksum restamping inside the block would run against the file that
+    # is about to be replaced -- a concurrent reader could cache the old bytes
+    # under the path and go on serving them after the rename. No dynamic test can
+    # observe that window, so it is pinned structurally here.
+    source = (package / "_io_engine" / "_hdu_rewrite.py").read_text(encoding="utf-8")
+    checked = 0
+    too_early = {"_invalidate_written_target", "_write_all_checksums"}
+    for node in ast.walk(ast.parse(source)):
+        items = getattr(node, "items", None)
+        if not isinstance(node, (ast.With, ast.AsyncWith)) or items is None:
+            continue
+        entered = ast.unparse(items[0].context_expr)
+        if entered != "_atomic_replace_target(path)":
+            continue
+        checked += 1
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and ast.unparse(inner.func) in too_early:
+                pytest.fail(
+                    f"{entered} block calls {ast.unparse(inner.func)} on line "
+                    f"{inner.lineno}: it must run after the block, once the "
+                    "rename has made the new bytes current"
+                )
+
+    # And the guard has to be reachable at all: if _hdu_rewrite ever renames the
+    # helper, this check silently stops watching anything.
+    assert checked >= 2, f"only {checked} _atomic_replace_target blocks found"
+
+
+def _atomic_overwrite_route(route: str, path: str) -> None:
+    """Overwrite ``path`` through each whole-file writer, in turn."""
+    if route == "write":
+        torchfits.write(path, torch.ones((3, 3)), overwrite=True)
+    elif route == "hdulist-write":
+        from torchfits.hdu import HDUList, TensorHDU
+
+        HDUList([TensorHDU(data=torch.ones((3, 3)))]).write(path, overwrite=True)
+    elif route == "insert-hdu":
+        torchfits.insert_hdu(path, torch.ones((2, 2)), index=1)
+    else:  # pragma: no cover - parametrization is the only caller
+        raise AssertionError(f"unknown route {route!r}")
+
+
+@pytest.mark.parametrize(
+    "route", ["write", "hdulist-write", "insert-hdu"], ids=["write", "hdulist", "ins"]
+)
+@pytest.mark.parametrize("linked", [False, True], ids=["plain", "symlink"])
+def test_every_atomic_overwrite_route_leaves_the_file_consistent(
+    tmp_path, route, linked
+):
+    """All three routes must honour the same temp-file-and-rename contract.
+
+    They no longer share an implementation, so this pins the contract each one
+    owes its caller: the payload lands as a whole (the inode changes, so no
+    reader ever sees a partial file), the target keeps its permissions, no temp
+    file is left behind, and a symlinked target keeps its symlink -- the rename
+    goes onto the realpath, so ``path`` and its realpath both need their caches
+    invalidated afterwards.
+    """
+    target = tmp_path / f"{route}.fits"
+    if linked:
+        # The rename goes onto the realpath, so the symlink and the file it
+        # points to are two names for one target: watch the latter.
+        watched = tmp_path / f"{route}_real.fits"
+        torchfits.write(str(watched), torch.zeros((3, 3)))
+        target.symlink_to(watched)
+    else:
+        watched = target
+        torchfits.write(str(watched), torch.zeros((3, 3)))
+    watched.chmod(0o640)
+
+    before = watched.stat().st_ino
+    _atomic_overwrite_route(route, str(target))
+
+    assert watched.stat().st_mode & 0o777 == 0o640, "the mode was not carried over"
+    assert watched.stat().st_ino != before, (
+        "no rename happened; the file was written in place"
+    )
+    if linked:
+        assert target.is_symlink(), "the symlink was replaced instead of its target"
+    if route == "insert-hdu":
+        with torchfits.open(str(target)) as hdul:
+            assert len(hdul) == 2
+    else:
+        assert torch.equal(torchfits.read(str(target)), torch.ones((3, 3)))
+    expected = sorted({target.name, watched.name})
+    assert sorted(p.name for p in tmp_path.iterdir()) == expected, (
+        "a temp file was left behind"
+    )

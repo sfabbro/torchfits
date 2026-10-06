@@ -145,6 +145,13 @@ def _load_runner():
         ('print("boom")\nraise SystemExit(3)\n', "example_required.py", False, False),
         # Optional and happy still counts as a pass.
         ('print("fine")\n', "example_polars.py", True, True),
+        # An indented SKIP: the examples print these from inside `if` blocks.
+        (
+            'if True:\n    print("SKIP: sample not cached")\nraise SystemExit(1)\n',
+            "example_ml_galaxyzoo_legacy.py",
+            True,
+            True,
+        ),
     ],
 )
 def test_optional_examples_may_decline_without_failing_the_gate(
@@ -596,3 +603,94 @@ def test_an_example_that_prints_a_failed_check_still_passes_when_it_is_honest(
         )
         assert result.returncode == 0, f"{example}:\n{result.stderr}"
         assert success_line in result.stdout, f"{example}:\n{result.stdout}"
+
+
+# ---------------------------------------------------------------------------
+# EX-00x: a skip marker found anywhere in the output laundered a real crash
+# into a PASS (round-2 unit 18).
+#
+# `_run_example` matched SKIP_MARKERS as bare substrings against the whole
+# combined stdout+stderr. So an optional example that died hard -- printing a
+# traceback, or an unrelated warning -- was reported PASS (optional) as long as
+# its output contained the word "skipping" or "not installed" *anywhere*, and
+# the diagnostic was thrown away.
+#
+# No example relies on the loose match: every genuine decline in the tree is
+# "SKIP: ..." at the start of a line, and the two loose markers appear only
+# mid-line on paths that print and then continue (exit 0, so they never reach
+# this check). Requiring line-start keeps every real decline a skip.
+# ---------------------------------------------------------------------------
+
+
+def _run_optional(runner, tmp_path, monkeypatch, body: str) -> tuple[bool, str]:
+    script = tmp_path / "fake_optional.py"
+    script.write_text(body)
+    monkeypatch.setattr(runner, "_example_path", lambda _n: str(script))
+    monkeypatch.setattr(runner, "OPTIONAL", {"fake_optional.py"})
+    return runner._run_example("fake_optional.py")
+
+
+def test_a_hard_crash_naming_a_skip_word_is_not_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The finding. The path in the diagnostic contains "skipping"."""
+    runner = _load_runner()
+    body = (
+        "import sys, json\n"
+        'sys.stderr.write(json.dumps({"file": "/tmp/skipping/data.fits"}) + "\\n")\n'
+        'sys.stderr.write("ValueError: corrupt primary\\n")\n'
+        "raise SystemExit(1)\n"
+    )
+    ok, detail = _run_optional(runner, tmp_path, monkeypatch, body)
+    assert ok is False, f"a hard crash was laundered into a skip: {detail!r}"
+    # The diagnostic must survive: the whole point of failing is that a human
+    # can read why.
+    assert "corrupt primary" in detail, detail
+
+
+def test_an_unrelated_not_installed_warning_does_not_excuse_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warning about an unrelated missing package, then a hard failure."""
+    runner = _load_runner()
+    body = (
+        "import sys, warnings\n"
+        'warnings.warn("scipy not installed; falling back to a lossy path")\n'
+        'sys.stderr.write("AssertionError: expected 3 rows, got 0\\n")\n'
+        "raise SystemExit(1)\n"
+    )
+    ok, detail = _run_optional(runner, tmp_path, monkeypatch, body)
+    assert ok is False, f"laundered: {detail!r}"
+    assert "expected 3 rows" in detail, detail
+
+
+def test_a_line_starting_marker_is_still_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. Without it the two tests above could pass by rejecting
+    every decline -- which would re-break the defect the markers were added
+    for."""
+    runner = _load_runner()
+    for body in (
+        'print("SKIP: polars is not installed")\nraise SystemExit(1)\n',
+        'print("skipping: no network")\nraise SystemExit(1)\n',
+        'print("not installed")\nraise SystemExit(1)\n',
+        'if True:\n    print("  SKIP: sample not cached")\nraise SystemExit(1)\n',
+    ):
+        ok, detail = _run_optional(runner, tmp_path, monkeypatch, body)
+        assert ok is True, (
+            f"a genuine decline stopped being a skip: {body!r} -> {detail!r}"
+        )
+
+
+def test_declined_requires_a_line_to_begin_with_the_marker() -> None:
+    """`_declined` directly, so the rule is pinned apart from the runner."""
+    runner = _load_runner()
+    assert runner._declined("SKIP: no sample")
+    assert runner._declined("    SKIP: indented, and the examples indent")
+    assert runner._declined("noise\nSKIP: on the second line")
+    assert runner._declined("case-insensitive\nskip: lower")
+    assert not runner._declined("Traceback (most recent call last):")
+    assert not runner._declined("reading /tmp/skipping/data.fits")
+    assert not runner._declined("scipy not installed; then it crashed")
+    assert not runner._declined("")

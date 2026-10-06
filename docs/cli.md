@@ -53,7 +53,7 @@ Shared flags (availability varies by subcommand):
 
 | Flag | Name | Purpose | Default | Available on |
 |---|---|---|---|---|
-| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`) | All HDUs or 0/1 depending on command | every subcommand except `copy`, `diff` |
+| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`); a repeated index (`-e 0,0`) is a usage error | All HDUs or 0/1 depending on command | every subcommand except `copy`, `diff` |
 | `-f` | `--format` | Output format: `text`, `json`, or `jsonl` (aliases `--json`, `--jsonl`) | `text` | `info`, `header`, `verify`, `stats`, `table`, `probe` |
 | `-o` | `--out` | Output path (alias of the positional `OUTPUT`) | positional `OUTPUT` | `convert`, `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
 | `--out-dir` | `--out-dir` | Output directory for batch file processing | unset (required for multi-input batches) | `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
@@ -245,7 +245,7 @@ Supports two coordinate formats:
    torchfits cutout science.fits -o cutout.fits -e 0 --box 100,100,256,256
    ```
 
-`--box` values must be integers with non-negative `x1,y1` and `x1 < x2`, `y1 < y2` (0-based, half-open); an empty, inverted, or negative-origin box is a usage error (exit 2). A box that extends past the image edge is clamped to the image, so the output region is the box intersected with the image.
+`--box` values must be integers with non-negative `x1,y1` and `x1 < x2`, `y1 < y2` (0-based, half-open); an empty, inverted, or negative-origin box is a usage error (exit 2). A box that extends past the image edge is clamped to the image, so the output region is the box intersected with the image. A box that misses the image entirely — `x1 >= NAXIS1` or `y1 >= NAXIS2` — selects no pixels and is also a usage error (exit 2) rather than a silently written 0x0 image. On 3D+ cubes the box addresses the trailing `(y, x)` axes, so it is checked against `NAXIS2 x NAXIS1`.
 
 ```bash
 # Batch extract cutouts across multiple files

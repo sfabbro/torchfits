@@ -244,10 +244,16 @@ def quantize_int16_robust(
         # Weight/mask path: force BZERO=0; negatives clip to 0 (poloka KEEPZERO).
         positive = finite[finite > 0.0]
         if positive.numel() == 0:
-            n_clipped = int((~finite_mask).sum().item())
+            # lo == hi == 0.0 here, so every finite sample other than an exact
+            # zero is flattened onto code 0 by the zeros() below. Count them the
+            # way the general path counts (r2-023): reporting only the
+            # non-finite samples told a caller "nothing was clipped" about an
+            # array that had been entirely overwritten. blank_code tracks the
+            # blanks, not the clip count -- they are no longer the same set.
+            n_clipped = int((~(finite_mask & (flat == 0.0))).sum().item())
             codes = torch.zeros(flat.shape, dtype=torch.int16)
             blank_code = None
-            if n_clipped:
+            if not bool(finite_mask.all()):
                 codes[~finite_mask] = BLANK_CODE
                 blank_code = BLANK_CODE
             codes = codes.reshape(shape)
@@ -279,15 +285,32 @@ def quantize_int16_robust(
         sample = _percentile_sample(finite, lo_q, hi_q)
         lo = _percentile(sample, lo_q)
         hi = _percentile(sample, hi_q)
+        if hi <= lo:
+            # The percentile window collapsed: the samples that carry the
+            # spread are rarer than the window itself, so both ends measure
+            # the background (a masked image whose non-zero fraction is below
+            # ``100 - hi_q`` -- 0.1% by default -- measures 0.0 at both ends).
+            # That is *not* constant data, and the degenerate branch below
+            # then flattened the whole array onto a single code while still
+            # reporting n_clipped == 0, destroying every source in the image
+            # (r2-022). Ask the population, exactly as the keep_zero branch
+            # already does for ``hi <= 0``.
+            lo = float(finite.min())
+            hi = float(finite.max())
         if not (math.isfinite(lo) and math.isfinite(hi)):
             raise ValueError("quantize_int16_robust: non-finite percentile bounds")
         if hi <= lo:
             scale = 1.0
             zero = lo
             codes = torch.zeros(flat.shape, dtype=torch.int16).reshape(shape)
-            n_clipped = int((~finite_mask).sum().item())
+            # lo == hi here, so the general in-range test reduces to "equals
+            # lo"; non-finite samples are counted once, and blank_code tracks
+            # the blanks rather than the clip count (they used to be the same
+            # expression, which only held because the count was non-finite
+            # only).
+            n_clipped = int((~(finite_mask & (flat == lo))).sum().item())
             blank_code = None
-            if n_clipped:
+            if not bool(finite_mask.all()):
                 codes = codes.reshape(-1)
                 codes[~finite_mask] = BLANK_CODE
                 codes = codes.reshape(shape)

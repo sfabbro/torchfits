@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterator, Optional
 
+from .._io_engine.device import validate_device
 from .._table.cache import _acquire_cpp_reader
 from .._table.utils import _normalize_row_slice, _require_pyarrow
 from .._table.arrow_convert import _chunk_to_record_batch
@@ -202,6 +203,43 @@ def _read_table_unfiltered(
         backend=backend,
         header=header,
     )
+
+
+# Sentinel, not None: `scan(backend=None)` is a real (bad) call that
+# `validate_table_backend` rejects, so "argument absent" cannot be spelled None.
+_VALIDATE_SCAN_UNSET: Any = object()
+
+
+def _validate_scan_request(
+    *,
+    row_slice: Any,
+    batch_size: int,
+    backend: Any = _VALIDATE_SCAN_UNSET,
+    device: Any = _VALIDATE_SCAN_UNSET,
+) -> None:
+    """Validate scan parameters eagerly, at the public entry point.
+
+    ``scan``/``scan_torch`` return generators, so anything checked only inside
+    ``_scan_iter``/``_scan_torch_iter`` is deferred to the first ``next()`` --
+    after the caller has already built a pipeline around the scan. Both carry
+    the comment *"Eager guard: a generator body would defer this until first
+    next()"* above the path handling, so the intent is explicit, but only
+    ``path`` was hoisted: ``backend``, ``batch_size``, ``row_slice`` and
+    ``device`` were all generator-local. ``table.read`` raises for the same
+    arguments at call time, so the entry points disagreed about *when* a bad
+    request was rejected (r2-029).
+
+    The checks are repeated in the generator bodies, which is deliberate: they
+    also protect the internal recursive call from the ``where=`` branch, and
+    they are pure and cheap.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if backend is not _VALIDATE_SCAN_UNSET:
+        validate_table_backend(backend)
+    if device is not _VALIDATE_SCAN_UNSET:
+        validate_device(device)
+    _normalize_row_slice(row_slice)
 
 
 def _scan_iter(

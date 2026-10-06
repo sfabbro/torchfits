@@ -157,18 +157,14 @@ class FitsTableDataset(Dataset[Any]):
 
 
 def _resolve_table_mmap(mmap: bool | str) -> bool:
-    """Resolve the ``mmap=`` policy for a table read.
-
-    Kept as a named seam because the two call sites used to spell this
-    differently (``_resolve_table_mmap(self.mmap)`` on the ``scan_torch``
-    path, bare ``bool(self.mmap)`` on the ``scan`` path), which reads as a
-    difference when there is none: every value that reaches here is already
-    either a bool or a string, and a non-empty string -- ``"auto"`` included
-    -- is truthy. Verified equal to ``bool(mmap)`` over 11 probes (including
-    ``"auto"``, ``"never"``, ``""``, ``0``, ``None``). One function, so the
-    next reader is not left guessing what the other path was doing.
-    """
-    return True if mmap == "auto" else bool(mmap)
+    """Resolve ``mmap=`` the way image reads do: bool, or the string ``auto``."""
+    if isinstance(mmap, str):
+        if mmap.strip().lower() != "auto":
+            raise ValueError("mmap must be bool or 'auto'")
+        return True
+    if not isinstance(mmap, bool):
+        raise ValueError("mmap must be bool or 'auto'")
+    return mmap
 
 
 def _move_table_chunk(chunk: dict[str, Any], device: str) -> dict[str, Any]:
@@ -216,6 +212,7 @@ def _eager_table_columns(
         hdu=hdu,
         columns=columns,
         where=where,
+        mmap=_resolve_table_mmap(mmap),
     )
     result: dict[str, Any] = {}
     for col_name in pa_table.column_names:
@@ -428,7 +425,11 @@ class FitsTableIterableDataset(IterableDataset[Any]):
                     yield chunk
                     continue
                 n_rows = next(
-                    (v.shape[0] for v in chunk.values() if isinstance(v, torch.Tensor)),
+                    (
+                        v.shape[0] if isinstance(v, torch.Tensor) else len(v)
+                        for v in chunk.values()
+                        if isinstance(v, (torch.Tensor, list))
+                    ),
                     0,
                 )
                 for row_idx in range(n_rows):
@@ -505,6 +506,14 @@ class FitsCutoutDataset(Dataset[Any]):
     Each ``__getitem__`` calls ``read_subset`` for one window. NOTE:
     same-path cutouts re-open the file each row; use ``open_subset_reader``
     when one mosaic dominates.
+
+    A window that selects no pixels -- ``size <= 0`` in the 5-tuple form, or
+    ``x2 <= x1`` / ``y2 <= y1`` in the 6-tuple form -- is rejected here rather
+    than handed to ``read_subset``, which clamps it to an empty region. Such a
+    sample is a valid 0-pixel tensor, so it stacks through
+    :func:`fits_collate_fn` and reaches the model as a ``(B, 1, 0, 0)`` batch.
+    A box running off *one* edge still clamps to the overlap, matching the
+    ``torchfits cutout --box`` contract.
     """
 
     def __init__(
@@ -518,13 +527,33 @@ class FitsCutoutDataset(Dataset[Any]):
         for spec in cutouts:
             if len(spec) == 5:
                 path, hdu, x, y, size = spec
-                normalized.append((path, hdu, x, y, x + size, y + size))
+                normalized.append((path, hdu, x, y, x + int(size), y + int(size)))
             elif len(spec) == 6:
                 normalized.append(tuple(spec))  # type: ignore[arg-type]
             else:
                 raise ValueError(
                     "cutout must be (path, hdu, x, y, size) or "
                     "(path, hdu, x1, y1, x2, y2)"
+                )
+        if not normalized:
+            # The same rule the sibling loaders already enforce:
+            # ``_as_hdu_list`` refuses an empty ``hdu`` and ``_resolve_paths``
+            # refuses an empty ``paths``, because an empty selection does not
+            # fail on its own -- it builds a zero-length dataset, and whether
+            # anything notices then depends on whether the caller passed
+            # ``shuffle=`` to ``make_loader``.
+            raise ValueError("cutouts must be non-empty; got an empty list")
+        for path, hdu, x1, y1, x2, y2 in normalized:
+            if x1 < 0 or y1 < 0:
+                raise ValueError(
+                    f"cutout origin must be non-negative; got ({x1}, {y1}) "
+                    f"for {path!r} hdu={hdu!r}"
+                )
+            if x2 <= x1 or y2 <= y1:
+                raise ValueError(
+                    f"cutout {path!r} hdu={hdu!r} selects no pixels: "
+                    f"({x1}, {y1}) -> ({x2}, {y2}); a half-open window needs "
+                    "x1 < x2 and y1 < y2"
                 )
         self.cutouts = normalized
         self.transform = transform

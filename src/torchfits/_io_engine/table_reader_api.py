@@ -73,20 +73,17 @@ class TableReaderHandle:
         device: str = "cpu",
     ) -> dict[str, Any]:
         """Read rows for ``columns`` (all columns if ``None``) as tensors."""
-        import torch
-
-        from .device import to_device
+        from .table_api import _move_table_dict
 
         dev_str = validate_device(device)
         reader = self._ensure_open()
         col_names = list(columns) if columns is not None else []
         data = dict(reader.read_rows(col_names, int(start_row), int(num_rows)))
-        if dev_str == "cpu":
-            return data
-        return {
-            key: to_device(value, device) if isinstance(value, torch.Tensor) else value
-            for key, value in data.items()
-        }
+        # _move_table_dict also moves the tensors *inside* row-aligned list
+        # payloads (VLA / string lists). The hand-written comprehension that
+        # used to live here only saw top-level tensors, so a VLA column stayed
+        # on the CPU while its sibling columns moved (r2-020).
+        return _move_table_dict(data, dev_str)
 
 
 def open_table_reader(path: str, hdu: int | str = 1) -> TableReaderHandle:

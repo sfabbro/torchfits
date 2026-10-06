@@ -54,7 +54,18 @@ class TableHDURef:
         self.header = header or Header()
         self._source_path = source_path
         self._source_hdu = source_hdu
-        self._columns: Optional[tuple[str, ...]] = tuple(columns) if columns else None
+        # ``columns=[]`` is a request for *no* columns, not for every column:
+        # the read path treats an empty projection as unset
+        # (_read_schema._validate_projection_columns), so accepting one here
+        # made select([]) silently return the unprojected table while
+        # ``columns`` reported all of them.
+        selected = tuple(columns) if columns is not None else None
+        if selected is not None and not selected:
+            raise ValueError(
+                "columns must name at least one column; an empty list reads "
+                "every column, so it cannot express the requested projection"
+            )
+        self._columns: Optional[tuple[str, ...]] = selected
         self._row_slice = row_slice
 
     def _require_source(self) -> tuple[str, int]:
@@ -72,19 +83,23 @@ class TableHDURef:
             return 0
         if self._row_slice is None:
             return total
-        if isinstance(self._row_slice, tuple):
-            start, stop = self._row_slice
-        else:
-            start = 0 if self._row_slice.start is None else int(self._row_slice.start)
-            stop = self._row_slice.stop
-        start = int(start)
-        if start < 0:
-            start = 0
-        if stop is None:
-            return max(0, total - start)
-        stop = int(stop)
-        stop = min(stop, total)
-        return max(0, stop - start)
+        # One definition of the row window, shared with read()/iter_rows()
+        # (r5c-15 dedupe). This property used to re-derive it with weaker rules:
+        # a negative start became 0, a negative stop became 0 rows, step was
+        # ignored and a non-2-tuple raised a raw unpacking error -- so len(ref)
+        # reported 10 rows for a window read() refused, 0 for another, and 3 for
+        # slice(0, 3, 2) which read() also refuses. The lazy import keeps the
+        # un-windowed metadata path (which never needed _table.utils) free of
+        # it; it costs ~15 ms on first use.
+        from .._table.utils import _normalize_row_slice
+
+        start_row, count = _normalize_row_slice(self._row_slice)
+        start = max(0, start_row - 1)
+        if start >= total:
+            return 0
+        if count == -1:
+            return total - start
+        return max(0, min(int(count), total - start))
 
     def __len__(self) -> int:
         return self.num_rows
@@ -131,6 +146,13 @@ class TableHDURef:
     def select(self, cols: List[str]) -> "TableHDURef":
         if not isinstance(cols, list) or not all(isinstance(c, str) for c in cols):
             raise TypeError("cols must be a list[str]")
+        if not cols:
+            # Refused by __init__ (an empty projection reads every column);
+            # said here so the error names the call that made it.
+            raise ValueError(
+                "select() requires at least one column; an empty list reads "
+                "every column, so it cannot express the requested projection"
+            )
         return TableHDURef(
             header=self.header,
             source_path=self._source_path,

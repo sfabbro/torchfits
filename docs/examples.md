@@ -91,7 +91,7 @@ print(f"Datacube shape: {flux_cube.shape}")  # [4563, 74, 74]
 ```
 
 - **Script:** [`example_manga_logcube.py`](published-examples/example_manga_logcube.py)
-- **Radio Cube Script:** [`example_image_cube.py`](published-examples/example_image_cube.py)
+- **Radio Cube Script:** [`example_cube.py`](published-examples/example_cube.py)
 
 ---
 
@@ -165,7 +165,7 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 |---|---|
 | [`example_image.py`](published-examples/example_image.py) | Basic read and write round-trip for 2D images |
 | [`example_image_cutouts.py`](published-examples/example_image_cutouts.py) | Bounding box cutouts with `read_subset` and `open_subset_reader` |
-| [`example_image_cube.py`](published-examples/example_image_cube.py) | 3D radio and spectral data cube slicing |
+| [`example_cube.py`](published-examples/example_cube.py) | 3D radio and spectral data cube slicing |
 | [`example_image_mef.py`](published-examples/example_image_mef.py) | Multi-extension inspection and named HDU extraction |
 | [`example_m13_stack.py`](published-examples/example_m13_stack.py) | Multi-frame exposure stacking and median coaddition |
 | [`example_mef_header.py`](published-examples/example_mef_header.py) | Navigating complex headers across multi-CCD files |

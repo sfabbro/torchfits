@@ -990,11 +990,22 @@ class TestIterableFileSharding:
         # holds for every epoch however the rows are ordered inside it.
         assert set(epoch1) == {0.0, 2.0, 4.0}  # count preserved under shuffle
         assert set(epoch2) == {0.0, 2.0, 4.0}
+
+        def _sequence(dataset, n=3):
+            return [self._values(dataset) for _ in range(n)]
+
         # ...and the order within the shard is what varies epoch to epoch.
         # Before DA-001 this was a no-op: the permutation was seeded from
         # ``seed + worker_id``, a constant for the life of the dataset, so
         # every epoch replayed epoch 1 exactly.
-        assert epoch1 != epoch2
+        #
+        # Compared over three epochs, not the two above: this rank's shard
+        # holds 3 rows, so a single permutation has only 3! = 6
+        # possibilities and two *adjacent* epochs land on the same one by
+        # chance a sixth of the time. Asserting on a bare pair made this
+        # test flaky (measured: 5 failures in 20 runs) without the shuffle
+        # ever having been wrong. Same reasoning as the comparison below.
+        assert _sequence(ds0) != _sequence(ds0)
 
         # The property that assertion used to stand in for: the same seed
         # still replays the same *sequence* of epochs.
@@ -1006,9 +1017,6 @@ class TestIterableFileSharding:
         # epochs, not one: this rank's shard holds 3 rows, so a single
         # permutation has only 3! = 6 possibilities and two seeds collide
         # on it by chance roughly a third of the time.
-        def _sequence(dataset, n=3):
-            return [self._values(dataset) for _ in range(n)]
-
         assert _sequence(
             FitsTensorIterableDataset(tagged_images, rank=0, **dict(kwargs, seed=12))
         ) != _sequence(FitsTensorIterableDataset(tagged_images, rank=0, **kwargs))

@@ -23,8 +23,13 @@ def _is_string_typed(key: str, value: str) -> bool:
     ``fast_parse_header_cards``: numeric literals, ``T``/``F``, complex
     literals and blank values are not string-typed, and a CONTINUE card after
     them is malformed (kept verbatim) instead of fused into an unrelated
-    keyword. Quoted values that merely *look* numeric/boolean stay ambiguous
-    in this direction and are kept apart — fail-safe, never fused.
+    keyword.
+
+    Only for a card that carries **no** ``&`` chain marker: the value alone
+    cannot say whether the file quoted it, and a quoted ``'(1.5,2.5)'`` or
+    ``'12345'`` is a string that merely *looks* numeric/complex. A trailing
+    ``&`` settles that question on its own (only a quoted LONGSTRN field has
+    one) and is handled by the caller as an unconditional chain signal.
     """
     from ..header_parser import FastHeaderParser, _parse_fits_number
 
@@ -86,7 +91,16 @@ def _reassemble_longstr_cards(
                 if value.endswith("&"):
                     out[-1] = Card(key, value[:-1], comment)
                     marker = len(out) - 1
-                if _is_string_typed(key, value):
+                    # A trailing '&' IS the quoted-chain signal: only a quoted
+                    # LONGSTRN field can carry one, so this card is a chain
+                    # target whatever its content looks like. Without this,
+                    # _is_string_typed judged the *unquoted* value and a legal
+                    # chain such as KEY = '(1.5,2.5)(...)&' or a run of digits
+                    # came back False -- leaving `target` on the PREVIOUS
+                    # card, so the segments were appended to the wrong keyword
+                    # and this one's value was truncated with the '&' lost.
+                    target = len(out) - 1
+                elif _is_string_typed(key, value):
                     target = len(out) - 1
             continue
 

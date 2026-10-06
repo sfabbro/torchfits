@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -633,3 +634,125 @@ def test_shared_metadata_cache_is_shared_between_the_two_modules(sample) -> None
 
     core.clear_shared_read_meta_cache()
     assert core.shared_meta_entry_count() == 0
+
+
+# Accessors on the `Metadata` handle that do real work: they move the HDU
+# cursor and then ask CFITSIO. Every one of them must release the GIL, because
+# nanobind never does it implicitly.
+_IO_ACCESSORS = frozenset(
+    {
+        "num_hdus",
+        "hdu_type",
+        "shape",
+        "bitpix",
+        "nrows",
+        "colnames",
+        "table_info",
+        "keywords",
+        "header",
+        "header_text",
+        "scale_info",
+        "image_info",
+        "is_compressed_image",
+    }
+)
+
+
+def _reader_defs() -> dict[str, str]:
+    """The source text of each ``.def(...)`` on the `Metadata` binding."""
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "torchfits"
+        / "cpp_src"
+        / "core"
+        / "core_bindings.cpp"
+    ).read_text(encoding="utf-8")
+    start = source.index("nb::class_<c::FitsReader>")
+    block = source[start:]
+    defs: dict[str, str] = {}
+    for match in re.finditer(r'\.def\(\s*"([a-z_0-9]+)"', block):
+        name = match.group(1)
+        # The binding runs to the start of the next `.def(` at the same level.
+        rest = block[match.end() :]
+        nxt = rest.find(".def(")
+        defs[name] = rest[:nxt] if nxt != -1 else rest
+    return defs
+
+
+def test_num_hdus_does_not_move_the_handles_hdu_cursor(tmp_path: Path) -> None:
+    """Asking how many extensions there are must not change which one you read.
+
+    `FitsReader` caches the current HDU and skips `fits_movabs_hdu` when the
+    requested HDU matches the cache. `num_hdus()` is the one accessor that calls
+    `checked_num_hdus`, which moves the CFITSIO cursor to the last extension as
+    part of its truncation check -- and never wrote `current_hdu_`. So after a
+    `num_hdus()` call the cache described one HDU while CFITSIO sat on another,
+    and the next read of the cached HDU skipped the move and answered with the
+    last extension's data.
+
+    Measured before the fix, on a 3-HDU file with 8x8 / 16x16 / 32x32 images:
+    `shape(0)` answered `(8, 8)`, then `num_hdus()`, then `shape(0)` answered
+    `(32, 32)` -- HDU 2's shape. No exception, no warning; a caller reading a
+    primary header's dimensions got another extension's.
+    """
+    fits = pytest.importorskip("astropy.io.fits")  # optional, as elsewhere here
+    hdus = [
+        fits.PrimaryHDU(np.zeros((8, 8), dtype=np.int16)),
+        fits.ImageHDU(np.zeros((16, 16), dtype=np.int16), name="ONE"),
+        fits.ImageHDU(np.zeros((32, 32), dtype=np.int16), name="TWO"),
+    ]
+    path = tmp_path / "cursor.fits"
+    fits.HDUList(hdus).writeto(path, overwrite=True)
+
+    with core.Metadata(str(path)) as reader:
+        assert reader.num_hdus() == 3
+        for hdu in range(3):
+            first = tuple(reader.shape(hdu))
+            reader.num_hdus()  # a query, and it must leave the position alone
+            assert tuple(reader.shape(hdu)) == first, (
+                f"reading HDU {hdu} gave {first} before num_hdus() and "
+                f"{tuple(reader.shape(hdu))} after it: the handle is reporting "
+                f"a different extension than the one asked for"
+            )
+
+
+def test_metadata_handle_releases_the_gil_for_every_io_accessor() -> None:
+    """A metadata read through the handle must not hold the GIL.
+
+    nanobind releases the GIL only where the binding says so, and the
+    module-level entry points (`read_header_dict`, `read_shape`, ...) have always
+    wrapped their C++ call in `nb::gil_scoped_release`. The `Metadata` handle's
+    methods were bound straight to the C++ member functions, so the same read
+    stalled every other Python thread for its duration.
+
+    Measured, unrelated pure-Python iterations during the same 3 s of work:
+
+        handle, before   16,395,508        module-level  31,109,014
+        handle, after    32,623,045        module-level  32,285,669
+
+    Timing is too flaky to assert directly, so this asserts the *contract* that
+    produces it -- the same structural guard `test_every_cpp_self_check_is_in_the_runner`
+    applies to the C++ harness -- which also catches the next accessor added
+    without the guard.
+    """
+    defs = _reader_defs()
+    missing = sorted(
+        name
+        for name in _IO_ACCESSORS
+        if name in defs
+        and "ReleaseGIL()" not in defs[name]
+        and "nb::gil_scoped_release" not in defs[name]
+    )
+    assert not missing, (
+        f"Metadata accessors doing file I/O without releasing the GIL: {missing}. "
+        f"Add ReleaseGIL() as a call guard, or -- for the accessors that build a "
+        f"dict/list/tuple in the lambda, which must not touch Python objects "
+        f"without the GIL -- wrap the C++ call in nb::gil_scoped_release."
+    )
+    # And the inverse: the handle must still be declared at all, or this test
+    # would pass vacuously against a renamed class.
+    assert {"header", "shape", "keywords"} <= set(defs), (
+        f"the Metadata binding no longer exposes the accessors this guard reads: "
+        f"{sorted(defs)}"
+    )

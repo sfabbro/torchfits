@@ -99,6 +99,17 @@ def parse_hdu_list(hdu: str | None) -> list[int] | None:
             raise UsageError(f"invalid HDU index: {piece!r}") from exc
     if not out:
         raise UsageError("--hdu requires at least one HDU index")
+    # A repeated index is a selection whose length no longer matches the
+    # number of selected HDUs: `arith -e 0,0` writes a 2-HDU MEF from a
+    # 1-HDU selection and `-e 0,1,0,1` a 4-HDU one, because those commands
+    # emit one output per *listed* index. The sibling batch guards
+    # (ensure_unique_basenames / ensure_unique_split_stems) already refuse
+    # the duplicate analogue for --out-dir collisions; refuse it here too.
+    seen: set[int] = set()
+    for idx in out:
+        if idx in seen:
+            raise UsageError(f"duplicate HDU index in --hdu: {idx}")
+        seen.add(idx)
     return out
 
 
@@ -114,9 +125,72 @@ def selected_hdu_indices(num_hdus: int, hdu: str | None) -> list[int]:
     return wanted
 
 
+_COMPRESSION_CARDS = ("ZIMAGE", "ZCMPTYPE", "ZBITPIX", "ZNAXIS", "ZTILE1")
+
+
+def _header_truthy(value: Any) -> bool:
+    """FITS logical truthiness: ``T``/``TRUE``/``1``/``YES``/``Y``, else False."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().upper() in {"T", "TRUE", "1", "YES", "Y"}
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return bool(value)
+
+
+def is_compressed_image_header(header: Any) -> bool:
+    """True when *header* marks a tile-compressed image (``ZIMAGE`` / ZCARDS).
+
+    A tile-compressed image is stored as a ``BINTABLE`` of tiles, so the
+    ``XTENSION`` test alone reports it as a catalog. The rest of the package
+    already separates the two by looking for ``ZIMAGE`` and the ``ZCMPTYPE`` /
+    ``ZBITPIX`` / ``ZNAXIS`` / ``ZTILE1`` cards (see
+    ``_io_engine.hdu_api.find_first_hdu`` and ``data.datasets``); the CLI
+    needs the same discriminator or it labels science images as tables.
+    """
+    try:
+        if _header_truthy(header.get("ZIMAGE")):
+            return True
+    except AttributeError:
+        return False
+    return any(card in header for card in _COMPRESSION_CARDS[1:])
+
+
+def compressed_image_geometry(header: Any) -> tuple[tuple[int, ...], str] | None:
+    """``(shape, dtype_name)`` of the *image* a compressed HDU stores.
+
+    A tile-compressed HDU's ordinary ``NAXIS*`` / ``BITPIX`` describe the tile
+    table, so an inventory that trusted them would report the tile geometry
+    for a science image. The image geometry lives in ``ZNAXIS*`` / ``ZBITPIX``.
+    Returns ``None`` for a header that is not a compressed image or whose Z
+    cards are incomplete, so callers keep their existing fallback.
+    """
+    if not is_compressed_image_header(header):
+        return None
+    from .._hdu.dataview import _BITPIX_TO_KIND
+
+    try:
+        naxis = int(header.get("ZNAXIS", 0))
+        if naxis < 1:
+            return None
+        shape = tuple(int(header[f"ZNAXIS{axis}"]) for axis in range(1, naxis + 1))
+        dtype = _BITPIX_TO_KIND.get(int(header.get("ZBITPIX")))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if dtype is None:
+        return None
+    return shape, dtype
+
+
 def hdu_type_name(header: Any, hdu_obj: Any) -> str:
     from .._hdu.table_hdu_ref import TableHDURef
 
+    # ZIMAGE is definitive, so it outranks both the TableHDURef test and
+    # XTENSION=BINTABLE: torchfits.read_tensor decompresses such an HDU.
+    if is_compressed_image_header(header):
+        return "IMAGE"
     if isinstance(hdu_obj, TableHDURef):
         return "TABLE"
     xtension = str(header.get("XTENSION", "")).strip().upper()

@@ -29,15 +29,34 @@ OPTIONAL = {
     "example_ml_galaxyzoo_legacy.py",
 }
 
-# Markers an optional example prints when it declines to run. The examples use a
-# "SKIP: ..." convention; the older "not installed"/"skipping" pair matched none
-# of the seven examples that print one, so an optional example skipping that way
-# was still reported as a failure.
+# Markers an optional example prints when it *declines to run*. Matched only at
+# the start of a line, because a marker found anywhere in the output launders a
+# real crash into a skip: a traceback naming `/tmp/skipping/data.fits`, or an
+# unrelated "scipy not installed" warning printed before the failure, both
+# contain these words and both are hard failures.
+#
+# Every genuine decline in this tree is "SKIP: ..." at the start of a line, and
+# the two loose markers are only ever seen mid-line on paths that print and then
+# *continue* (exit 0, so they never reach this check). Requiring line-start
+# therefore keeps every real decline a skip and stops the laundering.
 SKIP_MARKERS = (
     "skip:",
     "not installed",
     "skipping",
 )
+
+
+def _declined(output: str) -> bool:
+    """True when a line *begins* with one of SKIP_MARKERS.
+
+    Case-insensitive, and each line is stripped first so an indented
+    ``print("  SKIP: ...")`` still counts -- the examples indent freely.
+    """
+    for line in output.splitlines():
+        head = line.strip().lower()
+        if any(head.startswith(marker) for marker in SKIP_MARKERS):
+            return True
+    return False
 
 
 def _discover_examples() -> list[str]:
@@ -139,7 +158,7 @@ def _run_example(name: str) -> tuple[bool, str]:
 
     output = (result.stderr or "") + (result.stdout or "")
     # Only OPTIONAL examples may decline to run.
-    if name in OPTIONAL and any(m in output.lower() for m in SKIP_MARKERS):
+    if name in OPTIONAL and _declined(output):
         return True, "skipped (optional)"
     return False, output[:1500]
 

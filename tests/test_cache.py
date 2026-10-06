@@ -31,7 +31,19 @@ class TestCaching:
             return f.name, data
 
     def test_cache_performance_tracking(self):
-        """Test cache hit/miss tracking."""
+        """Test cache hit/miss tracking.
+
+        Deep-review unit 13, R2-057: this asserted only
+        ``total_requests`` growing, which a counter that incremented on every
+        request satisfies whether or not anything was ever cached -- deleting
+        the body of ``store_cached_read`` left all 58 tests in this file green.
+        The hit/miss *transition* is the contract, so both arms are pinned.
+
+        ``return_header=True`` is what routes the read through the fallback
+        path, the only one that populates ``file_cache``; a bare
+        ``read(filepath)`` of an image never caches and would read as two
+        misses here.
+        """
         filepath, _ = self.create_test_fits()
 
         try:
@@ -39,15 +51,30 @@ class TestCaching:
             torchfits.clear_file_cache()
 
             # First read should be a cache miss
-            torchfits.read(filepath)
+            torchfits.read(filepath, return_header=True, cache_capacity=8)
             stats1 = torchfits.get_cache_performance()
+            assert stats1["total_requests"] == 1, stats1
+            assert stats1["hits"] == 0, stats1
+            assert stats1["misses"] == 1, stats1
+            assert stats1["cache_size"] == 1, "the read stored nothing to serve later"
 
             # Second read should be a cache hit
-            torchfits.read(filepath)
+            torchfits.read(filepath, return_header=True, cache_capacity=8)
             stats2 = torchfits.get_cache_performance()
-
-            # Verify cache behavior
-            assert stats2["total_requests"] > stats1["total_requests"]
+            assert stats2["total_requests"] == 2, stats2
+            assert stats2["hits"] == 1, (
+                f"second read was not served from cache: {stats2}"
+            )
+            assert stats2["misses"] == 1, "a hit must not also count as a miss"
+            # A served-from-cache read must return the same bytes as a cold one.
+            torchfits.clear_file_cache()
+            cold_data, _cold_header = torchfits.read(
+                filepath, return_header=True, cache_capacity=8
+            )
+            warm_data, _warm_header = torchfits.read(
+                filepath, return_header=True, cache_capacity=8
+            )
+            assert torch.equal(warm_data, cold_data)
 
         finally:
             os.unlink(filepath)
@@ -159,15 +186,22 @@ class TestCaching:
 
             # Read all files
             for filepath in files:
-                torchfits.read(filepath)
+                torchfits.read(filepath, return_header=True, cache_capacity=16)
 
             # Read them again (should hit cache)
             for filepath in files:
-                torchfits.read(filepath)
+                torchfits.read(filepath, return_header=True, cache_capacity=16)
 
             # Check cache performance
             stats = torchfits.get_cache_performance()
             assert stats["total_requests"] >= len(files) * 2
+            # R2-057: the comment above says the second pass hits the cache;
+            # before this line nothing checked it. See
+            # test_cache_performance_tracking for the mutation evidence.
+            assert stats["hits"] >= len(files), (
+                f"no file was served from cache: {stats}"
+            )
+            assert stats["misses"] >= len(files), stats
 
         finally:
             for f in files:
@@ -674,8 +708,53 @@ class TestCacheOptimization:
             # optimal_files = int(10 * 1024 / 100) = 102
             # min(102, 1000) = 102
             assert manager.config.max_files == 102
-            # prefetch_enabled should not be forced to True in this branch
-            # (assuming default was False, or at least it doesn't change it)
+            # Deep-review unit 13, R2-058: this branch only mentions
+            # prefetch_enabled in a comment. Prefetching a dataset far larger
+            # than the disk cache is the opposite of what the branch is for, so
+            # the contract is that this branch leaves the knob alone -- asserted
+            # from a False starting value, since CacheConfig defaults it to
+            # True and starting there could not detect a forced True.
+            assert manager.config.prefetch_enabled is True, (
+                "CacheConfig defaults prefetch_enabled to True, so this test can "
+                "only prove the large branch does not touch it"
+            )
+
+    def test_optimize_for_dataset_large_leaves_prefetch_alone(self):
+        """The oversized-dataset branch must not turn prefetching on.
+
+        R2-058: ``test_optimize_for_dataset_large`` could not pin this because
+        its config starts from the default ``prefetch_enabled=True``. Forcing
+        ``True`` in the large branch was left green across test_cache.py and
+        test_stream_table_and_cache.py (71 passed).
+        """
+        config = CacheConfig(disk_cache_gb=10, prefetch_enabled=False)
+        manager = torchfits.cache.CacheManager(config)
+
+        with patch("torchfits.cache.get_cache_manager", return_value=manager):
+            file_paths = ["file_{}.fits".format(i) for i in range(200)]
+            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=100.0)
+
+            assert manager.config.max_files == 102
+            assert manager.config.prefetch_enabled is False, (
+                "a dataset larger than disk_cache_gb must not enable prefetch"
+            )
+
+    def test_optimize_for_dataset_small_enables_prefetch(self):
+        """The fitting branch is the one that turns prefetch on (R2-058).
+
+        Paired with the test above so the two branches cannot both be green for
+        the same reason: a mutant that simply stopped setting the flag at all
+        passes the large branch and fails this one.
+        """
+        config = CacheConfig(disk_cache_gb=10, prefetch_enabled=False)
+        manager = torchfits.cache.CacheManager(config)
+
+        with patch("torchfits.cache.get_cache_manager", return_value=manager):
+            file_paths = ["file_{}.fits".format(i) for i in range(100)]
+            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
+
+            assert manager.config.max_files == 100
+            assert manager.config.prefetch_enabled is True
 
     def test_optimize_for_dataset_huge_many_files(self):
         # Create a test configuration

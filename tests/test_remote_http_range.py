@@ -696,3 +696,104 @@ def test_read_resume_validators_propagates_unexpected_errors(tmp_path, monkeypat
     monkeypatch.setattr(type(meta), "read_text", lambda _self: boom())
     with pytest.raises(RuntimeError, match="unexpected failure"):
         remote._read_resume_validators(meta)
+
+
+# ---------------------------------------------------------------------------
+# R2-060 / R2-061: two documented guards with no test anywhere.
+#
+# Both were found by running `coverage` over this roster against
+# `http_util` / `vos_uri` and reading the `Missing` column -- the docstrings
+# promise behaviour nothing asserts.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        " vos:alice/a.fits",  # leading whitespace
+        "vos:alice/a.fits ",  # trailing whitespace
+        "vos:alice/a b.fits",  # embedded space
+        "vos:tab\there.fits",  # embedded tab
+        "vos:new\nline.fits",  # embedded newline
+    ],
+)
+def test_is_vos_path_rejects_any_whitespace(candidate):
+    """R2-060: `is_vos_path`'s docstring says "with no embedded whitespace".
+
+    Break-it: reduce the guard to the `isinstance` check only -- **rc=0, 20
+    files green** (the widest selection of every `is_vos_path` consumer I
+    could name). A VOSpace URI is whitespace-delimited on the wire, so
+    accepting `" vos:alice/a.fits "` hands a malformed token to whatever
+    parses it next.
+    """
+    assert is_vos_path(candidate) is False, candidate
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    ["vos:alice/a.fits", "vault:b.fits", "vos://host/p.fits", "VOS:Mix/Case.FITS"],
+)
+def test_is_vos_path_still_accepts_well_formed_uris(candidate):
+    """The control for the guard above: a clean URI must still be accepted.
+
+    Without this, a mutant that made `is_vos_path` return `False` for
+    everything would pass the rejection test.
+    """
+    assert is_vos_path(candidate) is True, candidate
+
+
+@pytest.mark.parametrize(
+    "candidate, expected",
+    [
+        ("", False),
+        ("   ", False),
+        ("vos:", False),  # prefix with an empty path
+        ("vault:", False),
+        ("vos://", False),
+        ("https://example.edu/a.fits", False),
+    ],
+)
+def test_is_vos_path_rejects_empty_and_non_vos(candidate, expected):
+    """The non-empty-path and non-scheme halves of the same contract."""
+    assert is_vos_path(candidate) is expected, candidate
+
+
+def test_normalize_vos_uri_rejects_a_non_vos_path():
+    """R2-060: `normalize_vos_uri` raises `ValueError` for a plain local path.
+
+    Also uncovered by the same coverage run, and it is the function's only
+    error path -- a caller passing a local path would otherwise get
+    `AttributeError` from `path.lower().startswith` if the guard moved.
+    """
+    with pytest.raises(ValueError, match="not a vos/vault path"):
+        normalize_vos_uri("/local/file.fits")
+
+
+def test_http_read_range_rejects_reversed_bounds_before_any_request(monkeypatch):
+    """R2-061: `end_inclusive < start` must fail before the transport.
+
+    Without the guard `want` becomes negative and the request goes out as
+    `Range: bytes=10-5`, which is not a valid range: measured under the
+    mutation, the call reached `http_open` with exactly that header. The
+    transport is spied on here so the assertion is about *not asking* rather
+    than about what a server would reply.
+    """
+
+    def spy_open(url, *, headers=None, timeout=None):
+        raise AssertionError(f"reached the transport with headers={headers!r}")
+
+    monkeypatch.setattr(http_util, "http_open", spy_open)
+    with pytest.raises(ValueError, match="end_inclusive must be >= start"):
+        http_util.http_read_range("https://example.test/data.fits", 10, 5)
+
+    # The control: equal bounds is a legal one-byte range and must still be
+    # attempted, so a mutant that rejected every call cannot pass.
+    attempts: list[str] = []
+
+    def record_open(url, *, headers=None, timeout=None):
+        attempts.append(url)
+
+    monkeypatch.setattr(http_util, "http_open", record_open)
+    with pytest.raises(Exception):
+        http_util.http_read_range("https://example.test/data.fits", 5, 5)
+    assert attempts == ["https://example.test/data.fits"]

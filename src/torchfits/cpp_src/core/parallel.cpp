@@ -6,6 +6,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <pthread.h>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -125,9 +126,31 @@ int resolve_thread_count() {
     return threads;
 }
 
+// The pool pointer lives at namespace scope rather than inside a function-local
+// static so the fork handler below can drop it.
+Pool* g_pool = nullptr;
+
+// fork() hands the child a copy of this address space: the std::thread objects
+// the pool holds name threads that do not exist in the child, so a batch queued
+// there is never worked on and the caller waits on its condition variable
+// forever. Measured: a child that had not forked before the pool was warm hung
+// until SIGALRM (10s) with no output. `tests/cpp/test_fork_after_pool.cpp`
+// guards it. Assigning the pointer is async-signal-safe, which is all an
+// atfork child handler may do.
+void drop_pool_in_forked_child() {
+    g_pool = nullptr;
+}
+
 Pool& pool() {
-    static Pool* instance = new Pool(resolve_thread_count() - 1);
-    return *instance;
+    static const bool registered = [] {
+        pthread_atfork(nullptr, nullptr, drop_pool_in_forked_child);
+        return true;
+    }();
+    (void)registered;
+    if (!g_pool) {
+        g_pool = new Pool(resolve_thread_count() - 1);
+    }
+    return *g_pool;
 }
 
 }  // namespace

@@ -97,8 +97,25 @@ class Header(dict[str, Any]):
         self.remove(str(key), remove_all=True)
 
     def update(self, *args: Any, **kwargs: Any) -> None:
-        other = dict(*args, **kwargs)
-        for key, value in other.items():
+        if len(args) > 1:
+            raise TypeError(
+                f"update expected at most 1 positional argument, got {len(args)}"
+            )
+        # A Header argument is copied card-by-card. dict(*args) routes through
+        # the *mapping* view, which holds one value per keyword: copying a
+        # header through update() dropped every card comment and collapsed a
+        # repeated HISTORY/COMMENT block to its last line, where Header(src)
+        # keeps all of it.
+        cardwise: list[Card] = []
+        plain: dict[str, Any] = {}
+        for arg in args:
+            if isinstance(arg, Header):
+                cardwise.extend(arg.cards)
+            else:
+                plain.update(arg)
+        plain.update(kwargs)
+        self._update_from_cards(cardwise)
+        for key, value in plain.items():
             if (
                 not isinstance(value, (str, bytes))
                 and isinstance(value, tuple)
@@ -109,8 +126,25 @@ class Header(dict[str, Any]):
                 card_value = value
                 comment = ""
             self._set_card(str(key), card_value, str(comment), bump=False)
-        if other:
+        if cardwise or plain:
             self._version += 1
+
+    def _update_from_cards(self, cards: Any) -> None:
+        """Apply an ordered card sequence through the card path.
+
+        Commentary keywords append (so a multi-line HISTORY block survives);
+        value keywords are applied once each, keeping the source's FIRST
+        occurrence so the mapping agrees with ``dict(source)`` (see
+        :meth:`_set_mapping_for_card`).
+        """
+        seen: set[str] = set()
+        for card in cards:
+            key = str(card.key)
+            if key not in _COMMENTARY_KEYS:
+                if key in seen:
+                    continue
+                seen.add(key)
+            self._set_card(key, card.value, card.comment, bump=False)
 
     def clear(self) -> None:
         super().clear()

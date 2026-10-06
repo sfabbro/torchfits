@@ -152,6 +152,14 @@ def to_arrow(
     except ImportError:
         raise ImportError("PyArrow is required for to_arrow conversion.") from None
 
+    # Checked once, up front: the old per-column check only fired when a
+    # VLA column was actually reached, so a misspelled policy was accepted
+    # silently by every table without one -- including through to_polars,
+    # which forwards the value here untouched. to_pandas validates its own
+    # 'object'/'drop' spelling and maps it below.
+    if vla_policy not in ("list", "drop"):
+        raise ValueError("vla_policy must be 'list' or 'drop'")
+
     arrays = []
     names = []
 
@@ -173,7 +181,7 @@ def to_arrow(
                 arrays.append(pa.array(converted_list))
             elif vla_policy == "drop":
                 names.pop()
-            else:
+            else:  # unreachable: vla_policy is checked before the loop
                 raise ValueError("vla_policy must be 'list' or 'drop'")
         else:
             arrays.append(pa.array(value))

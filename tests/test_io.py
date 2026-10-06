@@ -187,8 +187,12 @@ class TestIORead:
         )
         mock_cpp.read_full_nocache.assert_called_once_with("file.fits", 0, True)
 
-    def test_read_target_device_conversion(self, mock_cpp):
-        """Test moving data to different device if target_dtype is specified."""
-        # Note: testing actual device move without CUDA is hard, we can just test dtype
-        res = io.read("file.fits", hdu=0, bf16=True, scale_on_device=False)
-        assert res.dtype == torch.bfloat16
+    # ``test_read_target_device_conversion`` used to live here. Its body was a
+    # byte-for-byte copy of ``test_read_bf16`` -- it passed no ``device`` and
+    # asserted only the dtype, so it could not fail: making ``to_device``
+    # return its input untouched (ignoring the requested device outright) left
+    # all 22 tests in this file green, while the same mutation failed 10 tests
+    # in tests/test_mps.py. Device placement needs real hardware and is covered
+    # there and in test_api.py / test_integration.py; a mocked ``cpp`` module
+    # cannot exercise it, so the duplicate is gone rather than left advertising
+    # coverage it never had (R2-053).

@@ -86,9 +86,12 @@ class DataView:
                 and abs(bzero - 2147483648.0) < tol
             ):
                 return _dtype("uint32")
-            # Identity integer storage with BLANK is read as scaled float+NaN.
-            if "BLANK" in self._header:
-                return _dtype("float32")
+            # Anything else with a scale or BLANK is the scaled-float read.
+            # BITPIX=64 + BZERO=2**63 is that path too: the storage keyword
+            # is int64, and reporting int64 here disagreed with read().
+            scaled = abs(bscale - 1.0) >= tol or abs(bzero) >= tol
+            if scaled or "BLANK" in self._header:
+                return _dtype("float64")
         return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:
@@ -136,7 +139,10 @@ class DataView:
                 return start, stop
             raise TypeError("Slice spec must be int or slice")
 
-        y1, y2 = _normalize_index(slice_spec[0], shape[0])
-        x1, x2 = _normalize_index(slice_spec[1], shape[1])
+        # (y, x) are the trailing FITS plane. On a cube, shape[0] is NAXIS3;
+        # bounding the window with it clips NAXIS2/NAXIS1 and still returns
+        # every higher plane.
+        y1, y2 = _normalize_index(slice_spec[0], shape[-2])
+        x1, x2 = _normalize_index(slice_spec[1], shape[-1])
 
         return cast("Tensor", self._handle.read_subset(self._index, x1, y1, x2, y2))

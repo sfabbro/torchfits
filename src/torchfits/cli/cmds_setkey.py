@@ -111,6 +111,7 @@ def _parse_hdus(spec: str, n_hdus: int) -> list[int]:
     if text in {"all", "*"}:
         return list(range(n_hdus))
     out: list[int] = []
+    seen: set[int] = set()
     for part in text.split(","):
         part = part.strip()
         if not part:
@@ -121,6 +122,12 @@ def _parse_hdus(spec: str, n_hdus: int) -> list[int]:
             raise UsageError(f"invalid HDU index: {part!r}") from exc
         if idx < 0 or idx >= n_hdus:
             raise UsageError(f"HDU index out of range: {idx} (file has {n_hdus})")
+        # Same rule as common.parse_hdu_list: a repeated index would plan the
+        # same card edits twice. The edits are idempotent today, but the plan
+        # length is what other commands turn into an output HDU count.
+        if idx in seen:
+            raise UsageError(f"duplicate HDU index in --hdu: {idx}")
+        seen.add(idx)
         out.append(idx)
     if not out:
         raise UsageError("--hdu must list indices or 'all'")

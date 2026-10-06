@@ -127,7 +127,8 @@ class FITSHeaderScale(FITSTransform):
     Parameters
     ----------
     bscale : float
-        FITS BSCALE keyword value.  Default 1.0.
+        FITS BSCALE keyword value.  Default 1.0.  Must be non-zero (a zero
+        scale flattens ``forward`` and makes ``inverse`` NaN).
     bzero : float
         FITS BZERO keyword value.  Default 0.0.
     state : str or DataState or None
@@ -156,6 +157,12 @@ class FITSHeaderScale(FITSTransform):
         state: DataState | str | None = None,
     ) -> None:
         self.bscale = float(bscale)
+        # A zero scale is the only divisor in the package with no floor:
+        # forward() collapses the frame to ``bzero`` and inverse() computes
+        # ``(x - bzero) / 0`` -- NaN for every pixel -- with no error.
+        # AffineTransform already refuses ``scale=0`` for exactly this reason.
+        if self.bscale == 0.0:
+            raise ValueError(f"FITSHeaderScale bscale must be non-zero, got {bscale!r}")
         self.bzero = float(bzero)
         self.state = as_state(state)
 
@@ -253,7 +260,8 @@ class FITSScaleColumns(FITSTransform):
     Parameters
     ----------
     scales : dict[str, tuple[float, float]]
-        Mapping of column name → (TSCAL, TZERO).
+        Mapping of column name → (TSCAL, TZERO).  A zero TSCAL is rejected
+        (it makes ``inverse`` NaN for that column).
     state : str or DataState or None
         Declared state of the ``forward()`` input, when it is not carried by a
         payload. A payload that carries its own state must agree with it;
@@ -276,6 +284,14 @@ class FITSScaleColumns(FITSTransform):
             for name, (ts, tz) in scales.items()
             if ts != 1.0 or tz != 0.0
         }
+        # Same degenerate divisor as FITSHeaderScale.bscale: TSCAL=0 makes
+        # forward() write a constant column and inverse() return NaN for it.
+        for name, (ts, _tz) in self.scales.items():
+            if ts == 0.0:
+                raise ValueError(
+                    f"FITSScaleColumns TSCAL for column {name!r} must be "
+                    f"non-zero, got {ts!r}"
+                )
         self.state = as_state(state)
 
     @classmethod

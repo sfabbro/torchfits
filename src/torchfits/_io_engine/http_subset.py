@@ -188,14 +188,29 @@ def locate_uncompressed_2d(url: str, hdu: int | str) -> dict[str, Any]:
                 raise HttpRangeUnsupported("bad NAXIS") from exc
             if naxis != 2:
                 raise HttpRangeUnsupported(f"NAXIS={naxis} (need 2)")
-            bitpix = int(cards["BITPIX"])
+            # r4a-08 applies to the *matched* HDU exactly as it does to the
+            # ones walked past: a missing/garbage BITPIX/NAXIS1/NAXIS2 makes
+            # the file Range-unsuitable so the caller falls back to a full-file
+            # CFITSIO read, and must never see a bare KeyError/ValueError that
+            # escapes the (HttpRangeUnsupported, HttpRangeNotSatisfied) catch
+            # in read_subset / SubsetReader.
+            try:
+                bitpix = int(cards["BITPIX"])
+                naxis1 = int(cards["NAXIS1"])
+                naxis2 = int(cards["NAXIS2"])
+                elem_bytes = _bitpix_elem_bytes(bitpix)
+                dtype = _torch_dtype(bitpix)
+            except HttpRangeUnsupported:
+                raise
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HttpRangeUnsupported(f"malformed image cards: {exc}") from exc
             return {
                 "data_offset": data_start,
                 "bitpix": bitpix,
-                "naxis1": int(cards["NAXIS1"]),
-                "naxis2": int(cards["NAXIS2"]),
-                "elem_bytes": _bitpix_elem_bytes(bitpix),
-                "dtype": _torch_dtype(bitpix),
+                "naxis1": naxis1,
+                "naxis2": naxis2,
+                "elem_bytes": elem_bytes,
+                "dtype": dtype,
             }
         offset = data_start + _padded_data_nbytes(_hdu_data_span(cards))
     raise HttpRangeUnsupported(f"HDU {hdu!r} not found in Range scan")

@@ -1651,3 +1651,175 @@ def test_read_without_metadata_still_omits_it(tmp_path):
     path = _meta_table_file(tmp_path, "nometa.fits")
     table = torchfits.table.read(path, hdu=1)
     assert _field_keys(table.schema) == []
+
+
+# ---------------------------------------------------------------------------
+# duckdb_query: the SQL-injection guards. Documented in the source as
+# "Prevent SQL injection by strictly enforcing exactly one SELECT or EXPLAIN
+# statement", and previously enforced by three raises that no test reached.
+# Deleting all three left the whole suite green (3417 passed).
+# ---------------------------------------------------------------------------
+
+
+def test_duckdb_query_rejects_a_multi_statement_payload(tmp_path):
+    """A trailing statement must not execute. Measured: with the guard removed,
+    ``con.sql("SELECT ...; CREATE TABLE pwned AS SELECT 1")`` creates the
+    table -- duckdb runs both statements, so the payload's second half lands.
+    """
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    duckdb = pytest.importorskip("duckdb")
+    path = _make_table_file()
+
+    payload = "SELECT COUNT(*) AS n FROM fits_table; CREATE TABLE pwned AS SELECT 1"
+    with pytest.raises(ValueError, match="exactly one SQL statement"):
+        torchfits.table.duckdb_query(path, payload, hdu=1, decode_bytes=True)
+
+    # The control: the same statement on its own is what the API is for.
+    ok = torchfits.table.duckdb_query(
+        path, "SELECT COUNT(*) AS n FROM fits_table", hdu=1, decode_bytes=True
+    )
+    table = ok.read_all() if hasattr(ok, "read_all") else ok
+    assert table.column("n").to_pylist() == [3]
+
+    # And the payload really would have executed on a connection that had the
+    # table registered -- so the rejection is the guard, not duckdb refusing.
+    con = duckdb.connect()
+    torchfits.table.to_duckdb(path, relation_name="fits_table", connection=con, hdu=1)
+    con.sql(payload)
+    names = {row[0] for row in con.execute("SHOW TABLES").fetchall()}
+    assert "pwned" in names, names
+
+
+@pytest.mark.parametrize("query", ["", "   ", None, 7, b"SELECT 1"])
+def test_duckdb_query_rejects_an_empty_or_non_string_query(query):
+    """The emptiness guard also covers a non-string, which would otherwise
+    reach ``query.strip()`` as an AttributeError from deep inside duckdb."""
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    path = _make_table_file()
+    try:
+        with pytest.raises(ValueError, match="non-empty SQL string"):
+            torchfits.table.duckdb_query(path, query, hdu=1, decode_bytes=True)
+    finally:
+        os.unlink(path)
+
+
+def test_duckdb_query_rejects_a_non_select_statement(tmp_path):
+    """One statement is not enough: it must be a SELECT or EXPLAIN.
+
+    ``CREATE TABLE x AS SELECT 1`` is a single statement, so the count guard
+    alone would wave it through.
+    """
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    path = _make_table_file()
+    try:
+        with pytest.raises(ValueError, match="SELECT or EXPLAIN"):
+            torchfits.table.duckdb_query(
+                path,
+                "CREATE TABLE made_by_query AS SELECT 1",
+                hdu=1,
+                decode_bytes=True,
+            )
+        # EXPLAIN is explicitly allowed -- it is read-only.
+        explained = torchfits.table.duckdb_query(
+            path, "EXPLAIN SELECT * FROM fits_table", hdu=1, decode_bytes=True
+        )
+        assert explained is not None
+    finally:
+        os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# _raw_column_to_numpy: the VLA offsets-buffer validators. This is the last
+# thing between a malformed offsets buffer coming off the native reader and a
+# NumPy array whose rows are wrong but whose shape is right. Deleting all six
+# guards left the whole suite green (3424 passed).
+# ---------------------------------------------------------------------------
+
+
+def _raw_vla(offsets, shape=(3,), nbytes=None, dtype="int32", values=None):
+    """A native raw-column dict with a caller-chosen offsets buffer."""
+    payload = np.arange(1, 7, dtype=np.int32).tobytes() if values is None else values
+    off = np.asarray(offsets, dtype=np.int64).tobytes()
+    return {
+        "kind": "vla",
+        "dtype": dtype,
+        "shape": tuple(shape),
+        "data": memoryview(bytearray(payload[: nbytes or len(payload)])),
+        "offsets": memoryview(bytearray(off)),
+    }
+
+
+def _unchecked_split(raw):
+    """The arithmetic the guards wrap, for showing what they prevent."""
+    off = np.frombuffer(raw["offsets"], dtype=np.int64)
+    flat = np.frombuffer(raw["data"], dtype=np.dtype(raw["dtype"]))
+    return [flat[int(a) : int(b)].tolist() for a, b in zip(off[:-1], off[1:])]
+
+
+def test_raw_vla_accepts_well_formed_offsets():
+    """Control. Without this the rejections below could pass by rejecting all."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    flat, offsets = _raw_column_to_numpy(_raw_vla([0, 2, 3, 6]))
+    assert flat.tolist() == [1, 2, 3, 4, 5, 6]
+    assert offsets.tolist() == [0, 2, 3, 6]
+    assert [flat[a:b].tolist() for a, b in zip(offsets[:-1], offsets[1:])] == [
+        [1, 2],
+        [3],
+        [4, 5, 6],
+    ]
+
+
+def test_raw_vla_offsets_must_start_at_zero():
+    """Measured consequence of dropping this guard: every row shifts by one and
+    the read returns [[2, 3], [4], [5, 6]] instead of [[1, 2], [3], [4, 5, 6]]
+    -- right shape, plausible values, no exception."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    raw = _raw_vla([1, 3, 4, 7])
+    with pytest.raises(ValueError, match="must start at zero"):
+        _raw_column_to_numpy(raw)
+    # Show the corruption the guard is standing in front of.
+    assert _unchecked_split(raw) == [[2, 3], [4], [5, 6]]
+
+
+def test_raw_vla_offsets_must_be_monotonic():
+    """Measured consequence: [[1, 2, 3, 4, 5], [], [3, 4, 5, 6]] -- the middle
+    row comes back empty and its neighbours overlap."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    raw = _raw_vla([0, 5, 2, 6])
+    with pytest.raises(ValueError, match="not monotonic"):
+        _raw_column_to_numpy(raw)
+    assert _unchecked_split(raw) == [[1, 2, 3, 4, 5], [], [3, 4, 5, 6]]
+
+
+def test_raw_vla_offsets_must_match_the_declared_row_count():
+    """shape says 3 rows, so the offsets buffer must hold 4 entries."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    with pytest.raises(ValueError, match="declared row count"):
+        _raw_column_to_numpy(_raw_vla([0, 2, 3], shape=(3,)))
+
+
+def test_raw_vla_values_buffer_must_match_the_offsets():
+    """The last offset promises 6 int32 values; 8 bytes cannot supply them."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    with pytest.raises(ValueError, match="raw VLA values buffer has 8 bytes"):
+        _raw_column_to_numpy(_raw_vla([0, 2, 3, 6], nbytes=8))
+
+
+def test_raw_vla_offsets_must_be_int64_aligned():
+    """A 20-byte buffer is a truncated offsets array. numpy would read it as
+    garbage; the guard names the problem instead."""
+    from torchfits._table.arrow_convert import _raw_column_to_numpy
+
+    off = np.array([0, 2, 3, 6], dtype=np.int64).tobytes()[:-4]
+    raw = _raw_vla([0, 2, 3, 6])
+    raw["offsets"] = memoryview(bytearray(off))
+    with pytest.raises(ValueError, match="int64-aligned"):
+        _raw_column_to_numpy(raw)

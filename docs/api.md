@@ -179,6 +179,18 @@ Each entry has a quick-path row and a reference page above.
 `TableHDURef.head(n)` treats a negative `n` as a count from the end of the
 current row window.
 
+Row windows, projections and batching share one contract:
+
+| Call | Rule |
+|---|---|
+| `TableHDURef(row_slice=...)`, `read(row_slice=...)`, `head()` | The window is normalized once by the shared rule, so `num_rows` / `len(ref)` accept **exactly** the windows `read()` accepts and refuse the rest with the same message: `start >= 0`, non-negative `stop`, `step == 1`, `(start, stop)` tuple |
+| `TableHDURef.select(cols)` / `TableHDURef(columns=...)` | `cols` must name at least one column. An empty list is refused with `ValueError` — the read path treats an empty projection as *unset*, so it cannot mean "no columns" |
+| `TableHDU.iter_rows(batch_size)` / `TableHDURef.iter_rows(batch_size)` | `batch_size >= 1`, else `ValueError: batch_size must be > 0` (both implementations, same message) |
+| `Header.update(other_header)` | Card-lossless: comments and repeated `HISTORY` / `COMMENT` lines are preserved, and a duplicated value keyword keeps its **first** occurrence. Mapping / card-sequence / keyword arguments are unchanged |
+| `TableHDU.num_rows` | Derived from the column data when the table has columns, else from the header's `NAXIS2`; the header-derived form tracks `Header` edits |
+| Long header string values | A value over 68 chars is stored as a `LONGSTRN` `&`+`CONTINUE` chain. `read_header(path, hdu)[key]`, `open(path)[hdu].header[key]` and `read_header_cards` return the **same** characters for every content — including a chain that looks numeric (`'1234…'`) or complex (`'(1.5,2.5)…'`). A `&` with no CONTINUE after it stays literal content |
+| `to_arrow` / `to_polars` `vla_policy` | `"list"` or `"drop"`, checked before the data is walked (so a typo is refused even for a table with no VLA column). `to_pandas` spells its own `"object"` / `"drop"` |
+
 ---
 
 ## Limitations

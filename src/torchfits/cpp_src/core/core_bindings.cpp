@@ -34,6 +34,13 @@ namespace {
 namespace c = torchfits::core;
 namespace d = torchfits::detail;
 
+// nanobind never releases the GIL on its own; every binding that wants it
+// released has to say so. The `Metadata` handle's accessors move the HDU cursor
+// and then ask CFITSIO, which is file I/O, and the module-level entry points
+// below already release it -- so the same read cost unrelated Python threads
+// roughly twice as much depending on which entry point you used.
+using ReleaseGIL = nb::call_guard<nb::gil_scoped_release>;
+
 nb::dict key_values_to_dict(const std::vector<c::KeyValue>& values) {
     nb::dict out;
     for (const auto& kv : values) {
@@ -90,20 +97,30 @@ NB_MODULE(_core, m) {
         "Axis order differs between two of the accessors on purpose: ``shape()``\n"
         "is row-major (NAXISn reversed), ``image_info()`` is FITS NAXISn order.\n"
         "See each method's docstring before mixing them.")
-        .def(nb::init<const std::string&>(), nb::arg("path"))          .def("num_hdus", &c::FitsReader::num_hdus)
-          .def("hdu_type", &c::FitsReader::hdu_type, nb::arg("hdu"))
+        .def(nb::init<const std::string&>(), nb::arg("path"), ReleaseGIL())
+          .def("num_hdus", &c::FitsReader::num_hdus, ReleaseGIL())
+          .def("hdu_type", &c::FitsReader::hdu_type, nb::arg("hdu"), ReleaseGIL())
           // Axis order is the one thing a caller cannot check for itself, so it
           // is stated on every accessor that hands back a shape.
           .def("shape", &c::FitsReader::shape, nb::arg("hdu"),
                "Row-major (torch order) shape: NAXISn reversed.\n\n"
                "This is the shape the tensor paths use. ``image_info()`` returns\n"
-               "the same dimensions in FITS NAXISn order instead.")
-          .def("bitpix", &c::FitsReader::bitpix, nb::arg("hdu"))
-        .def("nrows", &c::FitsReader::nrows, nb::arg("hdu"))
-        .def("colnames", &c::FitsReader::colnames, nb::arg("hdu"))
+               "the same dimensions in FITS NAXISn order instead.",
+               ReleaseGIL())
+          .def("bitpix", &c::FitsReader::bitpix, nb::arg("hdu"), ReleaseGIL())
+        .def("nrows", &c::FitsReader::nrows, nb::arg("hdu"), ReleaseGIL())
+        .def("colnames", &c::FitsReader::colnames, nb::arg("hdu"), ReleaseGIL())
+        // The four accessors below build a Python object inside the lambda, so
+        // they cannot use ReleaseGIL as a call guard -- that would run the
+        // nb::dict/nb::list construction without the GIL. They release it
+        // around the C++ call only, exactly as the module-level entry points do.
         .def("table_info",
              [](c::FitsReader& self, int hdu) {
-                 const c::TableInfo info = self.table_info(hdu);
+                 c::TableInfo info;
+                 {
+                     nb::gil_scoped_release release;
+                     info = self.table_info(hdu);
+                 }
                  nb::dict out;
                  out["nrows"] = static_cast<long long>(info.nrows);
                  out["colnames"] = info.colnames;
@@ -113,17 +130,33 @@ NB_MODULE(_core, m) {
              nb::arg("hdu"))
         .def("keywords",
              [](c::FitsReader& self, int hdu, const std::vector<std::string>& keys) {
-                 return key_values_to_dict(self.keywords(hdu, keys));
+                 std::vector<c::KeyValue> values;
+                 {
+                     nb::gil_scoped_release release;
+                     values = self.keywords(hdu, keys);
+                 }
+                 return key_values_to_dict(values);
              },
              nb::arg("hdu"), nb::arg("keys"))
         .def("header",
-             [](c::FitsReader& self, int hdu) { return header_cards_to_list(self.header(hdu)); },
+             [](c::FitsReader& self, int hdu) {
+                 std::vector<c::HeaderCard> cards;
+                 {
+                     nb::gil_scoped_release release;
+                     cards = self.header(hdu);
+                 }
+                 return header_cards_to_list(cards);
+             },
              nb::arg("hdu"))
-        .def("header_text", &c::FitsReader::header_text, nb::arg("hdu"))
-        .def("scale_info", &c::FitsReader::scale_info, nb::arg("hdu"))
+        .def("header_text", &c::FitsReader::header_text, nb::arg("hdu"), ReleaseGIL())
+        .def("scale_info", &c::FitsReader::scale_info, nb::arg("hdu"), ReleaseGIL())
         .def("image_info",
              [](c::FitsReader& self, int hdu) {
-                 const auto info = self.image_info(hdu);
+                 std::tuple<int, int, std::array<LONGLONG, 9>> info;
+                 {
+                     nb::gil_scoped_release release;
+                     info = self.image_info(hdu);
+                 }
                  const int naxis = std::get<1>(info);
                  const std::array<LONGLONG, 9>& naxes = std::get<2>(info);
                  nb::list dims;
@@ -137,8 +170,8 @@ NB_MODULE(_core, m) {
                "non-square HDU it is the transpose of ``shape()``. Callers that\n"
                "want a torch shape want ``shape()``; this one exists to report\n"
                "NAXISn as written, e.g. to compare against a header.")
-          .def("is_compressed_image", &c::FitsReader::is_compressed_image, nb::arg("hdu"))
-        .def("close", &c::FitsReader::close)
+          .def("is_compressed_image", &c::FitsReader::is_compressed_image, nb::arg("hdu"), ReleaseGIL())
+        .def("close", &c::FitsReader::close, ReleaseGIL())
         .def("closed", &c::FitsReader::closed)
         .def("__enter__", [](c::FitsReader& self) -> c::FitsReader& { return self; },
              nb::rv_policy::reference_internal)

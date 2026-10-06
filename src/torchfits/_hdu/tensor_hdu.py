@@ -115,6 +115,29 @@ class TensorHDU:
                 yield data[start : start + step]
             return
 
+        source = self._source_path
+        if not isinstance(source, str) or not source:
+            raise RuntimeError(
+                "TensorHDU.chunks() requires a file-backed HDU opened by "
+                "path (torchfits.open); in-memory handles are unsupported"
+            )
+        # SubsetReader windows NAXIS1/NAXIS2 only. On a cube the first torch
+        # axis is NAXIS3, so a y-band is not to_tensor()[start:stop].
+        # ponytail: a spectral slab reads the whole cube, then views it.
+        # An n-d subset would keep the bounded-memory path.
+        naxis = 0
+        if self._header is not None:
+            try:
+                naxis = int(self._header.get("NAXIS", 0))
+            except (TypeError, ValueError):
+                naxis = 0
+        if naxis >= 3:
+            data = self.to_tensor()
+            step = max(1, int(chunk_size[0])) if chunk_size else 64
+            for start in range(0, int(data.shape[0]), step):
+                yield data[start : start + step]
+            return
+
         with self._io_lock:
             if self._closed or self._file_handle is None:
                 raise RuntimeError(
@@ -122,12 +145,6 @@ class TensorHDU:
                 )
             import torchfits._C as cpp
 
-            source = self._source_path
-            if not isinstance(source, str) or not source:
-                raise RuntimeError(
-                    "TensorHDU.chunks() requires a file-backed HDU opened by "
-                    "path (torchfits.open); in-memory handles are unsupported"
-                )
             # Private reader per iteration protocol: never shares the
             # HDUList's underlying fitsfile* across threads (H1).
             reader = cpp.SubsetReader(source, int(self._hdu_index))

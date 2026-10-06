@@ -60,6 +60,24 @@ public:
     // the torch-linked extension and the torch-free metadata core map the same
     // file rather than each compiling their own copy of the mmap bookkeeping.
     TORCHFITS_CORE_API void cleanup();
+
+    // Give up ownership of the descriptor without closing it, for the
+    // open -> fstat -> validate -> mmap sequence: a guard has to own the fd
+    // from the moment it is opened (the validation step can throw, and a raw
+    // int on the stack is not closed by unwinding), but the mapping that
+    // finally owns it does not exist yet. Only valid on a handle constructed
+    // as an fd-only owner (ptr == nullptr) -- calling it on a mapped handle
+    // would strand the mapping. Returns the descriptor, or -1 if this handle
+    // does not own one.
+    int detach_fd() noexcept {
+        if (!owner) {
+            return -1;
+        }
+        owner = false;
+        const int released = fd;
+        fd = -1;
+        return released;
+    }
 };
 
 // Convenience wrappers that accept signed integer types commonly used in

@@ -9,6 +9,7 @@ from .common import (
     EXIT_OK,
     add_emit_format_args,
     add_hdu_arg,
+    compressed_image_geometry,
     emit_records,
     header_extname,
     hdu_type_name,
@@ -38,12 +39,20 @@ def _info_record(path: str, index: int, hdu: Any) -> dict[str, Any]:
         "type": hdu_type_name(header, hdu),
     }
     if record["type"] == "IMAGE":
-        shape = getattr(hdu, "shape_str", None)
-        dtype = getattr(hdu, "dtype_str", None)
-        if shape is not None:
-            record["shape"] = shape
-        if dtype is not None:
-            record["dtype"] = dtype
+        # A compressed image stores its geometry in ZNAXIS*/ZBITPIX; the
+        # plain NAXIS*/BITPIX (and therefore shape_str/dtype_str) describe
+        # the tile table, so prefer the Z cards when they are present.
+        geometry = compressed_image_geometry(header)
+        if geometry is not None:
+            record["shape"] = str(geometry[0])
+            record["dtype"] = geometry[1]
+        else:
+            shape = getattr(hdu, "shape_str", None)
+            dtype = getattr(hdu, "dtype_str", None)
+            if shape is not None:
+                record["shape"] = shape
+            if dtype is not None:
+                record["dtype"] = dtype
     elif record["type"] == "TABLE":
         nrows = header.get("NAXIS2")
         if nrows is not None:

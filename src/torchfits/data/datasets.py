@@ -216,7 +216,21 @@ def _resolve_paths(paths: str | list[str]) -> list[str]:
         if is_remote_url(paths):
             return [paths]
         paths = sorted(_glob.glob(paths)) or [paths]
-    return list(paths)
+    resolved = list(paths)
+    if not resolved:
+        # Both siblings already refuse an empty selection: ``_as_hdu_list``
+        # raises "hdu sequence must be non-empty" and ``from_bands`` raises
+        # "no image bands found". Accepting one here built a dataset with zero
+        # files, and whether that was noticed then depended on a flag the
+        # caller happened to pass: torch's ``RandomSampler`` rejects
+        # ``num_samples == 0``, so ``make_loader(..., shuffle=True)`` failed
+        # loudly -- but ``SequentialSampler`` does not check, so
+        # ``shuffle=False`` built a loader that yielded zero batches and no
+        # error at all. A str never reaches here: a non-matching glob falls
+        # back to the literal pattern above, so it fails at read time with a
+        # real path in the message.
+        raise ValueError("paths must be non-empty; got an empty list")
+    return resolved
 
 
 def _as_hdu_list(hdu: HduSpec) -> list[HduRef]:
@@ -230,6 +244,45 @@ def _as_hdu_list(hdu: HduSpec) -> list[HduRef]:
 
 def _arm_name(hdu: HduRef) -> str:
     return str(hdu)
+
+
+def _resolve_spectral_selection(
+    slice_index: int | None, spectral_slice: tuple[int, int] | None
+) -> tuple[int | None, tuple[int, int] | None]:
+    """Validate the two mutually exclusive leading-axis selectors.
+
+    Both cube peers used to carry a byte-identical copy of this logic, and both
+    copies validated ``spectral_slice`` (``0 <= start < stop``) while leaving
+    ``slice_index`` entirely unchecked. ``Tensor.select`` wraps a negative
+    index, so ``slice_index=-1`` silently returned the **last** channel of the
+    cube -- no error, wrong answer -- where ``spectral_slice=(-1, 2)``, six
+    lines away in the same constructor, refused with a ``ValueError``. One
+    helper, so the two peers cannot drift apart again.
+
+    Deliberately *not* checked here: whether a non-negative index is within
+    range. That needs the cube's depth, i.e. a header read, so it belongs at
+    access -- and it already lands there as ``IndexError``, which is this
+    class's existing convention for a bad index (``ds[99]`` raises
+    ``IndexError`` too). Raising ``ValueError`` for one and not the other
+    would be a new asymmetry rather than a fix.
+    """
+    if slice_index is not None and spectral_slice is not None:
+        raise ValueError("pass slice_index= or spectral_slice=, not both")
+    if slice_index is not None and slice_index < 0:
+        raise ValueError(
+            f"slice_index must be >= 0; got {slice_index!r}. A negative index "
+            "would silently select a channel from the far end of the cube "
+            "(spectral_slice refuses a negative start for the same reason)."
+        )
+    window: tuple[int, int] | None = None
+    if spectral_slice is not None:
+        start, stop = int(spectral_slice[0]), int(spectral_slice[1])
+        if start < 0 or stop <= start:
+            raise ValueError(
+                "spectral_slice must be (start, stop) with 0 <= start < stop"
+            )
+        window = (start, stop)
+    return slice_index, window
 
 
 def _local_read_path(
@@ -902,18 +955,9 @@ class FitsCubeDataset(FitsTensorDataset):
         add_channel_dim: bool = False,
         **kwargs: Any,
     ) -> None:
-        if slice_index is not None and spectral_slice is not None:
-            raise ValueError("pass slice_index= or spectral_slice=, not both")
-        if spectral_slice is not None:
-            start, stop = int(spectral_slice[0]), int(spectral_slice[1])
-            if start < 0 or stop <= start:
-                raise ValueError(
-                    "spectral_slice must be (start, stop) with 0 <= start < stop"
-                )
-            self.spectral_slice: tuple[int, int] | None = (start, stop)
-        else:
-            self.spectral_slice = None
-        self.slice_index = slice_index
+        self.slice_index, self.spectral_slice = _resolve_spectral_selection(
+            slice_index, spectral_slice
+        )
         super().__init__(paths, hdu=hdu, add_channel_dim=add_channel_dim, **kwargs)
 
     def __getitem__(self, idx: int) -> tuple[Any, torch.Tensor]:
@@ -1064,18 +1108,9 @@ class FitsCubeIterableDataset(FitsTensorIterableDataset):
         add_channel_dim: bool = False,
         **kwargs: Any,
     ) -> None:
-        if slice_index is not None and spectral_slice is not None:
-            raise ValueError("pass slice_index= or spectral_slice=, not both")
-        if spectral_slice is not None:
-            start, stop = int(spectral_slice[0]), int(spectral_slice[1])
-            if start < 0 or stop <= start:
-                raise ValueError(
-                    "spectral_slice must be (start, stop) with 0 <= start < stop"
-                )
-            self.spectral_slice: tuple[int, int] | None = (start, stop)
-        else:
-            self.spectral_slice = None
-        self.slice_index = slice_index
+        self.slice_index, self.spectral_slice = _resolve_spectral_selection(
+            slice_index, spectral_slice
+        )
         super().__init__(paths, hdu=hdu, add_channel_dim=add_channel_dim, **kwargs)
 
     def __iter__(self) -> Iterator[Any]:
@@ -1232,7 +1267,9 @@ class FitsSpectrumDataset(Dataset[Any]):
         ):
             if extra is not None:
                 names.append(extra)
-        cols = tf_table.read_torch(path, hdu=hdu, columns=names, device=self.device)
+        cols = tf_table.read_torch(
+            path, hdu=hdu, columns=names, device=self.device, mmap=self.mmap
+        )
         out: dict[str, torch.Tensor] = {"flux": self._to_1d(cols[self.column])}
         if self.ivar_column is not None:
             out["ivar"] = self._to_1d(cols[self.ivar_column])
@@ -1496,7 +1533,15 @@ class FitsStagedCutoutIterableDataset(IterableDataset[Any]):
     ) -> None:
         self.files = _resolve_paths(paths)
         self._url_counts = Counter(self.files)
-        self.cutouts_per_file = max(1, int(cutouts_per_file))
+        # Refuse, do not coerce. ``cutout_size`` two lines below already
+        # rejects its degenerate value, and ``max(1, ...)`` here made a
+        # dataset asked for zero cutouts per file hand back one per file
+        # instead -- silently, and with a ``__repr__`` that reported the
+        # coerced value as if it had been asked for.
+        requested_cutouts = int(cutouts_per_file)
+        if requested_cutouts < 1:
+            raise ValueError(f"cutouts_per_file must be >= 1; got {cutouts_per_file!r}")
+        self.cutouts_per_file = requested_cutouts
         if isinstance(cutout_size, int):
             self.cutout_size = (cutout_size, cutout_size)
         else:

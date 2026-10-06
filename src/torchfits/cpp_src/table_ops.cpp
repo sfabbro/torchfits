@@ -631,13 +631,55 @@ void delete_rows(const char* filename, int hdu_num, long start_row, long num_row
     }
 }
 
+namespace {
+
+// A payload this function rejects must leave the file exactly as it found it.
+// CFITSIO has no rollback and the caller closes the handle on the error path,
+// which flushes whatever was already written -- so validating a column as the
+// loop reaches it means every column before the offending one is already on
+// disk by the time the exception propagates. Measured: update_rows of
+// {A: 2x1 int32, B: 2x5 int32} onto two 'J' columns raised "repeat mismatch
+// for B" and left A holding the new values.
+//
+// So the write is split in two. The plan pass below is the original body with
+// each fits_write_col replaced by a recorded call: it resolves, converts and
+// validates every column and writes nothing. The commit pass then issues
+// those calls, and nothing it does can reject the payload -- a non-zero
+// CFITSIO status from there on is an I/O failure, which no writer in this
+// library rolls back.
+//
+// A PlannedWrite's `data` is owned by the enclosing PlannedColumn: a copied
+// buffer in `owned`, an ndarray kept alive in `sources`, or the `strings` of a
+// TSTRING payload, whose char* array is built during the commit pass precisely
+// so that no pointer is taken before the strings have stopped moving.
+struct PlannedWrite {
+    int typecode = 0;
+    int colnum = 0;
+    long first_row = 1;
+    long nelements = 0;
+    void* data = nullptr;
+};
+
+struct PlannedColumn {
+    std::vector<PlannedWrite> writes;
+    std::vector<std::vector<uint8_t>> owned;
+    std::vector<nb::ndarray<>> sources;
+    std::vector<std::string> strings;
+    bool is_string = false;
+};
+
+}  // namespace
+
 void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long num_rows) {
     // Write every column of tensor_dict into rows [start_row, start_row+num_rows)
     // of an already-open table HDU. The caller owns the handle and its
     // open/close; errors propagate as exceptions (the caller closes).
     int status = 0;
+    std::vector<PlannedColumn> plan;
+    plan.reserve(static_cast<size_t>(tensor_dict.size()));
 
     for (auto item : tensor_dict) {
+        PlannedColumn col;
         std::string col_name = nb::cast<std::string>(item.first);
         int colnum = 0;
         // CASEINSEN: see the name-resolution policy note above. Note that the
@@ -673,7 +715,7 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
 
             for (long row = 0; row < num_rows; ++row) {
                 if (seq[row].is_none()) {
-                    fits_write_col(fptr, base_type, colnum, start_row + row, 1, 0, nullptr, &status);
+                    col.writes.push_back({base_type, colnum, start_row + row, 0, nullptr});
                     continue;
                 }
                 nb::ndarray<> arr = nb::cast<nb::ndarray<>>(seq[row]);
@@ -709,8 +751,19 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                     data_ptr = logical.data();
                 }
 
-                fits_write_col(fptr, base_type, colnum, start_row + row, 1, nelements, data_ptr, &status);
+                void* planned_ptr = data_ptr;
+                if (!contig_buf.empty()) {
+                    col.owned.push_back(std::move(contig_buf));
+                    planned_ptr = col.owned.back().data();
+                }
+                col.sources.push_back(arr);
+                if (base_type == TLOGICAL && nelements > 0) {
+                    col.owned.push_back(std::move(logical));
+                    planned_ptr = col.owned.back().data();
+                }
+                col.writes.push_back({base_type, colnum, start_row + row, nelements, planned_ptr});
             }
+            plan.push_back(std::move(col));
             continue;
         }
 
@@ -793,15 +846,10 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
                     }
                     padded_str.push_back(std::move(row));
                 }
-                std::vector<const char*> ptrs_str;
-                ptrs_str.reserve(padded_str.size());
-                for (const auto& s : padded_str) {
-                    ptrs_str.push_back(s.c_str());
-                }
-                fits_write_col(
-                    fptr, TSTRING, colnum, start_row, 1, num_rows,
-                    const_cast<char**>(ptrs_str.data()), &status
-                );
+                col.strings = std::move(padded_str);
+                col.is_string = true;
+                col.writes.push_back({TSTRING, colnum, start_row, num_rows, nullptr});
+                plan.push_back(std::move(col));
                 continue;
             } else {
                 throw std::runtime_error("update_rows string column expects list/tuple/str for " + col_name);
@@ -817,14 +865,10 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
             // a single character.
             long width_chars = repeat > 1 ? repeat : width;
             std::vector<std::string> padded = pad_fits_strings(values, width_chars);
-            std::vector<const char*> ptrs;
-            ptrs.reserve(padded.size());
-            for (const auto& s : padded) {
-                ptrs.push_back(s.c_str());
-            }
-
-            fits_write_col(fptr, TSTRING, colnum, start_row, 1, num_rows,
-                           const_cast<char**>(ptrs.data()), &status);
+            col.strings = std::move(padded);
+            col.is_string = true;
+            col.writes.push_back({TSTRING, colnum, start_row, num_rows, nullptr});
+            plan.push_back(std::move(col));
             continue;
         }
 
@@ -911,15 +955,15 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
             // bits and ignores per-row byte padding when repeat % 8 != 0
             // (verified against astropy ground truth), so keep every call
             // within a single row.
+            col.owned.push_back(std::move(logical));
+            const unsigned char* logical_base = col.owned.back().data();
             for (long r = 0; r < num_rows; ++r) {
-                fits_write_col(
-                    fptr, TBIT, colnum, start_row + r, 1, repeat,
-                    logical.data() + static_cast<size_t>(r * repeat), &status
-                );
-                if (status != 0) {
-                    throw std::runtime_error("Failed to update BIT column rows");
-                }
+                col.writes.push_back({
+                    TBIT, colnum, start_row + r, repeat,
+                    const_cast<unsigned char*>(
+                        logical_base + static_cast<size_t>(r * repeat))});
             }
+            plan.push_back(std::move(col));
             continue;
         }
 
@@ -997,10 +1041,46 @@ void populate_rows(fitsfile* fptr, nb::dict tensor_dict, long start_row, long nu
             throw std::runtime_error("Unsupported dtype for update_rows");
         }
 
-        fits_write_col(fptr, fits_type, colnum, start_row, 1, nelements, data_ptr, &status);
+        void* planned_ptr = data_ptr;
+        if (fits_type == TLOGICAL) {
+            col.owned.push_back(std::move(logical_buffer));
+            planned_ptr = col.owned.back().data();
+        } else if (!contig_buf.empty()) {
+            col.owned.push_back(std::move(contig_buf));
+            planned_ptr = col.owned.back().data();
+        }
+        col.sources.push_back(tensor);
+        col.writes.push_back({fits_type, colnum, start_row, nelements, planned_ptr});
+        plan.push_back(std::move(col));
     }
 
-    if (status != 0) {
+    // Commit. Every column is resolved and converted by now, so nothing below
+    // can reject the payload: a non-zero status here is a CFITSIO I/O failure.
+    int commit_status = 0;
+    std::vector<const char*> ptrs;
+    for (const PlannedColumn& col : plan) {
+        if (col.is_string) {
+            ptrs.clear();
+            ptrs.reserve(col.strings.size());
+            for (const std::string& s : col.strings) {
+                ptrs.push_back(s.c_str());
+            }
+            const PlannedWrite& w = col.writes[0];
+            fits_write_col(fptr, w.typecode, w.colnum, w.first_row, 1,
+                           static_cast<long>(col.strings.size()),
+                           const_cast<char**>(ptrs.data()), &commit_status);
+            continue;
+        }
+        for (const PlannedWrite& w : col.writes) {
+            fits_write_col(fptr, w.typecode, w.colnum, w.first_row, 1,
+                           w.nelements, w.data, &commit_status);
+            if (commit_status != 0 && w.typecode == TBIT) {
+                throw std::runtime_error("Failed to update BIT column rows");
+            }
+        }
+    }
+
+    if (commit_status != 0) {
         throw std::runtime_error("Failed to update rows in FITS table");
     }
 }

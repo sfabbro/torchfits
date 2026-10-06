@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -67,6 +68,40 @@ def _manifest_path(installed: Path) -> Path:
     return installed.parent / MANIFEST.format(name=installed.name)
 
 
+def _under_root(path: Path) -> str:
+    """``path`` relative to the repo root, or absolute when it lies outside.
+
+    Both sides of a drift report need this. Guarding only the target, as the
+    original did behind a ``# pragma: no cover``, left ``source.relative_to``
+    unguarded -- so *reporting* drift raised ``ValueError`` instead of
+    printing it. That cannot happen for the real ``MIRRORS`` (every entry is
+    under ``ROOT``), which is exactly why it survived: the only way to reach it
+    is a test that points ``MIRRORS`` at a temporary tree, which is how this
+    function has to be tested at all.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _needs_copy(source: Path, target: Path) -> bool:
+    """True when the installed copy is missing, or differs in bytes or mode.
+
+    The mode is part of the comparison because `shutil.copy2` copies it: a
+    mirrored ``*.sh`` hook that lost its executable bit on the installed side
+    has byte-identical content, so a bytes-only check called it in sync and
+    `agent-home-check` exited 0. Executing that copy then raises
+    ``PermissionError: [Errno 13]``. Comparing the full permission bits matches
+    what the sync path actually writes.
+    """
+    if not target.is_file():
+        return True
+    if target.read_bytes() != source.read_bytes():
+        return True
+    return stat.S_IMODE(target.stat().st_mode) != stat.S_IMODE(source.stat().st_mode)
+
+
 def _read_manifest(root: Path) -> list[str]:
     path = _manifest_path(root)
     if not path.is_file():
@@ -103,7 +138,7 @@ def plan() -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
             rel = source.relative_to(canonical)
             present.add(rel.as_posix())
             target = installed / rel
-            if not target.is_file() or target.read_bytes() != source.read_bytes():
+            if _needs_copy(source, target):
                 copies.append((source, target))
         for rel_name in _read_manifest(installed):
             rel = Path(rel_name)
@@ -128,17 +163,13 @@ def main(argv: list[str] | None = None) -> int:
     copies, stale = plan()
     if args.check:
         for source, target in copies:
-            try:
-                rel = target.relative_to(ROOT)
-            except ValueError:  # pragma: no cover - target is always under ROOT
-                rel = target
             print(
-                f"drift: {rel} does not match {source.relative_to(ROOT)}",
+                f"drift: {_under_root(target)} does not match {_under_root(source)}",
                 file=sys.stderr,
             )
         for target, _ in stale:
             print(
-                f"drift: {target.relative_to(ROOT)} no longer exists in .cursor/",
+                f"drift: {_under_root(target)} no longer exists in .cursor/",
                 file=sys.stderr,
             )
         if copies or stale:

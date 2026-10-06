@@ -113,13 +113,17 @@ def _parse_read_options(
     return opts
 
 
-def _validate_single_path_params(
-    path: str, hdu: Any, device: str, mmap: bool | str, mode: str
+def _validate_read_params(
+    hdu: Any, device: str, mmap: bool | str, mode: str
 ) -> tuple[bool, bool]:
-    """Validate path/hdu/device/mmap/mode; return (force_image, force_table)."""
-    if not isinstance(path, str):
-        raise ValueError("Path must be a string or list of strings")
-    require_bz2_support(path)
+    """Validate hdu/device/mmap/mode; return (force_image, force_table).
+
+    Split out of :func:`_validate_single_path_params` because the list-of-paths
+    dispatch runs before that function is reached, and so used to apply none of
+    these checks: ``read([a, b], mode='bogus')`` returned data where
+    ``read(a, mode='bogus')`` raises. Every check here is per-request rather
+    than per-path, so a list can and must run them too.
+    """
     if isinstance(hdu, int) and hdu < 0:
         raise ValueError("HDU index must be a non-negative integer")
     validate_device(device)
@@ -131,6 +135,16 @@ def _validate_single_path_params(
     if mode not in {"auto", "image", "table"}:
         raise ValueError("mode must be 'auto', 'image', or 'table'")
     return mode == "image", mode == "table"
+
+
+def _validate_single_path_params(
+    path: str, hdu: Any, device: str, mmap: bool | str, mode: str
+) -> tuple[bool, bool]:
+    """Validate path/hdu/device/mmap/mode; return (force_image, force_table)."""
+    if not isinstance(path, str):
+        raise ValueError("Path must be a string or list of strings")
+    require_bz2_support(path)
+    return _validate_read_params(hdu, device, mmap, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +430,16 @@ def _read_batch_paths(
     takes no such option, and ``_parse_read_options`` rejects unknown
     keywords before this point, so a ``strict`` forwarded through ``kwargs``
     could never be anything but ``False``.
+
+    The list form runs the same per-request validation as a single path, and
+    takes the C++ fast path only for a plain whole-image read, so that mode,
+    column selection and row windows reach the per-file loop instead of being
+    dropped on the floor.
     """
+    force_image, force_table = _validate_read_params(hdu, device, mmap, mode)
+    if force_image and (columns is not None or start_row != 1 or num_rows != -1):
+        raise ValueError("mode='image' does not support table row/column options")
+
     hdu_batch = hdu
     if hdu_batch is None or (
         isinstance(hdu_batch, str) and hdu_batch.strip().lower() == "auto"
@@ -431,7 +454,26 @@ def _read_batch_paths(
     # The batch C++ fast path has no fp16/bf16/raw_scale support; route
     # around it so list inputs honor the same conversion contract as single
     # reads instead of silently returning differently-scaled data.
-    if mmap is True and not (fp16 or bf16 or raw_scale):
+    #
+    # It also has no notion of mode, column selection or a row window, and --
+    # measured -- it does not even fail on a BINTABLE: it returned a
+    # zero-length tensor, so the per-file fallback below never got the chance
+    # to produce the table the caller asked for. Every one of these returned a
+    # confident wrong answer instead:
+    #   read([t1, t2], columns=['A'])             -> Tensor(0,)   x2
+    #   read([i1, i2], mode='table')              -> Tensor(4, 4) x2
+    #   read([i1, i2], mode='image', columns=['A']) -> Tensor(4, 4) x2
+    #   read([i1, i2], return_header=True)         -> Tensor(4, 4) x2, no header
+    # Take it only for a plain whole-image read and let the per-file loop
+    # handle everything else, where it applies the full contract.
+    plain_image_read = (
+        not force_table
+        and not return_header
+        and columns is None
+        and start_row == 1
+        and num_rows == -1
+    )
+    if plain_image_read and mmap is True and not (fp16 or bf16 or raw_scale):
         for item_path in path:
             require_bz2_support(item_path)
         try:

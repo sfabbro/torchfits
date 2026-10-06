@@ -8,6 +8,8 @@
 #include <array>
 #include <tuple>
 #include <cstdint>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <ATen/ATen.h>
@@ -65,6 +67,20 @@ public:
 private:
     bool ensure_raw_fd(size_t required_end);
     void close_raw_fd();
+    // Identity of the file this handle opened, captured in the constructor.
+    // A handle is allowed to outlive the file it opened (open_subset_reader and
+    // a reused FITSFile both do), and the SharedReadMeta it publishes into is
+    // shared with every *other* reader, whose handles describe the file as it
+    // is now. Comparing the two is what keeps a stale handle from writing a
+    // replaced file's header into the slot the replacement owns.
+    void capture_open_identity();
+    // True when this handle still describes the generation shared_meta_ names.
+    // The caller holds shared_meta_->mutex.
+    bool owns_current_generation_locked() const;
+    void publish_image_info(
+        int hdu_num, const std::tuple<int, int, std::array<LONGLONG, 9>>& info) const;
+    void publish_scale(int hdu_num, const ScaleInfo& info) const;
+    void publish_compressed(int hdu_num, bool compressed) const;
     std::string filename_;
     int mode_;
     fitsfile* fptr_ = nullptr;
@@ -73,6 +89,10 @@ private:
     int raw_fd_ = -1;
     off_t raw_file_size_ = 0;
     bool raw_fd_ready_ = false;
+    bool open_identity_valid_ = false;
+    ino_t open_inode_ = 0;
+    off_t open_size_ = 0;
+    int64_t open_mtime_ns_ = 0;
     std::unordered_map<int, ScaleInfo> scale_cache_;
     std::unordered_map<int, bool> compressed_cache_;
     std::unordered_map<int, std::tuple<int, int, std::array<LONGLONG, 9>>> image_info_cache_;

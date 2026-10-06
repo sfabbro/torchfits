@@ -71,6 +71,12 @@ def test_read_batch_hdus_short_batch_result_falls_back_per_hdu():
         )
     assert len(out) == 2
     assert calls == [0, 1]
+    # ``fake_unified`` stamps each read with its own call ordinal, so this pins
+    # attribution and not merely the count: ``out[i]`` must be the read of
+    # ``hdu[i]``. Asserting only the length and the call order left a
+    # permutation of the results completely invisible -- which is the whole
+    # failure this contract exists to prevent (R2-052).
+    assert [float(t.reshape(-1)[0]) for t in out] == [1.0, 2.0]
 
 
 def _fallback_kwargs(cpp, handle, read_header, **overrides):

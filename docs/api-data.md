@@ -162,12 +162,26 @@ cubes = FitsCubeDataset("cubes/*.fits", hdu=0, slice_index=None)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `paths` | `str` or `list[str]` | *(required)* | File paths, glob, or HTTP(S) URLs |
-| `hdu` | `int` or `str` or `sequence` | `0` | Flux HDU(s); multi → channel stack |
+| `paths` | `str` or `list[str]` | *(required)* | File paths, glob, or HTTP(S) URLs; must select at least one file |
+| `hdu` | `int` or `str` or `sequence` | `0` | Flux HDU(s); multi → channel stack; must be non-empty |
 | `add_channel_dim` | `bool` | `True` (Image) / `False` (Cube) | Prepend channel dim for rank-2 payloads |
-| `slice_index` | `int` or `None` | `None` (`Cube` only) | Index the leading (spectral) axis after read |
+| `slice_index` | `int` or `None` | `None` (`Cube` only) | Index the leading (spectral) axis after read; must be `>= 0` |
 | `spectral_slice` | `(int, int)` or `None` | `None` (`Cube` only) | Half-open spectral/channel window on the leading axis; mutually exclusive with `slice_index` |
 | `ivar_hdu` / `mask_hdu` / `label_key` / `labels` / `transform` / `device` / `mmap` / `cache_dir` | — | see `FitsTensorDataset` | Passed through unchanged |
+
+!!! info "Empty selections are refused, not tolerated"
+    Every dataset in `torchfits.data` rejects a selection with nothing in it —
+    `paths must be non-empty`, `hdu sequence must be non-empty`,
+    `cutouts must be non-empty`. The reason is that an empty dataset does not
+    fail on its own: `make_loader(..., shuffle=True)` raises from torch's
+    `RandomSampler`, which validates `num_samples > 0`, but `shuffle=False` uses
+    `SequentialSampler`, which does not check — so before the guard the same
+    dataset under the same `make_loader` was either an error or a silent
+    zero-work training loop depending on one flag.
+
+    A **glob that matches nothing is not this case.** It keeps falling back to
+    the literal pattern, so it fails at read time with the path you actually
+    asked for in the message.
 
 **Returns per item:** same as `FitsTensorDataset` — `(payload, label)`.
 
@@ -408,6 +422,12 @@ ds = FitsTableIterableDataset(
 **Returns per item:** `dict[str, Tensor | Any]` — one row, or one chunk of
 `batch_size` rows when `as_batches=True`.
 
+Iterating the unfiltered dataset yields exactly as many rows as
+[`FitsTableDataset`](#fitstabledataset) reports `len` for the same file and
+HDU, including when every column is variable-length. A variable-length column
+arrives from `scan_torch` as a Python `list` rather than a tensor, so the
+per-chunk row count is read from tensor *or* list columns.
+
 !!! warning "where= performance"
     The ``where=`` path uses ``table.scan()`` which yields Arrow
     ``RecordBatch`` objects and converts each row to Python individually.
@@ -451,9 +471,17 @@ ds = FitsCutoutDataset(cutouts, transform=None, device="cpu")
 
 Accepts `(path, hdu, x, y, size)` or `(path, hdu, x1, y1, x2, y2)` tuples.
 
+Every spec must describe a window that actually selects pixels. The origin must
+be non-negative (`x1 >= 0`, `y1 >= 0`) and the half-open window must be
+non-empty (`x1 < x2` and `y1 < y2`); otherwise the constructor raises
+`ValueError`. A degenerate window is rejected at construction rather than
+yielding a 0-pixel tensor, because `fits_collate_fn` stacks such shapes without
+complaint and `make_loader` would hand a model a batch whose `numel()` is 0.
+A window whose *far* edge runs off the image is still clamped to the overlap.
+
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `cutouts` | `Sequence` | *(required)* | List of cutout specs |
+| `cutouts` | `Sequence` | *(required)* | Non-empty list of cutout specs; each must select at least one pixel |
 | `transform` | `callable` or `None` | `None` | Applied to each cutout tensor |
 | `device` | `str` | `"cpu"` | Torch device |
 | `add_channel_dim` | `bool` | `True` | Prepend channel dimension |
@@ -549,7 +577,7 @@ ds = FitsCubeIterableDataset(
 |---|---|---|---|
 | `paths` | `str` or `list[str]` | *(required)* | FITS file paths, glob, or URLs |
 | `hdu` | `int` or `str` or `sequence` | `0` | Primary datacube HDU(s) |
-| `slice_index` | `int` or `None` | `None` | Optional index along the leading channel/spectral axis |
+| `slice_index` | `int` or `None` | `None` | Optional index along the leading channel/spectral axis; must be `>= 0` (a negative index would silently pick a channel from the far end) |
 | `spectral_slice` | `(int, int)` or `None` | `None` | Half-open spectral window on the leading axis (mutually exclusive with `slice_index`) |
 | `transform` | `callable` or `None` | `None` | Applied to each payload |
 | `shuffle` | `bool` | `False` | Shuffle file order per epoch |
@@ -612,7 +640,7 @@ ds = FitsStagedCutoutIterableDataset(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `paths` | `str` or `list[str]` | *(required)* | Mosaic file paths or remote URLs |
-| `cutouts_per_file` | `int` | `100` | Number of cutouts to sample per mosaic |
+| `cutouts_per_file` | `int` | `100` | Number of cutouts to sample per mosaic; must be `>= 1` |
 | `cutout_size` | `int` or `tuple[int, int]` | `128` | Output cutout dimensions `(H, W)` |
 | `hdu` | `int` or `str` or `sequence` | `0` | Primary/flux HDU(s); sequence stacks channels |
 | `ivar_hdu` | `int` or `str` or `sequence` or `None` | `None` | Companion inverse variance HDU(s) |

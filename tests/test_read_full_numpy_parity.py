@@ -163,8 +163,8 @@ _EXPECTED_DTYPE = {
     "uint32_pack": np.uint32,
     "int8_signed": np.int8,
     "plain_int16": np.int16,
-    "scaled_int16": np.float32,
-    "blank_identity": np.float32,
+    "scaled_int16": np.float64,
+    "blank_identity": np.float64,
     "blank_uint16": np.uint16,
     "float32_ieee": np.float32,
     "float64": np.float64,
@@ -228,10 +228,10 @@ def test_sibling_cpp_readers_agree(parity_fixtures, name: str, mmap: bool) -> No
     )
 
 
-def test_blank_identity_promotes_to_nan_float32(parity_fixtures) -> None:
-    """blank-nulval: BLANK on a non-convention integer image -> float32 NaN."""
+def test_blank_identity_promotes_to_nan_float64(parity_fixtures) -> None:
+    """blank-nulval: BLANK on a non-convention integer image -> float64 NaN."""
     got = np.asarray(cpp.read_full_numpy(parity_fixtures["blank_identity"], 0, True))
-    assert got.dtype == np.float32
+    assert got.dtype == np.float64
     assert np.isnan(got[2, 3]) and np.isnan(got[5, 1])
     # Exactly the two BLANK pixels, (2,3) and (5,1), and no others. This used to
     # read `assert not np.isnan(got).sum() == got.size`, which parses as
@@ -292,11 +292,9 @@ def test_compressed_float32_ieee_bits_survive(tmp_path) -> None:
     )
 
 
-def test_image_scale_accumulation_is_float32_pinned(tmp_path):
-    """A-06 pin: image scale accumulation is float32 in 1.2.0 on every read
-    surface, with the scale actually applied. The 2.0 switch to float64 must
-    be deliberate (backlog entry); this test failing means the dtype moved
-    without the plan's re-baselining."""
+def test_image_scale_accumulation_is_float64(tmp_path):
+    """Scaled integer images accumulate in float64, so a BITPIX=32 value
+    above 2^24 survives. float32 rounded 16777217 to 16777216."""
     raw = np.array([[0, 1000, -1000]], dtype=np.int16)
     path = tmp_path / "scale_pin.fits"
     _write_raw_image(
@@ -312,23 +310,43 @@ def test_image_scale_accumulation_is_float32_pinned(tmp_path):
         ],
         raw,
     )
-    expected = np.array([[32768.0, 32868.0, 32668.0]], dtype=np.float32)
+    expected = np.array([[32768.0, 32868.0, 32668.0]], dtype=np.float64)
 
     got = np.asarray(cpp.read_full_numpy(str(path), 0, True))
-    assert got.dtype == np.float32 and got.dtype != np.float64
+    assert got.dtype == np.float64
     np.testing.assert_array_equal(got, expected)
 
-    assert torchfits.read_tensor(str(path), hdu=0, mmap=True).dtype == torch_float32()
+    assert torchfits.read_tensor(str(path), hdu=0, mmap=True).dtype == torch_float64()
     np.testing.assert_array_equal(
         torchfits.read_tensor(str(path), hdu=0, mmap=True).numpy(), expected
     )
     got_cached = np.asarray(cpp.read_full_numpy_cached(str(path), 0, False))
-    assert got_cached.dtype == np.float32
+    assert got_cached.dtype == np.float64
     np.testing.assert_array_equal(got_cached, expected)
     scaled_cpu = cpp.read_full_scaled_cpu(str(path), 0, True)
-    assert scaled_cpu.dtype == torch_float32()
-    assert scaled_cpu.dtype != torch_float64()
+    assert scaled_cpu.dtype == torch_float64()
     np.testing.assert_array_equal(scaled_cpu.numpy(), expected)
+
+    # Identity BSCALE plus BLANK still promotes, and must not round past 2^24.
+    big = tmp_path / "blank_i32.fits"
+    pixels = np.array([[16777216, 16777217, -999]], dtype=np.int32)
+    _write_raw_image(
+        big,
+        [
+            "SIMPLE  =                    T",
+            "BITPIX  =                   32",
+            "NAXIS   =                    2",
+            "NAXIS1  =                    3",
+            "NAXIS2  =                    1",
+            "BLANK   =                 -999",
+        ],
+        pixels,
+    )
+    promoted = torchfits.read_tensor(str(big), hdu=0)
+    assert promoted.dtype == torch_float64()
+    assert promoted[0, 0].item() == 16777216.0
+    assert promoted[0, 1].item() == 16777217.0
+    assert promoted[0, 2].isnan()
 
 
 def torch_float32():

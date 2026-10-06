@@ -320,7 +320,16 @@ def test_argparse_usage_errors_exit_2(matrix_env):
 
 
 def test_real_sigint_exit_130(matrix_env):
-    """Real SIGINT through the real signal handler: exit 130, never 2."""
+    """Real SIGINT through the real signal handler: exit 130, never 2.
+
+    Launch this suite in the **foreground**. A shell that starts a job with
+    ``&`` sets SIGINT to ``SIG_IGN`` in it, and ``SIG_IGN`` survives ``exec``,
+    so every subprocess inherits it -- the child below then ignores its own
+    SIGINT and exits 0. That is what made this test look like a flake in
+    whole-``tests/`` runs launched with ``nohup ... &``; measured here:
+    foreground SIGINT handler ``0x10286ca54``, background ``0x1`` (SIG_IGN).
+    The test itself is correct and is deliberately left unchanged.
+    """
     code = (
         "import os, signal, sys\n"
         "import torchfits.cli.cmds_info as ci\n"

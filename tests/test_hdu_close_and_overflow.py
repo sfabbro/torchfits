@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -44,39 +45,245 @@ def test_tensor_hdu_to_tensor_raises_after_close():
     handle.close.assert_not_called()
 
 
-def test_tensor_hdu_concurrent_close_does_not_call_cpp_after_close():
+@contextlib.contextmanager
+def _patched_cpp(side_effect=None):
+    """Yield a mock standing in for ``torchfits._C``.
+
+    ``import torchfits._C`` is what binds the extension as an attribute on the
+    package, and ``mock.patch`` needs that attribute to exist -- in a process
+    that never imported it, a bare ``mock.patch("torchfits._C")`` raises
+    AttributeError before the test body runs.
+    """
+    import torchfits._C  # noqa: F401  -- binds the attribute on the package
+
+    with mock.patch("torchfits._C") as cpp:
+        cpp.read_full.side_effect = (
+            side_effect
+            if side_effect is not None
+            else (lambda *a, **k: torch.zeros(2, 2))
+        )
+        yield cpp
+
+
+def test_close_before_read_never_reaches_cpp():
+    """close-first ordering: a refused read must not touch C++ at all.
+
+    ``to_tensor`` and ``mark_closed`` both hold ``_io_lock`` across their
+    whole body, so they are mutually exclusive. Once ``mark_closed`` has
+    returned, ``to_tensor`` must raise and must not have called ``read_full``.
+    """
     handle = mock.Mock()
     hdu = TensorHDU(file_handle=handle, hdu_index=0)
-    barrier = threading.Barrier(2)
+    closed_done = threading.Event()
     errors: list[BaseException] = []
 
     def reader() -> None:
-        barrier.wait()
+        if not closed_done.wait(10):
+            errors.append(AssertionError("closer never ran"))
+            return
         try:
-            import torchfits
-
-            if not hasattr(torchfits, "_C"):
-                torchfits._C = mock.Mock()
-            with mock.patch("torchfits._C") as cpp:
-                cpp.read_full.side_effect = lambda *a, **k: torch.zeros(2, 2)
-                try:
-                    hdu.to_tensor()
-                except RuntimeError:
-                    pass
-        except BaseException as exc:  # noqa: BLE001 — collect race outcomes
+            hdu.to_tensor()
+        except RuntimeError:
+            pass  # close won: the documented outcome
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
             errors.append(exc)
 
     def closer() -> None:
-        barrier.wait()
+        hdu.mark_closed()
+        closed_done.set()
+
+    with _patched_cpp() as cpp:
+        threads = [threading.Thread(target=reader), threading.Thread(target=closer)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+            assert not t.is_alive(), "close/read race deadlocked"
+        assert not errors, f"unexpected reader outcome: {errors!r}"
+        assert cpp.read_full.call_count == 0, (
+            "to_tensor reached C++ after mark_closed() returned: "
+            f"{cpp.read_full.call_args_list}"
+        )
+    assert hdu._closed
+
+
+def test_read_before_close_reaches_cpp_exactly_once():
+    """read-first ordering: the read happens once, and close still lands.
+
+    The reader holds the same lock ``to_tensor`` takes, so this ordering is
+    pinned rather than left to the scheduler.
+    """
+    handle = mock.Mock()
+    hdu = TensorHDU(file_handle=handle, hdu_index=0)
+    read_done = threading.Event()
+    errors: list[BaseException] = []
+
+    def reader() -> None:
+        try:
+            with hdu._io_lock:
+                hdu.to_tensor()
+                read_done.set()
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+            errors.append(exc)
+            read_done.set()
+
+    def closer() -> None:
+        if not read_done.wait(10):
+            errors.append(AssertionError("reader never ran"))
+            return
         hdu.mark_closed()
 
-    threads = [threading.Thread(target=reader), threading.Thread(target=closer)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert not errors
+    with _patched_cpp() as cpp:
+        threads = [threading.Thread(target=reader), threading.Thread(target=closer)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+            assert not t.is_alive(), "close/read race deadlocked"
+        assert cpp.read_full.call_count == 1, (
+            "the pre-close read must go through C++ exactly once: "
+            f"{cpp.read_full.call_args_list}"
+        )
+    assert not errors, f"unexpected reader outcome: {errors!r}"
     assert hdu._closed
+
+
+def test_tensor_hdu_concurrent_close_does_not_call_cpp_after_close():
+    """Unsynchronised close/read: no C++ read may follow ``mark_closed``.
+
+    The ordering here is deliberately left to the scheduler, so the lock is
+    exercised the way production hits it. The invariant asserted is the one
+    the two ordered tests above pin: a ``read_full`` observed after
+    ``mark_closed`` returned is a violation whichever interleaving made it.
+
+    The earlier version of this test built its ``cpp`` mock inside the reader
+    thread's ``with mock.patch(...)`` block, so the mock was unreachable once
+    that block exited and no assertion could have inspected it; the
+    ``RuntimeError`` from a correctly refused read was swallowed by the same
+    handler that swallowed every other outcome. It therefore passed while C++
+    was being called after close.
+    """
+    violations: list[str] = []
+
+    def one_round() -> None:
+        handle = mock.Mock()
+        hdu = TensorHDU(file_handle=handle, hdu_index=0)
+        barrier = threading.Barrier(2)
+        closed = threading.Event()
+        errors: list[BaseException] = []
+
+        def fake_read_full(*_a, **_k):
+            if closed.is_set():
+                violations.append("read_full called after mark_closed() returned")
+            return torch.zeros(2, 2)
+
+        def reader() -> None:
+            barrier.wait(10)
+            try:
+                hdu.to_tensor()
+            except RuntimeError:
+                pass  # close won: the documented outcome
+            except BaseException as exc:  # noqa: BLE001 — collected below
+                errors.append(exc)
+
+        def closer() -> None:
+            barrier.wait(10)
+            hdu.mark_closed()
+            closed.set()
+
+        with _patched_cpp(fake_read_full) as cpp:
+            assert cpp.read_full.side_effect is fake_read_full
+            threads = [
+                threading.Thread(target=reader),
+                threading.Thread(target=closer),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+                assert not t.is_alive(), "close/read race deadlocked"
+        assert not errors, f"unexpected reader outcome: {errors!r}"
+        assert hdu._closed
+
+    for _ in range(25):
+        one_round()
+    assert not violations, violations
+
+
+def test_no_cpp_read_starts_after_mark_closed_returns_mid_read():
+    """The interleaving a scheduler almost never produces, pinned on purpose.
+
+    ``guard_fits_path`` is called inside ``to_tensor``'s critical section,
+    between the closed-check and the ``read_full`` call -- exactly the window
+    in which a dropped lock would let a close slip past. Blocking there holds
+    the reader in that window:
+
+    * if ``to_tensor`` really holds ``_io_lock`` across its whole body, then
+      ``mark_closed`` cannot return until the read is over, so no ``read_full``
+      can start after it;
+    * if the lock is dropped, the close completes while the reader sits in the
+      window and the ``read_full`` that follows is a post-close read.
+
+    Racing the two threads never reaches this: the window is a couple of
+    bytecodes and the reader wins it every time, at every ``switchinterval``.
+    """
+    handle = mock.Mock()
+    hdu = TensorHDU(file_handle=handle, hdu_index=0, source_path="pinned.fits")
+    in_window = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    violations: list[str] = []
+    errors: list[BaseException] = []
+
+    def blocking_guard(_path: str) -> str:
+        in_window.set()
+        release.wait(10)
+        return _path
+
+    def fake_read_full(*_a, **_k):
+        if closed.is_set():
+            violations.append("read_full called after mark_closed() returned")
+        return torch.zeros(2, 2)
+
+    def reader() -> None:
+        try:
+            hdu.to_tensor()
+        except RuntimeError:
+            pass  # close won: the documented outcome
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+            errors.append(exc)
+
+    def closer() -> None:
+        hdu.mark_closed()
+        closed.set()
+
+    with (
+        _patched_cpp(fake_read_full),
+        mock.patch(
+            "torchfits._io_engine.paths.guard_fits_path", side_effect=blocking_guard
+        ),
+    ):
+        threads = [
+            threading.Thread(target=reader),
+            threading.Thread(target=closer),
+        ]
+        threads[0].start()
+        assert in_window.wait(10), "reader never reached the pinned window"
+        # The reader is inside the critical section; the close must be queued
+        # behind it, not run to completion.
+        threads[1].start()
+        assert not closed.wait(0.25), (
+            "mark_closed() returned while a read was in flight -- the read "
+            "critical section is not holding _io_lock"
+        )
+        release.set()
+        for t in threads:
+            t.join(10)
+            assert not t.is_alive(), "close/read race deadlocked"
+
+    assert not errors, f"unexpected reader outcome: {errors!r}"
+    assert not violations, violations
+    assert closed.is_set()
 
 
 def test_prefetch_error_surfaces_on_resolve(tmp_path, monkeypatch):

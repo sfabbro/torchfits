@@ -73,6 +73,28 @@ auto with_open(const std::string& path, F&& body) -> decltype(body(std::declval<
     return body(fptr);
 }
 
+// CFITSIO scopes an HDU-selector filter: opening "mef.fits[1]" parks the new
+// handle on an absolute HDU and treats it as the first HDU of the file. The
+// selector is 0-based -- measured on a PRIMARY/SCI/ERR/CAT file,
+// read("[0]")->PRIMARY, read("[1]")->SCI, read("[2]")->ERR, read("[3]")->CAT --
+// so start_hdu() is the absolute 1-based HDU the filter selected.
+inline int start_hdu(fitsfile* fptr) {
+    int selected = 1;
+    // fits_get_hdu_num is a 2-argument CFITSIO macro that supplies the status
+    // itself; every other caller in this tree uses that form.
+    if (fptr != nullptr) fits_get_hdu_num(fptr, &selected);
+    return selected > 0 ? selected : 1;
+}
+
+// Absolute 1-based HDU for a scope-relative index. FITSFile applies exactly
+// this offset for handle-based reads (fits_file.cpp:160, target_hdu =
+// hdu_num + start_hdu_), so the path-based probes have to match it: before
+// this, read("mef.fits[1]", hdu=0) returned SCI's pixels while
+// read_header/read_shape/read_colnames/read_nrows/read_hdu_type for the very
+// same path described PRIMARY, because they moved to absolute hdu + 1 and
+// discarded the position CFITSIO had already given them.
+inline int absolute_hdu(fitsfile* fptr, int hdu) { return hdu + start_hdu(fptr); }
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -357,7 +379,7 @@ int checked_num_hdus(fitsfile* fptr, int start_hdu) {
 std::vector<HeaderCard> header_cards_path(const std::string& path, int hdu) {
     return with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_header_dict: could not move to HDU");
         return header_cards(fptr);
     });
@@ -366,7 +388,7 @@ std::vector<HeaderCard> header_cards_path(const std::string& path, int hdu) {
 std::string header_text_path(const std::string& path, int hdu) {
     return with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_header_string: could not move to HDU");
         return d::drop_non_ascii_bytes(header_text(fptr));
     });
@@ -380,6 +402,11 @@ int num_hdus_path(const std::string& path) {
         if (meta->num_hdus >= 0) return meta->num_hdus;
     }
     const int num_hdus = with_open(path, [](fitsfile* fptr) {
+        // checked_num_hdus() seeks to `start_hdu + num_hdus - 1` to find the
+        // last HDU's byte extent, and fits_get_num_hdus() is absolute, so the
+        // last HDU of the *file* is num_hdus and 1 is the argument that lands
+        // on it. Passing the filter's start_hdu here instead would seek past
+        // the last HDU and silently skip the truncation check.
         return checked_num_hdus(fptr, 1);
     });
     if (meta) {
@@ -399,7 +426,7 @@ std::string hdu_type_path(const std::string& path, int hdu) {
     }
     const std::string hdu_type = with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_hdu_type: could not move to HDU");
         return hdu_type_name(fptr);
     });
@@ -422,7 +449,7 @@ long long nrows_path(const std::string& path, int hdu) {
     }
     const long nrows = with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_nrows: could not move to HDU");
         return table_nrows(fptr);
     });
@@ -443,7 +470,7 @@ std::vector<std::string> colnames_path(const std::string& path, int hdu) {
     }
     const std::vector<std::string> names = with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_colnames: could not move to HDU");
         return table_colnames(fptr);
     });
@@ -457,7 +484,7 @@ std::vector<std::string> colnames_path(const std::string& path, int hdu) {
 TableInfo table_info_path(const std::string& path, int hdu) {
     return with_open(path, [hdu](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_table_info: could not move to HDU");
         return table_info(fptr);
     });
@@ -467,7 +494,7 @@ std::vector<KeyValue> keywords_path(
     const std::string& path, int hdu, const std::vector<std::string>& keys) {
     return with_open(path, [&](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_keys: could not move to HDU");
         return read_keywords(fptr, keys);
     });
@@ -497,7 +524,7 @@ std::pair<int, std::vector<long>> image_shape_path(const std::string& path, int 
     }
     return with_open(path, [hdu, &path](fitsfile* fptr) {
         int status = 0;
-        fits_movabs_hdu(fptr, hdu + 1, nullptr, &status);
+        fits_movabs_hdu(fptr, absolute_hdu(fptr, hdu), nullptr, &status);
         if (status != 0) throw std::runtime_error("read_shape: could not move to HDU");
         int bitpix = 0;
         int naxis = 0;
@@ -570,6 +597,32 @@ void FitsReader::move_to(int hdu) {
 int FitsReader::num_hdus() {
     std::lock_guard<std::recursive_mutex> lock(io_mutex_);
     if (fptr_ == nullptr) throw std::runtime_error("FitsReader is closed");
+    // checked_num_hdus() moves the CFITSIO cursor to the last HDU as part of
+    // its truncation check, but this is a query: the caller asked how many
+    // extensions there are, not to be left on one. It also never wrote
+    // current_hdu_, so the cache claimed the handle was still where it was
+    // while CFITSIO sat on the last extension -- and move_to() skips
+    // fits_movabs_hdu when the cache matches, so the next read of that same
+    // HDU returned the last extension's data instead. Measured: on a 3-HDU
+    // file, shape(0) -> num_hdus() -> shape(0) answered (32, 32) both times,
+    // where HDU 0 is (8, 8). Silent, and no exception anywhere.
+    //
+    // The restore is an RAII guard so it also runs when the truncation check
+    // throws, which is the case where the handle would otherwise be left
+    // pointing somewhere the cache does not describe.
+    const int restore_to = current_hdu_ >= 0 ? current_hdu_ : start_hdu_;
+    struct RestoreCursor {
+        fitsfile* fptr;
+        int target;
+        int* cache;
+        ~RestoreCursor() {
+            int status = 0;
+            // On failure, forget the position: a stale cache is what caused
+            // this in the first place, and an unknown one forces the next
+            // accessor to move for real.
+            if (fits_movabs_hdu(fptr, target, nullptr, &status) != 0) *cache = -1;
+        }
+    } restore{fptr_, restore_to, &current_hdu_};
     return core::checked_num_hdus(fptr_, start_hdu_);
 }
 

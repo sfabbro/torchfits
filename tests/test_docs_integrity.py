@@ -49,7 +49,7 @@ def test_docs_reference_existing_local_files() -> None:
         "docs/migration_fitsio.md",
         "docs/migration_astropy.md",
         "examples/example_image.py",
-        "examples/example_image_cube.py",
+        "examples/example_cube.py",
         "examples/example_image_cutouts.py",
         "examples/example_image_dataset.py",
         "examples/example_data_catalogs.py",
@@ -1136,6 +1136,68 @@ def test_ci_release_gate_matches_local_release_gate() -> None:
         "the CI release-gate job no longer runs the docs-link check that "
         "`pixi run release-gate` ends with"
     )
+
+
+def test_docs_contract_gate_is_defined_once() -> None:
+    """The docs-contract file list must have exactly one home: `pixi.toml`.
+
+    `test_ci_release_gate_matches_local_release_gate` (above) holds the release
+    set together across two files. The docs-contract set had no such guard, and
+    it was worse than untested: it was written down **three** times, in
+    `pixi.toml`'s `docs-contract`, in the CI job of the same name, and again in
+    `scripts/ci_local.sh`, which spelled out the pytest command and the docs
+    build separately. All three happened to agree, and nothing was checking.
+
+    That is not hypothetical. Adding `tests/test_docs_snippets.py` to `pixi.toml`
+    and to the CI job -- both edits correct, both made in the same minute --
+    silently left `scripts/ci_local.sh` gating on the old two files. The
+    pre-existing `docs-contract` run stayed green, because the divergence was in
+    a file the gate does not read.
+
+    So the fix is two halves, and both are pinned here:
+
+    1. `scripts/ci_local.sh` no longer copies the list; it calls
+       `pixi run docs-contract`, which is the same task the CI job mirrors.
+    2. This test compares the two remaining copies, so the CI job cannot drift
+       from the pixi task the way the local script did.
+
+    `pixi run docs-contract` must keep naming `tests/test_docs_integrity.py` and
+    `tests/test_package_isolation.py` alongside whatever else is added: those two
+    are the contract's substance, and a task that quietly stopped running them
+    would still look like a gate.
+    """
+    tasks = tomllib.loads((ROOT / "pixi.toml").read_text(encoding="utf-8"))["tasks"]
+    pixi_files = set(re.findall(r"tests/\S+\.py", tasks["docs-contract"]))
+    assert pixi_files, "pixi's docs-contract names no test files; check is vacuous"
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for marker in ("\n  docs-contract:\n", "name: Docs integrity"):
+        assert marker in workflow, f"ci.yml no longer has {marker!r}"
+    job = workflow.split("\n  docs-contract:\n", 1)[1].split("\n  release-gate:", 1)[0]
+    ci_files = set(re.findall(r"tests/\S+\.py", job))
+
+    assert ci_files == pixi_files, (
+        "the CI docs-contract job and `pixi run docs-contract` must gate the "
+        f"same test files. Only in CI: {sorted(ci_files - pixi_files)}. "
+        f"Only in pixi: {sorted(pixi_files - ci_files)}"
+    )
+
+    # The local mirror must delegate, not restate: a fourth copy would bring the
+    # problem straight back.
+    ci_local = (ROOT / "scripts" / "ci_local.sh").read_text(encoding="utf-8")
+    assert not re.search(r"tests/\S+\.py", ci_local), (
+        "scripts/ci_local.sh names test files directly; it must call "
+        "`pixi run docs-contract` so the list has one home"
+    )
+    assert "pixi run docs-contract" in ci_local, (
+        "scripts/ci_local.sh no longer runs the docs contract"
+    )
+
+    for required in ("tests/test_docs_integrity.py", "tests/test_package_isolation.py"):
+        assert required in pixi_files, (
+            f"docs-contract stopped running {required}; the task still exists, "
+            "so nothing else would notice"
+        )
 
 
 def _cited_bench_runs(doc: str) -> list[str]:
