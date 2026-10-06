@@ -11,7 +11,7 @@ SRC="${TORCHFITS_WHEEL_SRC:-dist-local}"
 DEST="${TORCHFITS_WHEELS_DEST:-vos:sfabbro/torchfits-gpu-bench/wheels}"
 
 if ! command -v vcp >/dev/null; then
-  echo "vcp not found (vos 3.x CLI; e.g. /opt/astroai/venv/cadc/bin/vcp)" >&2
+  echo "vcp not found (vos 3.x CLI; e.g. /opt/canfar/bin/vcp)" >&2
   exit 1
 fi
 if [[ ! -d "${SRC}" ]]; then
