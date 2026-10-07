@@ -528,6 +528,11 @@ else()
             target_compile_options(
                 cfitsio PRIVATE ${_TORCHFITS_SANITIZER_COMPILE_OPTIONS})
         endif()
+        # Clang IPO stores LLVM bitcode in this static archive. torchfits_core
+        # links it with --whole-archive and is not itself built with LTO, so
+        # GNU ld rejects every member ("is not an object").
+        set_target_properties(cfitsio PROPERTIES
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
         if(TORCHFITS_NIOBUF)
             # CFITSIO reads this compile-time macro directly from fitsio.h.
             target_compile_definitions(cfitsio PRIVATE NIOBUF=${TORCHFITS_NIOBUF})
