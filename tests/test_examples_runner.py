@@ -392,6 +392,8 @@ def test_a_good_transfer_is_streamed_to_disk_and_committed(
     sample_data, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Positive control for the streaming fetch path."""
+    # CI sets this for the example runner. This test is the download path.
+    monkeypatch.delenv("TORCHFITS_EXAMPLE_FAST", raising=False)
     seen: dict[str, object] = {}
 
     def fake_urlopen(url, timeout=None):  # noqa: ANN001, ANN202

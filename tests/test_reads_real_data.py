@@ -90,6 +90,7 @@ def _mega_frame() -> Path:
     return max(MEGACAM, key=lambda p: core.read_num_hdus(str(p)))
 
 
+@needs_corpus
 def test_read_shape_matches_astropy_for_every_real_hdu() -> None:
     """All 409 (frame, HDU) geometries against astropy's own HDU shape.
 

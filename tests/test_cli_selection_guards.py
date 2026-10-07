@@ -42,6 +42,14 @@ from torchfits.cli.common import UsageError, hdu_type_name, parse_hdu_list
 EXIT_OK = 0
 EXIT_USAGE = 2
 
+
+def _stat(text: str, key: str) -> float:
+    for token in text.replace("\n", " ").split():
+        if token.startswith(f"{key}="):
+            return float(token.split("=", 1)[1])
+    raise AssertionError(f"{key} missing from {text!r}")
+
+
 # Helpers introduced by these guards (is_compressed_image_header,
 # compressed_image_geometry, cmds_cutout._plane_shape /
 # _check_box_intersects_image, cmds_setkey._parse_hdus) are imported inside
@@ -196,8 +204,13 @@ def test_stats_reports_statistics_for_a_compressed_image(compressed, image):
     # Same numbers as the uncompressed source (tile quantization only moves
     # the minimum by ~1e-9, so compare the robust statistics).
     plain = _run_cli("stats", image)
-    assert "max=10.0" in result.stdout and "max=10.0" in plain.stdout
-    assert "mean=5.0" in result.stdout and "mean=5.0" in plain.stdout
+    # float32 reduction prints 4.999999523162842, not the token "5.0".
+    assert _stat(result.stdout, "max") == pytest.approx(10.0)
+    assert _stat(plain.stdout, "max") == pytest.approx(10.0)
+    assert _stat(result.stdout, "mean") == pytest.approx(
+        _stat(plain.stdout, "mean"), rel=1e-5
+    )
+    assert _stat(result.stdout, "mean") == pytest.approx(5.0, rel=1e-5)
 
 
 def test_table_does_not_dump_the_internal_tile_columns(compressed):
