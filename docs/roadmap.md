@@ -129,9 +129,9 @@ Remaining, in order:
 ## Current focus
 
 - **Single-pass arena decode for buffered table reads.** Removes the
-  largest remaining significant benchmark deficits vs `fitsio` (narrow-table
-  full reads with `mmap=False`, 21–36% on CPU and 8% on CUDA, plus
-  `predicate_filter` on the `ascii_10000` catalog, 6.4% on CPU): decode
+  largest remaining significant Linux benchmark deficits vs `fitsio` (narrow-table
+  full reads with `mmap=False`, 21–22% on CPU and 13% on CUDA, plus
+  `predicate_filter` on the `ascii_10000` catalog, 15% on CPU): decode
   straight into caller-visible, strided tensors instead of staging whole rows
   in scratch chunks. An API-visible change targeted at the next minor. The
   authoritative numbers are in [Benchmarks](benchmarks.md#performance-deficits);

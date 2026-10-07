@@ -1,0 +1,5 @@
+TORCHFITS_BENCH_RUN_DIR=/scratch/torchfits-gpu-bench/exhaustive_cuda_20261007_203924
+TORCHFITS_BENCH_RUN_ID=exhaustive_cuda_20261007_203924
+TORCHFITS_BENCH_MODE=exhaustive
+TORCHFITS_BENCH_GIT=a8008173d11d3f82f7b5fa0f21d1ac57e8b4e55c
+TORCHFITS_ARC_URI=/arc/home/sfabbro/torchfits-gpu-bench/exhaustive_cuda_20261007_203924

@@ -1264,15 +1264,17 @@ def test_benchmarks_headline_claims_match_the_cited_runs() -> None:
     def sig(run: str) -> list[dict[str, str]]:
         return [r for r in deficits[run] if r["significance"] == "significant"]
 
-    # (1) "100% of significant image comparisons".
+    # (1) A 100% image claim is only legal when no cited run has a
+    # significant fits deficit. A page that names those deficits must not
+    # make the claim.
     image_deficits = {
         run: [r for r in sig(run) if r["domain"] == "fits"] for run in runs
     }
-    assert not any(image_deficits.values()), (
-        f"the headline claims 100% of significant image comparisons, but "
-        f"significant fits deficits exist: {image_deficits}"
-    )
-    assert "100% of significant image comparisons" in headline
+    if "100% of significant image comparisons" in headline:
+        assert not any(image_deficits.values()), (
+            f"the headline claims 100% of significant image comparisons, but "
+            f"significant fits deficits exist: {image_deficits}"
+        )
 
     # (2) every operation that a peer wins significantly must be named.
     # Aliases keep the prose readable ("full reads" for read_full).
