@@ -271,7 +271,10 @@ def test_write_quantize_robust_roundtrip_fitsio(parity_dir) -> None:
     assert "BSCALE" in header and "BZERO" in header
     fi = fitsio.read(str(path), ext=0)
     tf = torchfits.read(str(path), hdu=0)
-    _assert_exact(np.asarray(tf), fi, "quantize read-back torchfits vs fitsio")
+    got = np.asarray(tf)
+    # Scaled integer images accumulate in float64. fitsio still returns float32.
+    assert got.dtype == np.float64, got.dtype
+    _assert_exact(got.astype(np.float32), fi, "quantize read-back torchfits vs fitsio")
     scale = float(header["BSCALE"])
     lo, hi = float(header["BZERO"]), float(header["BZERO"]) + scale * 32766.0
     assert np.max(np.abs(fi - arr)) <= (hi - lo) / 2.0 + 1e-6
