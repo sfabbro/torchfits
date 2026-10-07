@@ -293,6 +293,18 @@ def test_check_writes_nothing(mirror):
 # --- the gate itself, end to end -------------------------------------------
 
 
+def test_absent_install_is_not_drift(tmp_path, monkeypatch):
+    """A clean checkout has no ``.agents`` tree. That is not drift."""
+    mod = _load()
+    canonical = tmp_path / ".cursor" / "skills"
+    installed = tmp_path / ".agents" / "skills"
+    canonical.mkdir(parents=True)
+    (canonical / "SKILL.md").write_text("hello\n")
+    monkeypatch.setattr(mod, "MIRRORS", ((canonical, installed),))
+    assert mod.main(["--check", "--quiet"]) == 0
+    assert not installed.exists()
+
+
 def test_the_real_mirrors_are_in_sync():
     """`agent-home-check` as CI runs it, against this repository."""
     rc = subprocess.run(

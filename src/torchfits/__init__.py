@@ -21,6 +21,10 @@ import threading
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+from torchfits._torch_libs import install as _install_torch_lib_preload
+
+_install_torch_lib_preload()
+
 __version__ = "1.2.0rc1"
 
 _NAMESPACES: dict[str, str] = {

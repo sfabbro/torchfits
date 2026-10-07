@@ -162,6 +162,26 @@ def main(argv: list[str] | None = None) -> int:
 
     copies, stale = plan()
     if args.check:
+        # An absent install is not drift. The copies are gitignored, so a clean
+        # checkout has neither tree; only a tree that was actually synced can
+        # go stale.
+        installed_roots = [installed for _, installed in MIRRORS]
+
+        def _installed_root(target: Path) -> Path | None:
+            for root in installed_roots:
+                try:
+                    target.relative_to(root)
+                except ValueError:
+                    continue
+                return root
+            return None
+
+        copies = [
+            pair
+            for pair in copies
+            if (root := _installed_root(pair[1])) is not None
+            and (root.exists() or _manifest_path(root).is_file())
+        ]
         for source, target in copies:
             print(
                 f"drift: {_under_root(target)} does not match {_under_root(source)}",

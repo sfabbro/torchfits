@@ -54,12 +54,31 @@ def _resolve_on_index(requirement: str) -> list[str] | None:
         text=True,
         check=False,
         cwd=REPO_ROOT,
+        env=_pip_report_env(),
     )
     if report.returncode != 0:
         return None
-    return [
-        entry["metadata"]["version"] for entry in json.loads(report.stdout)["install"]
-    ]
+    # CI sets FORCE_COLOR, and pip then wraps the report in ANSI. That is not JSON.
+    payload = _strip_ansi(report.stdout)
+    return [entry["metadata"]["version"] for entry in json.loads(payload)["install"]]
+
+
+def _pip_report_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("FORCE_COLOR", None)
+    env["NO_COLOR"] = "1"
+    env["PIP_NO_COLOR"] = "1"
+    return env
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def test_pip_report_color_is_still_json() -> None:
+    """FORCE_COLOR makes pip wrap ``--report`` JSON in ANSI escapes."""
+    colored = '\x1b[1m{\x1b[0m\n  \x1b[1;34m"install"\x1b[0m: []\n\x1b[1m}\x1b[0m\n'
+    assert json.loads(_strip_ansi(colored)) == {"install": []}
 
 
 def _wheel_lane_spec() -> str:
