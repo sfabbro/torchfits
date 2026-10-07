@@ -83,7 +83,8 @@ else
     INCONTAINER="scripts/canfar_gpu_bench_incontainer.sh"
   fi
   if [[ -n "${TORCHFITS_VOS_BUNDLE:-}" ]]; then
-    REMOTE_PLAIN="for d in /opt/canfar/bin /opt/astroai/venv/cadc/bin /opt/astroai/bin /usr/local/bin; do [ -x \$d/vcp ] && PATH=\$d:\$PATH && break; done; vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
+    # No $ or & here: Skaha rejects the session args as an illegal group reference.
+    REMOTE_PLAIN="/opt/astroai/venv/cadc/bin/vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   else
     REMOTE_PLAIN="git clone --depth 1 --branch ${GIT_REF} ${REPO_URL} ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   fi
