@@ -1871,7 +1871,9 @@ def test_every_documented_torchfits_command_parses() -> None:
     # leaves that section empty, so the floor is 0 until a new command lands
     # there; the released sections stay exempt on purpose.
     unreleased_at = changelog.find("## Unreleased")
-    unreleased_body = changelog[unreleased_at:first_release.start()] if unreleased_at != -1 else ""
+    unreleased_body = (
+        changelog[unreleased_at : first_release.start()] if unreleased_at != -1 else ""
+    )
     floors = (
         ("cli.md", 15),
         ("cli-recipes.md", 8),
