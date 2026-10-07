@@ -1867,16 +1867,20 @@ def test_every_documented_torchfits_command_parses() -> None:
                 )
     # Per-page floors rather than a total, so a scan that silently stops
     # reading a page fails here instead of quietly passing on the rest.
-    # changelog.md is counted from `## Unreleased` only, which is where its
-    # current-state commands live.
-    for name, floor in (
+    # changelog.md is counted from `## Unreleased` only. A stamped release
+    # leaves that section empty, so the floor is 0 until a new command lands
+    # there; the released sections stay exempt on purpose.
+    unreleased_at = changelog.find("## Unreleased")
+    unreleased_body = changelog[unreleased_at:first_release.start()] if unreleased_at != -1 else ""
+    floors = (
         ("cli.md", 15),
         ("cli-recipes.md", 8),
         ("quickstart.md", 5),
         ("index.md", 2),
         ("install.md", 1),
-        ("changelog.md", 1),
-    ):
+        ("changelog.md", 1 if "torchfits " in unreleased_body else 0),
+    )
+    for name, floor in floors:
         assert per_page.get(name, 0) >= floor, (
             f"only {per_page.get(name, 0)} documented commands were parsed out of "
             f"docs/{name} (expected >= {floor}); the scan regressed. "
