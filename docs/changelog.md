@@ -91,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - types: Check the native extension boundary instead of assuming it
 - core: Split a torch-free core library out of the torch-linked extension
 ### Fixed
+- `read_torch(where=)` no longer builds a Python index of every kept row
+  when the result columns are tensors. That list was only needed for
+  variable-length and string columns, and on a dense numeric filter it cost
+  more than the column read.
 - CANFAR bench fetches use the pixi `vos` client (`pixi run vcp`). The fetch
   script no longer asks for a user-site `pip install vos`.
 - The docs-contract gate was written down three times and nothing held the

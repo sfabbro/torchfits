@@ -138,6 +138,22 @@ def test_where_read_accepts_the_default_row_window(tmp_path):
     assert out["A"].tolist() == [2, 3, 4]
 
 
+def test_tensor_where_does_not_build_a_python_row_index(tmp_path, monkeypatch):
+    """A tensor-only filter must not call ``nonzero().tolist()``.
+
+    That list is only consumed by list columns. Building it for a dense
+    numeric filter was slower than the column read.
+    """
+    path = _write_plain_table(tmp_path / "t.fits")
+
+    def _refuse_index(self, *args, **kwargs):
+        raise AssertionError("tensor where built a python row index")
+
+    monkeypatch.setattr(torch.Tensor, "nonzero", _refuse_index)
+    out = torchfits.table.read_torch(path, where="A > 1")
+    assert out["A"].tolist() == [2, 3, 4]
+
+
 def test_where_read_accepts_a_zero_row_window(tmp_path):
     """Non-vacuity for the num_rows check.
 

@@ -361,11 +361,13 @@ def read_table(
         assert mask is not None
         keep_cols = list(columns) if columns is not None else list(data.keys())
         filtered: dict[str, Any] = {}
-        # Row-aligned list payloads (VLA / string lists) are gathered by index,
-        # exactly as the row window slices them in _apply_row_window: leaving
-        # them whole handed back a dict whose columns had different lengths
-        # (r2-019), which silently misaligns any downstream zip/stack.
-        keep_idx: list[int] = mask.nonzero().flatten().tolist()
+        # List payloads (VLA / strings) have no boolean index. Build the row
+        # list only when one is kept. Doing it for a tensor column threw the
+        # list away, and on a dense 1e5-row filter that list cost more than
+        # the column read.
+        keep_idx: list[int] | None = None
+        if any(isinstance(data.get(k), list) for k in keep_cols):
+            keep_idx = mask.nonzero().flatten().tolist()
         for k, v in data.items():
             if k not in keep_cols:
                 continue
@@ -377,6 +379,7 @@ def read_table(
                 # work) and keep read_torch's tensor contract.
                 filtered[k] = torch.as_tensor(v)[mask]
             elif isinstance(v, list):
+                assert keep_idx is not None
                 filtered[k] = [v[i] for i in keep_idx]
             else:
                 filtered[k] = v
