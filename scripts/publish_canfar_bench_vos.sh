@@ -10,7 +10,7 @@ vos_dest="${2:?usage: $0 <bench-out> <vos:user/path/run-id>}"
 
 if ! command -v vcp >/dev/null; then
   # astroai/base installs vos under its venv/bins, just not on PATH.
-  for d in /opt/astroai/venv/cadc/bin /opt/astroai/bin /opt/conda/bin /usr/local/bin; do
+  for d in /opt/canfar/bin /opt/astroai/bin /opt/conda/bin /usr/local/bin; do
     if [[ -x "${d}/vcp" ]]; then
       export PATH="${d}:${PATH}"
       break
