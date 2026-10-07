@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.2.0] — 2026-10-07
+
 ### Added
 - Real-observation **read** coverage (`tests/test_reads_real_data.py`): the
   reads of the same CFHT sample data are cross-checked against
@@ -756,7 +758,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`/tmp/[data]/f.fits`) is still not mistaken for one.
 
 
-
 - `table.update_rows` no longer invents rows. A `row_slice` that ran past the end
   of the table was accepted, and the write grew `NAXIS2` to fit it: measured on a
   6-row table, `update_rows(path, payload_of_6, slice(4, 10))` returned normally
@@ -791,7 +792,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stay in the generator bodies as well, which is deliberate: they also protect
   the internal recursive call from the `where=` branch. Scans stay lazy — the
   first batch is still not read until the caller asks for one.
-
 
 - A failed cutout fallback no longer leaves a `SubsetReader` permanently broken.
   When a live HTTP Range cutout stops being servable, `SubsetReader.read_subset`
@@ -3359,7 +3359,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/astroai/torchfits/compare/v1.1.1...v1.1.3
 [1.1.1]: https://github.com/astroai/torchfits/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/astroai/torchfits/compare/v1.0.0...v1.1.0

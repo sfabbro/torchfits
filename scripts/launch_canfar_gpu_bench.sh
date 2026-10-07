@@ -83,7 +83,7 @@ else
     INCONTAINER="scripts/canfar_gpu_bench_incontainer.sh"
   fi
   if [[ -n "${TORCHFITS_VOS_BUNDLE:-}" ]]; then
-    REMOTE_PLAIN="/opt/astroai/venv/cadc/bin/vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
+    REMOTE_PLAIN="/opt/canfar/bin/vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   else
     REMOTE_PLAIN="git clone --depth 1 --branch ${GIT_REF} ${REPO_URL} ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
   fi
