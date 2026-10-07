@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## [1.2.0] — 2026-10-07
+## [1.2.0rc1] — 2026-10-07
 
 ### Added
 - Real-observation **read** coverage (`tests/test_reads_real_data.py`): the
@@ -3359,8 +3359,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0rc1...HEAD
+[1.2.0rc1]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0rc1
 [1.1.3]: https://github.com/astroai/torchfits/compare/v1.1.1...v1.1.3
 [1.1.1]: https://github.com/astroai/torchfits/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/astroai/torchfits/compare/v1.0.0...v1.1.0

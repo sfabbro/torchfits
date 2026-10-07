@@ -18,7 +18,7 @@
 schema_version: 1
 
 context:
-  version: "1.2.0"
+  version: "1.2.0rc1"
   # Wheel ABI lane. Rendered from scripts/torch_lanes.json; do not widen
   # (libtorch_python has no stable C++ ABI across torch minors).
   torch_pin: ">=2.13,<2.14"
