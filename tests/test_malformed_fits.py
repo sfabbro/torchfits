@@ -12,6 +12,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 import torchfits  # noqa: E402
+import torchfits._cpp as cpp  # noqa: E402
 from astropy.io import fits as afits  # noqa: E402
 
 _READERS = [
@@ -213,7 +214,7 @@ def test_truncated_image_subset_raises_not_zeros(tmp_path):
 
     with pytest.raises((RuntimeError, OSError, ValueError)):
         torchfits.read_subset(path, 0, 0, 0, 8, 8)
-    fh_cpp = torchfits._cpp.open_fits_file(path, "r")
+    fh_cpp = cpp.open_fits_file(path, "r")
     try:
         with pytest.raises((RuntimeError, OSError, ValueError)):
             fh_cpp.read_subset(0, 0, 0, 8, 8)
