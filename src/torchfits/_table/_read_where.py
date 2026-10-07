@@ -56,6 +56,7 @@ def _tnull_in_tensor(tensor: Any, sentinel: Any) -> Any:
         return sentinel + 128
     return sentinel
 
+
 # NOTE: ceiling — full-table torch WHERE materializes all selected columns before
 # masking; above this row count fall through to chunked Arrow-filter instead.
 _TORCH_WHERE_MAX_ROWS = 1_000_000

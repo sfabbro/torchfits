@@ -584,12 +584,12 @@ def test_unsigned_tnull_does_not_wrap_onto_32768(tmp_path):
     hdu.header["TSCAL1"] = 1.0
     hdu.header["TNULL1"] = -32768
     hdu.writeto(path)
-    assert torchfits.table.read(path, hdu=1, where="V == 32768").column("V").to_pylist() == [
-        32768
-    ]
-    assert torchfits.table.read(path, hdu=1, where="V == 32769").column("V").to_pylist() == [
-        32769
-    ]
+    assert torchfits.table.read(path, hdu=1, where="V == 32768").column(
+        "V"
+    ).to_pylist() == [32768]
+    assert torchfits.table.read(path, hdu=1, where="V == 32769").column(
+        "V"
+    ).to_pylist() == [32769]
     assert torchfits.table.read(path, hdu=1, where="V IS NULL").num_rows == 1
 
 
