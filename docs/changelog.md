@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Docs
-- Benchmarks page cites the 2026-10-07 CPU, CUDA, and MPS runs
-  (`exhaustive_cpu_20261007_203905`, `exhaustive_cuda_20261007_203924`,
-  `exhaustive_mps_20261007_204350`).
-
 ## [1.2.0rc1] — 2026-10-07
 
 ### Added
@@ -1876,6 +1871,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture sets, so a `nulval` that leaked onto ordinary data fails.
 
 ### Docs
+- Benchmarks page cites the 2026-10-07 CPU, CUDA, and MPS runs
+  (`exhaustive_cpu_20261007_203905`, `exhaustive_cuda_20261007_203924`,
+  `exhaustive_mps_20261007_204350`).
 - Transform docs cover the data-state contract, companion `ivar`/`mask`
   propagation, the mask helpers, weighted statistics and the new transforms;
   the integer-input note now matches the promotions above. Data docs cover the
