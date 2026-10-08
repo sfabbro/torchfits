@@ -3368,8 +3368,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.1.3...HEAD
-[1.2.0rc1]: https://github.com/astroai/torchfits/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0rc1...HEAD
+[1.2.0rc1]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0rc1
 [1.1.3]: https://github.com/astroai/torchfits/compare/v1.1.1...v1.1.3
 [1.1.1]: https://github.com/astroai/torchfits/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/astroai/torchfits/compare/v1.0.0...v1.1.0
