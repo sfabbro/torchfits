@@ -201,8 +201,8 @@ class TestRealDataIntegration:
             try:
                 result, _ = torchfits.read(f.name, return_header=True)
 
-                # Should be automatically scaled to float64
-                assert result.dtype == torch.float64
+                # BITPIX=16 scale stays float32.
+                assert result.dtype == torch.float32
 
                 # Verify scaling is applied correctly
                 # The FITS standard applies scaling automatically during read
@@ -217,7 +217,7 @@ class TestRealDataIntegration:
 
                 # Verify the scaling was applied (data should be different from raw)
                 assert not torch.allclose(
-                    result, torch.from_numpy(raw_data.astype(np.float64))
+                    result, torch.from_numpy(raw_data.astype(np.float32))
                 )
 
             finally:

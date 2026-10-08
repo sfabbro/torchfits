@@ -87,11 +87,13 @@ class DataView:
             ):
                 return _dtype("uint32")
             # Anything else with a scale or BLANK is the scaled-float read.
-            # BITPIX=64 + BZERO=2**63 is that path too: the storage keyword
-            # is int64, and reporting int64 here disagreed with read().
+            # BITPIX=8/16 stay float32 (those codes are exact). BITPIX=32/64
+            # are float64 so values above 2^24 do not round. BITPIX=64 +
+            # BZERO=2**63 is that path too: the storage keyword is int64, and
+            # reporting int64 here disagreed with read().
             scaled = abs(bscale - 1.0) >= tol or abs(bzero) >= tol
             if scaled or "BLANK" in self._header:
-                return _dtype("float64")
+                return _dtype("float32" if bitpix in (8, 16) else "float64")
         return base
 
     def __getitem__(self, slice_spec: Any) -> Tensor:

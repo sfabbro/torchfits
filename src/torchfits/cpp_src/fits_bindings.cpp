@@ -620,6 +620,10 @@ torch::Tensor read_full_unmapped(const std::string& path, int hdu_num) {
                 dtype = torch::kUInt16; datatype = TUSHORT;
             } else if (unsigned_long) {
                 dtype = torch::kUInt32; datatype = TUINT;
+            } else if (bitpix == BYTE_IMG || bitpix == SHORT_IMG) {
+                // int8/int16 codes are exact in float32. int32/int64 are not:
+                // 16777217 rounds to 16777216.
+                dtype = torch::kFloat32; datatype = TFLOAT;
             } else {
                 dtype = torch::kFloat64; datatype = TDOUBLE;
             }
@@ -1825,6 +1829,11 @@ void bind_fits(nb::module_& m) {
                 dst = (void*) arr.data();
                 datatype = TUINT;
                 out = arr.cast();
+            } else if (bitpix == BYTE_IMG || bitpix == SHORT_IMG) {
+                auto arr = alloc_numpy_array<float>(shape);
+                dst = (void*) arr.data();
+                datatype = TFLOAT;
+                out = arr.cast();
             } else {
                 auto arr = alloc_numpy_array<double>(shape);
                 dst = (void*) arr.data();
@@ -2044,7 +2053,10 @@ void bind_fits(nb::module_& m) {
             scale_info = file.get_scale_info_for_hdu(hdu_num);
         }
         if (scale_info.scaled) {
-            tensor = tensor.to(torch::kFloat64);
+            const auto dt = tensor.dtype();
+            const bool wide = dt == torch::kInt32 || dt == torch::kInt64
+                || dt == torch::kUInt32 || dt == torch::kUInt64;
+            tensor = tensor.to(wide ? torch::kFloat64 : torch::kFloat32);
             if (scale_info.bscale != 1.0) {
                 tensor.mul_(scale_info.bscale);
             }

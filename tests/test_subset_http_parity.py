@@ -86,7 +86,7 @@ def test_blank_subset_is_nan_float_and_matches_full_read(tmp_path):
 
     full = torchfits.read(path, hdu=0)
     sub = torchfits.read_subset(path, 0, 1, 1, 5, 4)
-    assert sub.dtype == torch.float64
+    assert sub.dtype == torch.float32
     np.testing.assert_array_equal(sub.numpy(), full.numpy()[1:4, 1:5])
     assert np.isnan(sub.numpy()).sum() == 1  # only (2,3) falls in the window
     assert np.isnan(full.numpy()[0, 0]) and np.isnan(full.numpy()[3, 5])

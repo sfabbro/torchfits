@@ -193,7 +193,7 @@ PY examples/example_mef_header.py
 
 Auditing `examples/` this way is how the `where=`-filter leak was found, and
 the remaining `torchfits.open()` leak is recorded in
-[Roadmap](roadmap.md#12-the-torch-boundary-in-progress).
+[Roadmap](roadmap.md#next).
 
 ## Benchmarks
 

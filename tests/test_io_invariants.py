@@ -597,7 +597,7 @@ def test_dataview_dtype_blank_is_float(tmp_path: Path) -> None:
     hdu.writeto(path.as_posix(), overwrite=True)
     with torchfits.open(path.as_posix()) as hdul:
         view = hdul[0].data
-        assert view.dtype == torch.float64
+        assert view.dtype == torch.float32
         sl = view[:2, :2]
         assert sl.dtype.is_floating_point
         assert bool(torch.isnan(sl[1, 0]))

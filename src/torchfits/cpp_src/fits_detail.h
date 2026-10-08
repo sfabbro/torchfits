@@ -189,6 +189,9 @@ inline torch::Tensor read_tensor_canonical(
             dtype = torch::kUInt16; datatype = TUSHORT;
         } else if (unsigned_long) {
             dtype = torch::kUInt32; datatype = TUINT;
+        } else if (bitpix == BYTE_IMG || bitpix == SHORT_IMG) {
+            // int8/int16 codes are exact in float32. int32/int64 are not.
+            dtype = torch::kFloat32; datatype = TFLOAT;
         } else {
             dtype = torch::kFloat64; datatype = TDOUBLE;
         }

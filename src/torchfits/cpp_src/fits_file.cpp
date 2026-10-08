@@ -552,7 +552,9 @@ torch::Tensor FITSFile::read_subset(int hdu_num, long x1, long y1, long x2, long
     if (signed_byte_scaled) { dtype = torch::kInt8;  datatype = TSBYTE; }
     else if (unsigned_short) { dtype = torch::kUInt16; datatype = TUSHORT; }
     else if (unsigned_long) { dtype = torch::kUInt32; datatype = TUINT; }
-    else if (scaled) { dtype = torch::kFloat64; datatype = TDOUBLE; }
+    else if (scaled && (bitpix == BYTE_IMG || bitpix == SHORT_IMG)) {
+        dtype = torch::kFloat32; datatype = TFLOAT;
+    } else if (scaled) { dtype = torch::kFloat64; datatype = TDOUBLE; }
     else {
         switch (bitpix) {
             case BYTE_IMG:     dtype = torch::kUInt8;  datatype = TBYTE;      break;
@@ -993,6 +995,8 @@ void SubsetReader::init_from_hdu() {
                detail::is_unsigned_long_offset(scale.bzero)) {
         dtype_ = torch::kUInt32; datatype_ = TUINT; elem_bytes_ = 4;
         mmap_conv_ = MmapConv::UInt32;
+    } else if (scale.scaled && (bitpix == BYTE_IMG || bitpix == SHORT_IMG)) {
+        dtype_ = torch::kFloat32; datatype_ = TFLOAT; return;
     } else if (scale.scaled) {
         dtype_ = torch::kFloat64; datatype_ = TDOUBLE; return;
     } else {
