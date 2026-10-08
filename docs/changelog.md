@@ -97,8 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `site-packages/torch/lib`. Pip installs do not put that directory on the
   linker's default path, so `torchfits.open` and the CLI died with
   `libc10.so: cannot open shared object file` before reading the file. The
-  extension import maps those libraries by absolute path and still does not
-  import the `torch` Python package.
+  extension import uses torch's own loader when that import works, and maps
+  the libraries by absolute path when it does not.
 - `read_torch(where=)` no longer builds a Python index of every kept row
   when the result columns are tensors. That list was only needed for
   variable-length and string columns, and on a dense numeric filter it cost

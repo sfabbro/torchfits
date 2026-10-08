@@ -438,7 +438,9 @@ def test_cfitsio_direct_validation_survives_python_dash_O() -> None:
         fn = next(c for c in code.co_consts if getattr(c, "co_name", "") == "validate")
         assert any(
             "RAISE" in i.opname or "CALL" in i.opname
-            for i in __import__("dis").get_instructions(fn, show_caches=False)
+            for i in __import__("dis").get_instructions(
+                fn, **({} if sys.version_info < (3, 11) else {"show_caches": False})
+            )
         ), f"the raise disappeared at optimize={optimize}"
 
 

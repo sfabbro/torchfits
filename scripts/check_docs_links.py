@@ -162,9 +162,36 @@ def _probe(url: str) -> str | None:
         return str(exc)
 
 
+def _covered_by_this_build(url: str) -> bool:
+    """The live site and ``raw/main`` lag the commit under test.
+
+    A canonical URL or an edit link for a page this build just wrote is not a
+    broken link. A first-party URL that does not exist in the tree still is.
+    """
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if host in {"astroai.github.io", "www.astroai.github.io"}:
+        path = parts.path
+        base = _site_base_path()
+        if base and path.startswith(base):
+            path = path[len(base) :]
+        return _target_exists(SITE_DIR / path.lstrip("/"))
+    if host in {"github.com", "www.github.com"} and parts.path.startswith(
+        "/astroai/torchfits/"
+    ):
+        for marker in ("/raw/main/", "/blob/main/"):
+            if marker in parts.path:
+                return Path(parts.path.split(marker, 1)[1]).is_file()
+    return False
+
+
 def warn_external_links(external: list[str]) -> list[str]:
     """Probe externals. Return first-party HTTP 404s (hard failures)."""
     unique = sorted({url.split("#", 1)[0] for url in external})
+    covered = [url for url in unique if _covered_by_this_build(url)]
+    if covered:
+        print(f"  {len(covered)} first-party link(s) resolve in this build; not probed")
+    unique = [url for url in unique if url not in set(covered)]
     first_party_404: list[str] = []
     with ThreadPoolExecutor(max_workers=16) as pool:
         for url, result in zip(unique, pool.map(_probe, unique)):
