@@ -89,9 +89,6 @@ torchfits.table.read_torch(
     num_rows=-1,
     device="cpu",
     mmap="auto",
-    cache_capacity=10,
-    handle_cache_capacity=16,
-    fast_header=True,
     return_header=False,
     where=None,
 )
@@ -106,11 +103,10 @@ torchfits.table.read_torch(
 | `num_rows` | `int` | `-1` | Row count (`-1` = through end) |
 | `device` | `str` | `"cpu"` | `"cpu"`, `"cuda"`, `"mps"` |
 | `mmap` | `bool` or `str` | `"auto"` | `True` / `False` / `"auto"` (`"auto"` → mmap on) |
-| `cache_capacity` | `int` | `10` | Accepted, **ignored** |
-| `handle_cache_capacity` | `int` | `16` | Accepted, **ignored** |
-| `fast_header` | `bool` | `True` | Accepted, **ignored** |
 | `return_header` | `bool` | `False` | Also return the HDU `Header` |
 | `where` | `str` or `None` | `None` | Simple numeric filter (see below) |
+
+`cache_capacity`, `handle_cache_capacity`, and `fast_header` are ignored.
 
 **Returns:** `dict[str, torch.Tensor]` (scalar columns; VLA columns use
 list/tuple values), or `(dict, Header)` when `return_header=True`.

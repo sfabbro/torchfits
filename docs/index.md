@@ -5,9 +5,7 @@ title: FITS I/O for PyTorch Tensors and Tables
 
 <div class="tf-below" markdown>
 
-**`torchfits`** delivers high-performance FITS I/O for the modern Python data science and machine learning ecosystem. Powered by a native C++ engine with vendored CFITSIO, it decodes astronomical images directly to PyTorch GPU/CPU tensors, queries binary catalogs as Arrow tables with C++ predicate pushdown, reads survey cutouts without materializing full frames, and provides a full shell CLI.
-
-Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS (Apple Silicon arm64)** supporting **Python 3.10–3.14** (no C++ compiler or system libraries needed).
+**torchfits** reads and writes FITS files as PyTorch tensors and Arrow tables. Cutouts and `where=` filters do not have to load the whole file. Wheels for Linux (x86_64 and aarch64) and macOS Apple Silicon include CFITSIO, for Python 3.10–3.14. No compiler is required.
 
 ---
 
@@ -15,35 +13,35 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
 
 <div class="grid cards" markdown>
 
--   :material-lightning-bolt:{ .lg .middle } **C++ Engine & Vendored CFITSIO**
+-   :material-lightning-bolt:{ .lg .middle } **Install**
 
     ---
 
-    Decodes FITS structures at near-native C speed. Ships with CFITSIO vendored in prebuilt wheels — install and run with zero compiler setup.
+    The wheel includes CFITSIO. You do not need a compiler or a system FITS library.
 
     [:octicons-arrow-right-24: Installation Guide](install.md)
 
--   :material-memory:{ .lg .middle } **GPU Tensor Placement**
+-   :material-memory:{ .lg .middle } **Images**
 
     ---
 
-    Decode on the host, then place the result on CUDA or Apple Silicon unified memory in one call (`device="cuda"` / `"mps"`).
+    `torchfits.read` returns a tensor. `device="cuda"` or `"mps"` places it after the file is read.
 
     [:octicons-arrow-right-24: Core I/O Workflows](python-workflows.md#images-and-hdus)
 
--   :material-database-search:{ .lg .middle } **Arrow-Native Catalogs & SQL**
+-   :material-database-search:{ .lg .middle } **Tables**
 
     ---
 
-    Filter multi-million row catalogs with C++ pushdown predicates (`where="MAG < 20"`). Zero-copy where dtypes allow; integration with Polars, Pandas, and DuckDB.
+    `where="MAG < 20"` returns an Arrow table. Polars, Pandas, and DuckDB can read it.
 
     [:octicons-arrow-right-24: Table Workflows](python-workflows.md#tables-as-dataframes)
 
--   :material-telescope:{ .lg .middle } **Survey-Scale Cutouts & ML**
+-   :material-telescope:{ .lg .middle } **Cutouts**
 
     ---
 
-    Extract sub-regions and postage stamps from giant mosaics without RAM exhaustion. Native PyTorch `Dataset` and multi-worker `make_loader`.
+    Read a box from a large image without loading the rest. `Dataset` and `make_loader` feed a training loop.
 
     [:octicons-arrow-right-24: Machine Learning with FITS](examples-ml.md)
 
@@ -58,7 +56,7 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
     ```python
     import torchfits
 
-    # Read image directly onto GPU or CPU
+    # Read an image. device= places the tensor after the read.
     tensor = torchfits.read_tensor("science.fits", hdu="SCI", device="cuda")
     print(f"Loaded tensor on {tensor.device} with shape {tensor.shape}")
 
@@ -72,7 +70,6 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
     ```python
     import torchfits
 
-    # Fast C++ predicate pushdown into PyArrow Table
     table = torchfits.table.read(
         "catalog.fits",
         hdu=1,
@@ -80,13 +77,12 @@ Prebuilt binary wheels are available for **Linux (x86_64, aarch64)** and **macOS
         where="MAG_G < 20.0 AND CLASS_STAR > 0.8",
     )
 
-    # Convert to Polars or Pandas without data copies
     import polars as pl
 
     df = pl.from_arrow(table)
     ```
 
-=== "Rapid Survey Cutouts"
+=== "Cutouts"
 
     ```python
     import torchfits

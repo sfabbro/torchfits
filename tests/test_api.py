@@ -379,11 +379,13 @@ class TestMainAPI:
             shape=(64, 64), dtype=np.float64
         )
 
+        import torchfits._cpp as cpp
+
         try:
-            baseline = torchfits.cpp.read_full_raw(filepath, 0, False)
+            baseline = cpp.read_full_raw(filepath, 0, False)
             # Run multiple times to catch crashy regressions in this code path.
             for _ in range(20):
-                result = torchfits.cpp.read_full_unmapped_raw(filepath, 0)
+                result = cpp.read_full_unmapped_raw(filepath, 0)
                 torch.testing.assert_close(result, baseline)
             np.testing.assert_allclose(
                 baseline.numpy(), expected_data, rtol=1e-12, atol=0.0
@@ -393,10 +395,12 @@ class TestMainAPI:
 
     def test_cpp_unmapped_raw_reads_int64_image(self):
         """The raw reader supports FITS BITPIX=64 images."""
+        import torchfits._cpp as cpp
+
         filepath, expected_data = self.create_test_fits(shape=(7, 9), dtype=np.int64)
 
         try:
-            result = torchfits.cpp.read_full_unmapped_raw(filepath, 0)
+            result = cpp.read_full_unmapped_raw(filepath, 0)
             assert result.dtype == torch.int64
             np.testing.assert_array_equal(result.numpy(), expected_data)
         finally:

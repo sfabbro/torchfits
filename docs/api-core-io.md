@@ -193,7 +193,7 @@ torchfits.read_hdus(path, hdus, *, device="cpu", mmap=True, return_header=False)
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path` | `str` | *(required)* | FITS file path |
-| `hdus` | `list[int | str]` or `tuple[int | str, ...]` | *(required)* | Image HDU indices or EXTNAME strings |
+| `hdus` | `list[int or str]` or `tuple[int or str, ...]` | *(required)* | Image HDU indices or EXTNAME strings |
 | `device` | `str` | `"cpu"` | Target device |
 | `mmap` | `bool` | `True` | Request the eligible memory-mapped input path |
 | `return_header` | `bool` | `False` | Also return a parallel list of `Header` objects |

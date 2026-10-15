@@ -182,6 +182,16 @@ def _covered_by_this_build(url: str) -> bool:
         for marker in ("/raw/main/", "/blob/main/"):
             if marker in parts.path:
                 return Path(parts.path.split(marker, 1)[1]).is_file()
+        if parts.path.startswith("/astroai/torchfits/compare/"):
+            pyproject = Path("pyproject.toml")
+            if pyproject.is_file():
+                version = (
+                    tomllib.loads(pyproject.read_text(encoding="utf-8"))
+                    .get("project", {})
+                    .get("version")
+                )
+                if version and f"v{version}" in parts.path:
+                    return True
     return False
 
 

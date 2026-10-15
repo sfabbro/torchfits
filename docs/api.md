@@ -106,7 +106,7 @@ and [Transforms](api-transforms.md). Runnable scripts are indexed in
 | Survey mosaic staged cutouts | `FitsStagedCutoutIterableDataset(paths, cutouts_per_file=500)` | [Data](api-data.md#fitsstagedcutoutiterabledataset) |
 | DataLoader + cache defaults | `make_loader(dataset, batch_size=32)` | [Data](api-data.md#make_loader) |
 | Image stretches, normalizers, clip | `from torchfits.transforms import …` | [Transforms](api-transforms.md) |
-| Shell inspect / convert | `torchfits info|header|verify|…` | [CLI](cli.md) |
+| Shell inspect / convert | `torchfits info` / `header` / `verify` | [CLI](cli.md) |
 
 ---
 
@@ -132,14 +132,10 @@ and [Transforms](api-transforms.md). Runnable scripts are indexed in
 | `torchfits.table` | FITS table / dataframe I/O, mutation, interop |
 | `torchfits.data` | Dataset classes and loader factory |
 | `torchfits.transforms` | Transform classes |
-| `torchfits.cache` | Cache configuration and management |
+| `torchfits.cache` | Where downloaded files and sample data are stored |
 | `torchfits.where` | Predicate parser and evaluator |
-| `torchfits.cpp` | Low-level native compatibility surface |
 
-`torchfits.cpp` is the low-level native compatibility surface used by
-performance-sensitive downstream packages. Its `__all__` is the
-function-level compatibility contract; new compiled-extension symbols are
-private until promoted there.
+The compiled reader is not a public module. Use `read`, `table`, and `open`.
 
 ---
 

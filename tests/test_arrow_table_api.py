@@ -157,7 +157,7 @@ def test_arrow_cpp_backend_matches_default():
     pytest.importorskip("pyarrow")
     path = _make_table_file()
     try:
-        import torchfits.cpp as cpp
+        import torchfits._cpp as cpp
 
         if not hasattr(cpp, "read_fits_table_rows"):
             pytest.skip("cpp table backend not available")
@@ -880,7 +880,7 @@ def test_bit_and_vla_columns_readable():
 def test_cpp_vla_returns_flat_tuple():
     path = _make_bit_vla_table_file()
     try:
-        import torchfits.cpp as cpp
+        import torchfits._cpp as cpp
 
         chunk = cpp.read_fits_table_rows_numpy(path, 1, ["VLA"], 1, -1, False)
         assert "VLA" in chunk

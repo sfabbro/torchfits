@@ -211,7 +211,7 @@ class TestCaching:
 
     def test_cached_numpy_reads_survive_repeated_cache_clears(self):
         """Regression: cached numpy reads should remain stable across cache clears."""
-        cpp = pytest.importorskip("torchfits.cpp")
+        cpp = pytest.importorskip("torchfits._cpp")
         if not hasattr(cpp, "read_full_numpy_cached"):
             pytest.skip("read_full_numpy_cached unavailable in this build")
 
@@ -235,7 +235,7 @@ class TestCaching:
 
     def test_cached_multibyte_read_matches_nocache_reference(self):
         """Regression: cached mmap raw path must match the no-cache path exactly."""
-        cpp = pytest.importorskip("torchfits.cpp")
+        cpp = pytest.importorskip("torchfits._cpp")
         if not hasattr(cpp, "read_full_cached") or not hasattr(
             cpp, "read_full_nocache"
         ):

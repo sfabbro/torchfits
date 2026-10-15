@@ -35,7 +35,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 - **Apple Silicon (MPS):** Native `arm64` wheels for macOS leverage Metal Performance Shaders (`device="mps"`).
 - **Graceful Fallback:** CUDA-built environments run seamlessly on CPU-only machines via automatic CPU fallback.
 - **MPS dtype handling:** `device="mps"` (and `mps:N`) downcasts `float64 → float32` and `complex128 → complex64` before the host-to-device transfer because MPS has no native 64-bit float/complex. Each downcast emits a `UserWarning` (Python's default filter shows it once per call site): `MPS does not support float64; downcasting to float32 (precision loss)` and `MPS does not support complex128; downcasting to complex64 (precision loss)`. The result keeps its shape and lands on the requested device; CPU and CUDA paths keep 64-bit.
-- **Scale precision note:** Image BSCALE/BZERO scaling and `BLANK` promotion accumulate in `float64`. Values above 2^53 (and `BITPIX=64` magnitudes near 2^63) still cannot be exact in that dtype. Table `TSCAL`/`TZERO` on real columns is also `float64`. Native `BITPIX=-32` images stay `float32`.
+- **Scaled images:** A real `BSCALE`/`BZERO` on BITPIX=8 or 16 is read as float32. The same on BITPIX=32 or 64 is read as float64, so integers above 2^24 are not rounded. `BLANK` on a plain integer image uses that same float dtype so the blank pixel can be NaN. Signed-byte and unsigned integer conventions (`BZERO` of -128, 32768, or 2147483648 with `BSCALE=1`) stay integers. Native `BITPIX=-32` images stay float32. Table `TSCAL`/`TZERO` on real columns is float64.
 
 ### Known limitations
 
@@ -43,7 +43,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 - **Runtime env knobs:** every `TORCHFITS_*` variable the library reads, with its default and effect, is listed under [Environment variables](architecture.md#environment-variables). Those knobs are not a stable public API and may change without notice.
 - **`KMP_DUPLICATE_LIB_OK`:** importing `torchfits` runs `os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")` before PyTorch loads. macOS otherwise aborts when PyTorch's `libomp` and a second OpenMP runtime (Homebrew or conda) are both mapped. An existing value is left alone. See [Install](install.md) if you import `torch` first.
 - **CFITSIO DNS:** `http`/`https`/`ftp` paths are classified at guard time. Python fetches (`http_open`) dial the addresses from that lookup. A URL that CFITSIO opens itself is only checked then; the driver re-resolves the host afterwards (residual TOCTOU). Pinning those connections would need a custom CFITSIO driver and is not implemented.
-- **Legacy knobs:** `ReadOptions.handle_cache_capacity` and `clear_file_cache(handles=)` are deprecated no-ops retained for compatibility; the unified `SharedReadMeta` cache is the live shared cache. They will be removed in 2.0 (deprecation warning now).
+- **Ignored arguments:** `cache_capacity`, `handle_cache_capacity`, and `fast_header` on a table read do nothing. So does `handles=` on `clear_file_cache()`. Leave them out of new code.
 
 ---
 

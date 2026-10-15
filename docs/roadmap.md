@@ -4,12 +4,13 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 
 ## Where things stand
 
-**1.2.0rc1** (2026-10-07) is the current release, on PyTorch 2.13. It is a candidate, not the final 1.2.0. The [changelog](changelog.md) has the notes. The changes that matter for what you call:
+**1.2.0** (2026-10-14) is the current release, on PyTorch 2.13. The [changelog](changelog.md) has the notes. The changes that matter for what you call:
 
 - Header and metadata reads go through `libtorchfits_core` and do not load PyTorch.
 - Arrow reads of fixed columns and flat variable-length arrays do not import PyTorch. Tensor reads stay on `read_torch`.
 - Transforms can carry inverse-variance and masks, and they refuse to calibrate data that is already calibrated.
-- Scaled BITPIX=32 and 64 images are read as float64. Scaled BITPIX=8 and 16, including `quantize="robust"`, are float32. The 1.2.0rc1 wheels still return float64 for those 8- and 16-bit reads.
+- Scaled BITPIX=32 and 64 images are read as float64. Scaled BITPIX=8 and 16, including `quantize="robust"`, are float32.
+- The legacy `torchfits.cpp` module is removed; the native surface is internal (`torchfits._cpp`).
 
 **1.1** added checksummed writes, streaming `where=` filters, and the remote downloader. **1.0** (2026-08-09) was memory-mapped image reads, table filters, the datasets, and the CLI.
 

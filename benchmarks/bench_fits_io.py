@@ -626,11 +626,13 @@ class FITSBenchmarkSuite:
         payload_bytes = sum(plane[hdu] for hdu in ext_sequence)
 
         def torchfits_sequence():
-            handle = torchfits.cpp.open_fits_file(str(path), "r")
+            import torchfits._cpp as cpp
+
+            handle = cpp.open_fits_file(str(path), "r")
             try:
                 result = None
                 for hdu in ext_sequence:
-                    result = torchfits.cpp.read_full(handle, hdu, False)
+                    result = cpp.read_full(handle, hdu, False)
                 return result
             finally:
                 handle.close()

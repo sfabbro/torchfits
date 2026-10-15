@@ -577,7 +577,7 @@ def test_convert_parquet(table_fits, tmp_path):
 
 def test_convert_csv_tsv_arrow(table_fits, tmp_path):
     import pyarrow.csv as pacsv
-    import pyarrow.feather as feather
+    import pyarrow.ipc as paipc
 
     csv_out = tmp_path / "t.csv"
     tsv_out = tmp_path / "t.tsv"
@@ -595,7 +595,7 @@ def test_convert_csv_tsv_arrow(table_fits, tmp_path):
         ).num_rows
         == 3
     )
-    assert feather.read_table(arrow_out).num_rows == 3
+    assert paipc.open_file(arrow_out).read_all().num_rows == 3
 
 
 @pytest.fixture

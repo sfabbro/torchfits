@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.2.0] — 2026-10-14
+
+### Removed
+- `torchfits.cpp` legacy alias is removed. The native surface is private
+  (`torchfits._cpp`); user-facing code should use `torchfits.read`,
+  `torchfits.table`, and `torchfits.open`.
+
 ### Fixed
 - Scaled BITPIX=8 and BITPIX=16 images are read as float32. 1.2.0rc1 returned
   float64 for every scaled image that was not an integer convention. BITPIX=32
@@ -1509,7 +1516,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0rc1...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0
 [1.2.0rc1]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0rc1
 [1.1.3]: https://github.com/astroai/torchfits/compare/v1.1.1...v1.1.3
 [1.1.1]: https://github.com/astroai/torchfits/compare/v1.1.0...v1.1.1

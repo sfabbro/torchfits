@@ -74,10 +74,10 @@ def test_native_hdu_tensor_failure_is_not_replaced_by_empty_image(tmp_path):
         def to_tensor(self):
             raise RuntimeError("cannot materialize image")
 
+    import torchfits._cpp as cpp
+
     with pytest.raises(RuntimeError, match="cannot materialize image"):
-        torchfits.cpp.write_fits_file(
-            str(tmp_path / "broken.fits"), [BrokenHDU()], True
-        )
+        cpp.write_fits_file(str(tmp_path / "broken.fits"), [BrokenHDU()], True)
 
 
 def test_failed_overwrite_preserves_existing_file(tmp_path):

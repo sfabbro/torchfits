@@ -7,10 +7,10 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-FITS I/O for PyTorch: read and write FITS as tensors and tables — cutouts,
-predicate filters, and a shell CLI (C++ engine, vendored CFITSIO).
+Read and write FITS files as PyTorch tensors and Arrow tables. Cutouts,
+`where=` filters, and a shell CLI are included. CFITSIO is in the wheel.
 
-Prebuilt binary wheels for **Python 3.10–3.14** on **PyTorch 2.13.x** (ABI-matched wheels) — Linux (x86_64, aarch64) and macOS (Apple Silicon arm64), with vendored CFITSIO.
+Prebuilt wheels for **Python 3.10–3.14** and **PyTorch 2.13.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
 
 Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.github.io/torchfits/edge/) (`main` tip)
 

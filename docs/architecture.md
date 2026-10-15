@@ -211,18 +211,14 @@ Caches sit in three places:
 | Python I/O metadata | engine caches (via `clear_file_cache`) | Path-keyed header / meta / data LRU |
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
-The Python metadata layer is torch-free (Phases 0–1 below): `io.py` resolves the
-extension lazily, the HDU classes are module attributes resolved on first
-access, and dtype tags in `_hdu/dataview.py` are names rather than `torch.dtype`
-objects. The next architectural step moves the native inspection code behind a
-second module and removes the remaining dynamic libtorch dependency.
+Header and metadata probes go through `torchfits._core` and do not load
+PyTorch. `torchfits.open()` still loads the torch-linked reader, because the
+open file handle is shared with pixel reads.
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
 `clear_file_cache(...)` clears the I/O metadata layers only.
-`CacheConfig.max_files` / `max_memory_mb` and `configure_cpp_cache()` are
-documented no-ops (the C++ handle pool was removed; live shared state is
-SharedReadMeta). `clear_file_cache(handles=)` is ignored for the same
-reason — there is no shared `fitsfile*` pool.
+There is no shared pool of open FITS handles. `clear_file_cache()` drops
+cached header and scale metadata. `handles=` on that call does nothing.
 `clear_all_caches()` (or `clear_cache(disk=True)`) also removes on-disk
 roots under `cache_root()`. See
 [Cache Utilities](api-core-io.md#cache-utilities).
@@ -484,11 +480,13 @@ PyTorch build version) — see
 
 ---
 
-## C++ extension surface (`torchfits._C`)
+## C++ extension surface (`torchfits._C` & `torchfits._cpp`)
 
-The native module exports the following classes and functions. This surface
-is the stability contract — new symbols are private until promoted to
-`torchfits.cpp.__all__`.
+The native extension is internal. User-facing code should use `torchfits.read`,
+`torchfits.table`, and `torchfits.open`. Within the package, `torchfits._cpp` is
+the private stability boundary that wraps raw `torchfits._C` symbols with SSRF
+path guards — new native symbols remain private until promoted to
+`torchfits._cpp.__all__`.
 
 ### Type stub (`torchfits/_C.pyi`)
 
@@ -554,8 +552,7 @@ promises `torch.Tensor` fails the build.
 
 ### Cache functions
 
-`configure_cache`, `clear_file_cache`, `invalidate_file_cache`,
-`clear_shared_read_meta_cache`, `get_cache_size`
+`clear_shared_read_meta_cache`
 
 ### Utilities
 

@@ -25,12 +25,11 @@ from torchfits._torch_libs import install as _install_torch_lib_preload
 
 _install_torch_lib_preload()
 
-__version__ = "1.2.0rc1"
+__version__ = "1.2.0"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
     "cache": "torchfits.cache",
-    "cpp": "torchfits.cpp",
     "transforms": "torchfits.transforms",
     "data": "torchfits.data",
     "where": "torchfits.where",
@@ -214,8 +213,6 @@ def __getattr__(name: str) -> Any:
             return cached
 
         if name in _NAMESPACES:
-            if name == "cpp":
-                _ensure_runtime_init()
             value: Any = import_module(_NAMESPACES[name])
         elif name in _ROOT_FUNCTIONS:
             if name not in _METADATA_ROOT_FUNCTIONS:
@@ -239,7 +236,6 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from . import (
         cache as cache,
-        cpp as cpp,
         data as data,
         hdu as hdu,
         table as table,

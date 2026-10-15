@@ -292,9 +292,9 @@ def test_read_blocks_private_cfitsio_http_url():
     with pytest.raises(HttpBlockedError, match="private"):
         torchfits.table.scan_polars("http://127.0.0.1:9/x.fits")
     with pytest.raises(HttpBlockedError, match="private"):
-        torchfits.cpp.open_fits_file("http://127.0.0.1:9/x.fits", "r")
+        torchfits._cpp.open_fits_file("http://127.0.0.1:9/x.fits", "r")
     with pytest.raises(HttpBlockedError, match="private"):
-        torchfits.cpp.TableReader("http://127.0.0.1:9/x.fits", 1)
+        torchfits._cpp.TableReader("http://127.0.0.1:9/x.fits", 1)
 
 
 def test_guard_allows_public_network_url_for_cfitsio(monkeypatch):
