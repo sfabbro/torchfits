@@ -208,9 +208,6 @@ execute_process(
 # PyTorch's cuda.cmake (pulled in by find_package(Torch)) calls get_target_property on CUDA::nvrtc
 # before extension code runs. INTERFACE_LINK_LIBRARIES is read by PyTorch for nvrtc shorthash.
 if(TORCHFITS_PYTORCH_CUDA_VERSION AND NOT TARGET CUDA::nvrtc)
-    find_package(CUDAToolkit QUIET COMPONENTS nvrtc cudart)
-endif()
-if(TORCHFITS_PYTORCH_CUDA_VERSION AND NOT TARGET CUDA::nvrtc)
     set(_TORCHFITS_CUDA_LIB_HINTS "")
     foreach(_root IN ITEMS "${CUDAToolkit_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}" "$ENV{CUDA_HOME}" "$ENV{CUDA_PATH}")
         if(_root)
