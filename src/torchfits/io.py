@@ -59,9 +59,6 @@ _READ_EXC_TYPES = (
     RuntimeError,
     OSError,
     ValueError,
-    TypeError,
-    AttributeError,
-    MemoryError,
 )
 
 

@@ -283,3 +283,16 @@ def test_read_batch_paths_does_not_swallow_keyboardinterrupt():
             read_exc_types=io._READ_EXC_TYPES,
             logger=logger,
         )
+
+
+def test_read_batch_propagates_fatal_errors_unwrapped():
+    """Fatal programmatic errors must propagate unwrapped, even with strict=False (r1b-09)."""
+    from torchfits._io_engine import batch as batch_mod
+
+    read_func = mock.Mock(side_effect=TypeError("this is a type error"))
+    log = mock.Mock()
+
+    with pytest.raises(TypeError, match="this is a type error"):
+        batch_mod.read_batch(
+            read_func, io._READ_EXC_TYPES, log, ["a.fits"], strict=False
+        )
