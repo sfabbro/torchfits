@@ -140,24 +140,6 @@ def test_cache_manager_owns_private_config_copy():
     assert CacheConfig.for_environment().max_files != 123456
 
 
-def test_clear_cpp_attr_cache():
-    from torchfits._io_engine import _read_pipeline as rp
-
-    dummy = mock.Mock(spec=["present"])
-    assert rp._cpp_has(dummy, "present") is True
-    assert rp._cpp_has(dummy, "absent") is False
-    # Legacy cache was removed; _clear_cpp_attr_cache is gone or no-op.
-    if hasattr(rp, "_CPP_ATTR_CACHE"):
-        assert rp._CPP_ATTR_CACHE  # populated (legacy)
-        rp._clear_cpp_attr_cache()
-        assert rp._CPP_ATTR_CACHE == {}
-    else:
-        # No cache to clear — probe is stateless via hasattr.
-        assert not hasattr(rp, "_CPP_ATTR_CACHE") or rp._CPP_ATTR_CACHE == {}
-        if hasattr(rp, "_clear_cpp_attr_cache"):
-            rp._clear_cpp_attr_cache()
-
-
 def test_probe_returns_empty_on_missing_file():
     from torchfits._table import read as read_mod
 

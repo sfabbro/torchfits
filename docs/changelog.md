@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Fixed
-- Resolve table tnull mask, enforce raw bscale and quantize checks, clean dead native entry points and hasattr probes
-
 ## [1.2.1] — 2026-10-14
 
 ### Fixed
