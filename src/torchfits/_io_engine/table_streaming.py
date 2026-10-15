@@ -50,11 +50,6 @@ def stream_table(
 
     col_list = columns if columns else []
 
-    if not hasattr(cpp, "read_fits_table_rows"):
-        result = cpp.read_fits_table(file_path, hdu, col_list, mmap)
-        yield _squeeze_scalar_columns(result)
-        return
-
     header = None
     if total_rows is None:
         header = get_header_func(file_path, hdu)
@@ -131,7 +126,6 @@ def stream_table(
         and not scaled_columns
         and not vla_columns
         and not probe_failed
-        and hasattr(cpp, "read_fits_table_rows")
     ):
         while row <= total_rows:
             remaining = total_rows - row + 1
@@ -146,35 +140,22 @@ def stream_table(
             emitted += 1
             if max_chunks is not None and emitted >= max_chunks:
                 return
-    elif hasattr(cpp, "read_fits_table_rows_from_handle"):
+    elif mmap:
         file_handle = cpp.open_fits_file(file_path, "r")
         try:
-            reader = None
-            if hasattr(cpp, "TableReader"):
-                reader = cpp.TableReader(file_handle, hdu)
+            reader = cpp.TableReader(file_handle, hdu)
             while row <= total_rows:
                 remaining = total_rows - row + 1
                 size = min(chunk_rows, remaining)
-                if reader is not None:
-                    yield cast(
-                        Dict[str, Any],
-                        _squeeze_scalar_columns(reader.read_rows(col_list, row, size)),
-                    )
-                else:
-                    yield cast(
-                        Dict[str, Any],
-                        _squeeze_scalar_columns(
-                            cpp.read_fits_table_rows_from_handle(
-                                file_handle, hdu, col_list, row, size
-                            )
-                        ),
-                    )
+                yield cast(
+                    Dict[str, Any],
+                    _squeeze_scalar_columns(reader.read_rows(col_list, row, size)),
+                )
                 row += size
                 emitted += 1
                 if max_chunks is not None and emitted >= max_chunks:
                     return
         finally:
-            reader = None
             file_handle.close()
     else:
         # The raw mmap route is closed here (ASCII table, scaled columns, or a

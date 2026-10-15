@@ -611,8 +611,6 @@ def _try_cpp_where_pushdown(
 
     import torchfits._C as cpp
 
-    if not hasattr(cpp, "read_fits_table_filtered"):
-        return None
     filters = _compile_where_to_simple_predicates(where)
     if filters is None:
         return None

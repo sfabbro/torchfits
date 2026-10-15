@@ -283,16 +283,15 @@ def _resolve_hdu_index(
     # not pay a libtorch dlopen to reach the isinstance(hdu, int) branch above.
     import torchfits._C as cpp
 
-    if hasattr(cpp, "resolve_hdu_name_cached"):
-        try:
-            return int(cpp.resolve_hdu_name_cached(path, hdu))
-        except Exception as exc:
-            _log.debug(
-                "_resolve_hdu_index: resolve_hdu_name_cached(%r, %r) failed: %s",
-                path,
-                hdu,
-                exc,
-            )
+    try:
+        return int(cpp.resolve_hdu_name_cached(path, hdu))
+    except Exception as exc:
+        _log.debug(
+            "_resolve_hdu_index: resolve_hdu_name_cached(%r, %r) failed: %s",
+            path,
+            hdu,
+            exc,
+        )
 
     # Skinny fallback: probe EXTNAME only (no full header dump).
     # Missing EXTNAME (common on primary) must continue, not abort the scan.

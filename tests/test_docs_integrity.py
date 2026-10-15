@@ -988,10 +988,7 @@ def test_owed_behavior_notes_match_the_implementation() -> None:
     assert "KMP_DUPLICATE_LIB_OK" in compat
     assert "residual TOCTOU" in compat
     assert "float32" in compat and "float64" in compat
-
-    numpy_at = arch.find("`read_full_numpy`")
-    assert numpy_at != -1
-    assert "bitwise" in arch[numpy_at : numpy_at + 600]
+    assert "PyTorch ABI compatibility" in arch
 
     assert "three-valued" in tables
     assert "NaN" in tables

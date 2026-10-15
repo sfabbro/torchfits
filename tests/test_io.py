@@ -12,7 +12,6 @@ def mock_cpp():
         m_cpp.read_full.return_value = torch.zeros((10, 10))
         m_cpp.read_full_raw.return_value = torch.zeros((10, 10))
         m_cpp.read_full_unmapped_raw.return_value = torch.zeros((10, 10))
-        m_cpp.read_full_unmapped.return_value = torch.zeros((10, 10))
         m_cpp.read_full_nocache.return_value = torch.zeros((10, 10))
         m_cpp.read_hdus_batch.return_value = [
             torch.zeros((10, 10)),

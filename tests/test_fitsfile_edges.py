@@ -53,15 +53,6 @@ def _write_compressed_float(path, arr, algorithm):
 def _image_read_paths(path, hdu, width, height):
     return {
         "read_full": lambda: np.asarray(_cpp.read_full(str(path), hdu, True)),
-        "read_full_numpy": lambda: np.asarray(
-            _cpp.read_full_numpy(str(path), hdu, True)
-        ),
-        "read_full_numpy_cached": lambda: np.asarray(
-            _cpp.read_full_numpy_cached(str(path), hdu, True)
-        ),
-        "read_full_unmapped": lambda: np.asarray(
-            _cpp.read_full_unmapped(str(path), hdu)
-        ),
         "SubsetReader": lambda: np.asarray(
             _cpp.SubsetReader(str(path), hdu).read(0, 0, width, height)
         ),
@@ -197,10 +188,6 @@ def test_table_hdu_through_image_readers_raises(tmp_path):
     )
     with pytest.raises(RuntimeError):
         _cpp.read_full(str(path), 1, True)
-    with pytest.raises(RuntimeError):
-        _cpp.read_full_numpy(str(path), 1, True)
-    with pytest.raises(RuntimeError):
-        _cpp.read_full_unmapped(str(path), 1)
     with pytest.raises(RuntimeError):
         _cpp.SubsetReader(str(path), 1)
     with pytest.raises(RuntimeError):

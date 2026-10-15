@@ -32,10 +32,7 @@ class TableReaderHandle:
         if not isinstance(hdu, (int, str)):
             raise ValueError("hdu must be an integer or string")
         if isinstance(hdu, str):
-            if hasattr(cpp, "resolve_hdu_name_cached"):
-                hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
-            else:
-                raise ValueError("named HDUs require resolve_hdu_name_cached support")
+            hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
         if hdu < 0:
             raise ValueError("hdu must be a non-negative integer")
         self._path = path

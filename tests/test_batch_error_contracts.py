@@ -71,8 +71,3 @@ def test_read_hdus_batch_all_good_returns_all(batch_trio):
         n = len(hdul)
     out = cpp.read_hdus_batch(batch_trio[0], list(range(n)), True)
     assert len(out) == n
-
-
-def test_read_hdus_sequence_last_empty_raises(batch_trio):
-    with pytest.raises(RuntimeError):
-        cpp.read_hdus_sequence_last(batch_trio[0], [], True)

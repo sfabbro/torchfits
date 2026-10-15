@@ -209,30 +209,6 @@ class TestCaching:
                     os.unlink(f)
             torchfits.clear_file_cache()
 
-    def test_cached_numpy_reads_survive_repeated_cache_clears(self):
-        """Regression: cached numpy reads should remain stable across cache clears."""
-        cpp = pytest.importorskip("torchfits._cpp")
-        if not hasattr(cpp, "read_full_numpy_cached"):
-            pytest.skip("read_full_numpy_cached unavailable in this build")
-
-        file_a, _ = self.create_test_fits((257,))
-        file_b, _ = self.create_test_fits((33, 17))
-
-        try:
-            for i in range(300):
-                torchfits.clear_file_cache()
-                if i % 2 == 0:
-                    arr = cpp.read_full_numpy_cached(file_a, 0, True)
-                    assert arr.shape == (257,)
-                else:
-                    arr = cpp.read_full_numpy_cached(file_b, 0, True)
-                    assert arr.shape == (33, 17)
-        finally:
-            for path in (file_a, file_b):
-                if os.path.exists(path):
-                    os.unlink(path)
-            torchfits.clear_file_cache()
-
     def test_cached_multibyte_read_matches_nocache_reference(self):
         """Regression: cached mmap raw path must match the no-cache path exactly."""
         cpp = pytest.importorskip("torchfits._cpp")

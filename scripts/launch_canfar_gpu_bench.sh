@@ -33,7 +33,7 @@ case "${MODE}" in
     ;;
 esac
 RUN_ID="${TORCHFITS_BENCH_RUN_ID:-${DEFAULT_RUN_ID}}"
-IMAGE="${TORCHFITS_CANFAR_IMAGE:-astroai/base:latest}"
+IMAGE="${TORCHFITS_CANFAR_IMAGE:-images.canfar.net/astroai/base:latest}"
 # Empty TORCHFITS_CANFAR_GPU means "omit --gpu" (CPU session).
 if [[ -n "${TORCHFITS_CANFAR_GPU+x}" ]]; then
   GPU="${TORCHFITS_CANFAR_GPU}"

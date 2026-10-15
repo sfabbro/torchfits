@@ -27,10 +27,8 @@ from ._mutation_coerce import (
     _coerce_table_complex_values,
     _coerce_table_string_values,
     _coerce_table_vla_values,
-    _delete_column_rows,
     _ensure_dtype_maps,
     _infer_column_format_for_insert,
-    _merge_insert_column,
     _mutation_cache_barrier,
     _normalize_column_values_for_format,
     _normalize_mutation_rows,
@@ -246,7 +244,6 @@ def insert_rows(
     if not isinstance(row, int) or row < 0:
         raise ValueError("row must be a non-negative integer")
 
-    import torchfits
     import torchfits._C as cpp
 
     target_hdu, header_map, columns, tform_map = _resolve_table_hdu_index_and_columns(
@@ -271,16 +268,7 @@ def insert_rows(
 
     start_row = row + 1
     _mutation_cache_barrier(path)
-    if hasattr(cpp, "insert_fits_table_rows"):
-        cpp.insert_fits_table_rows(path, target_hdu, normalized, start_row)
-    else:
-        existing = _read_table_for_rewrite(path, target_hdu, columns)
-        rewritten: dict[str, Any] = {}
-        for name in columns:
-            rewritten[name] = _merge_insert_column(
-                existing[name], normalized[name], row
-            )
-        torchfits.replace_hdu(path, target_hdu, rewritten)
+    cpp.insert_fits_table_rows(path, target_hdu, normalized, start_row)
     _mutation_cache_barrier(path)
 
 
@@ -302,7 +290,6 @@ def delete_rows(
     if num_rows == 0:
         return
 
-    import torchfits
     import torchfits._C as cpp
 
     target_hdu, header_map, _columns, _tform_map = _resolve_table_hdu_index_and_columns(
@@ -321,16 +308,7 @@ def delete_rows(
         return
 
     _mutation_cache_barrier(path)
-    if hasattr(cpp, "delete_fits_table_rows"):
-        cpp.delete_fits_table_rows(path, target_hdu, start_row, num_rows)
-    else:
-        columns = _columns
-        existing = _read_table_for_rewrite(path, target_hdu, columns)
-        start0 = start_row - 1
-        rewritten: dict[str, Any] = {}
-        for name in columns:
-            rewritten[name] = _delete_column_rows(existing[name], start0, num_rows)
-        torchfits.replace_hdu(path, target_hdu, rewritten)
+    cpp.delete_fits_table_rows(path, target_hdu, start_row, num_rows)
     _mutation_cache_barrier(path)
 
 

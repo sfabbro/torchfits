@@ -427,3 +427,19 @@ def test_bytes_header_value_rejected_on_compressed_rewrite(tmp_path):
     )
     with pytest.raises(UnicodeDecodeError):
         replace_hdu(path, 0, bad, compress=True)
+
+
+def test_write_sequence_with_quantize_rejected(tmp_path):
+    """quantize= on multi-HDU sequences must raise QuantizeError, compressed or not."""
+    from torchfits._io_engine._write_helpers import QuantizeError
+
+    t1 = torch.ones(2, 2, dtype=torch.float32)
+    t2 = torch.zeros(2, 2, dtype=torch.float32)
+
+    p1 = str(tmp_path / "plain_seq.fits")
+    with pytest.raises(QuantizeError, match="not multi-HDU sequences"):
+        torchfits.write(p1, [t1, t2], quantize="lossless")
+
+    p2 = str(tmp_path / "comp_seq.fits")
+    with pytest.raises(QuantizeError, match="not multi-HDU sequences"):
+        torchfits.write(p2, [t1, t2], compress=True, quantize="lossless")

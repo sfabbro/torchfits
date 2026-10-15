@@ -242,6 +242,27 @@ def test_filter_unsigned_int16_pushdown(tmp_path):
         assert fallback == want, pred
 
 
+def test_filter_unsigned_int16_with_tnull(tmp_path):
+    """WHERE on uint16 with TNULL must convert negative sentinel to physical null.
+
+    Regression: table.read_torch compared raw sentinel (-32768) directly with
+    uint16 values, which wrapped to 32768, dropping real rows and keeping the null.
+    """
+    import torchfits.table as table
+
+    path = str(tmp_path / "uint16_null.fits")
+    raw = np.array([-32768, 0, -32763, -32668], dtype=np.int16)
+    col = fits.Column(name="a", format="1I", bzero=32768, null=-32768, array=raw)
+    hdu = fits.BinTableHDU.from_columns([col])
+    hdu.writeto(path)
+
+    t_arrow = table.read(path, where="a >= 0")
+    assert t_arrow["a"].to_pylist() == [32768, 32773, 32868]
+
+    t_torch = table.read_torch(path, where="a >= 0")
+    assert t_torch["a"].tolist() == [32768, 32773, 32868]
+
+
 def test_filter_unsigned_int32_pushdown(tmp_path):
     """WHERE on uint32 (TZERO=2**31) columns must compare physical values."""
     import torchfits.table as table

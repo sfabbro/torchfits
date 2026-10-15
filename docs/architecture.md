@@ -522,12 +522,9 @@ promises `torch.Tensor` fails the build.
 ### Image functions
 
 `read_full` (3 overloads), `read_full_cached`, `read_full_nocache`,
-`read_full_unmapped`, `read_full_unmapped_raw`, `read_full_raw`,
-`read_full_raw_with_scale`, `read_full_scaled_cpu`,
-`read_full_numpy`, `read_full_numpy_cached`
-(bitwise match of `read_tensor(...).numpy()`, including unsigned
-`BZERO` conventions that stay integers),
-`read_images_batch`, `read_hdus_batch`, `read_hdus_sequence_last`
+`read_full_unmapped_raw`, `read_full_raw`,
+`read_full_raw_with_scale`,
+`read_images_batch`, `read_hdus_batch`
 
 ### Header functions
 
@@ -556,8 +553,7 @@ promises `torch.Tensor` fails the build.
 
 ### Utilities
 
-`open_and_read_headers`, `open_fits_file`, `read_tensor_from_handle`,
-`echo_tensor`
+`open_and_read_headers`, `open_fits_file`
 
 ---
 

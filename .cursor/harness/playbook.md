@@ -27,7 +27,7 @@
   desc: Keep the git tree package-facing — Round-N scorecard CSVs under docs/assets/bench only when published; freeze audits go to .cursor/reviews/ (gitignored); no archive/ of agent dumps.
 
 - id: pixi-test-env-rebuild
-  desc: After C++/native edits, rebuild every pixi env you will run — `pixi run -e test -- pip install -e . --no-build-isolation` before pytest, and `pixi run -- pip install -e . --no-build-isolation` (or `pixi run dev`) before `pixi run python` example smoke; default and test envs do not share the extension.
+  desc: After C++/native edits, rebuild every pixi env you will run — `pixi run -e test -- pip install -e . --no-build-isolation` before pytest, and `pixi run -- pip install -e . --no-build-isolation` (or `pixi run dev`) before `pixi run python` example smoke; default and test envs do not share the extension. Symptom of a stale/missing test-env build: `ImportError: cannot import name '_core' from 'torchfits'`.
 
 - id: scorecard-deficit-significance
   desc: `compute_deficits` always emits lag rows; floors only set `significance` to noise|significant — unit tests must not expect `[]` for under-floor lags.
@@ -63,7 +63,7 @@
   desc: torchfits copy is shutil.copy2 (local) or http_open/urlretrieve (remote), not HDUList.write; CompImage stays compressed; refuse same-path; guard_fits_path before any fetch.
 
 - id: tnull-read-torch
-  desc: table.read_torch(where=) applies TNULL mask and _torch_cmp_mask (range-safe) before compare — same row set as Arrow table.read. Quantized TNULL is NaN in tensors; Arrow conversion with apply_fits_nulls maps those NaNs to null so IS NULL matches. Raw integer TNULL without TSCAL stays a sentinel.
+  desc: table.read_torch(where=) applies TNULL mask and _torch_cmp_mask (range-safe) through _tnull_in_tensor before compare — same row set as Arrow table.read (any TNULL compare on unsigned tensors must go through _tnull_in_tensor to translate negative sentinels to physical null values). Quantized TNULL is NaN in tensors; Arrow conversion with apply_fits_nulls maps those NaNs to null so IS NULL matches. Raw integer TNULL without TSCAL stays a sentinel.
 
 - id: blank-nulval
   desc: BLANK present promotes the image to the scaled-float path (even identity BSCALE/BZERO) so nulval=NaN applies on full read and read_subset. HTTP Range treats BLANK as scaled (fallback to CFITSIO). Do not rewrite BSCALE=1 — that distorts real scale=1 packs. Native IEEE float/double must pass nullptr to fits_read_img (CFITSIO fnan treats Inf and signed zero as undefined when nulval is set); nulval=NaN is only for compressed tiles or integer storage read as float. Table TNULL→NaN only when TSCAL/TZERO cards exist (quantize); raw integer TNULL stays a sentinel. Unsigned/signed-byte conventions keep integer dtypes even with BLANK. Writing an already-decoded float with a copied integer header must drop BSCALE/BZERO/BLANK (CFITSIO would re-apply them).

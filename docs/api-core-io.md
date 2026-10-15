@@ -358,7 +358,7 @@ torchfits.read_shape(path, hdu=0)
 ```python
 torchfits.read_hdu_type(path, hdu=0)  # "IMAGE" / "BINARY_TABLE" / ...
 torchfits.read_num_hdus(path)
-torchfits.read_extname(path, hdu=1)  # EXTNAME or None
+torchfits.read_extname(path, hdu=0)  # EXTNAME or None
 ```
 
 ## Skinny colnames / table info

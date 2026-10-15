@@ -26,13 +26,11 @@ struct HDUInfo {
 };
 
 torch::Tensor read_full_cached(const std::string& path, int hdu_num, bool use_mmap);
-torch::Tensor read_full_unmapped(const std::string& path, int hdu_num);
 torch::Tensor read_full_unmapped_raw(const std::string& path, int hdu_num);
 torch::Tensor read_full_nocache(const std::string& path, int hdu_num, bool use_mmap);
 int resolve_hdu_name_cached(const std::string& filename, const std::string& hdu_name);
 std::vector<torch::Tensor> read_images_batch(const std::vector<std::string>& paths, int hdu_num, bool use_mmap = true);
 std::vector<torch::Tensor> read_hdus_batch(const std::string& path, const std::vector<int>& hdus, bool use_mmap);
-torch::Tensor read_hdus_sequence_last(const std::string& path, const std::vector<int>& hdus, bool use_mmap);
 std::pair<FITSFile*, std::vector<HDUInfo>> open_and_read_headers(const std::string& path, int mode);
 void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header, nb::object schema_obj, bool is_ascii);
 void write_table_hdu(fitsfile* fptr, nb::dict tensor_dict, nb::dict header);

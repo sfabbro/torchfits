@@ -27,10 +27,6 @@ _READ_OPTION_FIELD_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _cpp_has(cpp_module: Any, attr: str) -> bool:
-    return hasattr(cpp_module, attr)
-
-
 def _bit_columns_from_header(header: Header | None) -> set[str]:
     if not header:
         return set()
@@ -562,9 +558,7 @@ def _read_batch_hdus(
     logger: Any,
 ) -> Any:
     """Dispatch multiple HDUs from one FITS path."""
-    # read_hdus_batch has no fp16/bf16/raw_scale support; keep list-of-HDU
-    # inputs consistent with the per-HDU conversion contract.
-    if not (fp16 or bf16 or raw_scale) and hasattr(cpp_module, "read_hdus_batch"):
+    if not (fp16 or bf16 or raw_scale):
         if mmap is False:
             use_mmap = False
         elif mmap is True:
@@ -647,7 +641,7 @@ def _read_cpu_fast_path(
     # not single full reads — it lost ~15% to fitsio on hcompress.
     try:
         effective_mmap = resolve_image_mmap(path, hdu, mmap, cache_capacity)
-        if cache_capacity <= 0 and hasattr(cpp_module, "read_full_nocache"):
+        if cache_capacity <= 0:
             data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
         else:
             data = cpp_module.read_full(path, hdu, effective_mmap)
@@ -714,21 +708,21 @@ def _read_generic_fast_path(
                 # through read_full_raw_with_scale (extra host ops vs fitsio).
                 if debug_scale:
                     logger.debug("TORCHFITS_DEBUG_SCALE: thin_cpu_logical")
-                if cache_capacity <= 0 and hasattr(cpp_module, "read_full_nocache"):
+                if cache_capacity <= 0:
                     data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
                 else:
                     data = cpp_module.read_full(path, hdu, effective_mmap)
         elif raw_scale:
             if debug_scale:
                 logger.debug("TORCHFITS_DEBUG_SCALE: raw_scale")
-            if not effective_mmap and _cpp_has(cpp_module, "read_full_unmapped_raw"):
+            if not effective_mmap:
                 data = cpp_module.read_full_unmapped_raw(path, hdu)
             else:
                 data = cpp_module.read_full_raw(path, hdu, effective_mmap)
         else:
             if debug_scale:
                 logger.debug("TORCHFITS_DEBUG_SCALE: unscaled")
-            if cache_capacity <= 0 and hasattr(cpp_module, "read_full_nocache"):
+            if cache_capacity <= 0:
                 data = cpp_module.read_full_nocache(path, hdu, effective_mmap)
             else:
                 data = cpp_module.read_full(path, hdu, effective_mmap)

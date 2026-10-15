@@ -46,11 +46,9 @@ def dispatch_read_image_cpp(
 ) -> Tensor:
     """Dispatch the correct C++ function for low-level image reading."""
     if raw_scale:
-        if not mmap and hasattr(cpp, "read_full_unmapped_raw"):
+        if not mmap:
             return cast(Tensor, cpp.read_full_unmapped_raw(path, hdu))
-        if hasattr(cpp, "read_full_raw"):
-            return cast(Tensor, cpp.read_full_raw(path, hdu, mmap))
-        return cast(Tensor, cpp.read_full(path, hdu, mmap))
+        return cast(Tensor, cpp.read_full_raw(path, hdu, mmap))
     return cast(Tensor, cpp.read_full(path, hdu, mmap))
 
 
@@ -71,10 +69,7 @@ def read_image(
     guard_fits_path(path)
 
     if isinstance(hdu, str):
-        if hasattr(_cpp, "resolve_hdu_name_cached"):
-            hdu = int(_cpp.resolve_hdu_name_cached(path, hdu))
-        else:
-            raise ValueError("named HDUs require resolve_hdu_name_cached support")
+        hdu = int(_cpp.resolve_hdu_name_cached(path, hdu))
 
     data = dispatch_read_image_cpp(_cpp, path, hdu, mmap, raw_scale)
 
@@ -126,10 +121,8 @@ def read_hdus(
             resolved_hdus.append(int(hdu))
             continue
         if isinstance(hdu, str):
-            if hasattr(_cpp, "resolve_hdu_name_cached"):
-                resolved_hdus.append(int(_cpp.resolve_hdu_name_cached(path, hdu)))
-                continue
-            raise ValueError("named HDUs require resolve_hdu_name_cached support")
+            resolved_hdus.append(int(_cpp.resolve_hdu_name_cached(path, hdu)))
+            continue
         raise ValueError("each item in hdus must be an int or str")
 
     data = _cpp.read_hdus_batch(path, resolved_hdus, mmap)

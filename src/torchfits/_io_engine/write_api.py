@@ -226,6 +226,11 @@ def write(
                         _TableHDUWriteProxy(data, header, quantize=quantize)
                     )
             elif isinstance(data, (list, tuple)):
+                if quantize is not None:
+                    raise QuantizeError(
+                        "quantize= is supported for a single image tensor or dict table, "
+                        "not multi-HDU sequences"
+                    )
                 for item in data:
                     compressed_hdus.append(_coerce_compressed_hdu_item(item))
                 if header and compressed_hdus:

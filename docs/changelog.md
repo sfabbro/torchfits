@@ -13,11 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `torchfits.cpp` legacy alias is removed. The native surface is private
   (`torchfits._cpp`); user-facing code should use `torchfits.read`,
   `torchfits.table`, and `torchfits.open`.
+- Seven test-only native entry points (`read_full_numpy`, `read_full_numpy_cached`,
+  `read_full_unmapped`, `read_full_scaled_cpu`, `read_tensor_from_handle`,
+  `read_hdus_sequence_last`, `echo_tensor`) and 32 redundant `hasattr(cpp, ...)`
+  probe branches are removed.
 
 ### Fixed
 - Scaled BITPIX=8 and BITPIX=16 images are read as float32. 1.2.0rc1 returned
   float64 for every scaled image that was not an integer convention. BITPIX=32
   and 64 stay float64, so 16777217 is not rounded.
+- `table.read_torch(where=)` translates negative TNULL sentinels to physical
+  nulls via `_tnull_in_tensor` on unsigned integer columns, matching `table.read`.
+- `fits_set_bscale` errors during raw image reads now raise `RuntimeError` rather
+  than silently reading scaled pixels.
+- `write()` with `compress=True` raises `QuantizeError` when `quantize=` is
+  passed for multi-HDU sequence inputs, matching uncompressed sequence writes.
 
 ## [1.2.0rc1] — 2026-10-07
 

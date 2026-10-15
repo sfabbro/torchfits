@@ -151,8 +151,6 @@ def _thin_read_table_filtered(
     """
     import torchfits._C as cpp
 
-    if not hasattr(cpp, "read_fits_table_filtered"):
-        return None
     filters = compile_predicates(where)
     if filters is None:
         return None
@@ -342,7 +340,7 @@ def read_table(
         import numpy as np
 
         import torchfits
-        from torchfits._table._read_where import _torch_cmp_mask
+        from torchfits._table._read_where import _tnull_in_tensor, _torch_cmp_mask
         from torchfits.fits_schema import column_tnull_map
 
         header = torchfits.read_header(path, hdu=hdu)
@@ -356,6 +354,7 @@ def read_table(
             part = _torch_cmp_mask(values, op, lit)
             sentinel = tnull_map.get(col)
             if sentinel is not None:
+                sentinel = _tnull_in_tensor(values, sentinel)
                 part = part & torch.ne(values, sentinel)
             mask = part if mask is None else (mask & part)
         assert mask is not None

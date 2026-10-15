@@ -83,17 +83,16 @@ def read_fallback(
         try:
             if isinstance(hdu, str):
                 hdu_num = None
-                if hasattr(cpp_module, "resolve_hdu_name_cached"):
-                    try:
-                        hdu_num = int(cpp_module.resolve_hdu_name_cached(path, hdu))
-                    except (RuntimeError, TypeError, ValueError) as exc:
-                        _log.debug(
-                            "resolve_hdu_name_cached(%r, %r) failed: %s",
-                            path,
-                            hdu,
-                            exc,
-                        )
-                        hdu_num = None
+                try:
+                    hdu_num = int(cpp_module.resolve_hdu_name_cached(path, hdu))
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    _log.debug(
+                        "resolve_hdu_name_cached(%r, %r) failed: %s",
+                        path,
+                        hdu,
+                        exc,
+                    )
+                    hdu_num = None
 
                 if hdu_num is None:
                     num_hdus = cpp_module.get_num_hdus(file_handle)
@@ -232,12 +231,10 @@ def read_fallback_image(
         except (RuntimeError, TypeError, ValueError):
             header = None
     if raw_scale:
-        if not effective_mmap and hasattr(cpp_module, "read_full_unmapped_raw"):
+        if not effective_mmap:
             data = cpp_module.read_full_unmapped_raw(path, hdu_num)
-        elif hasattr(cpp_module, "read_full_raw"):
-            data = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
         else:
-            data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
+            data = cpp_module.read_full_raw(path, hdu_num, effective_mmap)
     else:
         data = cpp_module.read_full(file_handle, hdu_num, effective_mmap)
 
@@ -307,7 +304,7 @@ def read_fallback_table(
     # recorded and the original readers still run in order, so their
     # diagnoses surface (truncation identity, r4a-05). IO errors propagate
     # immediately and are never retried.
-    if table_mmap and hasattr(cpp_module, "read_fits_table_rows_from_handle"):
+    if table_mmap:
         try:
             candidate = cpp_module.read_fits_table_rows_from_handle(
                 file_handle, hdu_num, col_list, start_row, num_rows
@@ -322,14 +319,9 @@ def read_fallback_table(
     if table_result is None and table_mmap:
         try:
             if start_row > 1 or num_rows != -1:
-                if hasattr(cpp_module, "read_fits_table_rows"):
-                    table_result = cpp_module.read_fits_table_rows(
-                        path, hdu_num, col_list, start_row, num_rows, True
-                    )
-                else:
-                    table_result = cpp_module.read_fits_table(
-                        path, hdu_num, col_list, True
-                    )
+                table_result = cpp_module.read_fits_table_rows(
+                    path, hdu_num, col_list, start_row, num_rows, True
+                )
             else:
                 table_result = cpp_module.read_fits_table(path, hdu_num, col_list, True)
         except (RuntimeError, TypeError, ValueError) as exc:
@@ -350,36 +342,22 @@ def read_fallback_table(
         # stays path-based because that cache is keyed on the path; the
         # single-open fast attempt above covers the common full-read case
         # (r5a-11). The from_handle stage below is the last-resort reader.
-        if hasattr(cpp_module, "read_fits_table_rows"):
-            try:
-                table_result = cpp_module.read_fits_table_rows(
-                    path, hdu_num, col_list, start_row, num_rows, False
-                )
-            except (RuntimeError, TypeError, ValueError) as exc:
-                decode_errors.append(exc)
-                table_result = None
+        try:
+            table_result = cpp_module.read_fits_table_rows(
+                path, hdu_num, col_list, start_row, num_rows, False
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            decode_errors.append(exc)
+            table_result = None
     if table_result is None:
         try:
             if columns is None and start_row == 1 and num_rows == -1:
                 table_result = cpp_module.read_fits_table_from_handle(
                     file_handle, hdu_num
                 )
-            elif hasattr(cpp_module, "read_fits_table_rows_from_handle"):
+            else:
                 table_result = cpp_module.read_fits_table_rows_from_handle(
                     file_handle, hdu_num, col_list, start_row, num_rows
-                )
-            elif start_row > 1 or num_rows != -1:
-                if hasattr(cpp_module, "read_fits_table_rows"):
-                    table_result = cpp_module.read_fits_table_rows(
-                        path, hdu_num, col_list, start_row, num_rows, False
-                    )
-                else:
-                    table_result = cpp_module.read_fits_table(
-                        path, hdu_num, col_list, False
-                    )
-            else:
-                table_result = cpp_module.read_fits_table(
-                    path, hdu_num, col_list, False
                 )
         except (RuntimeError, TypeError, ValueError) as exc:
             decode_errors.append(exc)
@@ -409,25 +387,6 @@ def read_fallback_table(
     from .table_api import _squeeze_scalar_columns
 
     table_data = _squeeze_scalar_columns(table_data)
-
-    if start_row > 1 or num_rows != -1:
-        if not hasattr(cpp_module, "read_fits_table_rows"):
-            # Slice every row-aligned column (tensors *and* lists) so the
-            # window can never produce mismatched lengths across columns.
-            total = None
-            for value in table_data.values():
-                if isinstance(value, (torch.Tensor, list)):
-                    total = len(value)
-                    break
-            end_row = (
-                start_row + num_rows - 1
-                if num_rows != -1
-                else (total if total is not None else start_row - 1)
-            )
-            for key, value in table_data.items():
-                if isinstance(value, (torch.Tensor, list)):
-                    table_data[key] = value[start_row - 1 : end_row]
-        # else: the C++ row reader already applied the window upstream.
 
     if use_cache and cache_key is not None:
         store_cached_read(

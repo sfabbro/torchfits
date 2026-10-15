@@ -38,9 +38,6 @@ def _iter_chunks_cpp_table(
     import torchfits
     import torchfits._C as cpp
 
-    if not hasattr(cpp, "read_fits_table_rows_from_handle"):
-        return None
-
     if header is None:
         header = torchfits.read_header(path, hdu)
     total_rows = header.get("NAXIS2", 0)
@@ -59,17 +56,13 @@ def _iter_chunks_cpp_table(
     col_list = columns if columns else []
 
     def _generator() -> Any:
-        can_mmap_rows = mmap and hasattr(
-            cpp, "read_fits_table_rows_mmap_from_reader_raw"
+        can_mmap_rows = mmap and _can_use_mmap_row_path_for_full_read(
+            path, hdu, columns, header=header
         )
-        if can_mmap_rows:
-            can_mmap_rows = _can_use_mmap_row_path_for_full_read(
-                path, hdu, columns, header=header
-            )
         file_handle = None
         mmap_reader = None
         try:
-            if can_mmap_rows and hasattr(cpp, "open_fits_mmap_reader"):
+            if can_mmap_rows:
                 try:
                     # Open once: per-batch reopens (open + header parse per
                     # batch) dominate the mmap row path for batched scans.

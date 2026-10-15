@@ -48,10 +48,7 @@ def read_subset(
         path = resolve_local_path(path)
 
     if isinstance(hdu, str):
-        if hasattr(cpp, "resolve_hdu_name_cached"):
-            hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
-        else:
-            raise ValueError("named HDUs require resolve_hdu_name_cached support")
+        hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
     try:
         file_handle, cached = get_cached_handle(path, handle_cache_capacity)
         try:
@@ -111,10 +108,7 @@ class SubsetReader:
             path = resolve_local_path(path)
 
         if isinstance(hdu, str):
-            if hasattr(cpp, "resolve_hdu_name_cached"):
-                hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
-            else:
-                raise ValueError("named HDUs require resolve_hdu_name_cached support")
+            hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
 
         self._reader = cpp.SubsetReader(path, int(hdu))
 

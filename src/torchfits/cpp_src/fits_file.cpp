@@ -418,17 +418,31 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
     if (needs_bscale_guard) {
         int key_status = 0;
         double bscale = 1.0, bzero = 0.0;
-        key_status = 0;
         fits_read_key(fptr_, TDOUBLE, "BSCALE", &bscale, nullptr, &key_status);
-        if (key_status != 0 && key_status != KEY_NO_EXIST) bscale = 1.0;
+        if (key_status != 0 && key_status != KEY_NO_EXIST) {
+            char err_text[31];
+            fits_get_errstatus(key_status, err_text);
+            throw std::runtime_error("Error reading BSCALE: status=" + std::to_string(key_status) +
+                                     " msg=" + std::string(err_text));
+        }
         key_status = 0;
         fits_read_key(fptr_, TDOUBLE, "BZERO", &bzero, nullptr, &key_status);
-        if (key_status != 0 && key_status != KEY_NO_EXIST) bzero = 0.0;
+        if (key_status != 0 && key_status != KEY_NO_EXIST) {
+            char err_text[31];
+            fits_get_errstatus(key_status, err_text);
+            throw std::runtime_error("Error reading BZERO: status=" + std::to_string(key_status) +
+                                     " msg=" + std::string(err_text));
+        }
         guard.bscale = bscale; guard.bzero = bzero;
         status = 0;
         fits_set_bscale(fptr_, 1.0, 0.0, &status);
-        if (status == 0) guard.active = true;
-        else status = 0;
+        if (status != 0) {
+            char err_text[31];
+            fits_get_errstatus(status, err_text);
+            throw std::runtime_error("Error disabling scaling for raw read: status=" +
+                                     std::to_string(status) + " msg=" + std::string(err_text));
+        }
+        guard.active = true;
     }
     int anynul = 0;
     float fnullval = NAN;

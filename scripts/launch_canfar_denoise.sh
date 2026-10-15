@@ -14,7 +14,7 @@ cd "$ROOT_DIR"
 
 RUN_ID="${TORCHFITS_DENOISE_RUN_ID:-denoise_$(date -u +%Y%m%d_%H%M%S)}"
 MODE="${TORCHFITS_DENOISE_MODE:-full}"
-IMAGE="${TORCHFITS_CANFAR_IMAGE:-astroai/base:latest}"
+IMAGE="${TORCHFITS_CANFAR_IMAGE:-images.canfar.net/astroai/base:latest}"
 GPU="${TORCHFITS_CANFAR_GPU:-1}"
 CPU="${TORCHFITS_CANFAR_CPU:-8}"
 MEMORY="${TORCHFITS_CANFAR_MEMORY:-32}"

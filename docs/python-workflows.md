@@ -37,7 +37,7 @@ import torchfits
 image = torchfits.read_tensor("science.fits", hdu=0)
 print(f"Shape: {image.shape}, Dtype: {image.dtype}, Device: {image.device}")
 
-# Direct transfer to GPU (CUDA on Linux, MPS on macOS)
+# Transfer to GPU after read (CUDA on Linux, MPS on macOS)
 gpu_image = torchfits.read_tensor("science.fits", hdu=0, device="cuda")
 
 # Select HDU by extension name (EXTNAME)

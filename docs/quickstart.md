@@ -25,7 +25,7 @@ import torchfits
 image = torchfits.read_tensor("science.fits", hdu=0)
 print(f"Shape: {image.shape}, Dtype: {image.dtype}")
 
-# Direct decode to GPU (CUDA on Linux, MPS on Apple Silicon)
+# Read and place onto GPU (CUDA on Linux, MPS on Apple Silicon)
 gpu_image = torchfits.read_tensor("science.fits", hdu=0, device="cuda")
 
 # Read pixel data alongside header metadata
