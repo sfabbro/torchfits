@@ -81,7 +81,7 @@ jobs:
           python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.1
+        uses: pypa/cibuildwheel@v4.3.0
       - uses: actions/upload-artifact@v7
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}
