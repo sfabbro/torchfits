@@ -1135,6 +1135,18 @@ def test_ci_release_gate_matches_local_release_gate() -> None:
     )
 
 
+def test_docs_drift_builds_site_before_link_check() -> None:
+    """The nightly crawl reads site/, which a fresh checkout does not contain."""
+    workflow = (ROOT / ".github" / "workflows" / "docs-drift.yml").read_text(
+        encoding="utf-8"
+    )
+    build_at = workflow.find("zensical build --clean")
+    links_at = workflow.find("scripts/check_docs_links.py")
+    assert build_at != -1 and links_at != -1 and build_at < links_at, (
+        "docs-drift.yml must build site/ before check_docs_links.py"
+    )
+
+
 def test_docs_contract_gate_is_defined_once() -> None:
     """The docs-contract file list must have exactly one home: `pixi.toml`.
 
