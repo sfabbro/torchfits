@@ -25,7 +25,7 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           # setup-pixi otherwise installs latest, which fails requires-pixi ==0.81.0.
-          pixi-version: "0.81.0"
+          pixi-version: v0.81.0
           environments: test
           locked: true
           cache: true
