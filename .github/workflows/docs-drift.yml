@@ -52,5 +52,12 @@ jobs:
       # tracked `.cursor/` tree; drift means a client would load a stale skill.
       - name: Agent-home copies match .cursor
         run: python scripts/sync_agent_home.py --check
+      # check_docs_links.py crawls site/. The push jobs build it first; this
+      # scheduled job was calling the checker against a checkout that has no site/.
+      - name: Zensical build
+        run: |
+          pip install "zensical>=0.0.61"
+          bash scripts/sync_docs_examples.sh
+          zensical build --clean
       - name: Docs links
         run: python scripts/check_docs_links.py

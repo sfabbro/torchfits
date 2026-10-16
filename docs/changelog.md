@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- `InterquantileScale.compute_scale()` returns the scale statistic without
+  changing the cached state used by `inverse()`; `eps` must be finite and positive.
+- transforms: Expose interquantile scale statistic
+
 ## [1.2.1] — 2026-10-14
 
 ### Fixed

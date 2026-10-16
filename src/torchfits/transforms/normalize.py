@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Optional, Tuple
 
 import torch
@@ -659,14 +660,16 @@ class InterquantileScale(FITSTransform):
         self.dim = tuple(dim) if dim is not None else None
         self.zero_preserving = bool(zero_preserving)
         self.eps = float(eps)
+        if not math.isfinite(self.eps) or self.eps <= 0.0:
+            raise ValueError(f"eps must be finite and > 0, got {eps!r}")
         self.weighted = bool(weighted)
 
-    def _forward_flux(
+    def _compute_statistics(
         self,
         flux: torch.Tensor,
         mask: torch.Tensor | None,
         ivar: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         xf = _stats_upcast(flux)
         dim = self.dim if self.dim is not None else tuple(range(xf.ndim))
         with torch.no_grad():
@@ -676,12 +679,31 @@ class InterquantileScale(FITSTransform):
             else:
                 q_lo = _quantile(xf, self.q_low, dim, mask=mask)
                 q_hi = _quantile(xf, self.q_high, dim, mask=mask)
-            scale = torch.clamp_min(q_hi - q_lo, self.eps).to(xf.dtype)
+            eps = max(self.eps, torch.finfo(xf.dtype).tiny)
+            scale = torch.clamp_min(q_hi - q_lo, eps).to(xf.dtype)
             offset = (
                 None
                 if self.zero_preserving
                 else _median(xf, dim, mask=mask).to(xf.dtype)
             )
+        return scale, offset
+
+    def compute_scale(self, x: Any, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Return the interquantile scale without changing inverse state."""
+        view = self.view(x, mask=mask)
+        scale, _ = self._compute_statistics(
+            view.flux, view.effective_mask(mask), view.ivar
+        )
+        return scale
+
+    def _forward_flux(
+        self,
+        flux: torch.Tensor,
+        mask: torch.Tensor | None,
+        ivar: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        xf = _stats_upcast(flux)
+        scale, offset = self._compute_statistics(xf, mask, ivar)
 
         self._last_scale = scale
         self._last_offset = offset

@@ -426,11 +426,14 @@ $\sqrt{\text{mean}(x^2)}$ (RMS).
     When you want the simplest possible normalization — just scale by the
     typical value. Good for quick per-image scaling before comparison.
 
-### `InterquantileScale(q_low=0.05, q_high=0.95, dim=None, zero_preserving=True, eps=1e-9)`
+### `InterquantileScale(q_low=0.05, q_high=0.95, dim=None, zero_preserving=True, eps=1e-9, *, weighted=False)`
 
 Zero-preserving or centered interquantile scale normalization.
 
 $$s = \max(Q_{q_{\text{high}}}(x) - Q_{q_{\text{low}}}(x),\ \text{eps})$$
+
+If `eps` is smaller than the statistics dtype can represent normally, the
+smallest positive normal value for that dtype is used instead.
 
 In zero-preserving mode (default):
 
@@ -448,7 +451,12 @@ $$\text{output} = \frac{x - \text{median}(x)}{s}$$
 | `q_high` | `0.95` | Upper quantile (0.0 to 1.0) |
 | `dim` | `None` | Dimensions for joint quantiles (None = all dims) |
 | `zero_preserving` | `True` | Scale without subtracting offset (preserves colours and zero-point) |
-| `eps` | `1e-9` | Divisor floor |
+| `eps` | `1e-9` | Positive, finite divisor floor |
+| `weighted` | `False` | Use inverse-variance weighted quantiles when a payload provides `ivar` |
+
+`compute_scale(x, mask=None)` returns $s$ for the same tensor, payload, mask,
+weighting, and dimensions as `forward()`. It does not change the cached
+coefficients used by `inverse()`.
 
 !!! info "When to use"
     Standard choice for multi-band astronomical images where relative colour

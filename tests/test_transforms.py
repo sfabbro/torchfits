@@ -26,6 +26,7 @@ from torchfits.transforms import (
     MeshBackgroundSubtract,
     MinMaxNormalize,
     PercentileClipNormalize,
+    Payload,
     RobustNormalize,
     SigmaClip,
     SigmaNormalize,
@@ -1172,6 +1173,79 @@ class TestInterquantileScale:
         out = t.forward(x)
         assert torch.isfinite(out).all()
         assert torch.allclose(t._last_scale, torch.tensor(1e-6))
+
+    def test_eps_below_dtype_range_uses_positive_representable_floor(self) -> None:
+        x = torch.ones(16, dtype=torch.float32)
+        t = InterquantileScale(eps=1e-50)
+
+        scale = t.compute_scale(x)
+        out = t.forward(x)
+
+        assert scale.item() == torch.finfo(torch.float32).tiny
+        assert torch.isfinite(out).all()
+
+    @pytest.mark.parametrize(
+        "eps", [0.0, -1.0, float("nan"), float("inf"), float("-inf")]
+    )
+    def test_eps_must_be_finite_and_positive(self, eps: float) -> None:
+        with pytest.raises(ValueError, match="eps must be finite and > 0"):
+            InterquantileScale(eps=eps)
+
+    def test_compute_scale_tensor_respects_dims_and_does_not_enable_inverse(
+        self,
+    ) -> None:
+        x = torch.tensor([[0.0, 1.0, 2.0, 3.0], [10.0, 20.0, 30.0, 40.0]])
+        original = x.clone()
+        t = InterquantileScale(q_low=0.0, q_high=1.0, dim=(-1,))
+
+        scale = t.compute_scale(x)
+
+        assert torch.equal(scale, torch.tensor([[3.0], [30.0]]))
+        assert torch.equal(x, original)
+        with pytest.raises(RuntimeError, match="prior forward"):
+            t.inverse(x)
+        transformed = t.forward(x)
+        assert torch.equal(t._last_scale, scale)
+        assert torch.equal(transformed, x / scale)
+
+    def test_compute_scale_uses_payload_mask_and_weighted_ivar(self) -> None:
+        flux = torch.tensor([[0.0, 10.0, 20.0, 30.0], [100.0, 110.0, 120.0, 130.0]])
+        ivar = torch.tensor([[4.0, 1.0, 1.0, 4.0], [1.0, 4.0, 4.0, 1.0]])
+        mask = torch.ones_like(flux, dtype=torch.bool)
+        payload = {"flux": flux, "ivar": ivar, "mask": mask}
+        originals = {key: value.clone() for key, value in payload.items()}
+        t = InterquantileScale(q_low=0.25, q_high=0.75, dim=(-1,), weighted=True)
+
+        scale = t.compute_scale(payload)
+
+        assert torch.equal(scale, torch.tensor([[30.0], [10.0]]))
+        for key, original in originals.items():
+            assert torch.equal(payload[key], original)
+
+    def test_compute_scale_explicit_mask_overrides_payload_mask(self) -> None:
+        flux = torch.tensor([0.0, 1.0, 2.0, 10.0])
+        payload = Payload(flux=flux, mask=torch.tensor([True, True, True, False]))
+        t = InterquantileScale(q_low=0.0, q_high=1.0)
+
+        payload_scale = t.compute_scale(payload)
+        explicit_scale = t.compute_scale(payload, mask=torch.ones(4, dtype=torch.bool))
+
+        assert payload_scale.item() == pytest.approx(2.0)
+        assert explicit_scale.item() == pytest.approx(10.0)
+
+    def test_compute_scale_preserves_existing_forward_cache(self) -> None:
+        x = torch.tensor([1.0, 2.0, 5.0])
+        t = InterquantileScale(q_low=0.0, q_high=1.0, zero_preserving=False)
+        scaled = t.forward(x)
+        cached_scale = t._last_scale
+        cached_offset = t._last_offset
+
+        probe_scale = t.compute_scale(torch.tensor([0.0, 100.0]))
+
+        assert probe_scale.item() == pytest.approx(100.0)
+        assert t._last_scale is cached_scale
+        assert t._last_offset is cached_offset
+        assert torch.allclose(t.inverse(scaled), x)
 
     def test_invalid_quantiles_raises(self) -> None:
         with pytest.raises(ValueError, match="0.0 <= q_low < q_high <= 1.0"):
