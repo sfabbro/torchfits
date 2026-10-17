@@ -2,7 +2,7 @@
 
 Supported Python versions, PyTorch runtime ABIs, CUDA flavors, and operating systems for **torchfits**.
 
-For supported FITS formats, HDU types, tile compression algorithms, and catalog features, see the [Feature Parity Matrix](parity.md).
+For supported FITS formats, HDU types, tile compression, and catalog features, see [Evaluation](evaluation.md).
 
 ---
 

@@ -6,23 +6,32 @@ import os
 import tempfile
 
 import numpy as np
-from astropy.io import fits
-from astropy.table import Table
+import torch
 
 import torchfits
+from torchfits.hdu import HDUList, TableHDU, TensorHDU
 
 
 def _create_test_file(path: str) -> None:
-    primary = fits.PrimaryHDU()
-    sci = fits.ImageHDU(np.arange(100, dtype=np.float32).reshape(10, 10), name="SCI")
-    err = fits.ImageHDU(np.random.rand(20, 20).astype(np.float32), name="ERR")
-    catalog = Table(
-        rows=[(150.0, 45.0, 10.0), (151.0, 46.0, 12.0), (152.0, 47.0, 15.0)],
-        names=("ra", "dec", "flux"),
-        dtype=("f8", "f8", "f4"),
-    )
-    cat_hdu = fits.BinTableHDU(catalog, name="CATALOG")
-    fits.HDUList([primary, sci, err, cat_hdu]).writeto(path, overwrite=True)
+    catalog = {
+        "ra": np.array([150.0, 151.0, 152.0], dtype=np.float64),
+        "dec": np.array([45.0, 46.0, 47.0], dtype=np.float64),
+        "flux": np.array([10.0, 12.0, 15.0], dtype=np.float32),
+    }
+    HDUList(
+        [
+            TensorHDU(torch.empty(0)),
+            TensorHDU(
+                torch.from_numpy(np.arange(100, dtype=np.float32).reshape(10, 10)),
+                {"EXTNAME": "SCI"},
+            ),
+            TensorHDU(
+                torch.from_numpy(np.random.rand(20, 20).astype(np.float32)),
+                {"EXTNAME": "ERR"},
+            ),
+            TableHDU(catalog, header={"EXTNAME": "CATALOG"}),
+        ]
+    ).write(path, overwrite=True)
 
 
 def main() -> None:

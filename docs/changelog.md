@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changing the cached state used by `inverse()`; `eps` must be finite and positive.
 - transforms: Expose interquantile scale statistic
 
+### Fixed
+- build: Avoid CUDA discovery for CPU extension
+
 ## [1.2.1] — 2026-10-14
 
 ### Fixed
@@ -1047,7 +1050,7 @@ API freeze (rc line followed for extended testing + blockers).
 ### Docs
 
 - Site logo/favicon: `torchfits-logo.png`.
-- README / benchmark run IDs aligned with [`docs/benchmarks.md`](benchmarks.md).
+- README / benchmark run IDs aligned with [`docs/benchmarks.md`](evaluation.md).
 
 ## [0.9.1] - 2026-07-14
 

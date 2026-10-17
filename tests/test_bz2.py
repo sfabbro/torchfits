@@ -14,12 +14,11 @@ import bz2
 
 import numpy as np
 import pytest
+import torch
 
-astropy_fits = pytest.importorskip("astropy.io.fits")
-torch = pytest.importorskip("torch")
-
-import torchfits  # noqa: E402
-from torchfits._io_engine.paths import has_bz2_support  # noqa: E402
+import torchfits
+from torchfits._io_engine.paths import has_bz2_support
+from torchfits.hdu import HDUList, TableHDU, TensorHDU
 
 HAS_BZ2 = has_bz2_support()
 
@@ -28,16 +27,15 @@ HAS_BZ2 = has_bz2_support()
 def bz2_mef(tmp_path_factory):
     """Plain MEF (image + table) and its whole-file bzip2 twin."""
     d = tmp_path_factory.mktemp("bz2")
-    hdul = astropy_fits.HDUList(
+    image = torch.from_numpy(np.arange(64, dtype=np.float32).reshape(8, 8))
+    hdul = HDUList(
         [
-            astropy_fits.PrimaryHDU(data=np.arange(64, dtype=np.float32).reshape(8, 8)),
-            astropy_fits.BinTableHDU.from_columns(
-                [astropy_fits.Column(name="A", format="J", array=np.arange(100))]
-            ),
+            TensorHDU(image),
+            TableHDU({"A": np.arange(100)}),
         ]
     )
     plain = str(d / "mef.fits")
-    hdul.writeto(plain)
+    hdul.write(plain, overwrite=True)
     bz = str(d / "mef.fits.bz2")
     with open(bz, "wb") as fh:
         fh.write(bz2.compress(open(plain, "rb").read()))

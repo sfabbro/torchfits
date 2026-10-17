@@ -2,8 +2,8 @@
 Identity stress: the same pixels and columns through several read/write paths.
 
 Checked here:
-  - image: write / write_tensor / HDUList.write / astropy, then read_tensor,
-    the OBJECT card, open().data slices, and astropy getdata
+  - image: write / write_tensor / HDUList.write, then read_tensor,
+    the OBJECT card, and open().data slices
   - table: table.write / write(dict) / TableHDU, then row count, column I,
     scan batch sizes, and where= row counts
   - uint16 image round-trip
@@ -22,7 +22,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from astropy.io import fits
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -49,16 +48,13 @@ def image_identity(tmp: str) -> None:
     p_a = os.path.join(tmp, "img_a.fits")
     p_b = os.path.join(tmp, "img_b.fits")
     p_c = os.path.join(tmp, "img_c.fits")
-    p_d = os.path.join(tmp, "img_d.fits")
     torchfits.write(p_a, t, header=hdr, overwrite=True)
     torchfits.write_tensor(p_b, t, header=hdr, overwrite=True)
     HDUList([TensorHDU(data=t, header=hdr)]).write(p_c, overwrite=True)
-    fits.PrimaryHDU(data, header=fits.Header(hdr)).writeto(p_d, overwrite=True)
-    for p in (p_a, p_b, p_c, p_d):
+    for p in (p_a, p_b, p_c):
         got = torchfits.read_tensor(p).numpy()
         _check(got, data, f"image {p}")
         assert torchfits.read_header(p)["OBJECT"] == "M31"
-        assert np.array_equal(fits.getdata(p).astype(np.float32), data)
     hl = torchfits.open(p_a)
     assert np.array_equal(hl[0].data[:, :].numpy(), data)
     assert np.array_equal(hl[0].data[1:3, 1:3].numpy(), data[1:3, 1:3])
@@ -100,7 +96,6 @@ def unsigned_scaling_identity(tmp: str) -> None:
     torchfits.write(p, torch.from_numpy(u16), overwrite=True)
     got = torchfits.read_tensor(p).numpy()
     assert np.array_equal(got, u16)
-    assert np.array_equal(fits.getdata(p).astype(np.uint16), u16)
     print("unsigned identity: OK")
 
 

@@ -27,8 +27,11 @@ import tempfile
 
 import numpy as np
 import torch
-from astropy.io import fits
+
 from torch.utils.data import DataLoader
+
+import torchfits
+from torchfits.hdu import HDUList, TableHDU, TensorHDU
 
 from torchfits.data import (
     FitsCubeDataset,
@@ -94,14 +97,16 @@ def write_images(root: str) -> list[str]:
     paths = []
     for i in range(N_IMAGES):
         path = os.path.join(root, f"cutout_{i:03d}.fits")
-        hdus = [fits.PrimaryHDU()]
+        hdus: list = [TensorHDU(torch.empty(0))]
         for name, value in _band_cutout(rng, bright=bool(i % 2)).items():
-            hdu = fits.ImageHDU(value, name=name)
+            header = {"EXTNAME": name}
             if not name.endswith(("_IVAR", "_DQ")):
-                hdu.header["ZP"] = 26.0
-                hdu.header["EXPTIME"] = 100.0
-            hdus.append(hdu)
-        fits.HDUList(hdus).writeto(path, overwrite=True)
+                header["ZP"] = 26.0
+                header["EXPTIME"] = 100.0
+            hdus.append(
+                TensorHDU(torch.from_numpy(np.ascontiguousarray(value)), header)
+            )
+        HDUList(hdus).write(path, overwrite=True)
         paths.append(path)
     return paths
 
@@ -120,15 +125,12 @@ def write_spectra(root: str) -> list[str]:
         ivar = np.full(NWAVE, 1.0 / 0.02**2, np.float32)
         dq = np.zeros(NWAVE, np.int32)
         dq[rng.integers(0, NWAVE, 2)] = 2
-        cols = [
-            fits.Column(name="FLUX", format="E", array=flux),
-            fits.Column(name="IVAR", format="E", array=ivar),
-            fits.Column(name="WAVE", format="E", array=wave),
-            fits.Column(name="DQ", format="J", array=dq),
-        ]
-        fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(
-            path, overwrite=True
-        )
+        HDUList(
+            [
+                TensorHDU(torch.empty(0)),
+                TableHDU({"FLUX": flux, "IVAR": ivar, "WAVE": wave, "DQ": dq}),
+            ]
+        ).write(path, overwrite=True)
         paths.append(path)
     return paths
 
@@ -139,28 +141,20 @@ def write_cube(root: str) -> str:
     cube = rng.normal(10.0, 1.0, (24, 16, 16)).astype(np.float32)
     cube[10:14, 6:10, 6:10] += 25.0  # a bright blob in a few channels
     path = os.path.join(root, "ifu_cube.fits")
-    fits.PrimaryHDU(cube).writeto(path, overwrite=True)
+    torchfits.write(path, cube, overwrite=True)
     return path
 
 
 def write_catalog(root: str) -> str:
     rng = np.random.default_rng(SEED + 3)
     n = 64
-    cols = [
-        fits.Column(
-            name="MAG", format="E", array=rng.normal(21, 1, n).astype(np.float32)
-        ),
-        fits.Column(
-            name="Z", format="E", array=rng.uniform(0, 1, n).astype(np.float32)
-        ),
-        fits.Column(
-            name="SNR", format="E", array=rng.uniform(3, 40, n).astype(np.float32)
-        ),
-    ]
+    table = {
+        "MAG": rng.normal(21, 1, n).astype(np.float32),
+        "Z": rng.uniform(0, 1, n).astype(np.float32),
+        "SNR": rng.uniform(3, 40, n).astype(np.float32),
+    }
     path = os.path.join(root, "catalog.fits")
-    fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(
-        path, overwrite=True
-    )
+    HDUList([TensorHDU(torch.empty(0)), TableHDU(table)]).write(path, overwrite=True)
     return path
 
 

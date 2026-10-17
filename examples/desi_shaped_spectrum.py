@@ -11,13 +11,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from astropy.io import fits
+import torch
 
 from torchfits.data import FitsSpectrumDataset
+from torchfits.hdu import HDUList, TensorHDU
 
 
 def _write_desi_shaped(path: Path) -> None:
-    hdus = [fits.PrimaryHDU()]
+    hdus = [TensorHDU(torch.empty(0))]
     for name, nwave in (
         ("B_FLUX", 20),
         ("B_IVAR", 20),
@@ -26,9 +27,11 @@ def _write_desi_shaped(path: Path) -> None:
         ("Z_FLUX", 18),
         ("Z_IVAR", 18),
     ):
-        data = np.arange(4 * nwave, dtype=np.float32).reshape(4, nwave)
-        hdus.append(fits.ImageHDU(data, name=name))
-    fits.HDUList(hdus).writeto(path, overwrite=True)
+        data = torch.from_numpy(
+            np.arange(4 * nwave, dtype=np.float32).reshape(4, nwave)
+        )
+        hdus.append(TensorHDU(data, {"EXTNAME": name}))
+    HDUList(hdus).write(str(path), overwrite=True)
 
 
 def main() -> None:

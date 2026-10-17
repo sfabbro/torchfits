@@ -71,5 +71,8 @@
 - id: cpp-seal-all
   desc: torchfits._cpp.__getattr__ raises for names not in __all__; __dir__ is __all__ only. New _C symbols stay private until listed.
 
+- id: eval-split
+  desc: Benchmarks, parity, and astropy/fitsio oracles live in torchfits-harness. Tests that read src/torchfits/cpp_src, extern/cfitsio, or tests/cpp stay here. Do not put astropy or fitsio back on the pixi or extra dependency lists.
+
 - id: kmp-duplicate-lib-ok
   desc: os.environ.setdefault KMP_DUPLICATE_LIB_OK=TRUE in __init__.py and pixi [activation.env]; required on macOS when torch and the extension both link libomp.

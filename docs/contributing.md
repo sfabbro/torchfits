@@ -66,9 +66,7 @@ below, stop and add a `[dependencies]` entry in `pixi.toml` (or a feature's
   run inside an activated pixi env and are
   intentional — they rebuild the C++ extension against the
   pixi-managed dependencies already on `$PATH`. They are not bare-pip
-  installs. (In particular, `bench-gpu-install` under
-  `[feature.gpu.tasks]` is the canonical pixi-tasked reinstallation of
-  the C++ extension with `--no-deps` against the pixi-managed torch.)
+  installs.
 - `pip install -r requirements.txt` style flows do not exist in this repo
   and must not be added; pixi is the single source of truth for the
   environment.
@@ -80,15 +78,16 @@ src/torchfits/          Python package
 src/torchfits/cpp_src/  C++ native extension (nanobind + CFITSIO)
 extern/cfitsio/         Vendored CFITSIO sources (via extern/vendor.sh)
 tests/                  Unit and integration tests
-benchmarks/             Benchmark scripts and replay gates
 docs/                   Documentation (zensical)
 overrides/              Docs theme templates (zensical custom_dir)
 examples/               Runnable example scripts
-scripts/                CI, docs, and bench helpers
+scripts/                CI, docs, and release helpers
 ```
 
-Local-only (gitignored): `build/`, `site/`, `benchmarks_results/` (bench run
-output — publish selected CSVs under `docs/assets/bench/<run-id>/`).
+Benchmarks, parity checks, and migration notes live in
+[torchfits-harness](https://github.com/astroai/torchfits-harness).
+
+Local-only (gitignored): `build/`, `site/`.
 
 ## Native extension
 
@@ -197,14 +196,7 @@ the remaining `torchfits.open()` leak is recorded in
 
 ## Benchmarks
 
-Quick FITS benchmark sweep:
-
-```bash
-pixi run bench-all
-```
-
-Published multi-host benchmark runs (release docs): see [Release Checklist](release.md#6-benchmark-evidence)
-(`bench-exhaustive-local` + CANFAR CPU/CUDA + `bench-release-scorecard`).
+Performance comparisons run in [torchfits-harness](https://github.com/astroai/torchfits-harness).
 
 Include benchmark evidence in PRs that touch performance-sensitive paths.
 
@@ -212,10 +204,9 @@ Include benchmark evidence in PRs that touch performance-sensitive paths.
 
 - `README.md`: user-facing overview only.
 - `docs/api.md`: public API reference. Update if a PR changes a public API.
-- `docs/roadmap.md`: FITS I/O roadmap and parity tiers.
-- `docs/parity.md`: compatibility matrix. Update if support status changes.
+- `docs/roadmap.md`: FITS I/O roadmap.
+- `docs/evaluation.md`: pointer to benchmarks, parity, and migration notes in torchfits-harness.
 - `docs/changelog.md`: release notes, [Keep a Changelog](https://keepachangelog.com/) format.
-- `docs/benchmarks.md`: benchmark methodology and results.
 - Published site: **stable** = latest `v*` tag at
   [astroai.github.io/torchfits](https://astroai.github.io/torchfits/);
   **edge** = tip of `main` at

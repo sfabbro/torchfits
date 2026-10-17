@@ -12,7 +12,6 @@ import shutil
 import tempfile
 
 import numpy as np
-from astropy.io import fits
 
 import torchfits
 from torchfits.data import FitsImageDataset, make_loader
@@ -25,9 +24,12 @@ def _create_dummy_fits(
     rng = np.random.default_rng(0)
     for i in range(num_files):
         data = rng.random(size).astype(np.float32)
-        hdu = fits.PrimaryHDU(data)
-        hdu.header["LABEL"] = i % 2
-        hdu.writeto(os.path.join(data_dir, f"image_{i:03d}.fits"), overwrite=True)
+        torchfits.write(
+            os.path.join(data_dir, f"image_{i:03d}.fits"),
+            data,
+            header={"LABEL": i % 2},
+            overwrite=True,
+        )
 
 
 def main() -> None:

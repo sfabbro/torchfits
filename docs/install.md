@@ -120,7 +120,6 @@ For local development and running the test suite, we recommend [pixi](https://pi
 pixi install
 pixi run test           # run test suite
 pixi run lint           # ruff linter and formatter
-pixi run bench-all      # benchmarks
 ```
 
 ---
@@ -129,9 +128,8 @@ pixi run bench-all      # benchmarks
 
 | Extra | Included packages | Purpose |
 |---|---|---|
-| `torchfits[dev]` | pytest, ruff, mypy, astropy, fitsio, pandas, matplotlib | Full development suite |
-| `torchfits[bench]` | astropy, fitsio, pandas, matplotlib | Benchmarking suite |
-| `torchfits[test]` | pytest, pytest-cov, astropy, fitsio, psutil, pyarrow | Unit testing extras (`pip install torchfits[test]`) |
+| `torchfits[dev]` | pytest, ruff, mypy, pandas, matplotlib | Library development toolchain |
+| `torchfits[test]` | pytest, pytest-cov, psutil, pyarrow | Unit testing extras (`pip install torchfits[test]`) |
 | `torchfits[docs]` | zensical | Building the documentation site |
 | `torchfits[examples]` | matplotlib | Running tutorial scripts |
 

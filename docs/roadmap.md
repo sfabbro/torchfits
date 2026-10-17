@@ -16,7 +16,7 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 
 ## Next
 
-- Buffered table reads (`mmap=False`) are still behind fitsio: narrow `read_full` by 22% on CPU and 13% on CUDA, and `ascii_10000` `predicate_filter` by 15% on CPU. Figures are the October 2026 runs in [Benchmarks](benchmarks.md#performance-deficits).
+- Buffered table reads (`mmap=False`) are still behind fitsio: narrow `read_full` by 22% on CPU and 13% on CUDA, and `ascii_10000` `predicate_filter` by 15% on CPU. Figures are the October 2026 runs published in [torchfits-harness](https://github.com/astroai/torchfits-harness).
 - Arrow conversion still copies native buffers through NumPy. PyArrow itself imports NumPy; torchfits should stop adding its own copy.
 - `compress` and `decompress` only re-encode bytes, but they still load the torch-linked library.
 - `torchfits.open()` still opens that library. Telling a table HDU from an image HDU also imports PyTorch, so a header-only open is not torch-free yet.

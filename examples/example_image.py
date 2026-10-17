@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from astropy.io import fits
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -22,10 +21,9 @@ import torchfits  # noqa: E402
 
 def _create_test_file(path: str) -> None:
     data = np.arange(64, dtype=np.float32).reshape(8, 8)
-    hdu = fits.PrimaryHDU(data)
-    hdu.header["OBJECT"] = "M31"
-    hdu.header["EXPTIME"] = 120.0
-    hdu.writeto(path, overwrite=True)
+    torchfits.write(
+        path, data, header={"OBJECT": "M31", "EXPTIME": 120.0}, overwrite=True
+    )
 
 
 def main() -> None:

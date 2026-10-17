@@ -2,7 +2,7 @@
 preview = ["pixi-build"]
 # Keep the manager itself reproducible alongside pixi.lock. Update this pin
 # deliberately when the lockfile is regenerated with a newer Pixi release.
-requires-pixi = "==0.81.0"
+requires-pixi = "==0.82.0"
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
@@ -80,12 +80,9 @@ pre-commit = ">=4.6"
 # pyarrow built against the older abseil. This cap is a solver constraint, not
 # a version preference — do not hand-loosen it.
 pyarrow = ">=25.0.0,<26"
-# Comparison libs with open floors (the solver picks python-compatible builds:
-# astropy 8 / matplotlib 3.11+ need 3.11+, numpy 2.5 needs 3.12+). The 3.10
-# lane automatically falls back to astropy 6.1.x / matplotlib 3.10.x.
-astropy = ">=6.1"
-fitsio = ">=1.4"
-matplotlib = ">=3.8"
+# Plotting and table interop for examples. Astropy and fitsio live in
+# torchfits-harness.
+matplotlib = ">=3.11"
 pandas = ">=2.2"
 polars = ">=1.43.2"
 duckdb = ">=1.5.5"
@@ -98,7 +95,7 @@ build = "pixi build"
 current-source-gate = "pixi install --locked && pixi run preflight-push && pixi run ci-local"
 # test runs the full suite including performance markers; the GHA PR matrix excludes them. release-gate runs the curated release subset (no marker filter) and must stay in lockstep with the CI release-gate job's file list -- tests/test_docs_integrity.py enforces that.
 test = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/"
-release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_scale_on_device.py tests/test_data.py tests/test_transforms.py tests/test_transforms_e2e.py tests/test_api.py tests/test_arrow_table_api.py tests/test_security.py tests/test_release_smoke.py tests/test_cli.py tests/test_public_boundary.py tests/test_http_probe_fixture.py tests/test_mps.py tests/test_io_invariants.py -q && pixi run docs-contract && pixi run docs-links"
+release-gate = "pixi run dev && KMP_DUPLICATE_LIB_OK=TRUE pytest tests/test_package_isolation.py tests/test_docs_integrity.py tests/test_fits_schema.py tests/test_read_policy.py tests/test_examples_runner.py tests/test_transforms.py tests/test_release_smoke.py tests/test_public_boundary.py tests/test_http_probe_fixture.py -q && pixi run docs-contract && pixi run docs-links"
 lint = "ruff check . && ruff format ."
 preflight-push = "ruff check . && ruff format --check . && mypy src/torchfits && python -m compileall -q src/torchfits tests && pixi run check-lane && pixi run changelog-check"
 # Regenerate the native type stub from the built extension; --check is the
@@ -133,99 +130,10 @@ docs-contract = "bash scripts/sync_docs_examples.sh && zensical build --clean &&
 # Assumes site/ already exists (docs-contract or docs-build ran first).
 docs-links = "pixi run python scripts/check_docs_links.py"
 
-# Core benchmarks (essential)
-# After a fresh clone, run:  pixi run bench-install
-# This builds the C++ extension once; benchmarks reuse it.
-bench-install = "pip install -e . --no-build-isolation"
-bench-fits = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fits-only"
-bench-fitstable = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --fitstable-only"
-# Same command as bench-fits; mnemonic for Apple Silicon hosts (device picked at runtime).
-bench-mps = "pixi run bench-fits"
-bench-table-arrow = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_arrow_tables.py"
-
-# Comprehensive benchmarks (renamed from exhaustive)
-bench-all = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all"
-bench-all-keep = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile user --scope all --keep-temp"
-
-bench-all-force = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_all.py --profile lab --scope all"
-bench-exhaustive = "bash scripts/run_exhaustive_bench_and_patch_docs.sh"
-bench-suite = "bash scripts/bench_suite.sh"
-bench-exhaustive-local = "bash scripts/bench_exhaustive_local.sh"
-bench-exhaustive-canfar-cpu = "TORCHFITS_BENCH_MODE=exhaustive-cpu bash scripts/launch_canfar_gpu_bench.sh"
-bench-exhaustive-canfar-cuda = "TORCHFITS_BENCH_MODE=exhaustive bash scripts/launch_canfar_gpu_bench.sh"
-bench-release-scorecard = "bash scripts/bench_release_scorecard.sh"
-bench-canfar-gpu = "bash scripts/launch_canfar_gpu_bench.sh"
-bench-cache = "pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_cache.py"
-bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
-# Pure-C CFITSIO (vendored) microbench + torchfits/fitsio peers on same fixtures
-bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
-# Cold/warm latency baseline for the metadata ("skinny") APIs. Its two
-# dimensions -- header size and cold vs warm -- are why no single number for
-# this family is meaningful; see the module docstring.
-bench-metadata = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_metadata.py"
-# MEF median stack: slice-streaming kernel shared by every method, so the
-# fitsio-vs-torchfits comparison is apples to apples. Needs CFHT MegaCam MEFs.
-bench-median-stack = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_median_stack.py"
-bench-megacam = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_megacam_cutouts.py"
-bench-denoise = "pixi run -e bench-all bench-install && pixi run -e bench-all python benchmarks/bench_denoise.py"
-bench-ml = 'bash -c "TS=$(date -u +%Y%m%d_%H%M%S); pixi run -e bench bench-install && pixi run -e bench python benchmarks/bench_ml_loader.py --output benchmarks_results/ml_${TS}/ml_results.csv --run-id ml_${TS}"'
-
-# Render the bench-all CSV into the I/O Transport x Backend markdown section
-# of docs/benchmarks.md. Pass --csv after --, e.g.:
-#   pixi run bench-table-render -- --csv benchmarks_results/<run-id>/results.csv
-bench-table-render = "pixi run -e default python scripts/render_bench_iopath_table.py"
-
 [feature.prod.dependencies]
 python = "3.13.*"
 
 [feature.test.dependencies]
-
-# Benchmark feature with additional dependencies (polars/duckdb/astropy/
-# matplotlib/pandas live at workspace level so every env, incl. the 3.10
-# lane, gets them)
-[feature.bench.dependencies]
-psutil = ">=7.2.2,<8"
-# Build deps needed so pip install -e . can compile the C++ extension
-cmake = ">=3.21"
-ninja = ">=1.10"
-nanobind = ">=3.0.1"
-scikit-build-core = ">=1.0.3"
-pip = ">=24.0"
-cxx-compiler = ">=1.11.0,<2"
-# GPU feature: CUDA-enabled PyTorch for H100/Hopper (sm_90) benchmarking.
-# Start from the conda-forge CPU pytorch the workspace already pins, then
-# swap it for the CUDA wheel in gpu-bootstrap. CMakeLists.txt stubs Caffe2
-# CUDA targets so the compile-time probe does not need a conda toolkit.
-# Wheels themselves are CPU-linked (USE_CUDA=OFF).
-[feature.gpu.dependencies]
-# Cuda-toolkit lives on the nvidia channel, which has no osx-arm64 builds; gate
-# it to linux-64 only. macOS users keep the CPU-only default and stay on bench-all.
-# cuda-cudart-dev + cuda-nvcc provide headers + libs that PyTorch's cuda.cmake
-# requires (FindCUDA bypass via CMAKE_DISABLE_FIND_PACKAGE_CUDA alone is not
-# enough: PyTorch's own cmake re-checks CUDA_TOOLKIT_ROOT_DIR).
-[feature.gpu.target.linux-64.dependencies]
-# cu128 wheel bundles its own nvidia-cuda-runtime-cu12/libs.
-# We don't need conda CUDA dev packages which only ship
-# libcudart.so without headers; CMakeLists.txt stubs Caffe2 CUDA
-# targets so the probe does not require a toolkit.
-
-[feature.gpu.tasks]
-gpu-bootstrap = "bash scripts/gpu-bootstrap.sh"
-bench-gpu-install = "bash -c 'source scripts/gpu-env-loader.sh && unset CC CXX CFLAGS CXXFLAGS LDFLAGS && rm -rf build src/torchfits.egg-info && find src/torchfits \\( -name \"_C*.so\" -o -name \"_core*.so\" -o -name \"libtorchfits_core*.so\" -o -name \"libtorchfits_core*.dylib\" \\) -delete && python -m pip install -e . --no-build-isolation --no-deps'"
-bench-gpu = "pixi run -e bench-gpu gpu-bootstrap && pixi run -e bench-gpu bench-gpu-install && pixi run -e bench-gpu gpu-env-check && pixi run -e bench-gpu python benchmarks/bench_all.py --profile user --scope all --run-id gpu_$(date -u +%Y%m%d_%H%M%S)"
-gpu-env-check = "bash -c 'source scripts/gpu-env-loader.sh && python -c \"import torch; assert torch.cuda.is_available(), \\\"gpu-env-check: CUDA not reachable from this env\\\"; print(\\\"torch=\\\", torch.__version__, \\\"cuda_available=\\\", torch.cuda.is_available()); print(\\\"cuda runtime=\\\", torch.version.cuda); print(\\\"device=\\\", torch.cuda.get_device_name(0), \\\"cap=\\\", torch.cuda.get_device_capability(0))\"'"
-
-# The C++ extension (torchfits._C) has no embedded RPATH pointing at torch's
-# bundled libtorch_python + libtorch_cuda + libc10_cuda, nor at conda's
-# libcudart.so.12; the CPU edit-install build doesn't link these at compile
-# time — they're dlopen-time only. The path is python-version dependent, so
-# bench-gpu tasks source scripts/gpu-env-loader.sh instead of hardcoding one
-# version here.
-#
-# bench-gpu-install deletes all three native artifacts before rebuilding, not
-# just _C: the torch-free library and the _core module are stamped with a build
-# id, so a _C from one build next to a libtorchfits_core from another turns
-# into an ImportError at the first metadata call rather than at link time.
 
 [activation.env]
 # Keep the project env hermetic: user-site packages (e.g. an older pyarrow or
@@ -235,44 +143,9 @@ PYTHONNOUSERSITE = "1"
 # link libomp (import torchfits, or pixi, before a second libomp loads).
 KMP_DUPLICATE_LIB_OK = "TRUE"
 
-# Per-python benchmark environments for the CANFAR grid:
-# python 3.10-3.14 x torch lanes 2.10-2.13 x {cpu, cuda}. The torch lane is
-# applied per session with scripts/release_lane.py --apply. pixi intersects
-# workspace + feature specs, so these envs deliberately exclude the prod
-# feature (python=3.13 pin); the solver picks python-compatible versions of
-# astropy/matplotlib/etc. automatically (astropy 8 needs 3.11+, numpy 2.5
-# needs 3.12+, so the 3.10 lane falls back to the newest compatible builds).
-[feature.py310.dependencies]
-python = "3.10.*"
-
-[feature.py311.dependencies]
-python = "3.11.*"
-
-[feature.py312.dependencies]
-python = "3.12.*"
-
-[feature.py313.dependencies]
-python = "3.13.*"
-
-[feature.py314.dependencies]
-python = "3.14.*"
-
 [environments]
 default = { features = ["prod"] }
 test = { features = ["prod", "test"] }
-bench = { features = ["prod", "bench"] }
-bench-all = { features = ["prod", "bench"] }
-bench-gpu = { features = ["prod", "bench", "gpu"] }
-bench-py310 = { features = ["bench", "py310"] }
-bench-py311 = { features = ["bench", "py311"] }
-bench-py312 = { features = ["bench", "py312"] }
-bench-py313 = { features = ["bench", "py313"] }
-bench-py314 = { features = ["bench", "py314"] }
-bench-gpu-py310 = { features = ["bench", "gpu", "py310"] }
-bench-gpu-py311 = { features = ["bench", "gpu", "py311"] }
-bench-gpu-py312 = { features = ["bench", "gpu", "py312"] }
-bench-gpu-py313 = { features = ["bench", "gpu", "py313"] }
-bench-gpu-py314 = { features = ["bench", "gpu", "py314"] }
 
 [pypi-dependencies]
 zensical = ">=0.0.61"

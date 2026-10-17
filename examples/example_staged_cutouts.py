@@ -17,8 +17,10 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from astropy.io import fits
+
 from torch.utils.data import DataLoader
+
+import torchfits
 
 from torchfits.data import FitsStagedCutoutIterableDataset
 
@@ -30,7 +32,7 @@ def create_demo_mosaics(root_dir: Path, count: int = 3) -> list[str]:
         path = root_dir / f"survey_mosaic_{i:02d}.fits"
         # Simulated 2000x2000 mosaic image
         data = np.random.randn(2000, 2000).astype(np.float32)
-        fits.PrimaryHDU(data).writeto(str(path), overwrite=True)
+        torchfits.write(str(path), data, overwrite=True)
         paths.append(str(path))
     return paths
 

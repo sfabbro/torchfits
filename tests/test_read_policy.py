@@ -81,15 +81,11 @@ def test_unhashable_backend_is_rejected_through_the_public_api(tmp_path):
     """The leak was reachable from table.read/scan, not just the helper."""
     import numpy as np
     import pytest
-    from astropy.io import fits
 
     import torchfits
 
     path = str(tmp_path / "t.fits")
-    cols = [fits.Column(name="X", format="E", array=np.arange(4, dtype=np.float32))]
-    fits.HDUList(
-        [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols, nrows=4)]
-    ).writeto(path, overwrite=True)
+    torchfits.table.write(path, {"X": np.arange(4, dtype=np.float32)}, overwrite=True)
 
     with pytest.raises(ValueError, match="backend must be one of"):
         torchfits.table.read(path, hdu=1, backend=["cpp"])

@@ -12,8 +12,10 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from astropy.io import fits
+
 from torch.utils.data import DataLoader
+
+import torchfits
 
 from torchfits.data import FitsImageDataset, fits_collate_fn, make_loader
 
@@ -22,7 +24,7 @@ def _write_tiny_files(data_dir: Path, n: int = 4) -> None:
     rng = np.random.default_rng(0)
     for i in range(n):
         data = rng.random((16, 16)).astype(np.float32)
-        fits.PrimaryHDU(data).writeto(data_dir / f"tiny_{i:02d}.fits", overwrite=True)
+        torchfits.write(data_dir / f"tiny_{i:02d}.fits", data, overwrite=True)
 
 
 def main() -> int:

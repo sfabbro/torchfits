@@ -22,7 +22,6 @@ _EXCLUDE = {
 # out. They still run — the point is that they must not red the gate for a reason
 # outside this repository's control.
 OPTIONAL = {
-    "example_polars.py",
     # Fetches a catalog and one FITS cutout per row from a third-party HTTP
     # service (legacysurvey.org). Its availability depends on that service and on
     # the network, not on anything here, so a network problem must not fail CI.

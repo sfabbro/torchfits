@@ -10,7 +10,6 @@ import os
 import tempfile
 
 import numpy as np
-from astropy.io import fits
 
 import torchfits
 from torchfits.transforms import (
@@ -28,7 +27,7 @@ def _create_test_file(path: str) -> None:
     bulge = 20000 * np.exp(-(x**2 + y**2) / (2 * 20**2))
     background = rng.normal(100, 5, (256, 256))
     data = (disk + bulge + background).astype(np.float32)
-    fits.PrimaryHDU(data).writeto(path, overwrite=True)
+    torchfits.write(path, data, overwrite=True)
 
 
 def main() -> None:

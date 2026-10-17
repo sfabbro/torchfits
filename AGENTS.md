@@ -2,6 +2,13 @@
 
 Pixi-first: use `pixi run …`, never bare `python` for project work.
 
+## Evaluation
+
+Benchmarks, upstream parity, migration notes, and CANFAR evaluation live in
+[torchfits-harness](https://github.com/astroai/torchfits-harness). Do not import
+harness code from `src/torchfits`. Astropy and fitsio are not dependencies of
+this repo. `to_astropy` stays a lazy optional converter.
+
 ## Verify tiers
 
 | When | Command |
@@ -61,8 +68,8 @@ Before opening a PR:
 1. Read [`.cursor/jules-ledger.md`](.cursor/jules-ledger.md) and search recently
    merged Jules PRs — **do not repeat a theme already landed**.
 2. Cite evidence: a failing test / assert that fails before and passes after, a
-   CFITSIO or public API contract, or before/after timing from an existing
-   `pixi run bench-*` case (same host, same `case_id`).
+   CFITSIO or public API contract, or a measurement from torchfits-harness
+   (same host, same `case_id`).
 3. One logical change per PR; title names the bug or the bench case.
 4. No new dependencies; no SemVer bumps; no force-push.
 5. Run `pixi run preflight-push` (or the smallest relevant pytest) before opening

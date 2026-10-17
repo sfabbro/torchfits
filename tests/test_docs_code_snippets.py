@@ -12,10 +12,11 @@ from typing import NamedTuple
 import numpy as np
 import pytest
 import torch
-from astropy.io import fits
-from astropy.table import Table
 
+import torchfits
+from torchfits._hdu.header import Header
 from torchfits.cli.main import build_parser
+from torchfits.hdu import HDUList, TableHDU, TensorHDU
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "docs"
@@ -55,62 +56,72 @@ def mock_fits_workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Create a temporary directory with standard FITS files for doc snippet execution."""
     ws = tmp_path_factory.mktemp("doc_fits_ws")
 
-    # 1. science.fits (Image with header keywords and EXTNAME=SCI)
-    img_data = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
-    prim_hdu = fits.PrimaryHDU(img_data)
-    prim_hdu.header["OBJECT"] = "M31"
-    prim_hdu.header["EXPTIME"] = 300.0
-    prim_hdu.header["FILTER"] = "r"
-    prim_hdu.header["OBSERVER"] = "Astronomer"
-    prim_hdu.header["EXTNAME"] = "SCI"
-    sci_ext = fits.ImageHDU(img_data, name="SCI")
-    fits.HDUList([prim_hdu, sci_ext]).writeto(ws / "science.fits", overwrite=True)
-
-    # 2. catalog.fits (Binary table)
-    cat_tab = Table(
-        {
-            "ID": np.array([1, 2, 3, 4, 5], dtype=np.int64),
-            "RA": np.array([10.1, 10.2, 10.3, 10.4, 10.5], dtype=np.float64),
-            "DEC": np.array([-1.0, 0.5, 1.5, -0.2, 2.0], dtype=np.float64),
-            "MAG_G": np.array([17.5, 19.2, 21.0, 18.0, 22.5], dtype=np.float32),
-            "CLASS_STAR": np.array([0.95, 0.88, 0.12, 0.99, 0.05], dtype=np.float32),
-            "FLUX": np.array([10.5, 23.1, 45.0, 12.0, 50.0], dtype=np.float32),
-        }
+    img = torch.from_numpy(np.arange(64 * 64, dtype=np.float32).reshape(64, 64))
+    science = HDUList(
+        [
+            TensorHDU(
+                img,
+                Header(
+                    {
+                        "OBJECT": "M31",
+                        "EXPTIME": 300.0,
+                        "FILTER": "r",
+                        "OBSERVER": "Astronomer",
+                        "EXTNAME": "SCI",
+                    }
+                ),
+            ),
+            TensorHDU(img, Header({"EXTNAME": "SCI"})),
+        ]
     )
-    cat_tab.write(ws / "catalog.fits", format="fits", overwrite=True)
+    science.write(str(ws / "science.fits"), overwrite=True)
 
-    # 3. giant_mosaic.fits / survey_mosaic.fits / mosaic.fits / horsehead.fits / sdss_*.fits
-    mosaic_data = np.ones((512, 512), dtype=np.float32) * 42.0
-    fits.writeto(ws / "giant_mosaic.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "survey_mosaic.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "mosaic.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "horsehead.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "sdss_i.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "sdss_r.fits", mosaic_data, overwrite=True)
-    fits.writeto(ws / "sdss_g.fits", mosaic_data, overwrite=True)
+    catalog = {
+        "ID": np.array([1, 2, 3, 4, 5], dtype=np.int64),
+        "RA": np.array([10.1, 10.2, 10.3, 10.4, 10.5], dtype=np.float64),
+        "DEC": np.array([-1.0, 0.5, 1.5, -0.2, 2.0], dtype=np.float64),
+        "MAG_G": np.array([17.5, 19.2, 21.0, 18.0, 22.5], dtype=np.float32),
+        "CLASS_STAR": np.array([0.95, 0.88, 0.12, 0.99, 0.05], dtype=np.float32),
+        "FLUX": np.array([10.5, 23.1, 45.0, 12.0, 50.0], dtype=np.float32),
+    }
+    torchfits.table.write(str(ws / "catalog.fits"), catalog, overwrite=True)
 
-    # 4. observation.fits / mef_survey.fits (Multi-Extension FITS)
-    prim_hdu = fits.PrimaryHDU()
-    prim_hdu.header["OBJECT"] = "NGC1234"
-    sci_hdu = fits.ImageHDU(img_data, name="SCI")
-    cat_hdu = fits.BinTableHDU(cat_tab, name="CATALOG")
-    hdul = fits.HDUList([prim_hdu, sci_hdu, cat_hdu])
-    hdul.writeto(ws / "observation.fits", overwrite=True)
-    hdul.writeto(ws / "mef_survey.fits", overwrite=True)
+    mosaic = torch.ones(512, 512) * 42.0
+    for name in (
+        "giant_mosaic.fits",
+        "survey_mosaic.fits",
+        "mosaic.fits",
+        "horsehead.fits",
+        "sdss_i.fits",
+        "sdss_r.fits",
+        "sdss_g.fits",
+    ):
+        torchfits.write(str(ws / name), mosaic, overwrite=True)
 
-    # 5. data/survey/*.fits directory structure
+    mef = HDUList(
+        [
+            TensorHDU(torch.empty(0), Header({"OBJECT": "NGC1234"})),
+            TensorHDU(img, Header({"EXTNAME": "SCI"})),
+            TableHDU(catalog, header=Header({"EXTNAME": "CATALOG"})),
+        ]
+    )
+    mef.write(str(ws / "observation.fits"), overwrite=True)
+    mef.write(str(ws / "mef_survey.fits"), overwrite=True)
+
     survey_dir = ws / "data" / "survey"
     survey_dir.mkdir(parents=True, exist_ok=True)
     for i in range(3):
-        fhdr = fits.Header()
-        fhdr["CLASS_ID"] = i % 2
-        fhdr["CLASS"] = "GALAXY" if i % 2 == 0 else "STAR"
-        fits.writeto(
-            survey_dir / f"survey_{i}.fits", img_data, header=fhdr, overwrite=True
+        torchfits.write(
+            str(survey_dir / f"survey_{i}.fits"),
+            img,
+            header={
+                "CLASS_ID": i % 2,
+                "CLASS": "GALAXY" if i % 2 == 0 else "STAR",
+            },
+            overwrite=True,
         )
 
-    # 6. huge_catalog.fits
-    cat_tab.write(ws / "huge_catalog.fits", format="fits", overwrite=True)
+    torchfits.table.write(str(ws / "huge_catalog.fits"), catalog, overwrite=True)
 
     return ws
 

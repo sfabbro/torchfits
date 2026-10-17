@@ -33,8 +33,7 @@ nav = [
     "examples-transforms.md",
     "examples-ml.md",
     "denoise-pipeline.md",
-    "benchmarks.md",
-    "parity.md",
+    "evaluation.md",
   ]},
   {"API Reference" = [
     "api.md",
@@ -43,10 +42,6 @@ nav = [
     "api-data.md",
     "api-transforms.md",
     "architecture.md",
-  ]},
-  {"Migration" = [
-    "migration_astropy.md",
-    "migration_fitsio.md",
   ]},
   {"Project" = [
     "changelog.md",

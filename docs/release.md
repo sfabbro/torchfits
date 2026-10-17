@@ -95,37 +95,15 @@ release API freeze review under
 Covered by `release-gate`; re-run narrowly if needed:
 
 ```bash
-pixi run pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py -q
 pixi run pytest tests/test_package_isolation.py tests/test_docs_integrity.py -q
 ```
 
+Upstream parity smokes run in torchfits-harness.
+
 ## 6. Benchmark evidence
 
-Published multi-host benchmark runs (MPS + CANFAR CPU + CANFAR CUDA):
-
-```bash
-pixi run bench-install
-bash scripts/selfcheck_canfar_launcher.sh
-# Launch CANFAR first (async), then local:
-pixi run bench-exhaustive-canfar-cpu
-pixi run bench-exhaustive-canfar-cuda
-pixi run bench-exhaustive-local
-# After CANFAR finishes:
-bash scripts/fetch_canfar_bench_vos.sh exhaustive_cpu_<stamp>
-bash scripts/fetch_canfar_bench_vos.sh exhaustive_cuda_<stamp>
-# Local leg: bench-exhaustive-local prints its run-id (exhaustive_<cpu|mps>_<stamp>).
-pixi run bench-release-scorecard -- \
-  benchmarks_results/exhaustive_<cpu-or-mps>_<localstamp> \
-  benchmarks_results/exhaustive_cpu_<stamp> \
-  benchmarks_results/exhaustive_cuda_<stamp>
-```
-
-Mirror CSVs into `docs/assets/bench/<run-id>/` and update Published paths in
-`docs/benchmarks.md`. Companion suites: `pixi run bench-megacam`, `bench-ml`.
-
-Quick local check (not a published run): `pixi run bench-all` /
-`pixi run bench-mps`. Manual CI refresh: `.github/workflows/bench-report.yml`
-(`workflow_dispatch` only; CPU-only).
+Benchmark runs, published CSVs, and the parity matrix live in
+[torchfits-harness](https://github.com/astroai/torchfits-harness).
 
 Repository: https://github.com/astroai/torchfits.
 
@@ -133,15 +111,14 @@ Repository: https://github.com/astroai/torchfits.
 `.github/workflows/build_wheels.yml` (publishes via OIDC trusted
 publishing on the `pypi` GitHub Environment; no API token).
 
-Do not make new performance claims unless the benchmark run is archived and the
-comparison target is listed in `docs/parity.md`.
+Do not make new performance claims unless the benchmark run is archived in
+torchfits-harness.
 
 ## 7. Parity and docs contract
 
-- [x] `docs/parity.md` marks every major FITS feature as supported, partial,
-      unsupported, or out of scope.
-- [x] `benchmarks/replays/upstream_sources.json` references the parity tests
-      that justify comparator claims.
+- [x] Parity and migration notes live in torchfits-harness. This repo's
+      [evaluation](evaluation.md) page points there.
+- [x] Core tests and the default environment do not import astropy or fitsio.
 - [x] README and docs do not claim torchfits ownership of WCS, sphere geometry,
       HEALPix, or sky-domain simulation.
 - [x] Install docs still document CPU-only (no CUDA libs) and GPU torch index

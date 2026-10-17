@@ -2,7 +2,7 @@
 
 Practical patterns and best practices for working with FITS files in Python with PyTorch, PyArrow, and modern data science tools.
 
-If you are migrating from existing libraries, see also the [Astropy migration guide](migration_astropy.md) or [fitsio migration guide](migration_fitsio.md).
+If you are migrating from astropy or fitsio, see [Evaluation](evaluation.md).
 
 ---
 

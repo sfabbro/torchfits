@@ -38,6 +38,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 import torchfits  # noqa: E402
+from torchfits.hdu import HDUList, TensorHDU  # noqa: E402
 
 core = pytest.importorskip("torchfits._core")
 
@@ -160,8 +161,6 @@ def test_shape_and_image_info_state_their_axis_order(tmp_path) -> None:
     ``scripts/gen_native_stub.py``, and ``tests/test_native_stub.py`` gates the
     stub against the extension, so checking the runtime docstring covers both.
     """
-    fits = pytest.importorskip("astropy.io.fits")
-
     path = tmp_path / "nonsquare.fits"
     torchfits.write(
         str(path),
@@ -183,10 +182,8 @@ def test_shape_and_image_info_state_their_axis_order(tmp_path) -> None:
     assert fits_order == tuple(reversed(shape))
     assert fits_order != shape, "a square frame would prove nothing"
 
-    # Both readings are the header's own words, so astropy is the arbiter.
-    with fits.open(path) as hdul:
-        assert tuple(hdul[0].shape) == shape
-        assert (hdul[0].header["NAXIS1"], hdul[0].header["NAXIS2"]) == fits_order
+    header = torchfits.read_header(str(path), 0)
+    assert (int(header["NAXIS1"]), int(header["NAXIS2"])) == fits_order
 
     # The part that was actually missing: nothing told the caller which is which.
     shape_doc = (core.Metadata.shape.__doc__ or "").lower()
@@ -696,14 +693,14 @@ def test_num_hdus_does_not_move_the_handles_hdu_cursor(tmp_path: Path) -> None:
     `(32, 32)` -- HDU 2's shape. No exception, no warning; a caller reading a
     primary header's dimensions got another extension's.
     """
-    fits = pytest.importorskip("astropy.io.fits")  # optional, as elsewhere here
-    hdus = [
-        fits.PrimaryHDU(np.zeros((8, 8), dtype=np.int16)),
-        fits.ImageHDU(np.zeros((16, 16), dtype=np.int16), name="ONE"),
-        fits.ImageHDU(np.zeros((32, 32), dtype=np.int16), name="TWO"),
-    ]
     path = tmp_path / "cursor.fits"
-    fits.HDUList(hdus).writeto(path, overwrite=True)
+    HDUList(
+        [
+            TensorHDU(torch.zeros(8, 8, dtype=torch.int16)),
+            TensorHDU(torch.zeros(16, 16, dtype=torch.int16), {"EXTNAME": "ONE"}),
+            TensorHDU(torch.zeros(32, 32, dtype=torch.int16), {"EXTNAME": "TWO"}),
+        ]
+    ).write(str(path), overwrite=True)
 
     with core.Metadata(str(path)) as reader:
         assert reader.num_hdus() == 3

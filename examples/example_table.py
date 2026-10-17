@@ -15,7 +15,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from astropy.table import Table
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -27,18 +26,18 @@ import torchfits  # noqa: E402
 
 
 def _create_test_file(path: str) -> None:
-    from astropy.io import fits
-
-    table = Table(
+    torchfits.table.write(
+        path,
         {
             "ra": np.array([200.0, 201.0, 202.0], dtype=np.float64),
             "dec": np.array([45.0, 46.0, 47.0], dtype=np.float64),
             "flux": np.array([1.0, 2.0, 3.0], dtype=np.float32),
             "id": np.array([1, 2, 3], dtype=np.int32),
             "flag": np.array([True, False, True], dtype=bool),
-        }
+        },
+        overwrite=True,
+        extname="MY_TABLE",
     )
-    fits.BinTableHDU(table, name="MY_TABLE").writeto(path, overwrite=True)
 
 
 def main() -> None:

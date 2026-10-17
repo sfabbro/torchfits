@@ -115,7 +115,6 @@ print(f"Selected {events.num_rows} hard X-ray photons.")
 ```
 
 - **Script:** [`example_table.py`](published-examples/example_table.py)
-- **Dataframe Interop Script:** [`example_table_interop.py`](published-examples/example_table_interop.py)
 - **DuckDB & Polars Analytics:** [`example_table_recipes.py`](published-examples/example_table_recipes.py)
 
 ---
@@ -179,7 +178,6 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 | Script | Purpose & Key APIs |
 |---|---|
 | [`example_table.py`](published-examples/example_table.py) | Arrow tables, tensor dictionary loading, and Chandra event filtering |
-| [`example_table_interop.py`](published-examples/example_table_interop.py) | Zero-copy conversion between PyArrow, Pandas, and Polars |
 | [`example_polars.py`](published-examples/example_polars.py) | `read_polars` and out-of-core `scan_polars` streaming |
 | [`example_table_recipes.py`](published-examples/example_table_recipes.py) | SQL pushdown, DuckDB querying, and Arrow record batch iterators |
 
@@ -195,11 +193,11 @@ torchfits.write("packed_int16.fits", image_float, quantize="robust", overwrite=T
 These are assertion-driven rather than illustrative: every check below raises on
 failure, so the smoke suite reports a broken read or write instead of printing it.
 
+The fitsio and CCfits cookbooks live in [torchfits-harness](https://github.com/astroai/torchfits-harness).
+
 | Script | What it asserts |
 |---|---|
-| [`example_cfitsio_cookbook.py`](published-examples/example_cfitsio_cookbook.py) | The `fitsio` C cookbook, in torchfits: create/read, multi-HDU copy, subset reads, checksums, `TFORM` `J/K/E/D/L/A`, header key update/delete, ASCII tables |
-| [`example_ccfits_cookbook.py`](published-examples/example_ccfits_cookbook.py) | The CCfits C++ cookbook, in torchfits: primary image + header parity with astropy, binary-table column types `J/K/E/D/L/X/A`, projection + row slice + `where=`, `uint16` BZERO round-trip, `HISTORY`/`CONTINUE` long strings, multi-HDU `EXTNAME` |
-| [`example_identity_stress.py`](published-examples/example_identity_stress.py) | The same pixels and columns through every write/read path: `write`/`write_tensor`/`HDUList`/astropy, tensor dicts, `scan` batch sizes, `where=` row counts, `uint16`, VLA + 2-d columns, `RICE_1` and `GZIP_1` |
+| [`example_identity_stress.py`](published-examples/example_identity_stress.py) | The same pixels and columns through every write/read path: `write`/`write_tensor`/`HDUList`, tensor dicts, `scan` batch sizes, `where=` row counts, `uint16`, VLA + 2-d columns, `RICE_1` and `GZIP_1` |
 
 ### Machine Learning & Preprocessing
 

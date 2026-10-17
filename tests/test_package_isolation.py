@@ -118,7 +118,6 @@ def test_native_torch_abi_range_is_consistent() -> None:
     workflow_paths = (
         REPO_ROOT / ".github" / "workflows" / "ci.yml",
         REPO_ROOT / ".github" / "workflows" / "build_wheels.yml",
-        REPO_ROOT / ".github" / "workflows" / "bench-report.yml",
     )
     for path in workflow_paths:
         workflow = path.read_text(encoding="utf-8")
@@ -172,12 +171,17 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert (REPO_ROOT / "scripts" / "cibw_test.sh").is_file()
     assert (REPO_ROOT / "scripts" / "cibuildwheel.sh").is_file()
 
-    # [dev] covers test + bench + examples deps (no ipykernel).
+    # [dev] is the library toolchain. Comparators live in torchfits-harness.
     dev = set(pyproject["project"]["optional-dependencies"]["dev"])
     assert "ipykernel" not in dev
     assert any(x.startswith("pytest") for x in dev)
-    assert any(x.startswith("astropy") for x in dev)
     assert any(x.startswith("matplotlib") for x in dev)
+    extras = pyproject["project"]["optional-dependencies"]
+    assert "bench" not in extras
+    for group in ("dev", "test"):
+        for req in extras[group]:
+            name = req.split(">=")[0].split("[")[0]
+            assert name not in {"astropy", "fitsio"}, req
 
 
 def test_every_tracked_file_is_re_addable() -> None:

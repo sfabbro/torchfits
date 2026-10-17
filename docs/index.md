@@ -122,7 +122,7 @@ title: FITS I/O for PyTorch Tensors and Tables
 | **Command-Line Suite** | Disparate tools (`fitsinfo`, `imstat`, `fpack`) | Unified, multi-core `torchfits` CLI suite |
 | **Packaging & Installation** | May require local C compilation | Prebuilt wheels with vendored CFITSIO |
 
-Explore detailed benchmarks and published results in [Benchmarks](benchmarks.md), or check feature coverage in the [Compatibility & Parity Matrix](parity.md).
+Benchmarks, parity, and migration notes are in [Evaluation](evaluation.md).
 
 ---
 
@@ -153,8 +153,7 @@ Explore detailed benchmarks and published results in [Benchmarks](benchmarks.md)
 
     - [API Reference](api.md) — Full signatures, parameters, and return types.
     - [Core I/O](api-core-io.md) & [Tables API](api-tables.md) — Detailed class & function docs.
-    - [Benchmarks](benchmarks.md) — Performance methodology and published hardware results.
-    - [Astropy](migration_astropy.md) · [fitsio Migration](migration_fitsio.md) — Side-by-side transition guides.
+    - [Evaluation](evaluation.md) — Benchmarks, parity, and migration notes.
 
 </div>
 

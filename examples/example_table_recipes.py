@@ -6,7 +6,6 @@ import os
 import tempfile
 
 import numpy as np
-from astropy.table import Table
 
 import torchfits
 
@@ -15,26 +14,28 @@ _CI_FAST = os.environ.get("TORCHFITS_EXAMPLE_FAST") == "1"
 
 
 def _write_catalog(path: str, offset: float = 0.0) -> None:
-    table = Table(
+    torchfits.table.write(
+        path,
         {
             "OBJID": np.array([1, 2, 3, 4], dtype=np.int64),
             "RA": np.array([10.1, 11.2, 12.3, 13.4], dtype=np.float64),
             "DEC": np.array([-1.0, 0.5, 1.2, 2.1], dtype=np.float64),
             "MAG_G": np.array([20.1, 19.4, 18.9, 21.0], dtype=np.float32) + offset,
-            "BAND": np.array(["g", "g", "r", "r"], dtype="U1"),
-        }
+            "BAND": np.array(["g", "g", "r", "r"]),
+        },
+        overwrite=True,
     )
-    table.write(path, format="fits", overwrite=True)
 
 
 def _write_labels(path: str) -> None:
-    table = Table(
+    torchfits.table.write(
+        path,
         {
             "OBJID": np.array([1, 2, 3, 4], dtype=np.int64),
-            "CLASS": np.array(["star", "galaxy", "qso", "star"], dtype="U8"),
-        }
+            "CLASS": np.array(["star", "galaxy", "qso", "star"]),
+        },
+        overwrite=True,
     )
-    table.write(path, format="fits", overwrite=True)
 
 
 def main() -> None:

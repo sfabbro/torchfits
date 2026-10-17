@@ -10,10 +10,12 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from astropy.io import fits
+import torch
 from torch.utils.data import DataLoader
 
+import torchfits
 from torchfits.data import FitsCubeIterableDataset, FitsSpectrumIterableDataset
+from torchfits.hdu import HDUList, TensorHDU
 
 
 def create_demo_data(root_dir: Path) -> tuple[list[str], list[str]]:
@@ -23,18 +25,24 @@ def create_demo_data(root_dir: Path) -> tuple[list[str], list[str]]:
         path = root_dir / f"ifu_cube_{i:02d}.fits"
         # Simulated 3D IFU datacube: [30 wavelength channels, 64 Y, 64 X]
         data = np.random.randn(30, 64, 64).astype(np.float32)
-        fits.PrimaryHDU(data).writeto(str(path), overwrite=True)
+        torchfits.write(str(path), data, overwrite=True)
         cube_paths.append(str(path))
 
     spec_paths = []
     for i in range(4):
         path = root_dir / f"multi_arm_spec_{i:02d}.fits"
         hdus = [
-            fits.PrimaryHDU(),
-            fits.ImageHDU(np.random.randn(100).astype(np.float32), name="BLUE"),
-            fits.ImageHDU(np.random.randn(100).astype(np.float32), name="RED"),
+            TensorHDU(torch.empty(0)),
+            TensorHDU(
+                torch.from_numpy(np.random.randn(100).astype(np.float32)),
+                {"EXTNAME": "BLUE"},
+            ),
+            TensorHDU(
+                torch.from_numpy(np.random.randn(100).astype(np.float32)),
+                {"EXTNAME": "RED"},
+            ),
         ]
-        fits.HDUList(hdus).writeto(str(path), overwrite=True)
+        HDUList(hdus).write(str(path), overwrite=True)
         spec_paths.append(str(path))
 
     return cube_paths, spec_paths

@@ -7,13 +7,13 @@ import tempfile
 import time
 
 import numpy as np
-from astropy.table import Table
 
 import torchfits
 
 
 def _create_catalog(path: str, n_rows: int = 50_000) -> None:
-    table = Table(
+    torchfits.table.write(
+        path,
         {
             "id": np.arange(n_rows, dtype=np.int64),
             "ra": np.random.uniform(0, 360, n_rows).astype(np.float64),
@@ -21,9 +21,9 @@ def _create_catalog(path: str, n_rows: int = 50_000) -> None:
             "flux_g": np.random.exponential(100.0, n_rows).astype(np.float32),
             "flux_r": np.random.exponential(150.0, n_rows).astype(np.float32),
             "class": np.random.randint(0, 3, n_rows).astype(np.int16),
-        }
+        },
+        overwrite=True,
     )
-    table.write(path, format="fits", overwrite=True)
 
 
 def main() -> None:

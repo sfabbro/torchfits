@@ -47,7 +47,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy astropy fitsio pytest nanobind scikit-build-core psutil pyarrow
+          pip install numpy pytest nanobind scikit-build-core psutil pyarrow
       - name: Install torchfits
         run: pip install -e . --no-build-isolation
       - name: Run tests

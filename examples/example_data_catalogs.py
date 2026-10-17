@@ -6,9 +6,8 @@ import os
 import tempfile
 
 import numpy as np
-from astropy.io import fits
-from astropy.table import Table
 
+import torchfits
 from torchfits.data import (
     FitsCutoutDataset,
     FitsTableDataset,
@@ -19,14 +18,18 @@ from torchfits.data import (
 
 def _write_image(path: str) -> None:
     data = np.arange(1024, dtype=np.float32).reshape(32, 32)
-    fits.PrimaryHDU(data).writeto(path, overwrite=True)
+    torchfits.write(path, data, overwrite=True)
 
 
 def _write_table(path: str) -> None:
-    table = Table()
-    table["flux"] = np.arange(8, dtype=np.float32) + 1.0
-    table["mag"] = np.arange(8, dtype=np.float32) + 10.0
-    table.write(path, format="fits", overwrite=True)
+    torchfits.table.write(
+        path,
+        {
+            "flux": np.arange(8, dtype=np.float32) + 1.0,
+            "mag": np.arange(8, dtype=np.float32) + 10.0,
+        },
+        overwrite=True,
+    )
 
 
 def main() -> None:
