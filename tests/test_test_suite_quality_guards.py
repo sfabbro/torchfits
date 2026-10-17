@@ -233,9 +233,14 @@ def test_scanner_actually_walks_the_suite() -> None:
     A detector that quietly stops matching reports green while inspecting
     nothing, which is worse than no detector at all.
     """
-    assert len(SCANNED) > 100, (
-        f"only {len(SCANNED)} test files discovered -- the scanner is not "
-        "walking tests/"
+    modules = [p for p in TESTS_DIR.glob("test_*.py") if p.name != SELF]
+    # The floor used to be a hard 100, which was the pre-split suite. The
+    # check that still matters is that the scanner sees the suite that is
+    # actually on disk.
+    assert modules, "tests/ has no test modules for the scanner to walk"
+    assert len(SCANNED) >= len(modules), (
+        f"scanner saw {len(SCANNED)} files but tests/ has {len(modules)} "
+        "test modules"
     )
     assert SELF not in {p.name for p in SCANNED}
 
