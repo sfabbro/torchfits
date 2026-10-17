@@ -239,8 +239,7 @@ def test_scanner_actually_walks_the_suite() -> None:
     # actually on disk.
     assert modules, "tests/ has no test modules for the scanner to walk"
     assert len(SCANNED) >= len(modules), (
-        f"scanner saw {len(SCANNED)} files but tests/ has {len(modules)} "
-        "test modules"
+        f"scanner saw {len(SCANNED)} files but tests/ has {len(modules)} test modules"
     )
     assert SELF not in {p.name for p in SCANNED}
 
