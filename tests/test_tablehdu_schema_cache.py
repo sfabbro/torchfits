@@ -28,4 +28,6 @@ def test_tablehdu_schema_invalidation_on_del():
     assert [c["name"] for c in hdu.schema["columns"]] == ["x", "y"]
 
     del header["TTYPE2"]
-    assert [c["name"] for c in hdu.schema["columns"]] == ["x"]
+    # Deleting TTYPE2 while TFIELDS remains 2 makes the second column nameless:
+    # it must survive (not shift away) and carry the readers' COL<i> fallback.
+    assert [c["name"] for c in hdu.schema["columns"]] == ["x", "COL2"]

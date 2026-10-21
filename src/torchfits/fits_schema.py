@@ -125,23 +125,40 @@ def _kw_lookup(header: Mapping[str, Any]) -> Callable[[str], Any]:
     return get
 
 
+def _default_column_name(index: int) -> str:
+    """Name every reader uses for a column with no (or an empty) ``TTYPE`` card.
+
+    FITS permits a column without a ``TTYPE`` card.  The native readers
+    (``cpp_src/table_reader.h``) and the metadata API
+    (``cpp_src/core/metadata_api.cpp``) synthesize ``COL<i>`` in that case, so
+    the Python schema has to agree: naming the column ``""`` here made
+    ``schema`` disagree with ``read``/``read_torch`` and left no way to address
+    the column by name.
+    """
+    return f"COL{index}"
+
+
 def _iter_tfields_indexed(
     header: Mapping[str, Any],
 ) -> Iterator[tuple[int, str, str, str | None]]:
-    """Yield (index, name, tform, tdim) using TFIELDS fast-path or card scan."""
+    """Yield (index, name, tform, tdim) using TFIELDS fast-path or card scan.
+
+    A column without a usable ``TTYPE`` card is still yielded, with the same
+    ``COL<i>`` fallback the readers use.  Dropping it shifted every later
+    column's index, so ``schema`` addressed the wrong ``TFORM``/``TNULL`` cards.
+    """
     tfields = _tfields_count(header)
     if tfields > 0:
         get = _kw_lookup(header)
         for i in range(1, tfields + 1):
             si = str(i)
             name = get("TTYPE" + si)
-            if name is None:
-                continue
             tform = get("TFORM" + si)
             tdim = get("TDIM" + si)
+            resolved = "" if name is None else str(name)
             yield (
                 i,
-                str(name),
+                resolved if resolved else _default_column_name(i),
                 str(tform) if tform is not None else "",
                 (str(tdim) if tdim is not None else None),
             )
@@ -167,10 +184,14 @@ def _iter_tfields_indexed(
             if suffix.isdigit():
                 tdim_by_idx[int(suffix)] = str(value)
 
-    for idx in sorted(name_by_idx.keys()):
+    all_indices = (
+        set(name_by_idx.keys()) | set(tform_by_idx.keys()) | set(tdim_by_idx.keys())
+    )
+    for idx in sorted(all_indices):
+        name = name_by_idx.get(idx, "")
         yield (
             idx,
-            name_by_idx[idx],
+            name if name else _default_column_name(idx),
             tform_by_idx.get(idx, ""),
             tdim_by_idx.get(idx),
         )
