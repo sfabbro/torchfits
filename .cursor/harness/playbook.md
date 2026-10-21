@@ -3,10 +3,10 @@
 ## Bullets
 
 - id: verify-tiers
-  desc: the three config.json tiers are strictly nested. verify_fast = preflight-push (ruff, mypy, compileall, check-lane, changelog-check) during edits; verify adds ci-local before push; verify_full adds pre-commit, human opt-in only. preflight-push is the ONLY tier that type-checks, so never call a change clean without it; ci-local/release-gate run 20 of ~139 test files while `pixi run test` runs all. Never torchregress-harness in the agent loop.
+  desc: the three config.json tiers are strictly nested. verify_fast = preflight-push (ruff, mypy, compileall, check-lane, changelog-check) during edits; verify adds ci-local before push; verify_full adds pre-commit, human opt-in only. preflight-push is the ONLY tier that type-checks, so never call a change clean without it. release-gate names the nine contract files; CI and `pixi run test` run the whole tests/ suite. Never torchregress-harness in the agent loop.
 
 - id: ci-parity
-  desc: CI main job runs the whole suite (pytest tests/ -q -m 'not performance'); ci-local does NOT — it runs release-gate, which names 20 of the ~139 tests/test_*.py files. ci-local also re-implements preflight-push's lint steps without calling it, so it never runs mypy, compileall, or changelog-check. Only preflight-push type-checks; use it before claiming a change is clean.
+  desc: CI main job runs the whole suite (pytest tests/ -q -m 'not performance'); ci-local does NOT — it runs release-gate, the nine contract files plus docs-contract and docs-links. ci-local also re-implements preflight-push's lint steps without calling it, so it never runs mypy, compileall, or changelog-check. Only preflight-push type-checks; use it before claiming a change is clean.
 
 - id: file-memory
   desc: Put durable notes in .cursor/harness/ — not long chat scrollback.

@@ -99,7 +99,7 @@ rejected with an `ImportError` at the boundary instead of misreading data.
 | Metadata *calls* without Python torch | done (fresh-process blocker) |
 | Metadata calls without *libtorch at all* | done (`libtorchfits_core`; 337 ms → 53 ms cold) |
 | Core and extension agree on *real* observations | done (`tests/test_core_library_real_data.py`; 409 real (frame, HDU) records, 0 mismatches) |
-| Reads match `astropy` on *real* observations | done (`tests/test_reads_real_data.py`; decompressed frames, raw VLA tiles and 435 Mpix of mosaic all exact) |
+| Reads match `astropy` on *real* observations | done in [torchfits-harness](https://github.com/astroai/torchfits-harness) (`tests/test_reads_real_data.py`; decompressed frames, raw VLA tiles and 435 Mpix of mosaic all exact) |
 | Arrow table destinations without Python torch | done (native raw buffers; correctness-first staging remains) |
 | Zero-copy Arrow assembly | pending (the staging copy in the raw transport is still there) |
 | `torchfits.open()` handle on the torch-free path | pending (the `HDUList` handle is shared with the tensor readers) |

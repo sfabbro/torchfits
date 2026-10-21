@@ -398,7 +398,7 @@ update/delete). `insert_rows` requires keyword `row=` (0-based insert index).
 
 ### Astropy
 
-Direct reading, conversion, and writing for `astropy.table.Table`:
+Direct reading, conversion, and writing for `astropy.table.Table`. Astropy is not a torchfits dependency; install it before calling these:
 
 ```python
 # Read directly into an Astropy Table (supports SQL WHERE filters)
