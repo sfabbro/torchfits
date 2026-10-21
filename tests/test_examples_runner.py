@@ -58,18 +58,78 @@ def _parsed_calls(source: str) -> dict[str, ast.Call]:
     return calls
 
 
+#: Outer wall-clock budget for the whole gallery. The runner already bounds
+#: each example on its own (``examples/test_examples.py``'s ``TIMEOUTS``, 180 s
+#: by default); this is the net that stops a child which is wedged somewhere the
+#: per-example timer cannot reach -- a ``urlopen`` blocked on a black-holed host,
+#: a stuck decompressor -- from hanging the suite forever. The bounded gallery
+#: takes a few minutes, so half an hour is generous rather than tight.
+GALLERY_TIMEOUT_S = 1800
+
+#: A ~200 MB SDSS LOGCUBE cannot arrive inside the 180 s per-example default on
+#: any ordinary link, so that example needs its own budget in the full gallery.
+_LARGE_SAMPLE_EXAMPLE = "example_manga_logcube.py"
+
+
 def test_example_scripts_exit_zero() -> None:
-    result = subprocess.run(
-        [sys.executable, str(RUNNER)],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    """Every example exits 0, in the same bounded mode CI uses.
+
+    Two properties this gate needs and did not have:
+
+    * **Bounded.** :file:`example_manga_logcube.py` fetches a ~200 MB SDSS
+      LOGCUBE inside the runner's 180 s per-example budget, so on a slow link
+      the gate failed for a reason outside this repository. The subprocess also
+      had no timeout at all. The gallery now runs with
+      ``TORCHFITS_EXAMPLE_FAST=1`` -- exactly what CI sets: no network, cached
+      samples only, and an example whose sample is not cached prints ``SKIP``
+      and exits 0.
+    * **The same on every machine.** Running locally used to mean the full
+      network gallery (200 MB of downloads, ~35 minutes) while CI ran bounded
+      (seconds), so a green CI and a red laptop could disagree about one commit.
+      ``TORCHFITS_EXAMPLES_FULL=1`` restores the full gallery for a deliberate
+      run, as does ``pixi run python examples/test_examples.py``.
+    """
+    env = os.environ.copy()
+    full = os.environ.get("TORCHFITS_EXAMPLES_FULL", "").strip() == "1"
+    if not full:
+        env["TORCHFITS_EXAMPLE_FAST"] = "1"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(RUNNER)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GALLERY_TIMEOUT_S,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        raise AssertionError(
+            f"examples/test_examples.py did not finish in {GALLERY_TIMEOUT_S}s "
+            "(full mode downloads samples; unset TORCHFITS_EXAMPLES_FULL to run "
+            "the bounded gallery)"
+        ) from None
     assert result.returncode == 0, (
         f"examples/test_examples.py failed (exit {result.returncode})\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+def test_the_large_sample_example_has_a_budget_it_can_finish_in() -> None:
+    """The runner's per-example timer must not be shorter than a real download.
+
+    ``example_manga_logcube.py`` is a *required* example (only the Galaxy Zoo
+    one is optional), so its budget is a hard failure threshold -- while it sat
+    on the 180 s default it timed out on any machine without the sample already
+    cached, which is a red gate for the speed of an SDSS mirror.
+    """
+    runner = _load_module(RUNNER, "_torchfits_examples_runner")
+    overrides = runner.TIMEOUTS
+    assert _LARGE_SAMPLE_EXAMPLE in overrides, (
+        f"{_LARGE_SAMPLE_EXAMPLE} downloads a ~200 MB sample and needs its own "
+        "timeout; the 180 s default cannot cover it on a slow link"
+    )
+    assert overrides[_LARGE_SAMPLE_EXAMPLE] >= 300
 
 
 def test_network_examples_bound_their_downloads() -> None:
