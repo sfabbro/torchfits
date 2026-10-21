@@ -36,3 +36,28 @@ def test_schema_and_readers_agree_on_nameless_column(nameless_second_column):
     tensors = torchfits.table.read_torch(path, hdu=1)
     assert list(tensors.keys()) == names
     assert tensors["COL2"].tolist() == [10, 20, 30]
+
+
+def test_nameless_column_is_not_duplicated_on_sliced_or_filtered_reads(
+    nameless_second_column,
+):
+    """One nameless column must stay one column once slices or filters are involved.
+
+    The filtered and sliced paths build their field list from the header walk
+    plus (historically) a separate unnamed-column pass. Once the walk stopped
+    dropping nameless columns, the two sources listed it twice and an empty or
+    filtered read grew a duplicate ``COL2``.
+    """
+    path = nameless_second_column
+
+    empty = torchfits.table.read(path, hdu=1, row_slice=(0, 0))
+    assert empty.column_names == ["x", "COL2"]
+    assert empty.num_rows == 0
+
+    filtered = torchfits.table.read(path, hdu=1, where="x > 0")
+    assert filtered.column_names == ["x", "COL2"]
+    assert filtered.to_pydict() == {"x": [1, 2], "COL2": [20, 30]}
+
+    filtered_torch = torchfits.table.read_torch(path, hdu=1, where="x > 0")
+    assert list(filtered_torch.keys()) == ["x", "COL2"]
+    assert filtered_torch["COL2"].tolist() == [20, 30]
