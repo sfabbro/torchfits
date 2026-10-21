@@ -56,17 +56,29 @@ pytestmark = pytest.mark.skipif(
     reason="real CFHT sample data absent; run scripts/fetch_cfht_megacam_sample.sh",
 )
 
-#: One frame for the pixel tests, and one extension of it. The first sorted
-#: frame is stable across fetches, so the cost of this file does not depend on
-#: how many samples happen to be on disk.
-FRAME = MEGACAM[0]
+#: The extension every pixel test reads.
 HDU = 1
 
 
 @pytest.fixture(scope="module")
-def full_frame() -> torch.Tensor:
+def frame_path() -> Path:
+    """The frame the pixel tests agree on: the first sorted sample.
+
+    Resolved per test rather than at import. Indexing ``MEGACAM`` at module
+    level raises ``IndexError`` during collection on a clone without the
+    samples -- before the skip mark above can fire -- so a missing download
+    would turn the suite red instead of skipping it. The first sorted frame is
+    stable across fetches, so the cost of this file does not depend on how many
+    samples happen to be on disk.
+    """
+    assert MEGACAM, "no real CFHT frame; the module skip mark should have fired"
+    return MEGACAM[0]
+
+
+@pytest.fixture(scope="module")
+def full_frame(frame_path: Path) -> torch.Tensor:
     """One whole science extension, read once for every test in the file."""
-    frame = torchfits.read(FRAME, hdu=HDU)
+    frame = torchfits.read(frame_path, hdu=HDU)
     assert frame.ndim == 2
     return frame
 
@@ -84,7 +96,9 @@ def _assert_same(got: torch.Tensor, want: torch.Tensor, what: str) -> None:
         )
 
 
-def test_whole_frame_read_matches_a_full_box_subset(full_frame: torch.Tensor) -> None:
+def test_whole_frame_read_matches_a_full_box_subset(
+    frame_path: Path, full_frame: torch.Tensor
+) -> None:
     """``read`` and ``read_subset`` must agree on the box that covers everything.
 
     They are different CFITSIO entry points -- one reads the image, the other
@@ -92,11 +106,13 @@ def test_whole_frame_read_matches_a_full_box_subset(full_frame: torch.Tensor) ->
     decompression and the axis order, not a tautology.
     """
     ny, nx = full_frame.shape
-    box = torchfits.read_subset(FRAME, HDU, 0, 0, nx, ny)
+    box = torchfits.read_subset(frame_path, HDU, 0, 0, nx, ny)
     _assert_same(box, full_frame, "read_subset(full box)")
 
 
-def test_quadrants_stitch_back_into_the_whole_frame(full_frame: torch.Tensor) -> None:
+def test_quadrants_stitch_back_into_the_whole_frame(
+    frame_path: Path, full_frame: torch.Tensor
+) -> None:
     """Four cutouts, placed by their offsets, must reproduce the full frame.
 
     An off-by-one in a tile edge or a transpose inside the cutout reader shows
@@ -113,11 +129,12 @@ def test_quadrants_stitch_back_into_the_whole_frame(full_frame: torch.Tensor) ->
     ]
     stitched = torch.empty_like(full_frame)
     for x1, y1, x2, y2 in quadrants:
-        stitched[y1:y2, x1:x2] = torchfits.read_subset(FRAME, HDU, x1, y1, x2, y2)
+        stitched[y1:y2, x1:x2] = torchfits.read_subset(frame_path, HDU, x1, y1, x2, y2)
     _assert_same(stitched, full_frame, "quadrant stitch")
 
 
 def test_one_row_strips_match_the_same_rows_of_the_whole_frame(
+    frame_path: Path,
     full_frame: torch.Tensor,
 ) -> None:
     """Row strips at both ends and in the middle: the ugliest read pattern.
@@ -128,11 +145,13 @@ def test_one_row_strips_match_the_same_rows_of_the_whole_frame(
     """
     ny, nx = full_frame.shape
     for y in (0, ny // 2, ny - 1):
-        strip = torchfits.read_subset(FRAME, HDU, 0, y, nx, y + 1)
+        strip = torchfits.read_subset(frame_path, HDU, 0, y, nx, y + 1)
         _assert_same(strip, full_frame[y : y + 1, :], f"row strip y={y}")
 
 
-def test_a_reused_subset_reader_does_not_drift(full_frame: torch.Tensor) -> None:
+def test_a_reused_subset_reader_does_not_drift(
+    frame_path: Path, full_frame: torch.Tensor
+) -> None:
     """The same box, read twice from one reader, with an unrelated box between.
 
     ``open_subset_reader`` keeps a handle and its own CFITSIO state; if a
@@ -142,7 +161,7 @@ def test_a_reused_subset_reader_does_not_drift(full_frame: torch.Tensor) -> None
     """
     ny, nx = full_frame.shape
     box = (16, 16, 272, 272)
-    with torchfits.open_subset_reader(FRAME, HDU) as reader:
+    with torchfits.open_subset_reader(frame_path, HDU) as reader:
         first = reader.read_subset(*box)
         reader.read_subset(nx - 272, ny - 272, nx - 16, ny - 16)
         second = reader.read_subset(*box)
@@ -212,6 +231,7 @@ def test_scaled_reads_apply_each_real_bzero_convention_exactly() -> None:
 
 
 def test_repeated_reads_of_a_real_frame_are_bit_identical(
+    frame_path: Path,
     full_frame: torch.Tensor,
 ) -> None:
     """A second whole-frame read, after other work, must not drift.
@@ -219,11 +239,13 @@ def test_repeated_reads_of_a_real_frame_are_bit_identical(
     The path-level caches (header, schema, mmap plan) are keyed by path and
     HDU; a stale entry would show up as a different frame the second time.
     """
-    again = torchfits.read(FRAME, hdu=HDU)
+    again = torchfits.read(frame_path, hdu=HDU)
     _assert_same(again, full_frame, "second whole-frame read")
 
 
-def test_threads_read_one_real_frame_without_tearing(full_frame: torch.Tensor) -> None:
+def test_threads_read_one_real_frame_without_tearing(
+    frame_path: Path, full_frame: torch.Tensor
+) -> None:
     """Four threads, one 300 MB frame: every answer is the whole frame.
 
     CFITSIO handles are not shareable across threads, so a reader that reused
@@ -233,7 +255,7 @@ def test_threads_read_one_real_frame_without_tearing(full_frame: torch.Tensor) -
     """
 
     def read_once(_: int) -> torch.Tensor:
-        frame = torchfits.read(FRAME, hdu=HDU)
+        frame = torchfits.read(frame_path, hdu=HDU)
         assert frame.shape == full_frame.shape
         return frame
 
@@ -243,7 +265,7 @@ def test_threads_read_one_real_frame_without_tearing(full_frame: torch.Tensor) -
         _assert_same(frame, full_frame, f"thread {index}")
 
 
-def test_compressed_tile_table_reads_agree_across_backends() -> None:
+def test_compressed_tile_table_reads_agree_across_backends(frame_path: Path) -> None:
     """The real VLA column, through the three row-selection paths.
 
     ``COMPRESSED_DATA`` is the only variable-length column in the corpus. A
@@ -252,12 +274,12 @@ def test_compressed_tile_table_reads_agree_across_backends() -> None:
     maps them back, which is where a VLA read can silently pair the wrong heap
     offset with a row number.
     """
-    whole = table_api.read(FRAME, hdu=HDU)
+    whole = table_api.read(frame_path, hdu=HDU)
     column = whole.column_names[0]
     assert whole.num_rows > 4000
 
     rows = [3, 7, 11, 4000]
-    scattered = table_api.read(FRAME, hdu=HDU, rows=rows)
+    scattered = table_api.read(frame_path, hdu=HDU, rows=rows)
     assert scattered.num_rows == len(rows)
     for position, row in enumerate(rows):
         assert (
@@ -265,7 +287,7 @@ def test_compressed_tile_table_reads_agree_across_backends() -> None:
             == whole.column(column)[row].as_py()
         ), f"rows=[...] paired row {row} with the wrong heap entry"
 
-    contiguous = table_api.read(FRAME, hdu=HDU, row_slice=(10, 20))
+    contiguous = table_api.read(frame_path, hdu=HDU, row_slice=(10, 20))
     assert contiguous.num_rows == 10
     for position, row in enumerate(range(10, 20)):
         assert (
@@ -274,7 +296,7 @@ def test_compressed_tile_table_reads_agree_across_backends() -> None:
         ), f"row_slice(10, 20) row {position} != whole-table row {row}"
 
 
-def test_mmap_refusal_on_a_real_vla_column_keeps_the_values() -> None:
+def test_mmap_refusal_on_a_real_vla_column_keeps_the_values(frame_path: Path) -> None:
     """``mmap=True`` must fall back, not lose data, on a heap-backed column.
 
     CFITSIO answers ``VLA columns not supported for mmap`` here, and the
@@ -285,10 +307,10 @@ def test_mmap_refusal_on_a_real_vla_column_keeps_the_values() -> None:
     import torchfits._C as cpp
 
     with pytest.raises(RuntimeError, match="VLA columns not supported for mmap"):
-        cpp.read_fits_table_rows_raw(str(FRAME), HDU, [], 1, -1, True)
+        cpp.read_fits_table_rows_raw(str(frame_path), HDU, [], 1, -1, True)
 
-    via_mmap = table_api.read(FRAME, hdu=HDU, mmap=True)
-    via_reader = table_api.read(FRAME, hdu=HDU, mmap=False)
+    via_mmap = table_api.read(frame_path, hdu=HDU, mmap=True)
+    via_reader = table_api.read(frame_path, hdu=HDU, mmap=False)
     assert via_mmap.num_rows == via_reader.num_rows > 0
     column = via_mmap.column_names[0]
     assert via_mmap.column(column).to_pylist() == via_reader.column(column).to_pylist()
@@ -345,20 +367,22 @@ def test_a_real_frame_survives_a_lossless_write_read_round_trip(tmp_path: Path) 
         )
 
 
-def test_multi_extension_read_returns_each_extension_at_its_own_shape() -> None:
+def test_multi_extension_read_returns_each_extension_at_its_own_shape(
+    frame_path: Path,
+) -> None:
     """``read_hdus`` over a real MEF: 41 HDUs of one frame, three of them read.
 
     The extensions of a MegaCam frame are not all the same shape (the guide
     window and the mask differ), so a reader that cached the first HDU's
     geometry would return wrongly shaped tensors for the others.
     """
-    num_hdus = torchfits.read_num_hdus(FRAME)
+    num_hdus = torchfits.read_num_hdus(frame_path)
     assert num_hdus > 5
     wanted = [1, num_hdus // 2, num_hdus - 1]
-    tensors = torchfits.read_hdus(FRAME, wanted)
+    tensors = torchfits.read_hdus(frame_path, wanted)
     assert len(tensors) == len(wanted)
     for hdu, tensor in zip(wanted, tensors):
-        shape = torchfits.read_shape(FRAME, hdu)[1]
+        shape = torchfits.read_shape(frame_path, hdu)[1]
         assert tuple(tensor.shape) == tuple(shape), (
             f"HDU {hdu}: {tuple(tensor.shape)} != {shape}"
         )
