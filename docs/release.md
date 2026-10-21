@@ -10,7 +10,7 @@ because PyTorch has no stable C++ ABI across minors. Lanes live in
 
 | PyTorch lane | torchfits release |
 |---|---|
-| **2.13.x** | **1.2.3** (lane base. CUDA flavors cu126/cu129/cu130) |
+| **2.14.x** | **1.3.0** (lane base. CUDA flavors cu126/cu130) |
 
 `scripts/torch_lanes.json` currently defines a single lane; auxiliary
 `+torchNNN` local-version wheels are created by adding lanes to that file and
@@ -40,7 +40,7 @@ prerelease suffix:
 python scripts/release_lane.py --lane <X.Y> --prerelease rc<N> --apply
 ```
 
-e.g. `--prerelease rc5` on lane 2.13 appends `rc5` to that lane's `torchfits_version`, and
+e.g. `--prerelease rc5` on lane 2.14 appends `rc5` to that lane's `torchfits_version`, and
 `--check` / `check-lane` accept the rc state as the lane's base version.
 A plain `--apply` (no `--prerelease`) always finalizes back to the map
 version.
@@ -131,7 +131,7 @@ Wheel matrix (lanes × Python, built in tar copies so the working tree stays
 clean):
 
 ```bash
-bash scripts/build_wheels_local.sh --lanes <list> --pythons "3.10 3.11 3.12 3.13 3.14" dist-local
+bash scripts/build_wheels_local.sh --lanes <list> --pythons "3.11 3.12 3.13 3.14 3.15" dist-local
 bash scripts/verify_wheel_matrix.sh --jobs 4 dist-local
 ```
 

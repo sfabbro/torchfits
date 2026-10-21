@@ -25,7 +25,7 @@ from torchfits._torch_libs import install as _install_torch_lib_preload
 
 _install_torch_lib_preload()
 
-__version__ = "1.2.3"
+__version__ = "1.3.0"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",

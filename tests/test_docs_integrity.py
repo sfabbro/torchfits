@@ -951,7 +951,7 @@ def test_owed_behavior_notes_match_the_implementation() -> None:
     lanes = json.loads(
         (ROOT / "scripts" / "torch_lanes.json").read_text(encoding="utf-8")
     )
-    current = lanes["2.13"]["torchfits_version"]
+    current = lanes["2.14"]["torchfits_version"]
     release = (ROOT / "docs" / "release.md").read_text(encoding="utf-8")
     assert f"**{current}**" in release
     assert "1.0.0rc5" not in release

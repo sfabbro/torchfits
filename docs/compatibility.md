@@ -10,9 +10,9 @@ For supported FITS formats, HDU types, tile compression, and catalog features, s
 
 | Component | Prebuilt Wheels | Source Builds |
 |---|---|---|
-| **Python** | **3.10, 3.11, 3.12, 3.13, 3.14** | **3.10+** |
-| **PyTorch** | **2.13.x** (ABI-matched wheels) | **≥ 2.10** (`pip install --no-deps --no-build-isolation .`) |
-| **Hardware & CUDA** | **CPU**, **CUDA 12.6, 12.9, 13.0**, **Apple Silicon MPS** | All PyTorch-supported compute devices |
+| **Python** | **3.11, 3.12, 3.13, 3.14, 3.15** | **3.11+** |
+| **PyTorch** | **2.14.x** (ABI-matched wheels) | **≥ 2.10** (`pip install --no-deps --no-build-isolation .`) |
+| **Hardware & CUDA** | **CPU**, **CUDA 12.6, 13.0**, **Apple Silicon MPS** | All PyTorch-supported compute devices |
 | **Operating Systems** | **Linux** (`x86_64`, `aarch64`)<br>**macOS** (`arm64` Apple Silicon) | Linux, macOS |
 | **Core Libraries** | **NumPy ≥ 1.26**, **PyArrow ≥ 17.0** | Same |
 
@@ -20,11 +20,11 @@ For supported FITS formats, HDU types, tile compression, and catalog features, s
 
 ## PyTorch Minor Version ABI Matching
 
-Because PyTorch does not guarantee C++ ABI stability across minor version releases ($2.11 \to 2.12 \to 2.13$), each `torchfits` binary wheel embeds the specific PyTorch C++ ABI tag it was compiled against.
+Because PyTorch does not guarantee C++ ABI stability across minor version releases ($2.12 \to 2.13 \to 2.14$), each `torchfits` binary wheel embeds the specific PyTorch C++ ABI tag it was compiled against.
 
 | PyTorch Version | Wheel Distribution Channel | Installation Command |
 |---|---|---|
-| **PyTorch 2.13.x** | **Default PyPI Release** | `pip install torchfits` |
+| **PyTorch 2.14.x** | **Default PyPI Release** | `pip install torchfits` |
 | **Any other minor (≥ 2.10)** | **Source Build** | `pip install --no-deps --no-build-isolation .` |
 
 ---

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- PyTorch 2.14 lane: wheels are ABI-matched to `torch>=2.14,<2.15`, and the CUDA
+  flavors are `cu126` and `cu130` (`cu128` and `cu129` are not published for
+  2.14). The extension now builds as C++20, which torch 2.14's headers require.
+- Supported Python is now 3.11-3.15. 3.10 is dropped: PyTorch 2.14 is the last
+  release that ships `cp310` wheels, and 3.15 is stable as of 3.15.0.
+
 ## [1.2.3] — 2026-10-20
 
 ### Fixed

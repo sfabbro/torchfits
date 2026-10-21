@@ -5,7 +5,7 @@ title: FITS I/O for PyTorch Tensors and Tables
 
 <div class="tf-below" markdown>
 
-**torchfits** reads and writes FITS files as PyTorch tensors and Arrow tables. Cutouts and `where=` filters do not have to load the whole file. Wheels for Linux (x86_64 and aarch64) and macOS Apple Silicon include CFITSIO, for Python 3.10–3.14. No compiler is required.
+**torchfits** reads and writes FITS files as PyTorch tensors and Arrow tables. Cutouts and `where=` filters do not have to load the whole file. Wheels for Linux (x86_64 and aarch64) and macOS Apple Silicon include CFITSIO, for Python 3.11–3.15. No compiler is required.
 
 ---
 

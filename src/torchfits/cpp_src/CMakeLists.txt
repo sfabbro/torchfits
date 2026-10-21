@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 project(torchfits_cpp)
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20 is the floor, not a preference: torch 2.14's TorchConfig.cmake sets
+# CXX_STANDARD 20, and its ATen headers use concepts (`requires`) that a
+# C++17 build cannot parse -- the failure is a template error inside
+# TensorBase.h, not a warning anyone can read past.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler optimization
@@ -646,7 +650,7 @@ target_compile_definitions(torchfits_core PRIVATE
 if(USE_BZIP2)
     target_compile_definitions(torchfits_core PRIVATE TORCHFITS_HAVE_BZIP2=1)
 endif()
-target_compile_features(torchfits_core PRIVATE cxx_std_17)
+target_compile_features(torchfits_core PRIVATE cxx_std_20)
 
 # IPO/LTO is deliberately off here. LTO is free to internalize a symbol the
 # extension still needs to bind against, and the failure would only show up as
@@ -655,7 +659,7 @@ target_compile_features(torchfits_core PRIVATE cxx_std_17)
 set_target_properties(torchfits_core PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE
     POSITION_INDEPENDENT_CODE ON
-    CXX_STANDARD 17
+    CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     # CFITSIO's C ABI relies on default visibility and interposition rules that
@@ -685,7 +689,7 @@ target_include_directories(_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CFITSI
 if(CFITSIO_INCLUDE_DIRS)
     target_include_directories(_core PRIVATE ${CFITSIO_INCLUDE_DIRS})
 endif()
-target_compile_features(_core PRIVATE cxx_std_17)
+target_compile_features(_core PRIVATE cxx_std_20)
 target_compile_definitions(_core PRIVATE TORCHFITS_CORE_BUILD_ID="${TORCHFITS_CORE_BUILD_ID}")
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_options(_core PRIVATE -O3 -fno-semantic-interposition)
@@ -765,7 +769,7 @@ endif()
 
 # Compiler flags
 target_compile_definitions(_C PRIVATE VERSION_INFO="")
-target_compile_features(_C PRIVATE cxx_std_17)
+target_compile_features(_C PRIVATE cxx_std_20)
 
 # Build identity. _C records the core's id so a mismatched pair fails loudly at
 # import (torchfits/__init__.py) instead of crossing an ABI boundary quietly.

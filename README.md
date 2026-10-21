@@ -4,13 +4,13 @@
 [![GitHub release](https://img.shields.io/github/v/release/astroai/torchfits?include_prereleases&label=latest%20release)](https://github.com/astroai/torchfits/releases)
 [![Documentation](https://img.shields.io/badge/docs-stable-brightgreen)](https://astroai.github.io/torchfits/)
 [![CI](https://github.com/astroai/torchfits/actions/workflows/ci.yml/badge.svg)](https://github.com/astroai/torchfits/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Read and write FITS files as PyTorch tensors and Arrow tables. Cutouts,
 `where=` filters, and a shell CLI are included. CFITSIO is in the wheel.
 
-Prebuilt wheels for **Python 3.10–3.14** and **PyTorch 2.13.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
+Prebuilt wheels for **Python 3.11–3.15** and **PyTorch 2.14.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
 
 Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.github.io/torchfits/edge/) (`main` tip)
 
