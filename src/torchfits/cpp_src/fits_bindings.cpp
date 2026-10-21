@@ -789,6 +789,20 @@ double table_schema_to_double(const nb::object& obj) {
     throw std::runtime_error("schema numeric value must be a number or a numeric string");
 }
 
+// Text for a HISTORY/COMMENT card. Reading the value with an unchecked
+// nb::cast<std::string> turned any non-str payload (a list of lines, an int)
+// into a bare std::bad_cast that reached the caller as an unexplainable write
+// failure. Name the keyword and the offending Python type instead.
+static std::string commentary_text(nb::handle value, const std::string& comment,
+                                   const char* which) {
+    if (value.is_none()) return comment;
+    if (!nb::isinstance<nb::str>(value)) {
+        throw std::runtime_error(std::string(which) + " text must be a str, got " +
+                                 Py_TYPE(value.ptr())->tp_name);
+    }
+    return nb::cast<std::string>(value);
+}
+
 // Which FITS card type a caller-supplied header value maps to, or 0 when this
 // writer will not accept it at all. Stated once so the up-front validation in
 // write_table_hdu (which must run before fits_create_tbl creates anything) and
@@ -1823,11 +1837,11 @@ void bind_fits(nb::module_& m) {
             char* comment_ptr = sanitized_comment.empty() ? nullptr : sanitized_comment.data();
 
             if (key_upper == "HISTORY") {
-                std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
+                std::string text = commentary_text(value, comment, "HISTORY");
                 text = d::require_fits_ascii(text, "HISTORY text");
                 fits_write_history(fptr, text.c_str(), &key_status);
             } else if (key_upper == "COMMENT") {
-                std::string text = value.is_none() ? comment : nb::cast<std::string>(value);
+                std::string text = commentary_text(value, comment, "COMMENT");
                 text = d::require_fits_ascii(text, "COMMENT text");
                 fits_write_comment(fptr, text.c_str(), &key_status);
             } else if (nb::isinstance<nb::str>(value)) {
