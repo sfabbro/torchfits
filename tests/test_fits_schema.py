@@ -394,3 +394,40 @@ def test_selected_includes_vla_keeps_scanning_past_a_non_vla_pq_column(decoy):
     assert fits_schema.selected_includes_vla(header, ["DECOY"]) is False
     # ... and table_has_vla agrees, since it has the same gate/parse pair.
     assert fits_schema.table_has_vla(header) is True
+
+
+def test_iter_tfields_indexed_keeps_nameless_columns():
+    """Nameless columns must still be yielded, under the readers' COL<i> name.
+
+    Dropping them shifted every later column's index, and naming them ""
+    disagreed with read()/read_torch(), which fall back to COL<i>.
+    """
+    # Fast path (TFIELDS exists)
+    header1 = {
+        "TFIELDS": 2,
+        "TFORM1": "1J",  # TTYPE1 missing
+        "TTYPE2": "B",
+        "TFORM2": "1I",
+    }
+    cols1 = list(fits_schema._iter_tfields_indexed(header1))
+    assert len(cols1) == 2
+    assert cols1[0] == (1, "COL1", "1J", None)
+    assert cols1[1] == (2, "B", "1I", None)
+
+    # Slow path (no TFIELDS, cards are scanned)
+    header2 = {
+        "TFORM1": "1J",  # TTYPE1 missing
+        "TTYPE2": "B",
+        "TFORM2": "1I",
+        "TDIM2": "(2,2)",
+    }
+    cols2 = list(fits_schema._iter_tfields_indexed(header2))
+    assert len(cols2) == 2
+    assert cols2[0] == (1, "COL1", "1J", None)
+    assert cols2[1] == (2, "B", "1I", "(2,2)")
+
+    # An empty TTYPE card is as nameless as a missing one (metadata_api.cpp
+    # falls back on name.empty(), so the schema must too).
+    header3 = {"TFIELDS": 2, "TTYPE1": "", "TFORM1": "1J", "TTYPE2": "B"}
+    cols3 = list(fits_schema._iter_tfields_indexed(header3))
+    assert [c[1] for c in cols3] == ["COL1", "B"]

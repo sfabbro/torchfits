@@ -125,7 +125,8 @@ print(f"Loaded {table.num_rows} rows.")
 df_pandas = table.to_pandas()
 df_polars = pl.from_arrow(table)
 
-# Or read directly into an Astropy Table
+# Astropy is optional and is not installed with torchfits.
+# pip install astropy
 astropy_table = torchfits.table.read_astropy(
     "catalog.fits", hdu=1, where="MAG_G < 20.0"
 )

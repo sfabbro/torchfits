@@ -72,7 +72,7 @@ Building from source is only needed if you are developing torchfits or targeting
 - Python 3.10+
 - C++17 compiler (GCC 10+, Clang 14+, MSVC 2019+)
 - [CMake](https://cmake.org/) 3.21+ and [Ninja](https://ninja-build.org/)
-- [PyTorch](https://pytorch.org/) ≥ 2.10 and [NumPy](https://numpy.org/)
+- [PyTorch](https://pytorch.org/) ≥ 2.10, [NumPy](https://numpy.org/), and [PyArrow](https://arrow.apache.org/docs/python/) ≥ 17
 
 === "Linux"
 
@@ -100,7 +100,7 @@ cd torchfits
 ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt   # downloads the pinned CFITSIO
 
 # Install build dependencies and compile against your environment
-pip install numpy scikit-build-core nanobind
+pip install torch numpy pyarrow scikit-build-core nanobind
 pip install --no-deps --no-build-isolation -e .
 ```
 
@@ -114,13 +114,15 @@ pip install -e . --no-deps --no-build-isolation --config-settings=cmake.args="-D
 
 ## Development setup (Pixi)
 
-For local development and running the test suite, we recommend [pixi](https://pixi.sh/):
+For local development and running the test suite, use [pixi](https://pixi.sh/) `0.82.0` (`requires-pixi` in `pixi.toml`):
 
 ```bash
-pixi install
-pixi run test           # run test suite
+pixi install --locked
+pixi run test           # build the extension, then the full suite
 pixi run lint           # ruff linter and formatter
 ```
+
+`pixi run test` rebuilds the extension in the default environment. Astropy and fitsio are not installed here; comparisons against them run in [torchfits-harness](https://github.com/astroai/torchfits-harness).
 
 ---
 

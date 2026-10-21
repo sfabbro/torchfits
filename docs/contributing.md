@@ -16,7 +16,7 @@ The project uses [pixi](https://pixi.sh/) for environment management,
 [pytest](https://docs.pytest.org/) for testing. Detailed coding guidelines live in
 [`AGENTS.md`](https://github.com/astroai/torchfits/blob/main/AGENTS.md).
 
-The workspace pins Pixi `0.81.0` in `pixi.toml`; `pixi.lock` pins the actual
+The workspace pins Pixi `0.82.0` in `pixi.toml`; `pixi.lock` pins the actual
 package artifacts. The reproducible complete local gate is:
 
 ```bash
@@ -131,11 +131,13 @@ pixi run test
 pixi run current-source-gate
 ```
 
-Upstream parity + docs contract (also part of the release gate):
+Library contract and docs:
 
 ```bash
 pixi run release-gate
 ```
+
+Upstream parity against astropy and fitsio is `pixi run test` in torchfits-harness.
 
 ### Real-observation tests
 
@@ -146,7 +148,7 @@ Two suites run against real CFHT data — three 1.6 GB MegaPipe mosaics
 ```bash
 bash scripts/fetch_cfht_megacam_sample.sh    # ~2.5 GB
 bash scripts/fetch_cfht_megapipe_sample.sh  # ~5 GB
-pixi run -e test -- pytest tests/test_core_library_real_data.py tests/test_reads_real_data.py -q
+pixi run -e test -- pytest tests/test_core_library_real_data.py -q
 ```
 
 `tests/test_core_library_real_data.py` is about the **metadata** path: it
@@ -155,12 +157,10 @@ answer on all 409 (frame, HDU) records, and walks the whole 9 GB corpus in a
 fresh interpreter with `torch` and `numpy` both blocked, asserting the
 torch-linked extension module is never imported.
 
-`tests/test_reads_real_data.py` goes past the header and holds the **reads**
-against `astropy.io.fits` — a separate implementation with its own Rice
-decompressor and header parser, so agreement is evidence rather than
-self-consistency. Decompressed extensions, the raw variable-length tile
-stream, the real `BZERO` convention, and 435 megapixels of mosaic all have to
-match exactly.
+Pixel-level agreement with `astropy.io.fits` on those same files is
+`tests/test_reads_real_data.py` in
+[torchfits-harness](https://github.com/astroai/torchfits-harness). That
+comparison needs astropy, which this repository does not install.
 
 Run them before a PR that touches FITS parsing, header handling, the HDU
 resolution rules, image or table reads, or the core/extension split. Synthetic

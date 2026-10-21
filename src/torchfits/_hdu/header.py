@@ -33,6 +33,25 @@ def _normalize_header_value(value: Any) -> Any:
     return value
 
 
+def _commentary_lines(value: Any) -> list[Any]:
+    """Expand a HISTORY/COMMENT payload into one text card per line.
+
+    A list/tuple unfolds into consecutive cards (the FITS way to write a
+    multi-line comment); anything else becomes a single line.  Lines are
+    ``str()``-coerced because the card is text: an int used to reach the C++
+    writer as an unchecked ``nb::cast<std::string>`` and fail with an opaque
+    ``std::bad_cast``.  ``None`` is kept, since the writer substitutes the card
+    comment for it (``Header["HISTORY"] = (None, "comment")``).
+    """
+    if isinstance(value, (list, tuple)):
+        lines: list[Any] = []
+        for item in value:
+            lines.extend(_commentary_lines(item))
+        return lines
+    norm = _normalize_header_value(value)
+    return [norm if norm is None else str(norm)]
+
+
 class Header(dict[str, Any]):
     def __init__(self, cards: Any = None) -> None:
         super().__init__()
@@ -199,12 +218,24 @@ class Header(dict[str, Any]):
         return tuple(self._cards)
 
     def append(self, card: Card | tuple[str, Any] | tuple[str, Any, str]) -> None:
-        self._append_card(self._coerce_card(card), update_mapping=True)
+        parsed = self._coerce_card(card)
+        if parsed.key in _COMMENTARY_KEYS:
+            # Same expansion as Header["HISTORY"] = [...]: one card per line.
+            self._set_card(parsed.key, parsed.value, parsed.comment, bump=True)
+            return
+        self._append_card(parsed, update_mapping=True)
 
     def insert(
         self, index: int, card: Card | tuple[str, Any] | tuple[str, Any, str]
     ) -> None:
         parsed = self._coerce_card(card)
+        if parsed.key in _COMMENTARY_KEYS:
+            at = int(index)
+            for offset, line in enumerate(_commentary_lines(parsed.value)):
+                self._cards.insert(at + offset, Card(parsed.key, line, parsed.comment))
+            self._rebuild_mapping_for_key(parsed.key)
+            self._version += 1
+            return
         self._cards.insert(int(index), parsed)
         # Rebuild rather than set: inserting ahead of existing cards changes
         # which occurrence is first, and first is what the mapping reports.
@@ -276,11 +307,15 @@ class Header(dict[str, Any]):
             self._version += 1
 
     def _set_card(self, key: str, value: Any, comment: str, *, bump: bool) -> None:
+        if key in _COMMENTARY_KEYS:
+            for line in _commentary_lines(value):
+                self._append_card(
+                    Card(key, line, comment), update_mapping=True, bump=bump
+                )
+            return
+
         value = _normalize_header_value(value)
         card = Card(key, value, comment)
-        if key in _COMMENTARY_KEYS:
-            self._append_card(card, update_mapping=True, bump=bump)
-            return
 
         if key in self:
             for idx, existing in enumerate(self._cards):
