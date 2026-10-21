@@ -93,6 +93,11 @@ TIMEOUTS = {
     "example_table_recipes.py": 120,
     # Downloads up to GZ_N individual cutouts over HTTP on a cold cache.
     "example_ml_galaxyzoo_legacy.py": 300,
+    # One ~200 MB LOGCUBE on a cold cache. At the 180 s default this example
+    # timed out on ordinary links, and it is required -- so the gate went red
+    # for the speed of an SDSS mirror. It skips outright under
+    # TORCHFITS_EXAMPLE_FAST=1, which is how the pytest gate runs it.
+    "example_manga_logcube.py": 600,
 }
 
 
