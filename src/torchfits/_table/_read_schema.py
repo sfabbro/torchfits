@@ -124,13 +124,15 @@ def _column_fits_metadata(header: Any, col: Any) -> dict[str, str]:
 
 
 def _all_table_columns(header: Any, selected: Optional[set[str]] = None) -> list[Any]:
-    """Named columns plus TTYPE-less ones, in file order, honouring *selected*."""
-    cols = list(fits_schema.iter_table_columns(header, selected=selected))
-    cols += [
-        c for c in _unnamed_columns(header) if selected is None or c.name in selected
-    ]
-    cols.sort(key=lambda c: c.index)
-    return cols
+    """Every column in file order, honouring *selected*.
+
+    ``iter_table_columns`` yields TTYPE-less columns under their ``COL<i>``
+    auto-name, so nothing is left to supplement here. This used to append an
+    unnamed-column pass of its own, which (once the shared walker stopped
+    dropping those columns) listed every nameless column twice and gave filtered
+    or sliced reads a duplicate field.
+    """
+    return list(fits_schema.iter_table_columns(header, selected=selected))
 
 
 def _attach_fits_metadata(
@@ -394,43 +396,6 @@ def _column_arrow_type(col: Any, *, decode_bytes: bool, pa: Any) -> Any | None:
     else:
         return arrow_type
     return pa.list_(new_elem, arrow_type.list_size) if is_list else new_elem
-
-
-def _unnamed_columns(header: Any) -> list[Any]:
-    """TTYPE-less columns surfaced by the readers under the auto-name ``COL<i>``.
-
-    The shared ``fits_schema`` walker skips TTYPE-less columns; this restores
-    them as ``TableColumnMeta`` rows so empty results and ``schema()`` can
-    agree with the data paths (r5a-04). The ``COL<i>`` naming mirrors the C++
-    reader convention.
-    """
-    try:
-        tf_count = int(header.get("TFIELDS", 0))
-    except (TypeError, ValueError):
-        return []
-    out: list[Any] = []
-    for i in range(1, tf_count + 1):
-        si = str(i)
-        name = header.get("TTYPE" + si)
-        if isinstance(name, str) and name:
-            continue
-        tform = header.get("TFORM" + si)
-        tform_str = str(tform) if tform is not None else ""
-        tscal_raw = header.get("TSCAL" + si)
-        tzero_raw = header.get("TZERO" + si)
-        out.append(
-            fits_schema.TableColumnMeta(
-                index=i,
-                name=f"COL{si}",
-                tform=tform_str,
-                tform_info=fits_schema.parse_tform(tform_str),
-                tdim=None,
-                tnull=header.get("TNULL" + si),
-                tscal=float(tscal_raw) if tscal_raw is not None else 1.0,
-                tzero=float(tzero_raw) if tzero_raw is not None else 0.0,
-            )
-        )
-    return out
 
 
 def _reader_column_names(header: Any) -> set[str]:

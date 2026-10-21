@@ -191,10 +191,9 @@ def _try_torch_tensor_where_filter(
     output_cols = columns
     if output_cols is None:
         if header is not None:
-            # _all_table_columns, not iter_table_columns: the latter skips
-            # TTYPE-less columns, so this path used to return fewer columns
-            # than the same read without a filter -- and fewer than the C++
-            # pushdown, making the result backend-dependent (TE-007).
+            # Name every column the reader can serve, TTYPE-less ones included:
+            # a filtered read that returned a narrower set than the same read
+            # without a filter made the result backend-dependent (TE-007).
             output_cols = [col.name for col in _all_table_columns(header)]
         else:
             return None
@@ -618,11 +617,8 @@ def _try_cpp_where_pushdown(
         target_cols = columns
         if target_cols is None:
             if header is not None:
-                # _all_table_columns, like the torch path above: iter_table_columns
-                # skips TTYPE-less columns, so this path returned a different
-                # column set than the torch path for the same query -- and which
-                # one you got depended on whether torch was already imported
-                # (TE-007).
+                # Same column set as the torch path above, so which one you get
+                # does not depend on whether torch was already imported (TE-007).
                 target_cols = [col.name for col in _all_table_columns(header)]
             else:
                 target_cols = list(schema(path, hdu=hdu, backend="cpp").names)
