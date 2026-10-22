@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 - Finish the 2.14 lane sweep
+- Note the macOS Python 3.14 wheel cap
 
 ## [1.2.3] — 2026-10-20
 

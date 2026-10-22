@@ -10,7 +10,7 @@
 Read and write FITS files as PyTorch tensors and Arrow tables. Cutouts,
 `where=` filters, and a shell CLI are included. CFITSIO is in the wheel.
 
-Prebuilt wheels for **Python 3.11–3.15** and **PyTorch 2.14.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
+Prebuilt wheels for **Python 3.11–3.15 on Linux** and **3.11–3.14 on macOS**, with **PyTorch 2.14.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
 
 Docs: [stable](https://astroai.github.io/torchfits/) · [edge](https://astroai.github.io/torchfits/edge/) (`main` tip)
 
