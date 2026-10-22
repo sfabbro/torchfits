@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -281,3 +282,38 @@ def test_release_notes_extracts_stamped_then_unreleased(tmp_path) -> None:
 
     with pytest.raises(SystemExit):
         rn.extract("# Changelog\n", "9.9.9")
+
+
+def test_changelog_only_commit_is_not_collected(tmp_path, monkeypatch) -> None:
+    """Regenerating the changelog must not make the next check stale."""
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "tests@example.com")
+    git("config", "user.name", "Tests")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "changelog.md").write_text("# Changelog\n", encoding="utf-8")
+    (tmp_path / "code.py").write_text("x = 1\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "feat: first")
+    git("tag", "v1.0.0")
+
+    (tmp_path / "code.py").write_text("x = 2\n", encoding="utf-8")
+    git("commit", "-qam", "fix: real change")
+    (tmp_path / "docs" / "changelog.md").write_text(
+        "# Changelog\n\n### Fixed\n\n- Real change\n", encoding="utf-8"
+    )
+    git("commit", "-qam", "docs: regenerate the changelog")
+
+    monkeypatch.setattr(changelog, "ROOT", tmp_path)
+    assert changelog.collect_bullets("v1.0.0", include_all=False) == [
+        ("Fixed", "- Real change")
+    ]
