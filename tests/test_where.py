@@ -393,3 +393,43 @@ def test__evaluate_where_never_leaks_pyarrow_exceptions():
             continue
         except pa.ArrowNotImplementedError as exc:  # pragma: no cover
             pytest.fail(f"pyarrow error escaped for {condition!r}: {exc}")
+
+
+def test_r8b_10_numpy_scalars_as_filter_literals(tmp_path):
+    """NumPy scalars must be accepted as filter literals on the fast path."""
+    import torch
+    import torchfits
+    import numpy as np
+
+    path = str(tmp_path / "np_scalars.fits")
+    torchfits.table.write(path, {"A": torch.tensor([1, 2, 3], dtype=torch.int32)})
+
+    import torchfits._C as _C
+
+    # Ints
+    for val in [np.int64(1), np.int32(1), np.uint32(1)]:
+        res = _C.read_fits_table_filtered(path, 1, ["A"], [("A", ">", val)])
+        assert res["A"].tolist() == [2, 3]
+
+    # Floats
+    for val in [np.float64(1.5), np.float32(1.5)]:
+        res = _C.read_fits_table_filtered(path, 1, ["A"], [("A", ">", val)])
+        assert res["A"].tolist() == [2, 3]
+
+    # Bools are explicitly rejected by the original type check, ensure it stays that way.
+    with pytest.raises(RuntimeError, match="Unsupported filter value type"):
+        _C.read_fits_table_filtered(path, 1, ["A"], [("A", ">", True)])
+
+
+def test_numpy_bool_rejected_as_filter_literal(tmp_path):
+    import torch
+    import torchfits
+    import numpy as np
+
+    path = str(tmp_path / "np_scalars.fits")
+    torchfits.table.write(path, {"A": torch.tensor([1, 2, 3], dtype=torch.int32)})
+
+    import torchfits._C as _C
+
+    with pytest.raises(RuntimeError, match="Unsupported filter value type"):
+        _C.read_fits_table_filtered(path, 1, ["A"], [("A", ">", np.bool_(True))])
