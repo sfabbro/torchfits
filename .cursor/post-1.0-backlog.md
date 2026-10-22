@@ -217,7 +217,6 @@ Open after the R1–R16 directory pass. Do not re-fix these in silence: each one
 - r7c-25 — non-finite pixels cast to an integer output are platform-dependent.
 - r8b-08 — table write bindings and `TableReader` construction hold the GIL across CFITSIO calls.
 - r8b-09 — after a failed `fits_write_col`, the column loop keeps going with a poisoned status.
-- r8b-10 — filtered table reads reject `np.int64` / `np.int32` filter values (`np.float64` works).
 - r9b-06 — `open_fits_for_write` does not clean up a partial handle. A 200-iteration fd probe found no leak.
 - r11a-07 — `tests/test_bench_suites.py` pins source text with `inspect.getsource`.
 - r11a-08 — `TestCaching.test_cache_clearing` calls `get_cache_performance()` and asserts nothing.
@@ -229,6 +228,8 @@ Open after the R1–R16 directory pass. Do not re-fix these in silence: each one
 - `tests/test_remote_resume.py` `_FakeVosClient.copy` sleeps 0.2s after a `threading.Barrier(2)` so both writers stay inside `copy()`. Not a race.
 
 ### Struck (closed after the deferral)
+
+- r8b-10 — NumPy scalar filter literals accepted, bool/complex rejected (#259).
 
 - r1c-12 — blocked-prefix split documented and tested on both layers (R10).
 - r1c-14 — CFITSIO residual TOCTOU is stated in `docs/compatibility.md` (R15). Python fetches stay pinned.
