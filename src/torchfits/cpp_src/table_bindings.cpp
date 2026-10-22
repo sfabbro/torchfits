@@ -3,6 +3,7 @@
  */
 
 #include <string>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -815,31 +816,54 @@ void bind_table(nb::module_& m) {
             else if (op == "<=" || op == "le") f.op = torchfits::FilterOp::LE;
             else throw std::runtime_error("Unknown operator: " + op);
 
+            // Literal contract: float/int. Python bool is an int subclass but
+            // is not a filter value, and older NumPy releases give np.bool_ an
+            // __index__ (NumPy 2 does not), so bool is rejected by type name.
+            // NumPy integer scalars convert through __index__, so this branch
+            // can never truncate a float.
             nb::handle val = item[2];
-            if (nb::isinstance<bool>(val)) {
-                 throw std::runtime_error("Unsupported filter value type (only float/int)");
+            const char* type_name = Py_TYPE(val.ptr())->tp_name;
+            if (nb::isinstance<bool>(val) ||
+                std::strcmp(type_name, "numpy.bool") == 0 ||
+                std::strcmp(type_name, "numpy.bool_") == 0) {
+                throw std::runtime_error("Unsupported filter value type (only float/int)");
             }
-            if (PyObject_HasAttrString(val.ptr(), "dtype")) {
-                nb::object dtype = val.attr("dtype");
-                if (PyObject_HasAttrString(dtype.ptr(), "kind")) {
-                    std::string kind = nb::cast<std::string>(dtype.attr("kind"));
-                    if (kind == "b" || kind == "U" || kind == "S" || kind == "O" || kind == "c") {
-                         throw std::runtime_error("Unsupported filter value type (only float/int)");
-                    }
+            if (PyIndex_Check(val.ptr())) {
+                // __index__ is a type-level slot, so a 0-d array also lands
+                // here. Only an int64-convertible value is an integer literal;
+                // anything else (out of range, array) is rejected below.
+                if (!nb::try_cast<int64_t>(val, f.val_i)) {
+                    throw std::runtime_error(
+                        "Unsupported filter value type (only float/int)");
                 }
-            }
-            try {
-                f.val_i = nb::cast<int64_t>(val);
                 f.val_d = (double)f.val_i;
                 f.type_idx = 1;
-            } catch (const nb::cast_error&) {
-                try {
-                    f.val_d = nb::cast<double>(val);
-                    f.val_i = (int64_t)f.val_d;
-                    f.type_idx = 0;
-                } catch (const nb::cast_error&) {
-                    throw std::runtime_error("Unsupported filter value type (only float/int)");
+            } else {
+                // NumPy floating scalars are not Python float subclasses
+                // (except float64), so isinstance<float> misses float32/16.
+                const bool numpy_float =
+                    std::strcmp(type_name, "numpy.float16") == 0 ||
+                    std::strcmp(type_name, "numpy.float32") == 0 ||
+                    std::strcmp(type_name, "numpy.float64") == 0 ||
+                    std::strcmp(type_name, "numpy.longdouble") == 0;
+                if (!nb::isinstance<float>(val) && !numpy_float) {
+                    throw std::runtime_error(
+                        "Unsupported filter value type (only float/int)");
                 }
+                f.val_d = nb::cast<double>(val);
+                if (!std::isfinite(f.val_d)) {
+                    throw std::runtime_error("Filter float literal must be finite");
+                }
+                // The integer scan branch compares against this proxy; C++
+                // float-to-int conversion is undefined outside int64, so clamp.
+                if (f.val_d >= (double)std::numeric_limits<int64_t>::max()) {
+                    f.val_i = std::numeric_limits<int64_t>::max();
+                } else if (f.val_d <= (double)std::numeric_limits<int64_t>::min()) {
+                    f.val_i = std::numeric_limits<int64_t>::min();
+                } else {
+                    f.val_i = (int64_t)f.val_d;
+                }
+                f.type_idx = 0;
             }
             filters.push_back(f);
         }
