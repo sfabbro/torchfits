@@ -122,7 +122,7 @@ def test_documented_claims_cover_extras_and_lane(linux_pins) -> None:
     lane = pins.load_wheel_lane()
     assert any(SpecifierSet(s) == lane for s in lane_specs)
     # The prose minor is the *other* spelling of the same claim (README's
-    # "**PyTorch 2.13.x**", the compatibility matrix's bare "2.13.x" cell).
+    # "**PyTorch 2.14.x**", the compatibility matrix's bare "2.14.x" cell).
     # It has no specifier to compare, so it needs its own agreement.
     assert prose_minors == {_lane_minor(lane)}, (
         f"docs name torch minors {sorted(prose_minors)} in prose but the wheel "
@@ -135,7 +135,7 @@ def test_check_doc_drift_rejects_a_stale_prose_lane_minor() -> None:
 
     `check_doc_drift` compares the *specifier* claims against the lane, and the
     specifier form lives only in docs/install.md -- so before the prose form was
-    collected, renaming the README's "PyTorch 2.13.x" to any other minor still
+    collected, renaming the README's "PyTorch 2.14.x" to any other minor still
     reported `[ OK ] install one-liners match the extra pins and the wheel
     lane`. The headline sentence is the first thing a reader sees, so it is the
     one claim that must not be able to go stale silently.
@@ -240,7 +240,7 @@ def test_main_fails_when_lane_map_consistency_fails(
 ) -> None:
     """A [FAIL] from the lane-map check must propagate to the exit code."""
     monkeypatch.setattr(
-        pins, "iter_torch_pins", lambda _text: [_pin("cpu", "2.13.0+cpu")]
+        pins, "iter_torch_pins", lambda _text: [_pin("cpu", "2.14.0+cpu")]
     )
     monkeypatch.setattr(
         pins, "check_lane_map_consistency", lambda _lane: ["[FAIL] lane drifted"]

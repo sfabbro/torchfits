@@ -4,7 +4,7 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 
 ## Where things stand
 
-**1.2.0** (2026-10-14) is the current release, on PyTorch 2.13. The [changelog](changelog.md) has the notes. The changes that matter for what you call:
+**1.2.3** (2026-10-20) is the current release, on the PyTorch 2.13 lane. The next minor, 1.3.0, moves to the PyTorch 2.14 lane and to Python 3.11–3.15 (3.10 is dropped). The [changelog](changelog.md) has the notes. The changes that matter for what you call:
 
 - Header and metadata reads go through `libtorchfits_core` and do not load PyTorch.
 - Arrow reads of fixed columns and flat variable-length arrays do not import PyTorch. Tensor reads stay on `read_torch`.

@@ -287,8 +287,20 @@ def stamp_release(text: str, version: str, date: str) -> str:
 
 
 def collect_bullets(since: str, *, include_all: bool) -> list[tuple[str, str]]:
+    # A commit that edits only the changelog is bookkeeping, not a change.
+    # Without the exclusion, the commit that `--release`/`changelog-update`
+    # creates is itself collected as a new Docs bullet, so every check after a
+    # regeneration is stale and the tree can never settle.
     log = subprocess.run(
-        ["git", "log", "--pretty=%s", f"{since}..HEAD"],
+        [
+            "git",
+            "log",
+            "--pretty=%s",
+            f"{since}..HEAD",
+            "--",
+            ".",
+            ":(exclude)docs/changelog.md",
+        ],
         capture_output=True,
         text=True,
         cwd=ROOT,

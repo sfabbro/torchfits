@@ -142,7 +142,7 @@ dependencies = [
     # dependency is deliberately uncapped.
     "torch>={lane},<{next_lane}",
     # Floors name the oldest release with wheels for the minimum supported
-    # Python (3.10); they are not a statement about what is tested.
+    # Python (3.11); they are not a statement about what is tested.
     "numpy>=1.26",  # Core numerical operations
     "pyarrow>=17.0",  # Table I/O (Arrow interchange)
 ]"""

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a local wheel and smoke-import it in a fresh venv (outside the src tree).
 # Full multi-Python matrix is covered by cibuildwheel on tagged releases
-# (Linux x86_64 + aarch64, macOS arm64, cp310–cp314).
+# (Linux x86_64 + aarch64 on cp311–cp315; macOS arm64 on cp311–cp314).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

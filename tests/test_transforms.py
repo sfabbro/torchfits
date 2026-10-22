@@ -1,6 +1,7 @@
 """Tests for torchfits.transforms — ML-friendly FITS image preprocessing."""
 
 import pickle
+import sys
 import threading
 
 import pytest
@@ -1983,6 +1984,17 @@ class TestThreadSafety:
             lambda: PercentileClipNormalize(lower_pct=0, upper_pct=100),
             lambda: MeshBackgroundSubtract(mesh=(2, 2)),
         ],
+    )
+    @pytest.mark.skipif(
+        sys.version_info[:2] >= (3, 15)
+        and sys.platform in {"darwin", "win32"}
+        and tuple(int(p) for p in torch.__version__.split("+")[0].split(".")[:2])
+        < (2, 15),
+        reason=(
+            "torch 2.14's cp315 macOS/Windows wheels were built against "
+            "CPython 3.15.0b3 headers and segfault on the first tensor op "
+            "outside the main thread (pytorch/pytorch#200779); fixed in 2.15"
+        ),
     )
     def test_shared_instance_is_thread_safe(self, factory) -> None:
         """One instance used from two threads must keep each thread's

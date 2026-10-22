@@ -54,6 +54,18 @@ MEGACAM = sorted(DATA_ROOT.glob("cfht_megacam/*.fits.fz"))
 MEGAPIPE = sorted(DATA_ROOT.glob("cfht_megapipe/*.fits"))
 CORPUS = MEGACAM + MEGAPIPE
 
+# The two samples are fetched by separate scripts and are 2.5 GB and 5 GB, so a
+# clone can legitimately hold one of them. Guard each dataset on its own: with
+# only the module-level check, a partial corpus ran the tests that need the
+# other half and failed on an empty list instead of skipping.
+needs_megacam = pytest.mark.skipif(
+    not MEGACAM, reason="no MegaCam frames; run scripts/fetch_cfht_megacam_sample.sh"
+)
+needs_megapipe = pytest.mark.skipif(
+    not MEGAPIPE,
+    reason="no MegaPipe mosaics; run scripts/fetch_cfht_megapipe_sample.sh",
+)
+
 pytestmark = pytest.mark.skipif(
     not CORPUS,
     reason=(
@@ -168,6 +180,7 @@ def test_real_header_text_is_exactly_eighty_column_cards() -> None:
                 assert f"{key:<8}=" in text, f"{path.name} HDU {hdu}: {key} missing"
 
 
+@needs_megapipe
 def test_megapipe_mosaics_report_their_true_geometry() -> None:
     """A 1.6 GB mosaic, 21404x20347, answered from headers alone.
 
@@ -175,7 +188,6 @@ def test_megapipe_mosaics_report_their_true_geometry() -> None:
     where every question here is answered by reading a few hundred header cards
     and never touching a pixel.
     """
-    assert MEGAPIPE, "no MegaPipe mosaics fetched"
     for path in MEGAPIPE:
         assert core.read_num_hdus(str(path)) == 1
         bitpix, shape = core.read_shape(str(path), 0)
@@ -195,6 +207,7 @@ def test_megapipe_mosaics_report_their_true_geometry() -> None:
         assert re.fullmatch(r"[a-zA-Z0-9]+\.MP\d+", str(keys["FILTER"]))
 
 
+@needs_megacam
 def test_megacam_frames_are_rice_compressed_image_mefs() -> None:
     """CFITSIO calls every HDU of a ``.fz`` an IMAGE; the table probes still answer.
 
@@ -205,7 +218,6 @@ def test_megacam_frames_are_rice_compressed_image_mefs() -> None:
     ``read_table_info`` are meaningful and must agree with the ``NAXIS2`` and
     ``TFIELDS`` cards.
     """
-    assert MEGACAM, "no MegaCam frames fetched"
     for path in MEGACAM:
         num_hdus = core.read_num_hdus(str(path))
         assert num_hdus > 1
@@ -231,6 +243,7 @@ def test_megacam_frames_are_rice_compressed_image_mefs() -> None:
         assert {core.read_hdu_type(str(path), h) for h in range(num_hdus)} == {"IMAGE"}
 
 
+@needs_megacam
 def test_missing_keyword_still_raises_on_real_data() -> None:
     """A ``NAXIS=0`` real primary has no ``NAXIS1``; inventing one would be a lie.
 
@@ -248,6 +261,8 @@ def test_missing_keyword_still_raises_on_real_data() -> None:
             core.read_keys(str(path), 0, ["NO_SUCH_KEY"])
 
 
+@needs_megacam
+@needs_megapipe
 def test_real_corpus_is_readable_with_neither_torch_nor_numpy() -> None:
     """The whole corpus, in a fresh interpreter where both imports are blocked.
 

@@ -26,24 +26,24 @@ def test_strip_prerelease() -> None:
     assert lane.strip_prerelease("1.0.0rc5.post1") == "1.0.0"
     assert lane.strip_prerelease("1.0.0b1") == "1.0.0"
     assert lane.strip_prerelease("1.0.0a2") == "1.0.0"
-    assert lane.strip_prerelease("1.0.0.dev0+torch212") == "1.0.0"
+    assert lane.strip_prerelease("1.0.0.dev0+torch213") == "1.0.0"
 
 
 def _map_version() -> str:
-    return lane.load_lanes()["2.13"]["torchfits_version"]
+    return lane.load_lanes()["2.14"]["torchfits_version"]
 
 
 def test_lane_for_version_accepts_prerelease() -> None:
     lanes = lane.load_lanes()
     base = _map_version()
-    assert lane.lane_for_version(base, lanes) == "2.13"
-    assert lane.lane_for_version(f"{base}rc5", lanes) == "2.13"
+    assert lane.lane_for_version(base, lanes) == "2.14"
+    assert lane.lane_for_version(f"{base}rc5", lanes) == "2.14"
     with pytest.raises(SystemExit):
         lane.lane_for_version("2.0.0rc1", lanes)
 
 
 def test_render_prerelease_applies_suffix() -> None:
-    rendered = lane.render("2.13", None, prerelease="rc5")
+    rendered = lane.render("2.14", None, prerelease="rc5")
     expected = f"{_map_version()}rc5"
     assert _rendered_version(rendered) == expected
     for path, text in rendered.items():
@@ -53,27 +53,27 @@ def test_render_prerelease_applies_suffix() -> None:
 
 
 def test_render_committed_prerelease_matches_apply() -> None:
-    rendered = lane.render("2.13", None, prerelease="rc5")
-    committed = lane.render("2.13", f"{_map_version()}rc5")
+    rendered = lane.render("2.14", None, prerelease="rc5")
+    committed = lane.render("2.14", f"{_map_version()}rc5")
     assert rendered == committed
 
 
 def test_render_plain_apply_is_map_version() -> None:
     base = _map_version()
-    assert _rendered_version(lane.render("2.13", None)) == base
-    assert _rendered_version(lane.render("2.13", base)) == base
+    assert _rendered_version(lane.render("2.14", None)) == base
+    assert _rendered_version(lane.render("2.14", base)) == base
 
 
 def test_render_rejects_wrong_base_version() -> None:
     with pytest.raises(SystemExit, match=r"not '1\.0\.1rc5'"):
-        lane.render("2.13", "1.0.1rc5")
+        lane.render("2.14", "1.0.1rc5")
     with pytest.raises(SystemExit, match=r"not '2\.0\.0'"):
-        lane.render("2.13", "2.0.0")
+        lane.render("2.14", "2.0.0")
 
 
 def test_render_prerelease_rejects_non_release_lane() -> None:
     with pytest.raises(SystemExit, match="only applies to release lanes"):
-        lane.render("2.12", None, prerelease="rc5")
+        lane.render("2.13", None, prerelease="rc5")
 
 
 def test_prerelease_help_names_the_lane_base() -> None:
@@ -108,12 +108,12 @@ def test_local_lane_recovers_the_experimental_lane() -> None:
     filename), so the encoding is a repo convention, not a one-off.
     """
     base = _map_version()
-    assert lane.local_lane(f"{base}.dev0+torch212") == "2.12"
     assert lane.local_lane(f"{base}.dev0+torch213") == "2.13"
+    assert lane.local_lane(f"{base}.dev0+torch214") == "2.14"
     assert lane.local_lane(base) is None
     assert lane.local_lane(f"{base}rc5") is None
     # Only a dev-local segment names a lane; a prerelease is still the map lane.
-    assert lane.lane_for_version(f"{base}rc5", lane.load_lanes()) == "2.13"
+    assert lane.lane_for_version(f"{base}rc5", lane.load_lanes()) == "2.14"
 
 
 def _lane_tree(tmp_path: Path, lane_name: str) -> None:
@@ -149,41 +149,41 @@ def _use_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_current_lane_follows_an_experimental_lane_render(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A tree rendered onto 2.12 must not report the 2.13 release lane.
+    """A tree rendered onto 2.13 must not report the 2.14 release lane.
 
     ``--print-pins`` feeds ``TORCH_PIN`` to seven CI jobs, which install
     ``torch>=<pin>``; reporting the map lane for a dev-lane tree would install a
     torch the tree is not ABI-matched to.
     """
-    _lane_tree(tmp_path, "2.12")
+    _lane_tree(tmp_path, "2.13")
     _use_tree(monkeypatch, tmp_path)
-    assert lane.committed_torch_spec() == ">=2.12,<2.13"
-    assert lane.current_lane() == "2.12"
+    assert lane.committed_torch_spec() == ">=2.13,<2.14"
+    assert lane.current_lane() == "2.13"
     assert lane.check() == 0
 
 
 def test_print_pins_reports_the_committed_lane(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _lane_tree(tmp_path, "2.12")
+    _lane_tree(tmp_path, "2.13")
     _use_tree(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["release_lane.py", "--print-pins"])
     assert lane.main() == 0
     out = capsys.readouterr().out
-    assert "lane=2.12" in out
-    assert "torch=>=2.12,<2.13" in out
+    assert "lane=2.13" in out
+    assert "torch=>=2.13,<2.14" in out
 
 
 def test_print_pins_fails_loudly_when_the_tree_pin_disagrees(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A drifted constraints file must not be papered over with a map lookup."""
-    _lane_tree(tmp_path, "2.13")
+    _lane_tree(tmp_path, "2.14")
     _use_tree(monkeypatch, tmp_path)
     constraints = tmp_path / "constraints-wheel.txt"
     text, count = re.subn(
-        r"^torch>=2\.13,<2\.14$",
-        "torch>=2.12,<2.13",
+        r"^torch>=2\.14,<2\.15$",
+        "torch>=2.13,<2.14",
         constraints.read_text(),
         count=0,
         flags=re.M,
@@ -199,7 +199,7 @@ def test_print_pins_reports_the_committed_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A prerelease state prints its own version, not the map's base version."""
-    _lane_tree(tmp_path, "2.13")
+    _lane_tree(tmp_path, "2.14")
     _use_tree(monkeypatch, tmp_path)
     expected = f"{_map_version()}rc5"
     for name in ("pyproject.toml", "pixi.toml", "recipe.yaml", "__init__.py"):
