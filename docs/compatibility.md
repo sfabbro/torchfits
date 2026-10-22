@@ -31,7 +31,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 
 ## CUDA & Accelerator Compatibility
 
-- **Universal CUDA / CPU Wheels:** A single `torchfits` wheel functions across all CUDA flavors of its PyTorch minor version (`cu126`, `cu129`, `cu130`) as well as CPU-only (`+cpu`) installations.
+- **Universal CUDA / CPU Wheels:** A single `torchfits` wheel functions across all CUDA flavors of its PyTorch minor version (`cu126`, `cu130`) as well as CPU-only (`+cpu`) installations.
 - **Apple Silicon (MPS):** Native `arm64` wheels for macOS leverage Metal Performance Shaders (`device="mps"`).
 - **Graceful Fallback:** CUDA-built environments run seamlessly on CPU-only machines via automatic CPU fallback.
 - **MPS dtype handling:** `device="mps"` (and `mps:N`) downcasts `float64 → float32` and `complex128 → complex64` before the host-to-device transfer because MPS has no native 64-bit float/complex. Each downcast emits a `UserWarning` (Python's default filter shows it once per call site): `MPS does not support float64; downcasting to float32 (precision loss)` and `MPS does not support complex128; downcasting to complex64 (precision loss)`. The result keeps its shape and lands on the requested device; CPU and CUDA paths keep 64-bit.

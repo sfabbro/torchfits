@@ -28,10 +28,10 @@ pip install torchfits "torch==2.14.0+cpu" --extra-index-url https://download.pyt
 
 ### 3. Specific CUDA toolkit versions
 
-To match a specific CUDA version installed on your system (e.g. `cu126`, `cu129`, `cu130`):
+To match a specific CUDA version installed on your system (e.g. `cu126`, `cu130`):
 
 ```bash
-pip install "torchfits[cuda]" --extra-index-url https://download.pytorch.org/whl/cu129
+pip install "torchfits[cuda]" --extra-index-url https://download.pytorch.org/whl/cu130
 # Or explicitly pinning the CUDA PyTorch build:
 pip install torchfits "torch==2.14.0+cu130" --extra-index-url https://download.pytorch.org/whl/cu130
 ```
