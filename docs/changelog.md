@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - scripts: Anchor the duplicate-cpp guard to the repository root
 - real-data tests: Skip per dataset instead of failing on a partial corpus
 - ci: Stop publishing macOS cp315 wheels for the broken torch 2.14 ABI
+- table: Accept NumPy scalars as filter literals
+- table: Reject NumPy bool literals on every NumPy release
 
 ### Docs
 - Finish the 2.14 lane sweep
