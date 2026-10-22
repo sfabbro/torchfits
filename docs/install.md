@@ -1,6 +1,6 @@
 # Installation
 
-`torchfits` is distributed as prebuilt binary wheels for **Linux (x86_64, aarch64)** and **macOS (Apple Silicon arm64)** supporting **Python 3.11–3.15**. CFITSIO is vendored directly into the wheels, so no C++ compiler, system libraries, or manual build steps are required.
+`torchfits` is distributed as prebuilt binary wheels for **Linux (x86_64, aarch64)** and **macOS (Apple Silicon arm64)** supporting **Python 3.11–3.15 on Linux** and **3.11–3.14 on macOS**. CFITSIO is vendored directly into the wheels, so no C++ compiler, system libraries, or manual build steps are required.
 
 ## Quick install
 
@@ -43,6 +43,9 @@ pip install torchfits "torch==2.14.0+cu130" --extra-index-url https://download.p
 The PyPI release is built against one PyTorch minor version at a time (an "ABI lane"); the current lane is **PyTorch 2.14.x** (`torch>=2.14,<2.15`). Wheels are ABI-matched to that minor, so keep your PyTorch on 2.14.x.
 
 If you must stay on an older PyTorch (**≥ 2.10**), install from source against your environment (see below) — prebuilt wheels are not published for other lanes (PyTorch minor versions).
+
+!!! warning "Python 3.15 on macOS"
+    PyTorch 2.14's cp315 macOS wheels were built against CPython 3.15.0b3 headers and segfault on the first tensor operation outside the main thread ([pytorch/pytorch#200779](https://github.com/pytorch/pytorch/issues/200779)). PyTorch 2.14 has no fixed rebuild, so `torchfits` 1.3.0 does not publish cp315 macOS wheels; use Python 3.14 or the Linux cp315 wheel until PyTorch 2.15.
 
 ---
 
@@ -155,7 +158,7 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 
 **`No matching distribution found for torchfits`**
 
-Prebuilt binary wheels are available for Linux (x86_64, aarch64) and macOS (Apple Silicon arm64) on CPython 3.11–3.15. Windows and x86_64 macOS are unsupported (no wheels, no tested MSVC recipe).
+Prebuilt binary wheels are available for Linux (x86_64, aarch64) on CPython 3.11–3.15 and macOS (Apple Silicon arm64) on CPython 3.11–3.14. Windows and x86_64 macOS are unsupported (no wheels, no tested MSVC recipe).
 
 **`ImportError: ... ABI mismatch`**
 

@@ -157,6 +157,12 @@ repair-wheel-command = "auditwheel repair --exclude libtorch_python.so --exclude
 
 [tool.cibuildwheel.macos]
 archs = ["arm64"]
+# cp315 macOS wheels are not published for 1.3.0: torch 2.14's own cp315 macOS
+# wheel was built against CPython 3.15.0b3 headers and segfaults on the first
+# tensor op outside the main thread (pytorch/pytorch#200779). The Linux cp315
+# wheels are unaffected. Repeat the free-threaded skip: a platform-specific
+# `skip` replaces the global one.
+skip = "cp31?t-* cp315-*"
 before-all = "bash ./extern/vendor.sh --cfitsio-version extern/VERSIONS.txt"
 environment = { MACOSX_DEPLOYMENT_TARGET = "14.0", CMAKE_OSX_DEPLOYMENT_TARGET = "14.0", PIP_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cpu" }
 # ponytail: PyTorch extensions resolve torch at runtime; delocate breaks @rpath.

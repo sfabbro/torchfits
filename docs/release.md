@@ -182,7 +182,9 @@ Publishing triggers `.github/workflows/build_wheels.yml`, which:
 
 1. Runs tests (each job resolves the lane's torch pin via
    `release_lane.py --print-pins`).
-2. Builds wheels (Linux x86_64 + aarch64, macOS arm64, cp311–cp315, torch
+2. Builds wheels (Linux x86_64 + aarch64 on cp311–cp315; macOS arm64 on
+   cp311–cp314, because torch 2.14's cp315 macOS wheel is ABI-broken —
+   [pytorch#200779](https://github.com/pytorch/pytorch/issues/200779); torch
    pinned to the lane via `scripts/cibw_before_build.sh`). An sdist is
    attached to the GitHub Release only — **not** uploaded to PyPI.
 3. Uploads **wheels** to [PyPI](https://pypi.org/project/torchfits/) via

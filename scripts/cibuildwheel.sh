@@ -10,7 +10,7 @@
 #   bash scripts/verify_wheel_cuda_canfar.sh
 #
 # Usage:
-#   bash scripts/cibuildwheel.sh              # host arch, cp310-cp314
+#   bash scripts/cibuildwheel.sh              # host arch, cp311-cp315 (macOS: cp311-cp314)
 #   CIBW_ARCHS=aarch64 bash scripts/cibuildwheel.sh
 #   CIBW_BUILD=cp314-* bash scripts/cibuildwheel.sh
 set -euo pipefail

@@ -10,11 +10,11 @@
 # is never touched.
 #
 # Usage:
-#   bash scripts/build_wheels_local.sh [--lanes 2.12,2.13] [--pythons 3.11,3.13] [--jobs 2]
+#   bash scripts/build_wheels_local.sh [--lanes 2.14] [--pythons 3.11,3.13] [--jobs 2]
 #
 # Flags:
 #   --lanes      comma-separated torch lanes (default: all in scripts/torch_lanes.json)
-#   --pythons    comma-separated CPython versions (default: 3.10,3.11,3.12,3.13,3.14)
+#   --pythons    comma-separated CPython versions (default: 3.11,3.12,3.13,3.14,3.15)
 #   --jobs       parallel build cells (default: 2)
 #   --prerelease prerelease suffix (e.g. rc5) to render onto the lane version,
 #                mirroring `release_lane.py --prerelease` (matches the rc tag
@@ -25,7 +25,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="dist-local"
 JOBS=2
 LANES=""
-PYTHONS="3.10,3.11,3.12,3.13,3.14"
+PYTHONS="3.11,3.12,3.13,3.14,3.15"
 PRERELEASE=""
 
 while [[ $# -gt 0 ]]; do

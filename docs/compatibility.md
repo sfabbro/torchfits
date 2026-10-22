@@ -10,7 +10,7 @@ For supported FITS formats, HDU types, tile compression, and catalog features, s
 
 | Component | Prebuilt Wheels | Source Builds |
 |---|---|---|
-| **Python** | **3.11, 3.12, 3.13, 3.14, 3.15** | **3.11+** |
+| **Python** | **3.11, 3.12, 3.13, 3.14**; **3.15** (Linux only) | **3.11+** |
 | **PyTorch** | **2.14.x** (ABI-matched wheels) | **≥ 2.10** (`pip install --no-deps --no-build-isolation .`) |
 | **Hardware & CUDA** | **CPU**, **CUDA 12.6, 13.0**, **Apple Silicon MPS** | All PyTorch-supported compute devices |
 | **Operating Systems** | **Linux** (`x86_64`, `aarch64`)<br>**macOS** (`arm64` Apple Silicon) | Linux, macOS |
@@ -39,6 +39,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 
 ### Known limitations
 
+- **Python 3.15 on macOS is not supported by 1.3.0:** PyTorch 2.14's cp315 macOS and Windows wheels were built against CPython 3.15.0b3 headers, whose `PyThreadState` layout predates 3.15.0b4. The first Python-level tensor operation outside the main thread then segfaults inside pybind11's `gil_scoped_acquire` ([pytorch/pytorch#200779](https://github.com/pytorch/pytorch/issues/200779)); the Linux cp315 wheels are unaffected. `torchfits` 1.3.0 therefore publishes cp315 wheels for Linux only. macOS users on Python 3.15 need PyTorch 2.15, which this release does not target.
 - **No Windows support:** Prebuilt wheels and CI are Linux and macOS only; Windows is documented as unsupported.
 - **Runtime env knobs:** every `TORCHFITS_*` variable the library reads, with its default and effect, is listed under [Environment variables](architecture.md#environment-variables). Those knobs are not a stable public API and may change without notice.
 - **`KMP_DUPLICATE_LIB_OK`:** importing `torchfits` runs `os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")` before PyTorch loads. macOS otherwise aborts when PyTorch's `libomp` and a second OpenMP runtime (Homebrew or conda) are both mapped. An existing value is left alone. See [Install](install.md) if you import `torch` first.

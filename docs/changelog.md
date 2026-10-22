@@ -13,10 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2.14). The extension now builds as C++20, which torch 2.14's headers require.
 - Supported Python is now 3.11-3.15. 3.10 is dropped: PyTorch 2.14 is the last
   release that ships `cp310` wheels, and 3.15 is stable as of 3.15.0.
+- Python 3.15 support is Linux-only in this release: PyTorch 2.14's cp315
+  macOS/Windows wheels were built against CPython 3.15.0b3 headers and crash
+  on the first tensor operation outside the main thread
+  ([pytorch#200779](https://github.com/pytorch/pytorch/issues/200779)).
+  macOS keeps cp311-cp314 wheels; Linux publishes cp315.
 
 ### Fixed
 - scripts: Anchor the duplicate-cpp guard to the repository root
 - real-data tests: Skip per dataset instead of failing on a partial corpus
+- ci: Stop publishing macOS cp315 wheels for the broken torch 2.14 ABI
 
 ### Docs
 - Finish the 2.14 lane sweep
