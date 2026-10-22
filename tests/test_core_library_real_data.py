@@ -62,7 +62,8 @@ needs_megacam = pytest.mark.skipif(
     not MEGACAM, reason="no MegaCam frames; run scripts/fetch_cfht_megacam_sample.sh"
 )
 needs_megapipe = pytest.mark.skipif(
-    not MEGAPIPE, reason="no MegaPipe mosaics; run scripts/fetch_cfht_megapipe_sample.sh"
+    not MEGAPIPE,
+    reason="no MegaPipe mosaics; run scripts/fetch_cfht_megapipe_sample.sh",
 )
 
 pytestmark = pytest.mark.skipif(
