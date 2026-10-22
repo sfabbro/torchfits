@@ -394,6 +394,7 @@ def test__evaluate_where_never_leaks_pyarrow_exceptions():
         except pa.ArrowNotImplementedError as exc:  # pragma: no cover
             pytest.fail(f"pyarrow error escaped for {condition!r}: {exc}")
 
+
 def test_r8b_10_numpy_scalars_as_filter_literals(tmp_path):
     """NumPy scalars must be accepted as filter literals on the fast path."""
     import torch
