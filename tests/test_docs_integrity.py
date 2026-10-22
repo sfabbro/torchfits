@@ -636,8 +636,15 @@ def test_harness_task_references_resolve() -> None:
     than eyeballing.
     """
     tasks = tomllib.loads((ROOT / "pixi.toml").read_text(encoding="utf-8"))["tasks"]
+    # cwd=ROOT: without it these two tests silently skip whenever the suite is
+    # started from anywhere but the repo root (a CI runner, the CANFAR matrix,
+    # an IDE), which reads as "green" while the check never ran.
     listed = subprocess.run(
-        ["git", "ls-files", ".cursor"], capture_output=True, text=True, check=False
+        ["git", "ls-files", ".cursor"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if listed.returncode != 0:
         pytest.skip(f"not a git checkout: {listed.stderr.strip()}")
@@ -959,7 +966,7 @@ def test_owed_behavior_notes_match_the_implementation() -> None:
 
 def _tracked_files() -> list[str]:
     listed = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=False
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=False
     )
     if listed.returncode != 0:
         pytest.skip(f"not a git checkout: {listed.stderr.strip()}")
