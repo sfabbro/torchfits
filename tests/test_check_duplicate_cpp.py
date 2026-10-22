@@ -50,6 +50,16 @@ def test_iter_cpp_files_is_recursive() -> None:
     assert len(files) == len(set(files))
 
 
+def test_default_tree_does_not_depend_on_the_working_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A relative default made the guard scan an empty tree from any other CWD."""
+    monkeypatch.chdir(tmp_path)
+    assert guard.CPP_SRC_DIR.is_absolute()
+    assert guard.CPP_SRC_DIR == CPP_SRC
+    assert guard.iter_cpp_files()
+
+
 def test_duplicate_in_a_subdirectory_is_reported(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

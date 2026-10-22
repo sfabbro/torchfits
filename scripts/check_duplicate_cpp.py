@@ -29,7 +29,11 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-CPP_SRC_DIR = Path("src/torchfits/cpp_src")
+# Anchored to the checkout that owns this script, not the caller's CWD: a
+# relative path silently scanned an empty tree whenever the guard was invoked
+# from anywhere but the repo root (some CI runners, ad-hoc shells, test suites
+# started from another directory), which reports "no duplicates" for nothing.
+CPP_SRC_DIR = Path(__file__).resolve().parents[1] / "src" / "torchfits" / "cpp_src"
 
 # Function names that are *intentionally* duplicated (e.g. ``bind_table`` that
 # appears both as a nanobind entry point and in a different .cpp file).
