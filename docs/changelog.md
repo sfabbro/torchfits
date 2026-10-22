@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supported Python is now 3.11-3.15. 3.10 is dropped: PyTorch 2.14 is the last
   release that ships `cp310` wheels, and 3.15 is stable as of 3.15.0.
 
+### Fixed
+- scripts: Anchor the duplicate-cpp guard to the repository root
+- real-data tests: Skip per dataset instead of failing on a partial corpus
+
+### Docs
+- Finish the 2.14 lane sweep
+
 ## [1.2.3] — 2026-10-20
 
 ### Fixed
