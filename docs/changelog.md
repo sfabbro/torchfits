@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/check_release_rc.py` runs before PyPI upload and refuses a stable
   tag with no matching `vX.Y.Zrc*` tag.
 
+### Added
+- build: Add an opt-in instrumented coverage build
+  `-DTORCHFITS_COVERAGE=ON` instruments the extension, the torch-free core and
+  vendored CFITSIO with `--coverage` at `-O0` (IPO off) for gcovr reports; the
+  option fails at configure time on a compiler without gcov support.
+
 ## [1.3.0] — 2026-10-22
 
 ### Added

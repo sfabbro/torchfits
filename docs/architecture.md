@@ -468,7 +468,8 @@ harnesses. Not enforced by the docs-completeness test above.
 
 - **CMake** (`-DTORCHFITS_...=` at build time): `TORCHFITS_PGO`,
   `TORCHFITS_FINITE_MATH_ONLY`, `TORCHFITS_USE_VENDORED_CFITSIO`,
-  `TORCHFITS_AUTO_VENDOR_DEPS`, `TORCHFITS_NIOBUF`, `TORCHFITS_MINDIRECT`.
+  `TORCHFITS_AUTO_VENDOR_DEPS`, `TORCHFITS_NIOBUF`, `TORCHFITS_MINDIRECT`,
+  `TORCHFITS_COVERAGE`.
 - **Docs build** (`scripts/build_docs_pages.sh`): `TORCHFITS_DOCS_OUT`,
   `TORCHFITS_DOCS_URL`.
 - **Benchmarks** (`scripts/bench_*.sh`): `TORCHFITS_BENCH_ENV`,
