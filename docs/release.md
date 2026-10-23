@@ -45,6 +45,14 @@ e.g. `--prerelease rc5` on lane 2.14 appends `rc5` to that lane's `torchfits_ver
 A plain `--apply` (no `--prerelease`) always finalizes back to the map
 version.
 
+**Release-candidate gate.** From 1.3.1 onward, every stable tag is preceded by
+an `rc` tag for the same version. The rc and the stable tag carry the same
+tree apart from the version strings. Publish `vX.Y.Zrc1`, run the gates and
+install checks against that artifact, then finalize and tag the stable
+version. `scripts/check_release_rc.py` enforces the gate before PyPI upload,
+and section 9 runs it locally. `1.3.0` (2026-10-22) was published without an
+rc.
+
 `check-lane` fails unless all five agree with `scripts/torch_lanes.json`.
 Update the compatibility / install docs (README.md, `docs/install.md`,
 `docs/compatibility.md`) when the current-lane numbers change.
@@ -156,6 +164,7 @@ twine check dist/*
 ## 9. Tag and push
 
 ```bash
+python scripts/check_release_rc.py --version X.Y.Z
 git add -A
 git commit -m "release: vX.Y.Z"
 git tag vX.Y.Z

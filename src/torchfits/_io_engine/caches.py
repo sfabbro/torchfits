@@ -45,7 +45,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
         "fits_image_data": MappingProxyType(
             {
                 "data": True,
-                "handles": False,
                 "meta": False,
                 "hdu_types": False,
                 "stats": False,
@@ -55,7 +54,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
         "fits_table_data": MappingProxyType(
             {
                 "data": True,
-                "handles": False,
                 "meta": False,
                 "hdu_types": False,
                 "stats": False,
@@ -65,7 +63,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
         "fits_header_metadata": MappingProxyType(
             {
                 "data": False,
-                "handles": False,
                 "meta": True,
                 "hdu_types": True,
                 "stats": False,
@@ -75,7 +72,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
         "fits_header_hdu_metadata": MappingProxyType(
             {
                 "data": False,
-                "handles": False,
                 "meta": True,
                 "hdu_types": True,
                 "stats": False,
@@ -85,7 +81,6 @@ IO_CACHE_SUBSYSTEMS = MappingProxyType(
         "all": MappingProxyType(
             {
                 "data": True,
-                "handles": True,
                 "meta": True,
                 "hdu_types": True,
                 "stats": True,
@@ -114,18 +109,7 @@ def clear_cache_subsystem(
 ) -> None:
     """Clear one named FITS I/O cache subsystem."""
     policy = cache_subsystem_policy(name)
-    # ``handles`` is deliberately not forwarded: it is ignored since the handle
-    # cache was removed, and forwarding the policy's False value would surface
-    # the clear_file_cache(handles=) deprecation for internal callers who never
-    # passed the knob.
-    clear_file_cache(
-        data=policy["data"],
-        meta=policy["meta"],
-        hdu_types=policy["hdu_types"],
-        stats=policy["stats"],
-        cpp=policy["cpp"],
-        cpp_module=cpp_module,
-    )
+    clear_file_cache(**policy, cpp_module=cpp_module)
 
 
 def path_signature(path: str) -> tuple[int, int, int] | None:

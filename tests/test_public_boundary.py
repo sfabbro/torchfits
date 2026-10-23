@@ -66,6 +66,39 @@ def test_removed_cache_knobs_are_gone():
         hdu.TableHDU({}, col_stats={})
 
 
+def test_cache_policy_flags_match_clear_file_cache():
+    """Every policy must be callable against ``clear_file_cache``."""
+    import torchfits.io as io
+
+    accepted = set(inspect.signature(io.clear_file_cache).parameters) - {"cpp_module"}
+    for name in (
+        "fits_image_data",
+        "fits_table_data",
+        "fits_header_metadata",
+        "fits_header_hdu_metadata",
+        "all",
+    ):
+        policy = io.cache_subsystem_policy(name)
+        assert set(policy) == accepted
+        io.clear_file_cache(**policy)
+
+
+def test_table_hdu_header_is_keyword_only(tmp_path):
+    """A positional header must raise, and the header must survive a write."""
+    header = hdu.Header({"EXTNAME": "CAT", "NAXIS2": 1})
+    with pytest.raises(TypeError):
+        hdu.TableHDU({"A": np.arange(1)}, header)
+
+    params = inspect.signature(hdu.TableHDU.__init__).parameters
+    for name in ("header", "source_path", "source_hdu"):
+        assert params[name].kind is inspect.Parameter.KEYWORD_ONLY
+
+    table_hdu = hdu.TableHDU({"A": np.arange(1)}, header=header)
+    path = tmp_path / "cat.fits"
+    table_hdu.to_fits(str(path))
+    assert torchfits.read_header(str(path), hdu=1)["EXTNAME"] == "CAT"
+
+
 def test_root_functions_preserve_real_signatures():
     import torchfits.io
 

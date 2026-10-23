@@ -3,8 +3,9 @@
 Live hot-path I/O state (file/meta/header LRUs, invalidate) lives in
 ``torchfits._io_engine.caches``. This module owns env/policy
 (``CacheConfig`` / ``CacheManager``), on-disk cache roots, and aggregating
-``clear_cache`` / ``stats``. C++ ``configure_cache`` / handle-pool APIs are
-no-ops after Option A (private handles); live shared state is SharedReadMeta.
+``clear_cache`` / ``stats``. The C++ ``configure_cache`` and handle-pool APIs
+were removed with the shared-handle pool in 1.3.0; live shared state is
+``SharedReadMeta``.
 """
 
 from __future__ import annotations

@@ -523,7 +523,7 @@ def clear_file_cache(
     cpp: bool = True,
     cpp_module: Any = None,
 ) -> None:
-    """Clear the FITS metadata caches selectively."""
+    """Clear in-process FITS I/O caches, counters, and native shared metadata."""
     return _clear_file_cache_impl(
         data=data,
         meta=meta,
@@ -535,7 +535,7 @@ def clear_file_cache(
 
 
 def cache_subsystem_policy(name: str) -> dict[str, bool]:
-    """Query which cache subsystems (data, handles, meta) are enabled for a policy."""
+    """Return the clear flags for a named FITS I/O cache subsystem."""
     return _cache_subsystem_policy_impl(name)
 
 

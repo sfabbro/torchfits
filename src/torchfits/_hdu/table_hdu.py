@@ -122,9 +122,18 @@ class TableDataAccessor:
 
 
 class TableHDU:
+    """In-memory binary table HDU with tensor columns.
+
+    ``header``, ``source_path`` and ``source_hdu`` are keyword-only: the
+    pre-1.3 signature had ``col_stats`` in the second position, so positional
+    callers would otherwise bind a header as ``source_path`` and silently
+    drop the header cards on write.
+    """
+
     def __init__(
         self,
         tensor_dict: dict[str, Any],
+        *,
         header: Optional[Header] = None,
         source_path: Optional[str] = None,
         source_hdu: Optional[int] = None,
@@ -317,7 +326,12 @@ class TableHDU:
         if missing:
             raise KeyError(f"Columns not found: {missing}")
         selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in wanted}
-        return TableHDU(selected_dict, header=self._derived_header())
+        return TableHDU(
+            selected_dict,
+            header=self._derived_header(),
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
 
     def filter(self, condition: str) -> "TableHDU":
         import numpy as np
