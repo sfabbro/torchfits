@@ -4,7 +4,7 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 
 ## Where things stand
 
-**1.2.3** (2026-10-20) is the current release, on the PyTorch 2.13 lane. The next minor, 1.3.0, moves to the PyTorch 2.14 lane and to Python 3.11–3.15 (3.10 is dropped). The [changelog](changelog.md) has the notes. The changes that matter for what you call:
+**1.2.3** (2026-10-20) is the current release, on the PyTorch 2.13 lane. The next minor, 1.3.0, moves to the PyTorch 2.14 lane and to Python 3.11–3.15 (3.10 is dropped). It also makes `torchfits.open()` and header/HDU inspection run without importing PyTorch, and wraps native table buffers in Arrow instead of staging them through NumPy. The [changelog](changelog.md) has the notes. The changes that matter for what you call:
 
 - Header and metadata reads go through `libtorchfits_core` and do not load PyTorch.
 - Arrow reads of fixed columns and flat variable-length arrays do not import PyTorch. Tensor reads stay on `read_torch`.
@@ -17,9 +17,8 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 ## Next
 
 - Buffered table reads (`mmap=False`) are still behind fitsio: narrow `read_full` by 22% on CPU and 13% on CUDA, and `ascii_10000` `predicate_filter` by 15% on CPU. Figures are the October 2026 runs published in [torchfits-harness](https://github.com/astroai/torchfits-harness).
-- Arrow conversion still copies native buffers through NumPy. PyArrow itself imports NumPy; torchfits should stop adding its own copy.
 - `compress` and `decompress` only re-encode bytes, but they still load the torch-linked library.
-- `torchfits.open()` still opens that library. Telling a table HDU from an image HDU also imports PyTorch, so a header-only open is not torch-free yet.
+- Arrow table destinations avoid THPVariables, but the raw reader still lives in the torch-linked extension, so `table.read` imports PyTorch when it is installed; moving the raw reader into the core makes the destination truly torch-free.
 
 ## Later
 

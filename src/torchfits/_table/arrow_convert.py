@@ -56,12 +56,14 @@ def _is_raw_column(value: Any) -> bool:
 
 
 def _raw_column_to_numpy(value: dict[str, Any]) -> Any:
-    """Materialize one native raw column as an owned NumPy array/tuple.
+    """Expose one native raw column as a NumPy view over its memoryview.
 
-    The native side returns a Python-owned writable memoryview. NumPy provides
-    the torch-free typed view used by the established Arrow conversion rules.
-    We copy before returning so the result never depends on the lifetime of a
-    temporary native result dictionary; the VLA offsets remain exact int64.
+    The native side returns a Python-owned writable memoryview (a bytearray
+    owner), so ``np.frombuffer`` can wrap it without copying: the array keeps
+    the memoryview and its owner alive through ``.base``.  Arrow then wraps the
+    same buffer in ``_numpy_buffer_to_arrow``, which keeps the array alive.  A
+    copy here was the extra hop this module is meant to avoid; the VLA offsets
+    remain exact int64.
     """
     import numpy as np
 
@@ -80,14 +82,14 @@ def _raw_column_to_numpy(value: dict[str, Any]) -> Any:
             raise ValueError(
                 f"raw table column buffer has {data.nbytes} bytes; expected {expected}"
             )
-        return np.frombuffer(data, dtype=dtype).copy().reshape(shape)
+        return np.frombuffer(data, dtype=dtype).reshape(shape)
 
     offsets_data = value.get("offsets")
     if not isinstance(offsets_data, memoryview):
         raise TypeError("raw VLA table column offsets must be a memoryview")
     if offsets_data.nbytes % np.dtype(np.int64).itemsize:
         raise ValueError("raw VLA offsets buffer is not int64-aligned")
-    offsets = np.frombuffer(offsets_data, dtype=np.int64).copy()
+    offsets = np.frombuffer(offsets_data, dtype=np.int64)
     if len(shape) != 1 or offsets.size != shape[0] + 1:
         raise ValueError("raw VLA offsets do not match the declared row count")
     if offsets.size == 0 or int(offsets[0]) != 0:
@@ -100,7 +102,7 @@ def _raw_column_to_numpy(value: dict[str, Any]) -> Any:
         raise ValueError(
             f"raw VLA values buffer has {data.nbytes} bytes; expected {expected}"
         )
-    flat = np.frombuffer(data, dtype=dtype).copy()
+    flat = np.frombuffer(data, dtype=dtype)
     if expected_values != flat.size:
         raise ValueError("raw VLA offsets do not match the values buffer")
     return flat, offsets
@@ -120,6 +122,77 @@ def _pa_array(pa: Any, value: Any, *, mask: Any = None, type: Any = None) -> Any
     except TypeError:
         kwargs.pop("from_pandas", None)
         return pa.array(value, **kwargs)
+
+
+# Numeric dtypes whose NumPy memory layout is identical to Arrow's value
+# buffer.  bool is excluded: Arrow packs booleans one bit per value, so a
+# uint8 array cannot be wrapped directly.
+_ZERO_COPY_NUMPY_DTYPES = frozenset(
+    {
+        "float16",
+        "float32",
+        "float64",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+    }
+)
+
+
+def _numpy_buffer_to_arrow(pa: Any, arr: "np.ndarray", *, mask: Any = None) -> Any:
+    """Wrap a contiguous 1-D NumPy buffer as an Arrow array without copying.
+
+    ``pa.array(numpy_array)`` allocates a new value buffer.  A native raw
+    column already owns a Python bytearray, so ``Array.from_buffers`` keeps the
+    data where it is; the returned array holds the ``pa.Buffer``, which holds
+    the NumPy array, which holds the memoryview owner.
+
+    A TNULL mask becomes the Arrow validity bitmap: the value buffer stays
+    shared, only the bitmap is new.  Arrow validity is LSB-first, hence
+    ``bitorder="little"``.
+
+    Returns ``None`` for layouts with no direct Arrow buffer (bool, strings,
+    non-contiguous, 0-D) so callers fall back to ``pa.array``.
+    """
+    import numpy as np
+
+    if arr.ndim != 1 or not arr.flags.c_contiguous:
+        return None
+    if arr.dtype.name not in _ZERO_COPY_NUMPY_DTYPES:
+        return None
+    if not arr.dtype.isnative:
+        # Arrow's buffers are native-endian; a byteswapped array must go
+        # through the copying path so its values are converted.
+        return None
+    try:
+        arrow_type = getattr(pa, arr.dtype.name)()
+    except AttributeError:  # pragma: no cover - pyarrow always has these
+        return None
+
+    null_count = 0
+    validity = None
+    if mask is not None:
+        mask_arr = np.asarray(mask, dtype=np.bool_)
+        if mask_arr.size and bool(mask_arr.any()):
+            if mask_arr.size != arr.size:
+                return None
+            validity = pa.py_buffer(np.packbits(~mask_arr, bitorder="little"))
+            null_count = int(mask_arr.sum())
+
+    try:
+        return pa.Array.from_buffers(
+            arrow_type,
+            int(arr.size),
+            [validity, pa.py_buffer(arr)],
+            null_count=null_count,
+        )
+    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+        return None
 
 
 def _coerce_null_sentinel(value: "np.ndarray", sentinel: Any) -> Any:
@@ -286,11 +359,14 @@ def _numpy_to_arrow_array(
     if arr.ndim <= 1:
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
-            return _pa_array(pa, arr)
+            wrapped = _numpy_buffer_to_arrow(pa, arr)
+            return wrapped if wrapped is not None else _pa_array(pa, arr)
         mask = _null_mask(arr, sentinel)
         if mask.any():
-            return _pa_array(pa, arr, mask=mask)
-        return _pa_array(pa, arr)
+            wrapped = _numpy_buffer_to_arrow(pa, arr, mask=mask)
+            return wrapped if wrapped is not None else _pa_array(pa, arr, mask=mask)
+        wrapped = _numpy_buffer_to_arrow(pa, arr)
+        return wrapped if wrapped is not None else _pa_array(pa, arr)
     if arr.ndim == 2:
         if arr.dtype == np.uint8:
             if _fits_tform_is_bit(fits_tform):
@@ -309,14 +385,19 @@ def _numpy_to_arrow_array(
         flat = arr.reshape(-1)
         sentinel = _coerce_null_sentinel(arr, null_sentinel)
         if sentinel is None:
-            values = _pa_array(pa, flat)
+            values = _numpy_buffer_to_arrow(pa, flat)
+            if values is None:
+                values = _pa_array(pa, flat)
         else:
             flat_mask = _null_mask(flat, sentinel)
-            values = (
-                _pa_array(pa, flat, mask=flat_mask)
-                if flat_mask.any()
-                else _pa_array(pa, flat)
-            )
+            if flat_mask.any():
+                values = _numpy_buffer_to_arrow(pa, flat, mask=flat_mask)
+                if values is None:
+                    values = _pa_array(pa, flat, mask=flat_mask)
+            else:
+                values = _numpy_buffer_to_arrow(pa, flat)
+                if values is None:
+                    values = _pa_array(pa, flat)
         return pa.FixedSizeListArray.from_arrays(values, int(arr.shape[1]))
     return _pa_array(pa, arr.tolist())
 
@@ -480,10 +561,19 @@ def _vla_tuple_to_arrow_array(
         return _pa_array(pa, [])
     sentinel = _coerce_null_sentinel(flat, null_sentinel)
     if sentinel is None:
-        values = _pa_array(pa, flat)
+        values = _numpy_buffer_to_arrow(pa, flat)
+        if values is None:
+            values = _pa_array(pa, flat)
     else:
         mask = _null_mask(flat, sentinel)
-        values = _pa_array(pa, flat, mask=mask) if mask.any() else _pa_array(pa, flat)
+        if mask.any():
+            values = _numpy_buffer_to_arrow(pa, flat, mask=mask)
+            if values is None:
+                values = _pa_array(pa, flat, mask=mask)
+        else:
+            values = _numpy_buffer_to_arrow(pa, flat)
+            if values is None:
+                values = _pa_array(pa, flat)
 
     if int(offsets64[-1]) <= np.iinfo(np.int32).max:
         offsets = offsets64.astype(np.int32, copy=False)

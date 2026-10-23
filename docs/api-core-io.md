@@ -268,6 +268,11 @@ torchfits.open(path, mode="r")
 
 **Returns:** `HDUList` context manager.
 
+Header and HDU inspection (`hdul[i].header`, `hdul.info()`, `TableHDURef`
+metadata) goes through `torchfits._core` and does not import PyTorch. Reading
+pixels or tensors (`.data`, `.to_tensor()`) opens the tensor-backed reader on
+first use.
+
 ```python
 with torchfits.open("mef.fits") as hdul:
     primary = hdul[0]  # TensorHDU

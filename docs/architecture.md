@@ -101,8 +101,8 @@ rejected with an `ImportError` at the boundary instead of misreading data.
 | Core and extension agree on *real* observations | done (`tests/test_core_library_real_data.py`; 409 real (frame, HDU) records, 0 mismatches) |
 | Reads match `astropy` on *real* observations | done in [torchfits-harness](https://github.com/astroai/torchfits-harness) (`tests/test_reads_real_data.py`; decompressed frames, raw VLA tiles and 435 Mpix of mosaic all exact) |
 | Arrow table destinations without Python torch | done (native raw buffers; correctness-first staging remains) |
-| Zero-copy Arrow assembly | pending (the staging copy in the raw transport is still there) |
-| `torchfits.open()` handle on the torch-free path | pending (the `HDUList` handle is shared with the tensor readers) |
+| Zero-copy Arrow assembly | done (native buffers are wrapped with `Array.from_buffers`; no NumPy staging copy) |
+| `torchfits.open()` handle on the torch-free path | done (the handle is opened lazily by the first data access) |
 | `torchfits.table` without numpy | pending (torch-free today; the staging step still imports numpy, and pyarrow does too) |
 
 ---
@@ -212,8 +212,8 @@ Caches sit in three places:
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
 Header and metadata probes go through `torchfits._core` and do not load
-PyTorch. `torchfits.open()` still loads the torch-linked reader, because the
-open file handle is shared with pixel reads.
+PyTorch. `torchfits.open()` lists HDUs and reads headers through the same core;
+the torch-linked reader is opened lazily when an HDU first touches its data.
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
 `clear_file_cache(...)` clears the I/O metadata layers only.
