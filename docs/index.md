@@ -33,7 +33,9 @@ title: FITS I/O for PyTorch Tensors and Tables
 
     ---
 
-    `where="MAG < 20"` returns an Arrow table. Polars, Pandas, and DuckDB can read it.
+    `where="MAG < 20"` returns an Arrow table. Polars, Pandas, and DuckDB can
+    read it. The columns are zero-copy views over the decoded buffers, and this
+    path does not import PyTorch.
 
     [:octicons-arrow-right-24: Table Workflows](python-workflows.md#tables-as-dataframes)
 

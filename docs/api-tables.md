@@ -5,8 +5,11 @@ column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 
 Arrow is the **contract**, not the native representation. The C++ engine
 produces per-column `torch.Tensor` buffers and the Arrow table is a zero-copy
-view over that memory; see [Architecture](architecture.md#the-torch-boundary)
-for the boundary and what is still to move.
+view over that memory: the extension exports each column as a read-only buffer
+(no Python `torch` import, no `bytearray` copy), and clean numeric or
+fixed-width byte columns go straight into `pa.Array.from_buffers`. See
+[Architecture](architecture.md#the-torch-boundary) for the boundary and what is
+still to move.
 
 | Destination | Call | Returns |
 |---|---|---|
@@ -106,7 +109,10 @@ torchfits.table.read_torch(
 | `return_header` | `bool` | `False` | Also return the HDU `Header` |
 | `where` | `str` or `None` | `None` | Simple numeric filter (see below) |
 
-`cache_capacity`, `handle_cache_capacity`, and `fast_header` are ignored.
+`cache_capacity` controls the read cache (`0` disables it) and `fast_header`
+only affects the unified-reader fallback. The Arrow path (`table.read`) takes
+neither. `handle_cache_capacity` was removed in 1.3.0, along with
+`clear_file_cache(handles=)` and `configure_cache()`.
 
 **Returns:** `dict[str, torch.Tensor]` (scalar columns; VLA columns use
 list/tuple values), or `(dict, Header)` when `return_header=True`.

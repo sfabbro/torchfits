@@ -640,17 +640,24 @@ def _read_cpp_table_chunk(
                 chunk[name] = value
 
     if chunk is None:
-        try:
-            if mmap:
+        if mmap:
+            try:
                 chunk = cpp.read_fits_table_rows_raw(
                     path, hdu, col_list, start_row, num_rows, True
                 )
-            else:
+            except (RuntimeError, OSError) as exc:
+                # VLA, scaled, and ASCII tables cannot use the mmap layout.
+                # Retry the buffered reader before falling back to the
+                # row-by-row Python scan, which is an order of magnitude slower.
+                logger.debug("mmap row-slice read failed; retrying buffered: %s", exc)
+                chunk = None
+        if chunk is None:
+            try:
                 reader = _acquire_cpp_reader(path, hdu, cpp)
                 chunk = reader.read_rows_raw(col_list, start_row, num_rows)
-        except (RuntimeError, OSError) as exc:
-            logger.debug("row-slice table read failed: %s", exc)
-            chunk = None
+            except (RuntimeError, OSError) as exc:
+                logger.debug("row-slice table read failed: %s", exc)
+                chunk = None
     if chunk is None:
         return None
 

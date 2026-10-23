@@ -4,19 +4,21 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.cache/
 .pixi/
-.claude/
-.jules/
-.Jules/
-.cursor/reviews/
+.venv/
+venv/
 archive/
-verify_fix.py
 
-# Editor / Tools
+# Editor / tools
 .vscode/
 .qoder/
 .freebuff/
 .benchmarks/
+.DS_Store
+*.swp
+*~
 
 # Build
 site/
@@ -24,6 +26,7 @@ site_*/
 zensical.pages.toml
 build/
 dist/
+dist-local/
 wheelhouse/
 .tmp-vendor/
 *.egg-info/
@@ -40,51 +43,27 @@ extern/cfitsio/
 benchmarks_data/
 examples/data_*/
 
-# Logs / local benchmark output (canonical: benchmarks_results/)
+# Local run output
+*.log
+*.log*
+pytest_filtered.log
 benchmark_full_output.txt
 benchmarks_results/
 benchmarks_results_*/
 bench_results/
-benchmarks/bench_results/
-# legacy misspelling — keep ignored if present locally
 benchmark_results/
 benchmark_results_*/
-benchmarks/benchmark_results/
-# `replays/*` not `replays/`: git never descends into an excluded directory,
-# so excluding the directory itself makes the `!` line below unreachable and
-# every tracked file under it un-re-addable after a delete/restore cycle.
-benchmarks/replays/*
-!benchmarks/replays/upstream_sources.json
-*.log
-*.log*
-torchfits_exhaustive_*
-pytest_filtered.log
 
 # One-off diagnostic scripts (do not commit)
 debug_*.py
 reproduce_*.py
+verify_fix.py
 verify_inverse.py
 test_fetch*.py
 test_sg*.py
 
-# Local benchmark scratch files
-benchmarks/baselines/
-benchmarks/kapteyn_src/
-benchmarks/kapteyn-*.tar.gz
-benchmarks/large_mmap.fits
-benchmarks/parallel_test_*.fits
-benchmarks/scaled.fits
-benchmarks/repro_map2alm*.py
-benchmarks/find_overflow.py
-
 # mpl config cache
 mpl-cache-*/
-venv/
-.venv/
-
-.DS_Store
-*.swp
-*~
 
 # uv (not used — pixi is the package manager)
 uv.lock
@@ -96,8 +75,14 @@ examples/output/
 docs/published-examples/
 docs/assets/gallery/_rgb_demo/
 
-# Agent tooling (installed skills and per-batch scratch notes), not project code.
+# Agent tooling (installed skills and per-run scratch), not project code.
 # .cursor/ is the canonical tracked tree; the agent-home installer fans these out.
 .agents/
 .codex/
+.claude/
+.jules/
 skills-lock.json
+.cursor/reviews/
+.cursor/harness/failures/
+.cursor/harness/state/
+.cursor/harness/trajectories/

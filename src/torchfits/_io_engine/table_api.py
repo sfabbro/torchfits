@@ -185,7 +185,6 @@ def read_table(
     device: str = "cpu",
     mmap: Union[bool, str] = "auto",
     cache_capacity: int = 10,
-    handle_cache_capacity: int = 16,
     fast_header: bool = True,
     return_header: bool = False,
     where: str | None = None,
@@ -196,7 +195,7 @@ def read_table(
     Falls back to ``read_func`` (``torchfits.read``) when header is requested
     or the thin path fails. ``hdu`` may be an index or EXTNAME.
     """
-    _ = cache_capacity, handle_cache_capacity, fast_header, autodetect_hdu
+    _ = cache_capacity, fast_header
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
         raise ValueError(
             "hdu must be a non-negative integer or EXTNAME string "
@@ -412,12 +411,6 @@ def read_table(
             # (documented above); anything else is a bug and must surface.
             pass
 
-    # Forward handle_cache_capacity only for explicit non-default values: the
-    # fallback read() deprecates the knob whenever the kwarg is present, and
-    # forwarding its ignored default would warn on every internal fallback.
-    extra: dict[str, Any] = {}
-    if handle_cache_capacity != 16:
-        extra["handle_cache_capacity"] = handle_cache_capacity
     out = read_func(
         path=path,
         hdu=hdu,
@@ -430,7 +423,6 @@ def read_table(
         cache_capacity=cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
-        **extra,
     )
     data = out[0] if return_header else out
     if isinstance(data, torch.Tensor):

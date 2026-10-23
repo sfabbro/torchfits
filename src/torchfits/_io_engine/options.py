@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -20,17 +19,5 @@ class ReadOptions:
     start_row: int = 1
     num_rows: int = -1
     cache_capacity: int = 10
-    # Deprecated: per-path handle caching was removed (see caches.get_cached_handle).
-    # The value is ignored; kept only so existing callers/signatures do not churn.
-    handle_cache_capacity: int = 16
     fast_header: bool = True
     mode: str = "auto"
-
-    def __post_init__(self) -> None:
-        if self.handle_cache_capacity != 16:
-            warnings.warn(
-                "ReadOptions.handle_cache_capacity is ignored since the handle "
-                "cache was removed; it will be removed in 2.0",
-                DeprecationWarning,
-                stacklevel=2,
-            )

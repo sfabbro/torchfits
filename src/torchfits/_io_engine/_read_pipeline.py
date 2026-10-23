@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import warnings
 from collections.abc import Callable
 from dataclasses import fields
 from typing import Any, cast
@@ -86,13 +85,6 @@ def _parse_read_options(
             "read() got unexpected keyword argument(s): "
             + ", ".join(repr(k) for k in unknown)
         )
-    if "handle_cache_capacity" in kwargs:
-        warnings.warn(
-            "ReadOptions.handle_cache_capacity is ignored since the handle cache "
-            "was removed; it will be removed in 2.0",
-            DeprecationWarning,
-            stacklevel=3,
-        )
     if options is not None:
         colliding = (set(kwargs) & _READ_OPTION_FIELD_NAMES) - {"mode"}
         if colliding:
@@ -158,7 +150,7 @@ def read_unified(
     options: ReadOptions | None,
     return_header: bool,
     kwargs: dict[str, Any],
-    autodetect_hdu: Callable[[str, int], int],
+    autodetect_hdu: Callable[[str], int],
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
     read_check_cache: Callable[..., tuple[bool, Any, Any]],
@@ -182,7 +174,6 @@ def read_unified(
     start_row = opts.start_row
     num_rows = opts.num_rows
     cache_capacity = opts.cache_capacity
-    handle_cache_capacity = opts.handle_cache_capacity
     fast_header = opts.fast_header
     mode = opts.mode
 
@@ -214,7 +205,6 @@ def read_unified(
             start_row=start_row,
             num_rows=num_rows,
             cache_capacity=cache_capacity,
-            handle_cache_capacity=handle_cache_capacity,
             fast_header=fast_header,
             return_header=return_header,
             mode=mode,
@@ -238,10 +228,8 @@ def read_unified(
     if use_cache is True:
         if cache_capacity <= 0:
             cache_capacity = 10
-        handle_cache_capacity = 0
     elif use_cache is False:
         cache_capacity = 0
-        handle_cache_capacity = 0
 
     # Fixed: pass hdu then device (matches function signature order)
     force_image, force_table = _validate_single_path_params(
@@ -252,7 +240,7 @@ def read_unified(
 
     # --- resolve HDU ---
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
-        hdu = autodetect_hdu(path, handle_cache_capacity)
+        hdu = autodetect_hdu(path)
 
     hdu_type_hint = get_cached_hdu_type(path, hdu) if isinstance(hdu, int) else None
     is_cached_table_hdu = force_table or (
@@ -282,7 +270,6 @@ def read_unified(
             start_row=start_row,
             num_rows=num_rows,
             cache_capacity=cache_capacity,
-            handle_cache_capacity=handle_cache_capacity,
             fast_header=fast_header,
             return_header=return_header,
             batch_to_device=batch_to_device,
@@ -369,7 +356,6 @@ def read_unified(
         fp16=fp16,
         bf16=bf16,
         cache_capacity=cache_capacity,
-        handle_cache_capacity=handle_cache_capacity,
         fast_header=fast_header,
         return_header=return_header,
         force_image=force_image,
@@ -404,11 +390,10 @@ def _read_batch_paths(
     start_row: int,
     num_rows: int,
     cache_capacity: int,
-    handle_cache_capacity: int,
     fast_header: bool,
     return_header: bool,
     mode: str,
-    autodetect_hdu: Callable[[str, int], int],
+    autodetect_hdu: Callable[[str], int],
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
     read_check_cache: Callable[..., tuple[bool, Any, Any]],
@@ -442,7 +427,7 @@ def _read_batch_paths(
     ):
         if not path:
             raise ValueError("Batch read requires a non-empty path list")
-        hdu_batch = autodetect_hdu(path[0], handle_cache_capacity)
+        hdu_batch = autodetect_hdu(path[0])
     if not isinstance(hdu_batch, int):
         raise ValueError("Batch read requires a single integer HDU")
     hdu = hdu_batch
@@ -512,7 +497,6 @@ def _read_batch_paths(
                     start_row=start_row,
                     num_rows=num_rows,
                     cache_capacity=cache_capacity,
-                    handle_cache_capacity=handle_cache_capacity,
                     fast_header=fast_header,
                 ),
                 autodetect_hdu=autodetect_hdu,
@@ -544,11 +528,10 @@ def _read_batch_hdus(
     start_row: int,
     num_rows: int,
     cache_capacity: int,
-    handle_cache_capacity: int,
     fast_header: bool,
     return_header: bool,
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
-    autodetect_hdu: Callable[[str, int], int],
+    autodetect_hdu: Callable[[str], int],
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
     read_check_cache: Callable[..., tuple[bool, Any, Any]],
     read_header: Callable[[Any, int, bool], Any],
@@ -597,7 +580,6 @@ def _read_batch_hdus(
                 start_row=start_row,
                 num_rows=num_rows,
                 cache_capacity=cache_capacity,
-                handle_cache_capacity=handle_cache_capacity,
                 fast_header=fast_header,
             ),
             autodetect_hdu=autodetect_hdu,

@@ -49,6 +49,23 @@ def test_torch_frame_is_not_part_of_the_fits_hdu_surface():
     assert not hasattr(hdu, "TensorFrame")
 
 
+def test_removed_cache_knobs_are_gone():
+    """1.3.0 removed the deprecated no-op cache knobs instead of keeping shims."""
+    import torchfits.io as io
+    from torchfits._io_engine.options import ReadOptions
+
+    assert not hasattr(torchfits.cache, "configure_cache")
+    assert not hasattr(torchfits.cache.CacheManager, "configure_cpp_cache")
+    with pytest.raises(TypeError):
+        ReadOptions(handle_cache_capacity=16)
+    with pytest.raises(TypeError):
+        table.read_torch("unused.fits", handle_cache_capacity=16)
+    with pytest.raises(TypeError):
+        io.clear_file_cache(handles=False)
+    with pytest.raises(TypeError):
+        hdu.TableHDU({}, col_stats={})
+
+
 def test_root_functions_preserve_real_signatures():
     import torchfits.io
 

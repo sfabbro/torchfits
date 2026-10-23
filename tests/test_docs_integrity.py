@@ -392,19 +392,17 @@ def test_docs_examples_reference_existing_scripts() -> None:
         )
 
 
-def test_api_tables_documents_ignored_cache_kwargs() -> None:
-    """handle_cache_capacity must not look like an active knob without ignored/deprecated."""
+def test_api_tables_documents_removed_cache_kwargs() -> None:
+    """The removed handle-cache knobs must be documented as removed, not active."""
     tables_api = (ROOT / "docs" / "api-tables.md").read_text(encoding="utf-8")
     assert "handle_cache_capacity" in tables_api
-    # Signature lines may list the kwarg before the prose note; require an
-    # ignored/deprecated sentence that names the knob within a short span.
     note = re.search(
-        r"handle_cache_capacity.{0,120}?(ignored|deprecated)"
-        r"|(ignored|deprecated).{0,120}?handle_cache_capacity",
+        r"handle_cache_capacity.{0,160}?removed"
+        r"|removed.{0,160}?handle_cache_capacity",
         tables_api,
         flags=re.S | re.I,
     )
-    assert note, "api-tables.md must mark handle_cache_capacity as ignored/deprecated"
+    assert note, "api-tables.md must mark handle_cache_capacity as removed"
 
 
 def test_api_tables_where_strategy_mentions_mask_or_project() -> None:

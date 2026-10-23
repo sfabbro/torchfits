@@ -138,19 +138,17 @@ def path_signature(path: str) -> tuple[int, int, int] | None:
     return (int(st.st_size), int(mtime_ns), int(st.st_ino))
 
 
-def get_cached_handle(path: str, handle_cache_capacity: int) -> tuple[Any, bool]:
+def get_cached_handle(path: str) -> tuple[Any, bool]:
     """Open a fresh, privately-owned CFITSIO handle for this call.
 
     Per-path handle caching was removed: sharing one ``fitsfile*`` across threads
     corrupts CFITSIO's position state (§4 Option A). ``cached`` is always ``False``
-    so every caller closes the handle it received. ``handle_cache_capacity`` is
-    ignored (kept only so existing call sites need no signature churn).
+    so every caller closes the handle it received.
     """
     import torchfits._C as cpp
 
     from .paths import guard_fits_path
 
-    del handle_cache_capacity
     guard_fits_path(path)
     return cpp.open_fits_file(path, "r"), False
 
@@ -558,17 +556,11 @@ def reset_cache_stats() -> None:
 def clear_python_caches(
     *,
     data: bool = True,
-    handles: bool = True,
     meta: bool = True,
     hdu_types: bool = True,
     stats: bool = True,
 ) -> None:
-    """Clear Python-side root FITS I/O caches.
-
-    ``handles`` is accepted for compatibility and ignored: there is no
-    shared ``fitsfile*`` pool after Option A.
-    """
-    _ = handles
+    """Clear Python-side root FITS I/O caches."""
     with cache_lock:
         if data:
             file_cache.clear()
@@ -591,28 +583,15 @@ def clear_python_caches(
 def clear_file_cache(
     *,
     data: bool = True,
-    handles: bool = True,
     meta: bool = True,
     hdu_types: bool = True,
     stats: bool = True,
     cpp: bool = True,
     cpp_module: Any = None,
 ) -> None:
-    """Clear Python/C++ FITS I/O caches.
-
-    ``handles`` is deprecated and ignored (no shared CFITSIO handle pool since Option A).
-    It will be removed in 2.0.
-    """
-    if handles is not True:
-        warnings.warn(
-            "clear_file_cache(handles=) is ignored since the handle cache was "
-            "removed; it will be removed in 2.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    """Clear Python/C++ FITS I/O caches."""
     clear_python_caches(
         data=data,
-        handles=handles,
         meta=meta,
         hdu_types=hdu_types,
         stats=stats,

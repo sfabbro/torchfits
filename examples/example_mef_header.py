@@ -1,8 +1,9 @@
 """Example: inspect a multi-extension FITS header (astropy FITS-Header tutorial file).
 
 Lists HDUs like ``example_image_mef.py``, then reads a header by EXTNAME when
-the file has one, falling back to HDU index otherwise. Skips cleanly if the
-sample isn't cached (fetch via ``bash scripts/fetch_example_samples.sh``).
+the file has one, falling back to HDU index otherwise. ``torchfits.open`` and
+header inspection run without importing PyTorch. Skips cleanly if the sample
+isn't cached (fetch via ``bash scripts/fetch_example_samples.sh``).
 """
 
 from __future__ import annotations

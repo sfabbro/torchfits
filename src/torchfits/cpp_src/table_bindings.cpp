@@ -230,13 +230,82 @@ nb::list tensor_shape_to_python(const torch::Tensor& tensor) {
     return shape;
 }
 
-// Copy a decoded native tensor into a Python-owned writable buffer.  This is
-// deliberately below the Python-torch boundary: no THPVariable_Wrap call is
-// made, so Arrow-only callers can use the native engine with torch blocked.
-// PyArrow keeps the memoryview alive when it wraps the buffer.
+// ---------------------------------------------------------------------------
+// Zero-copy column transport.
+//
+// The reader decodes a column into a torch::Tensor. Arrow callers must consume
+// that memory without (a) wrapping it as a Python tensor, which loads the torch
+// runtime, or (b) copying it into a Python bytearray. `TensorBuffer` is a
+// minimal read-only 1-D buffer exporter; it owns a capsule that holds the
+// tensor, so the storage outlives the memoryview and any pa.Buffer that keeps
+// the memoryview alive. Nothing here calls THPVariable_Wrap.
+// ---------------------------------------------------------------------------
+struct TensorBuffer {
+    PyObject_HEAD
+    PyObject* owner;  // capsule holding a heap-allocated torch::Tensor
+    char* data;
+    Py_ssize_t len;
+    Py_ssize_t shape[1];
+    Py_ssize_t strides[1];
+};
+
+constexpr const char* kTensorCapsuleName = "torchfits.tensor_storage";
+
+void tensor_buffer_dealloc(PyObject* self) {
+    auto* buffer = reinterpret_cast<TensorBuffer*>(self);
+    Py_XDECREF(buffer->owner);
+    Py_TYPE(self)->tp_free(self);
+}
+
+int tensor_buffer_getbuffer(PyObject* self, Py_buffer* view, int flags) {
+    auto* buffer = reinterpret_cast<TensorBuffer*>(self);
+    if (view == nullptr) {
+        PyErr_SetString(PyExc_BufferError, "cannot create a buffer view");
+        return -1;
+    }
+    if ((flags & PyBUF_WRITABLE) == PyBUF_WRITABLE) {
+        view->obj = nullptr;
+        PyErr_SetString(PyExc_BufferError, "table column buffers are read-only");
+        return -1;
+    }
+    view->obj = self;
+    Py_INCREF(self);
+    view->buf = buffer->data;
+    view->len = buffer->len;
+    view->readonly = 1;
+    view->itemsize = 1;
+    view->format = (flags & PyBUF_FORMAT) ? const_cast<char*>("B") : nullptr;
+    view->ndim = 1;
+    view->shape = (flags & PyBUF_ND) ? buffer->shape : nullptr;
+    view->strides = (flags & PyBUF_STRIDES) ? buffer->strides : nullptr;
+    view->suboffsets = nullptr;
+    view->internal = nullptr;
+    return 0;
+}
+
+PyType_Slot tensor_buffer_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(tensor_buffer_dealloc)},
+    {Py_bf_getbuffer, reinterpret_cast<void*>(tensor_buffer_getbuffer)},
+    {0, nullptr},
+};
+
+PyType_Spec tensor_buffer_spec = {
+    "torchfits._TensorBuffer",
+    sizeof(TensorBuffer),
+    0,
+    Py_TPFLAGS_DEFAULT,
+    tensor_buffer_slots,
+};
+
+PyTypeObject* tensor_buffer_type = nullptr;
+
+// Expose a decoded column as a zero-copy read-only memoryview.
 nb::object tensor_buffer_to_python(const torch::Tensor& tensor) {
     if (!tensor.defined()) {
         throw std::runtime_error("cannot transport an undefined table tensor");
+    }
+    if (!tensor.device().is_cpu()) {
+        throw std::runtime_error("raw table transport requires a CPU tensor");
     }
     const torch::Tensor contiguous = tensor.contiguous();
     const size_t nbytes = static_cast<size_t>(contiguous.numel()) *
@@ -245,22 +314,46 @@ nb::object tensor_buffer_to_python(const torch::Tensor& tensor) {
         throw std::runtime_error("table column buffer exceeds Python addressable size");
     }
 
-    PyObject* owner = PyByteArray_FromStringAndSize(
-        nullptr, static_cast<Py_ssize_t>(nbytes));
-    if (!owner) {
-        throw nb::python_error();
-    }
-    if (nbytes != 0) {
-        void* dst = PyByteArray_AsString(owner);
-        if (!dst) {
-            Py_DECREF(owner);
+    if (tensor_buffer_type == nullptr) {
+        tensor_buffer_type = reinterpret_cast<PyTypeObject*>(
+            PyType_FromSpec(&tensor_buffer_spec));
+        if (tensor_buffer_type == nullptr) {
             throw nb::python_error();
         }
-        std::memcpy(dst, contiguous.const_data_ptr(), nbytes);
     }
-    PyObject* view = PyMemoryView_FromObject(owner);
-    Py_DECREF(owner);
-    if (!view) {
+
+    auto* holder = new torch::Tensor(contiguous);
+    PyObject* capsule = PyCapsule_New(
+        holder,
+        kTensorCapsuleName,
+        [](PyObject* cap) {
+            delete static_cast<torch::Tensor*>(
+                PyCapsule_GetPointer(cap, kTensorCapsuleName));
+        });
+    if (capsule == nullptr) {
+        delete holder;
+        throw nb::python_error();
+    }
+
+    PyObject* buffer = tensor_buffer_type->tp_alloc(tensor_buffer_type, 0);
+    if (buffer == nullptr) {
+        Py_DECREF(capsule);
+        throw nb::python_error();
+    }
+    auto* fields = reinterpret_cast<TensorBuffer*>(buffer);
+    fields->owner = capsule;  // steals the reference
+    // An empty column still needs a non-null buffer pointer for the protocol.
+    static char empty_byte = 0;
+    fields->data = nbytes == 0
+        ? &empty_byte
+        : static_cast<char*>(contiguous.data_ptr());
+    fields->len = static_cast<Py_ssize_t>(nbytes);
+    fields->shape[0] = fields->len;
+    fields->strides[0] = 1;
+
+    PyObject* view = PyMemoryView_FromObject(buffer);
+    Py_DECREF(buffer);
+    if (view == nullptr) {
         throw nb::python_error();
     }
     return nb::steal(view);
@@ -349,17 +442,25 @@ nb::dict raw_vla_column_to_python(
         Py_DECREF(values_owner);
         throw std::runtime_error("VLA table offsets exceed Python addressable size");
     }
-    PyObject* offsets_obj = PyBytes_FromStringAndSize(
+    PyObject* offsets_owner = PyByteArray_FromStringAndSize(
         reinterpret_cast<const char*>(offsets.data()),
         static_cast<Py_ssize_t>(offset_bytes));
-    if (!offsets_obj) {
+    if (!offsets_owner) {
         Py_DECREF(values_owner);
         throw nb::python_error();
     }
     PyObject* values_view = PyMemoryView_FromObject(values_owner);
     Py_DECREF(values_owner);
     if (!values_view) {
-        Py_DECREF(offsets_obj);
+        Py_DECREF(offsets_owner);
+        throw nb::python_error();
+    }
+    // Both branches of this function must return a memoryview: the Python
+    // conversion layer unwraps offsets with np.frombuffer and rejects bytes.
+    PyObject* offsets_view = PyMemoryView_FromObject(offsets_owner);
+    Py_DECREF(offsets_owner);
+    if (!offsets_view) {
+        Py_DECREF(values_view);
         throw nb::python_error();
     }
 
@@ -370,7 +471,7 @@ nb::dict raw_vla_column_to_python(
     shape.append(static_cast<int64_t>(col_data.vla_data.size()));
     result["shape"] = shape;
     result["data"] = nb::steal(values_view);
-    result["offsets"] = nb::steal(offsets_obj);
+    result["offsets"] = nb::steal(offsets_view);
     return result;
 }
 

@@ -9,6 +9,8 @@
 
 Read and write FITS files as PyTorch tensors and Arrow tables. Cutouts,
 `where=` filters, and a shell CLI are included. CFITSIO is in the wheel.
+Arrow columns are zero-copy views over the decoded buffers, and header or
+Arrow reads do not import PyTorch.
 
 Prebuilt wheels for **Python 3.11–3.15 on Linux** and **3.11–3.14 on macOS**, with **PyTorch 2.14.x**: Linux (x86_64, aarch64) and macOS Apple Silicon.
 
@@ -30,6 +32,7 @@ Prebuilt wheels decode FITS on the host, then `device="cuda"` / `"mps"` copies t
 | Write a tensor | `torchfits.write("out.fits", tensor)` |
 | Filter a catalog | `torchfits.table.read(..., where="MAG < 20")` |
 | Columns as tensors | `torchfits.table.read_torch(..., where=...)` |
+| Header without PyTorch | `torchfits.read_header("img.fits")` |
 | Open a MEF | `with torchfits.open("mef.fits") as hdul: …` |
 | Train | `FitsImageDataset` + `make_loader(..., num_workers=4)` |
 | Shell | `torchfits info` / `header` / `convert` / `cutout` / … |

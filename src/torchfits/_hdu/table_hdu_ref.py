@@ -233,8 +233,7 @@ class TableHDURef:
         data = self.read(mmap=mmap, device=device)
         return TableHDU(
             data,
-            {},
-            self.header,
+            header=self.header,
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -397,9 +396,7 @@ class TableHDURef:
         # Fresh open after mutation/os.replace: drop Python LRUs and SharedReadMeta
         # (C++ handle-pool invalidate is a no-op after Option A).
         invalidate_path_caches(path)
-        clear_meta = getattr(cpp, "clear_shared_read_meta_cache", None)
-        if clear_meta is not None:
-            clear_meta()
+        cpp.clear_shared_read_meta_cache()
         handle = cpp.open_fits_file(path, "r")
         try:
             # cpp.read_header returns raw (key, value, comment) triples with

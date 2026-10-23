@@ -242,16 +242,14 @@ def _require_image_hdu_dict_keys(item: Dict[str, Any]) -> None:
 
 
 def _invalidate_path_caches(path: str) -> None:
-    """Invalidate Python-side caches/handles for a path that is being modified."""
+    """Invalidate Python-side caches and native metadata for a modified path."""
     _invalidate_io_path_caches(path)
     import torchfits._C as cpp
 
     # The native side used to expose a per-path invalidate_file_cache as well;
     # it was a no-op with a misleading name (shared handles were removed), so
     # the live native state is cleared globally here.
-    clear_meta = getattr(cpp, "clear_shared_read_meta_cache", None)
-    if clear_meta is not None:
-        clear_meta()
+    cpp.clear_shared_read_meta_cache()
 
 
 @contextlib.contextmanager
@@ -577,9 +575,7 @@ def _write_header_cards_if_supported(
         return
     import torchfits._C as cpp
 
-    writer = getattr(cpp, "write_hdu_header_cards", None)
-    if writer is None:
-        return
+    writer = cpp.write_hdu_header_cards
     if invalidate:
         # Invalidate both before and after the C++ header-card write:
         #  - Before: ensure no stale handle/metadata races with writing new cards.
@@ -595,9 +591,7 @@ def _delete_header_key_if_supported(path: str, hdu: int, key: str) -> None:
     """Delete one non-structural header keyword via CFITSIO ``fits_delete_key``."""
     import torchfits._C as cpp
 
-    deleter = getattr(cpp, "delete_hdu_header_key", None)
-    if deleter is None:
-        raise RuntimeError("delete_hdu_header_key is unavailable in this build")
+    deleter = cpp.delete_hdu_header_key
     _invalidate_path_caches(path)
     deleter(path, int(hdu), str(key))
     _invalidate_path_caches(path)
