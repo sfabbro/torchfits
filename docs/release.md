@@ -45,6 +45,12 @@ e.g. `--prerelease rc5` on lane 2.14 appends `rc5` to that lane's `torchfits_ver
 A plain `--apply` (no `--prerelease`) always finalizes back to the map
 version.
 
+**Release-candidate gate.** Every stable tag is preceded by an `rc` tag from
+the same commit; after finalizing, only the version strings differ. Publish
+`vX.Y.Zrc1`, run the gates and install checks against that artifact, then
+finalize and tag the stable version. `1.3.0` (2026-10-22) was tagged and
+published without an rc; do not repeat that cut.
+
 `check-lane` fails unless all five agree with `scripts/torch_lanes.json`.
 Update the compatibility / install docs (README.md, `docs/install.md`,
 `docs/compatibility.md`) when the current-lane numbers change.
