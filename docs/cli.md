@@ -163,7 +163,7 @@ torchfits header *.fits --keyword-table -k OBJECT -k FILTER -k EXPTIME
 
 ### `verify`
 
-Validates FITS `DATASUM` and `CHECKSUM` keywords using CFITSIO's fast verification engine.
+Validates FITS `DATASUM` and `CHECKSUM` keywords using CFITSIO's fast verification engine. It is deliberately self-contained: a structure checker such as `fitsverify` is never invoked. Cross-checking the two verdicts lives in [torchfits-harness](https://github.com/astroai/torchfits-harness).
 
 ```bash
 # Verify checksums for all HDUs

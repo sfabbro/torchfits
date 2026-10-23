@@ -14,10 +14,13 @@ Deferred after the 1.0 triage passes. Do not block the 1.0 tag on these.
 - CLI trim (`compress` / `decompress` / `arith` vs fpack/numpy) — Waves 1–2
   shipped (`-j`/`-J`, imarith-class `arith`, batch copy/transform/cutout,
   stats std/median, compress `--algorithm`, header wildcards, setkey
-  `--delete`/`@list`). **Wave 3:** thin fitsverify subprocess helper (not
-  silent expand of checksum verify); fpack tile/dither/`-i2f`; WCS/catalog
+  `--delete`/`@list`). **Wave 3:** fpack tile/dither/`-i2f`; WCS/catalog
   cutouts; `imexpr`/full STILTS — **not** CFITSIO HTTPS drivers (keep own
   HTTP + SSRF).
+- `torchfits verify` is checksum verification only and stays self-contained:
+  it must never shell out to `fitsverify`. Cross-checking its verdict against
+  `fitsverify` belongs in torchfits-harness
+  (`tests/test_verify_vs_fitsverify.py`), not in the library.
 - Scorecard / CANFAR re-soak after thin-I/O — **done** (Round-3: MPS/CPU/CUDA
   `exhaustive_*_20260719_14*`; see `docs/benchmarks.md`)
 - MegaCam `torchfits_cached` vs `fitsio_cached` (Round-3 CSV on NRC-054711):
