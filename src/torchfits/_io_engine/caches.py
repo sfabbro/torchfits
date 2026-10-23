@@ -473,6 +473,7 @@ def _close_hdulist_for_path(path: str) -> None:
         # Prevent double-close when HDUList.__exit__ calls close() later.
         try:
             hdulist._file_handle = None
+            hdulist._lazy_handle = None
             hdulist._registry_key = None
         except Exception:
             pass

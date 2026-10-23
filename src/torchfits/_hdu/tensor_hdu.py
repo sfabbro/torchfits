@@ -22,12 +22,14 @@ class TensorHDU:
         file_handle: Any = None,
         hdu_index: int = 0,
         source_path: Optional[str] = None,
+        lazy_handle: Any = None,
     ):
         self._data = data
         self._header = header or Header()
         self._file_handle = file_handle
         self._hdu_index = hdu_index
         self._source_path = source_path
+        self._lazy_handle = lazy_handle
         self._data_view = (
             DataView(file_handle, hdu_index, header=self._header)
             if file_handle
@@ -36,15 +38,32 @@ class TensorHDU:
         self._closed = False
         self._io_lock = threading.RLock()
 
+    def _ensure_data_view(self) -> DataView:
+        """Open the shared file handle on first data access.
+
+        ``torchfits.open`` reads headers through the torch-free core, so a
+        file-backed HDU starts with no native handle; ``torchfits._C`` (and
+        therefore PyTorch) is imported only when ``.data`` is touched.
+        """
+        with self._io_lock:
+            if self._closed:
+                raise RuntimeError(
+                    "TensorHDU file handle is closed; cannot read image data"
+                )
+            if self._data_view is None:
+                if self._lazy_handle is not None:
+                    handle = self._lazy_handle.get()
+                    self._file_handle = handle
+                else:
+                    handle = self._file_handle
+                if handle is None:
+                    raise ValueError("No file handle available")
+                self._data_view = DataView(handle, self._hdu_index, header=self._header)
+            return self._data_view
+
     @property
     def data(self) -> DataView:
-        if self._closed:
-            raise RuntimeError(
-                "TensorHDU file handle is closed; cannot read image data"
-            )
-        if self._data_view is None:
-            raise ValueError("No file handle available")
-        return self._data_view
+        return self._ensure_data_view()
 
     @property
     def header(self) -> Header:
@@ -55,6 +74,7 @@ class TensorHDU:
         with self._io_lock:
             self._closed = True
             self._file_handle = None
+            self._lazy_handle = None
             self._data_view = None
 
     def to_tensor(self, device: str = "cpu") -> Tensor:
@@ -62,10 +82,13 @@ class TensorHDU:
             return to_device(self._data, device)
 
         with self._io_lock:
-            if self._closed or self._file_handle is None:
+            if self._closed:
                 raise RuntimeError(
                     "TensorHDU file handle is closed; cannot read image data"
                 )
+            if not (isinstance(self._source_path, str) and self._source_path):
+                if self._file_handle is None:
+                    raise ValueError("No file handle available")
             import torchfits._C as cpp
 
             # Prefer a private per-call handle: the HDUList's shared FITSFile
@@ -139,7 +162,7 @@ class TensorHDU:
             return
 
         with self._io_lock:
-            if self._closed or self._file_handle is None:
+            if self._closed:
                 raise RuntimeError(
                     "TensorHDU file handle is closed; cannot iterate chunks"
                 )
@@ -163,7 +186,7 @@ class TensorHDU:
     def _get_shape_str(self) -> str:
         if self._data is not None:
             return str(tuple(self._data.shape))
-        elif self._file_handle:
+        elif self._file_handle or self._source_path:
             try:
                 naxis = int(self.header.get("NAXIS", 0))
             except (TypeError, ValueError):
@@ -177,7 +200,7 @@ class TensorHDU:
     def _get_dtype_str(self) -> str:
         if self._data is not None:
             return str(self._data.dtype).replace("torch.", "")
-        elif self._file_handle:
+        elif self._file_handle or self._source_path:
             try:
                 bitpix = int(self.header.get("BITPIX", 0))
             except (TypeError, ValueError):
