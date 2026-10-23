@@ -535,7 +535,7 @@ def clear_file_cache(
 
 
 def cache_subsystem_policy(name: str) -> dict[str, bool]:
-    """Query which cache subsystems (data, handles, meta) are enabled for a policy."""
+    """Return the clear flags for a named FITS I/O cache subsystem."""
     return _cache_subsystem_policy_impl(name)
 
 

@@ -66,6 +66,27 @@ def test_removed_cache_knobs_are_gone():
         hdu.TableHDU({}, col_stats={})
 
 
+def test_cache_policy_flags_match_clear_file_cache():
+    """The policy dict must stay callable against ``clear_file_cache``."""
+    import torchfits.io as io
+
+    policy = io.cache_subsystem_policy("all")
+    assert set(policy) == {"data", "meta", "hdu_types", "stats", "cpp"}
+    io.clear_file_cache(**policy)
+    assert all(isinstance(flag, bool) for flag in policy.values())
+
+
+def test_table_hdu_header_is_keyword_only():
+    """A positional header must raise, not bind as ``source_path``."""
+    header = hdu.Header({"EXTNAME": "CAT", "NAXIS2": 1})
+    with pytest.raises(TypeError):
+        hdu.TableHDU({"A": np.arange(1)}, header)
+
+    table_hdu = hdu.TableHDU({"A": np.arange(1)}, header=header)
+    assert table_hdu.header["EXTNAME"] == "CAT"
+    assert table_hdu._source_path is None
+
+
 def test_root_functions_preserve_real_signatures():
     import torchfits.io
 

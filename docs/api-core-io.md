@@ -528,9 +528,7 @@ result = torchfits.verify_checksums(path, hdu=0)
 | Shared metadata (C++) | `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
 
 ```python
-torchfits.clear_file_cache(
-    data=True, handles=True, meta=True, hdu_types=True, stats=True, cpp=True
-)
+torchfits.clear_file_cache(data=True, meta=True, hdu_types=True, stats=True, cpp=True)
 torchfits.get_cache_performance()
 
 torchfits.cache.configure_for_environment()
@@ -544,10 +542,10 @@ torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
 `disk=True` (or call root `clear_all_caches()`) to also remove downloaded
 files under `cache_root()`.
 
-`clear_file_cache` keyword-only flags (all default `True`): `data`, `handles`,
-`meta`, `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the
-extension module used for the C++ clear. `handles=` is accepted for
-compatibility and ignored: there is no shared CFITSIO handle pool.
+`clear_file_cache` keyword-only flags (all default `True`): `data`, `meta`,
+`hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the extension
+module used for the C++ clear. The legacy `handles=` flag was removed in
+1.3.0: there is no shared CFITSIO handle pool to clear.
 
 `CacheConfig.max_files` and `max_memory_mb` do not size any live cache.
 
