@@ -1,9 +1,10 @@
 """
 Example: FITS tables as dataframes.
 
-Primary path: ``table.read`` → Arrow (portable dataframe).
-Also: ``table.read_torch`` (tensor columns), ``open_table_reader``,
-streaming, then mutations.
+Primary path: ``table.read`` → Arrow (portable dataframe). The Arrow columns
+are zero-copy views over the native column buffers, and ``table.read`` does not
+import PyTorch. Also: ``table.read_torch`` (tensor columns),
+``open_table_reader``, streaming, then mutations.
 """
 
 from __future__ import annotations

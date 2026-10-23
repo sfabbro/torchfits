@@ -166,8 +166,9 @@ def write(
         _invalidate_written_target(path)
         return
 
-    # The unified C++ cache and the Python-side handle cache can otherwise return
-    # stale views of an overwritten file (mtime/size can be unchanged).
+    # Python-side metadata caches and the native shared-read metadata can
+    # otherwise return stale views of an overwritten file (mtime/size can be
+    # unchanged).
     _invalidate_path_caches(path)
 
     try:

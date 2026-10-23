@@ -51,6 +51,13 @@ retaining an explicit ABI check before every tensor wrap.
 | `insert_hdu` / `replace_hdu` / `delete_hdu`, header writes | no | file structure |
 | `table.read` → Arrow, `table.schema`, `table.scan` | no | Arrow destination, no Python tensor needed |
 
+The Arrow path crosses the extension without creating a Python tensor at all:
+the native reader exports each decoded column as a read-only buffer (a
+capsule-owned `torch::Tensor` behind a minimal buffer-protocol type), and
+`pyarrow` wraps that memory with `Array.from_buffers`. Clean numeric and
+fixed-width byte columns therefore go buffer → Arrow with no `bytearray` copy
+and no NumPy hop.
+
 The dynamic-dependency split has landed. The native stack is two libraries, and
 the metadata path never touches the one that links libtorch:
 
@@ -100,10 +107,10 @@ rejected with an `ImportError` at the boundary instead of misreading data.
 | Metadata calls without *libtorch at all* | done (`libtorchfits_core`; 337 ms → 53 ms cold) |
 | Core and extension agree on *real* observations | done (`tests/test_core_library_real_data.py`; 409 real (frame, HDU) records, 0 mismatches) |
 | Reads match `astropy` on *real* observations | done in [torchfits-harness](https://github.com/astroai/torchfits-harness) (`tests/test_reads_real_data.py`; decompressed frames, raw VLA tiles and 435 Mpix of mosaic all exact) |
-| Arrow table destinations without Python torch | done (native raw buffers; correctness-first staging remains) |
-| Zero-copy Arrow assembly | done (native buffers are wrapped with `Array.from_buffers`; no NumPy staging copy) |
+| Arrow table destinations without Python torch | done (`table.read` never imports `torch`) |
+| Zero-copy Arrow assembly | done (the extension exports column storage through a read-only buffer view; `Array.from_buffers` wraps it, and clean columns never touch NumPy) |
 | `torchfits.open()` handle on the torch-free path | done (the handle is opened lazily by the first data access) |
-| `torchfits.table` without numpy | pending (torch-free today; the staging step still imports numpy, and pyarrow does too) |
+| `torchfits.table` without numpy | mostly done (clean numeric and fixed-width byte columns go buffer → Arrow directly; TNULL masks, unsigned widening, string decoding, and bit packing still stage through NumPy, and pyarrow imports it) |
 
 ---
 

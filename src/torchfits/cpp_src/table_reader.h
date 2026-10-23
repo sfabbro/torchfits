@@ -562,6 +562,29 @@ public:
         return scaled;
     }
 
+    // FITS stores uint16/uint32 columns as the signed value plus a 2**(b-1)
+    // offset (TZERO). Adding the offset modulo 2**b is exactly flipping the
+    // sign bit, so reinterpret the signed buffer as unsigned and XOR in place:
+    // no int64 upcast and no second allocation. The input is a freshly decoded
+    // column owned by the caller, so mutating it is safe.
+    torch::Tensor apply_unsigned_offset(torch::Tensor raw, torch::ScalarType target) {
+        if (!raw.is_contiguous()) {
+            raw = raw.contiguous();
+        }
+        if (target == torch::kUInt16) {
+            raw.bitwise_xor_(std::numeric_limits<int16_t>::min());
+            return raw.view(torch::kUInt16);
+        }
+        if (target == torch::kUInt32) {
+            raw.bitwise_xor_(std::numeric_limits<int32_t>::min());
+            return raw.view(torch::kUInt32);
+        }
+        // Defensive fallback for any future target width.
+        torch::Tensor converted = raw.to(torch::kInt64);
+        converted.add_(static_cast<int64_t>(1) << (8 * raw.element_size() - 1));
+        return converted.to(target);
+    }
+
     // Read columns from the table
     // Returns column data in file order (request order when column_names is
     // given), so callers that pair columns against TFORM/TTYPE cards (e.g. the
@@ -872,9 +895,8 @@ public:
             // Unsigned columns never enter block (1) (scaled == false), so
             // this only runs on unscaled integer storage, as before.
             if (col.is_unsigned_int) {
-                torch::Tensor converted = it->second.fixed_data.to(torch::kInt64);
-                converted.add_(col.unsigned_offset);
-                it->second.fixed_data = converted.to(col.unsigned_target_type);
+                it->second.fixed_data = apply_unsigned_offset(
+                    std::move(it->second.fixed_data), col.unsigned_target_type);
             }
         }
 
@@ -1282,9 +1304,8 @@ public:
                 }
                 // Apply unsigned-int coercion before storing.
                 if (col.is_unsigned_int) {
-                    tensor = tensor.to(torch::kInt64);
-                    tensor.add_(col.unsigned_offset);
-                    tensor = tensor.to(col.unsigned_target_type);
+                    tensor = apply_unsigned_offset(
+                        std::move(tensor), col.unsigned_target_type);
                 }
                 result[col_idx] = std::move(tensor);
 
@@ -1930,9 +1951,8 @@ public:
 
             // Apply unsigned integer offset for uint16/uint32 FITS convention.
             if (col.is_unsigned_int) {
-                out_tensor = out_tensor.to(torch::kInt64);
-                out_tensor.add_(col.unsigned_offset);
-                out_tensor = out_tensor.to(col.unsigned_target_type);
+                out_tensor = apply_unsigned_offset(
+                    std::move(out_tensor), col.unsigned_target_type);
             }
             result[col_idx] = out_tensor;
         }

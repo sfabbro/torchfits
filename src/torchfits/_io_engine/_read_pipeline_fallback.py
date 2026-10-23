@@ -38,7 +38,6 @@ def read_fallback(
     fp16: bool,
     bf16: bool,
     cache_capacity: int,
-    handle_cache_capacity: int,
     fast_header: bool,
     return_header: bool,
     force_image: bool,
@@ -79,7 +78,7 @@ def read_fallback(
     validate_device(device)
 
     try:
-        file_handle, cached_handle = get_cached_handle(path, handle_cache_capacity)
+        file_handle, cached_handle = get_cached_handle(path)
         try:
             if isinstance(hdu, str):
                 hdu_num = None

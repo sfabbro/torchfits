@@ -200,6 +200,6 @@ def test_filter_works_on_a_table_with_a_vector_column(tmp_path):
 def test_filter_on_a_columnless_table_reports_it_instead_of_keeping_every_row():
     """A 0-column BINTABLE still has NAXIS2 rows; a filter on it cannot match
     any column, and silently returning every row hid a typo'd column name."""
-    table = TableHDU({}, None, Header({"NAXIS2": 6}))
+    table = TableHDU({}, header=Header({"NAXIS2": 6}))
     with pytest.raises(ValueError, match="no columns"):
         table.filter("NOPE > 1")

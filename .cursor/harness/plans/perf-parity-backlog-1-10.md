@@ -91,7 +91,7 @@ same host.
 
 - Each item = one commit; `pixi run preflight-push` per item; full `pixi run
   ci-local` at wave boundaries; bench before/after same-host per item; results
-  logged in `.cursor/harness/deep-review-1-faithfulness.md` resolution log.
+  logged in the `torchfits-harness` benchmark records.
 - Wave 0 parity suite lands first and gates every subsequent diff.
 
 ## Disposition

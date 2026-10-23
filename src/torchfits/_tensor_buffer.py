@@ -5,10 +5,10 @@ tensors to a ``pyarrow.Array`` using the tensor's NumPy buffer view and
 ``pa.Array.from_buffers``.
 
 Supported dtypes: float32, float64, float16, int8, int16, int32, int64,
-uint8.  Unsupported dtypes (bool, bfloat16, …) fall back to
-``pa.array(tensor.tolist())``.  Complex tensors are rejected because Arrow
-has no complex type; zero-width 2-D tensors are rejected because Arrow fixed-
-size lists require a positive list size.
+uint8, uint16, uint32, uint64.  Unsupported dtypes (bool, bfloat16, …) fall
+back to ``pa.array(tensor.tolist())``.  Complex tensors are rejected because
+Arrow has no complex type; zero-width 2-D tensors are rejected because Arrow
+fixed-size lists require a positive list size.
 """
 
 from __future__ import annotations
@@ -27,6 +27,11 @@ _TORCH_DTYPE_ARROW: dict[torch.dtype, str] = {
     torch.int32: "int32",
     torch.int64: "int64",
     torch.uint8: "uint8",
+    # The C++ reader emits these for FITS uint16/uint32 columns; leaving them
+    # out silently degraded the column to int64 through ``tolist()``.
+    torch.uint16: "uint16",
+    torch.uint32: "uint32",
+    torch.uint64: "uint64",
 }
 
 

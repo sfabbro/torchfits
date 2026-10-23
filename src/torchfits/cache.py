@@ -219,21 +219,6 @@ class CacheManager:
             config if config is not None else CacheConfig.for_environment().copy()
         )
 
-    def configure_cpp_cache(self) -> None:
-        """Deprecated no-op.
-
-        The C++ handle-pool cache was removed (private per-call handles);
-        ``max_files`` / ``max_memory_mb`` never configured live state and the
-        knobs are scheduled for removal.
-        """
-        warnings.warn(
-            "CacheManager.configure_cpp_cache is a deprecated no-op: the "
-            "native handle pool was removed. Python-side caches size "
-            "themselves; CacheConfig.max_files/max_memory_mb do nothing.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive cache statistics (Python-side I/O engine)."""
         # The native handle-pool is gone; there is no cpp cache size to merge.
@@ -378,23 +363,6 @@ def stats() -> Dict[str, Any]:
     return result
 
 
-def configure_cache(
-    max_files: int, max_memory_mb: int, disk_cache_gb: int = 10
-) -> None:
-    """Deprecated no-op: retained for one release cycle.
-
-    The native cache these arguments targeted no longer exists; the
-    arguments are accepted and ignored (they configure no live state).
-    """
-    del max_files, max_memory_mb, disk_cache_gb
-    warnings.warn(
-        "torchfits.cache.configure_cache is a deprecated no-op: there is no "
-        "native handle-pool cache to configure.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-
 def optimize_for_dataset(file_paths: list[str], avg_file_size_mb: float = 10.0) -> None:
     """Optimize cache for a specific dataset."""
     get_cache_manager().optimize_for_dataset(file_paths, avg_file_size_mb)
@@ -441,7 +409,6 @@ __all__ = [
     "clear",
     "clear_all_caches",
     "clear_cache",
-    "configure_cache",
     "configure_for_environment",
     "get_cache_manager",
     "get_cache_stats",

@@ -15,7 +15,19 @@ from .._table.utils import _fits_tform_is_bit, _parse_tform, _require_pyarrow  #
 # Dtypes supported by the torch buffer-protocol fast path. Tensor values keep
 # their explicit torch boundary; raw native columns use the string map below.
 _BUFFER_SUPPORTED_TORCH_DTYPES = frozenset(
-    {"float32", "float64", "float16", "int8", "int16", "int32", "int64", "uint8"}
+    {
+        "float32",
+        "float64",
+        "float16",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+    }
 )
 _RAW_NUMPY_DTYPES = frozenset(
     {
@@ -58,12 +70,12 @@ def _is_raw_column(value: Any) -> bool:
 def _raw_column_to_numpy(value: dict[str, Any]) -> Any:
     """Expose one native raw column as a NumPy view over its memoryview.
 
-    The native side returns a Python-owned writable memoryview (a bytearray
-    owner), so ``np.frombuffer`` can wrap it without copying: the array keeps
-    the memoryview and its owner alive through ``.base``.  Arrow then wraps the
-    same buffer in ``_numpy_buffer_to_arrow``, which keeps the array alive.  A
-    copy here was the extra hop this module is meant to avoid; the VLA offsets
-    remain exact int64.
+    The native side returns a read-only memoryview that owns the decoded
+    tensor's storage, so ``np.frombuffer`` wraps it without copying: the array
+    keeps the memoryview (and through it the storage) alive through ``.base``.
+    Arrow then wraps the same buffer in ``_numpy_buffer_to_arrow``, which keeps
+    the array alive.  A copy here was the extra hop this module is meant to
+    avoid; the VLA offsets remain exact int64.
     """
     import numpy as np
 
@@ -148,10 +160,9 @@ def _numpy_buffer_to_arrow(pa: Any, arr: "np.ndarray", *, mask: Any = None) -> A
     """Wrap a contiguous 1-D NumPy buffer as an Arrow array without copying.
 
     ``pa.array(numpy_array)`` allocates a new value buffer.  A native raw
-    column already owns a Python bytearray, so ``Array.from_buffers`` keeps the
+    column already owns its decoded storage, so ``Array.from_buffers`` keeps the
     data where it is; the returned array holds the ``pa.Buffer``, which holds
     the NumPy array, which holds the memoryview owner.
-
     A TNULL mask becomes the Arrow validity bitmap: the value buffer stays
     shared, only the bitmap is new.  Arrow validity is LSB-first, hence
     ``bitorder="little"``.
@@ -350,7 +361,11 @@ def _numpy_to_arrow_array(
     import numpy as np
 
     arr = np.ascontiguousarray(value)
-    if unsigned_dtype and arr.dtype.kind == "f":
+    # TZERO moves a signed FITS column into the unsigned range. The native
+    # reader already applies it (so the tensor is uint16/uint32 and this is a
+    # no-op); the scaled fallback arrives as float. NumPy's integer cast wraps
+    # two's-complement, which is the same bit pattern the offset produces.
+    if unsigned_dtype and arr.dtype.name != unsigned_dtype:
         arr = arr.astype(np.dtype(unsigned_dtype), copy=False)
     if arr.ndim == 2 and arr.shape[1] == 1 and _tform_is_scalar(fits_tform):
         # Repeat-1 columns are scalar per the schema mapping; a width-1
@@ -513,6 +528,52 @@ def _column_value_to_arrow_array(
 # -- native raw-column and VLA helpers ---------------------------------------------
 
 
+def _raw_column_to_arrow_direct(
+    pa: Any,
+    value: dict[str, Any],
+    decode_bytes: bool,
+    fits_tform: str | None,
+) -> Any:
+    """Wrap a clean native column as an Arrow array with no NumPy hop.
+
+    Only layouts whose bytes are already Arrow's value buffer qualify: fixed
+    numeric columns, fixed-size numeric lists, and (``decode_bytes=False``)
+    fixed-width byte strings.  Everything else — TNULL masks, unsigned
+    widening, string decoding, bit packing — returns ``None`` so the caller
+    takes the general conversion path.
+    """
+    if value.get("kind") != "fixed":
+        return None
+    dtype_name = str(value.get("dtype", ""))
+    if dtype_name not in _ZERO_COPY_NUMPY_DTYPES:
+        return None
+    data = value.get("data")
+    if not isinstance(data, memoryview):
+        return None
+    arrow_type = getattr(pa, dtype_name, None)
+    if arrow_type is None:  # pragma: no cover - pyarrow always has these
+        return None
+    type_ = arrow_type()
+    shape = tuple(int(dim) for dim in value.get("shape", ()))
+    if len(shape) == 1:
+        return pa.Array.from_buffers(type_, shape[0], [None, pa.py_buffer(data)])
+    if len(shape) != 2:
+        return None
+    rows, width = shape
+    if width == 0:
+        return None
+    buffer = pa.py_buffer(data)
+    if dtype_name == "uint8":
+        if decode_bytes or _fits_tform_is_bit(fits_tform):
+            return None
+        code = _tform_code(fits_tform)
+        if code is None or code == "A":
+            # A char matrix is a fixed-width byte string, not a byte vector.
+            return pa.Array.from_buffers(pa.binary(width), rows, [None, buffer])
+    values = pa.Array.from_buffers(type_, rows * width, [None, buffer])
+    return pa.FixedSizeListArray.from_arrays(values, width)
+
+
 def _raw_column_to_arrow_array(
     pa: Any,
     value: dict[str, Any],
@@ -524,6 +585,10 @@ def _raw_column_to_arrow_array(
     fits_tform: str | None = None,
     unsigned_dtype: str | None = None,
 ) -> Any:
+    if null_sentinel is None and unsigned_dtype is None:
+        direct = _raw_column_to_arrow_direct(pa, value, decode_bytes, fits_tform)
+        if direct is not None:
+            return direct
     materialized = _raw_column_to_numpy(value)
     if value["kind"] == "vla":
         return _vla_tuple_to_arrow_array(pa, materialized, null_sentinel=null_sentinel)
@@ -577,8 +642,14 @@ def _vla_tuple_to_arrow_array(
 
     if int(offsets64[-1]) <= np.iinfo(np.int32).max:
         offsets = offsets64.astype(np.int32, copy=False)
-        return pa.ListArray.from_arrays(_pa_array(pa, offsets), values)
-    return pa.LargeListArray.from_arrays(_pa_array(pa, offsets64), values)
+        offset_array = _numpy_buffer_to_arrow(pa, offsets)
+        if offset_array is None:
+            offset_array = _pa_array(pa, offsets)
+        return pa.ListArray.from_arrays(offset_array, values)
+    offset_array = _numpy_buffer_to_arrow(pa, offsets64)
+    if offset_array is None:
+        offset_array = _pa_array(pa, offsets64)
+    return pa.LargeListArray.from_arrays(offset_array, values)
 
 
 # -- record-batch builder ----------------------------------------------------------

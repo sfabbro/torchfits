@@ -44,7 +44,7 @@ Because PyTorch does not guarantee C++ ABI stability across minor version releas
 - **Runtime env knobs:** every `TORCHFITS_*` variable the library reads, with its default and effect, is listed under [Environment variables](architecture.md#environment-variables). Those knobs are not a stable public API and may change without notice.
 - **`KMP_DUPLICATE_LIB_OK`:** importing `torchfits` runs `os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")` before PyTorch loads. macOS otherwise aborts when PyTorch's `libomp` and a second OpenMP runtime (Homebrew or conda) are both mapped. An existing value is left alone. See [Install](install.md) if you import `torch` first.
 - **CFITSIO DNS:** `http`/`https`/`ftp` paths are classified at guard time. Python fetches (`http_open`) dial the addresses from that lookup. A URL that CFITSIO opens itself is only checked then; the driver re-resolves the host afterwards (residual TOCTOU). Pinning those connections would need a custom CFITSIO driver and is not implemented.
-- **Ignored arguments:** `cache_capacity`, `handle_cache_capacity`, and `fast_header` on a table read do nothing. So does `handles=` on `clear_file_cache()`. Leave them out of new code.
+- **Removed knobs (1.3.0):** `handle_cache_capacity` on a table read, `handles=` on `clear_file_cache()`, `torchfits.cache.configure_cache()`, `CacheManager.configure_cpp_cache()`, and `TableHDU(col_stats=...)` are gone. `cache_capacity` still controls the read cache and `fast_header` still affects the unified-reader fallback.
 
 ---
 

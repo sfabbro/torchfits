@@ -23,14 +23,13 @@ def _remote_helpers() -> tuple[
 
 
 def read_subset(
-    get_cached_handle: Callable[[str, int], tuple[Any, bool]],
+    get_cached_handle: Callable[[str], tuple[Any, bool]],
     path: str,
     hdu: int | str,
     x1: int,
     y1: int,
     x2: int,
     y2: int,
-    handle_cache_capacity: int = 16,
 ) -> Tensor:
     """Read a rectangular subset of an image HDU."""
     import torchfits._C as cpp
@@ -50,7 +49,7 @@ def read_subset(
     if isinstance(hdu, str):
         hdu = int(cpp.resolve_hdu_name_cached(path, hdu))
     try:
-        file_handle, cached = get_cached_handle(path, handle_cache_capacity)
+        file_handle, cached = get_cached_handle(path)
         try:
             return cast(Tensor, file_handle.read_subset(hdu, x1, y1, x2, y2))
         finally:

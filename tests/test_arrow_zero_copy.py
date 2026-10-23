@@ -1,7 +1,8 @@
 """Zero-copy path from native table buffers to PyArrow arrays.
 
-The native reader hands Python a writable memoryview over a bytearray.  Arrow
-can wrap that buffer directly (``Array.from_buffers``); copying it through
+The native reader hands Python a read-only memoryview that owns the decoded
+column storage (the extension exports it through a buffer-protocol type).
+Arrow can wrap that buffer directly (``Array.from_buffers``); copying it through
 ``np.frombuffer(...).copy()`` and ``pa.array`` allocated two extra buffers per
 column.  These tests pin the buffer identity, not just the values, so a future
 change cannot quietly reintroduce the copies.
@@ -15,9 +16,16 @@ import pyarrow as pa
 from torchfits._table.arrow_convert import (
     _numpy_buffer_to_arrow,
     _numpy_to_arrow_array,
+    _raw_column_to_arrow_array,
+    _raw_column_to_arrow_direct,
     _raw_column_to_numpy,
     _vla_tuple_to_arrow_array,
 )
+
+
+def _readonly_view(flat):
+    """A read-only memoryview, like the native transport produces."""
+    return memoryview(bytes(flat.tobytes()))
 
 
 def _raw_fixed(values, dtype):
@@ -139,3 +147,83 @@ def test_vla_values_are_zero_copy():
     arrow_array = _vla_tuple_to_arrow_array(pa, materialized)
     assert arrow_array.to_pylist() == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0, 6.0, 7.0]]
     assert _values_address(arrow_array) == materialized[0].ctypes.data
+
+
+def test_direct_path_wraps_a_read_only_buffer_without_numpy():
+    values = np.arange(12, dtype=np.float64)
+    raw = {
+        "kind": "fixed",
+        "dtype": "float64",
+        "shape": [12],
+        "data": _readonly_view(values),
+    }
+    assert raw["data"].readonly
+    arrow_array = _raw_column_to_arrow_direct(pa, raw, True, "D")
+    assert arrow_array is not None
+    assert _values_address(arrow_array) == pa.py_buffer(raw["data"]).address
+    assert arrow_array.to_pylist() == values.tolist()
+
+
+def test_direct_path_keeps_two_dimensional_numeric_columns_flat():
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    raw = {
+        "kind": "fixed",
+        "dtype": "float32",
+        "shape": [3, 4],
+        "data": _readonly_view(values),
+    }
+    arrow_array = _raw_column_to_arrow_array(
+        pa, raw, False, "ascii", True, fits_tform="4E"
+    )
+    assert arrow_array.type == pa.list_(pa.float32(), 4)
+    assert _values_address(arrow_array) == pa.py_buffer(raw["data"]).address
+
+
+def test_direct_path_wraps_a_char_matrix_as_fixed_binary():
+    values = np.array([list(b"abc"), list(b"def")], dtype=np.uint8)
+    raw = {
+        "kind": "fixed",
+        "dtype": "uint8",
+        "shape": [2, 3],
+        "data": _readonly_view(values),
+    }
+    arrow_array = _raw_column_to_arrow_array(
+        pa, raw, False, "ascii", True, fits_tform="3A"
+    )
+    assert arrow_array.type == pa.binary(3)
+    assert arrow_array.to_pylist() == [b"abc", b"def"]
+
+
+def test_direct_path_defers_masked_and_unsigned_columns():
+    values = np.arange(4, dtype=np.int32)
+    raw = {
+        "kind": "fixed",
+        "dtype": "int32",
+        "shape": [4],
+        "data": _readonly_view(values),
+    }
+    assert _raw_column_to_arrow_direct(pa, raw, False, "J") is not None
+    masked = _raw_column_to_arrow_array(pa, raw, False, "ascii", True, null_sentinel=-1)
+    assert masked.to_pylist() == [0, 1, 2, 3]
+    widened = _raw_column_to_arrow_array(
+        pa, raw, False, "ascii", True, unsigned_dtype="uint32"
+    )
+    assert widened.type == pa.uint32()
+
+
+def test_arrow_table_keeps_the_native_column_storage_alive(tmp_path):
+    """The buffer exporter owns the decoded tensor; Arrow must outlive it."""
+    import torchfits
+
+    values = np.arange(4096, dtype=np.float64)
+    path = tmp_path / "zero_copy_lifetime.fits"
+    torchfits.table.write(str(path), {"X": values}, overwrite=True)
+
+    arrow_table = torchfits.table.read(str(path))
+    gc.collect()
+    # Reuse freed heap memory: a dangling Arrow buffer would now read garbage.
+    junk = np.full(8 * 1024 * 1024, 7.0)
+    try:
+        assert arrow_table.column("X").to_pylist() == values.tolist()
+    finally:
+        del junk

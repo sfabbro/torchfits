@@ -457,24 +457,18 @@ def _write_header_cards_if_supported(
     if not header_obj.cards:
         return
 
-    writer = getattr(cpp, "write_hdu_header_cards", None)
-    if writer is None:
-        return
     if invalidate:
         _invalidate_path_caches(path)
-        writer(path, int(hdu), list(header_obj.cards))
+        cpp.write_hdu_header_cards(path, int(hdu), list(header_obj.cards))
         _invalidate_path_caches(path)
         return
-    writer(path, int(hdu), list(header_obj.cards))
+    cpp.write_hdu_header_cards(path, int(hdu), list(header_obj.cards))
 
 
 def _delete_header_key_if_supported(path: str, hdu: int, key: str) -> None:
     """Delete one header key through the torch-free CFITSIO boundary."""
-    deleter = getattr(cpp, "delete_hdu_header_key", None)
-    if deleter is None:
-        raise RuntimeError("delete_hdu_header_key is unavailable in this build")
     _invalidate_path_caches(path)
-    deleter(path, int(hdu), str(key))
+    cpp.delete_hdu_header_key(path, int(hdu), str(key))
     _invalidate_path_caches(path)
 
 
@@ -523,20 +517,15 @@ def get_cache_performance() -> Any:
 def clear_file_cache(
     *,
     data: bool = True,
-    handles: bool = True,
     meta: bool = True,
     hdu_types: bool = True,
     stats: bool = True,
     cpp: bool = True,
     cpp_module: Any = None,
 ) -> None:
-    """Clear the FITS metadata caches selectively.
-
-    ``handles`` is accepted for compatibility and ignored.
-    """
+    """Clear the FITS metadata caches selectively."""
     return _clear_file_cache_impl(
         data=data,
-        handles=handles,
         meta=meta,
         hdu_types=hdu_types,
         stats=stats,

@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.3.0] — 2026-10-22
+
 ### Added
 - hdu: Make open() and header inspection torch-free
+  (`torchfits.open()` and header/HDU inspection never import PyTorch).
+- table: `table.read` (Arrow) no longer imports PyTorch either: the native
+  engine exposes column storage through a read-only buffer view, so the Arrow
+  destination is torch-free even though the extension stays torch-linked.
+- table: `uint16`, `uint32`, and `uint64` tensor columns keep their Arrow dtype
+  instead of silently degrading to `int64`.
 
 ### Changed
 - PyTorch 2.14 lane: wheels are ABI-matched to `torch>=2.14,<2.15`, and the CUDA
@@ -22,15 +30,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([pytorch#200779](https://github.com/pytorch/pytorch/issues/200779)).
   macOS keeps cp311-cp314 wheels; Linux publishes cp315.
 
+### Removed
+- Deprecated no-op cache knobs: `torchfits.cache.configure_cache()`,
+  `CacheManager.configure_cpp_cache()`, `clear_file_cache(handles=)`,
+  `ReadOptions.handle_cache_capacity`, and `TableHDU(col_stats=...)`.
+
 ### Fixed
 - scripts: Anchor the duplicate-cpp guard to the repository root
 - real-data tests: Skip per dataset instead of failing on a partial corpus
 - ci: Stop publishing macOS cp315 wheels for the broken torch 2.14 ABI
 - table: Accept NumPy scalars as filter literals
 - table: Reject NumPy bool literals on every NumPy release
+- table: Return a `memoryview` for the VLA offsets fallback so the Arrow
+  conversion no longer rejects it with `TypeError`.
+- table: Retry a buffered read when an `mmap=True` row slice cannot use the
+  mmap layout (VLA, scaled, ASCII) instead of dropping to the row-by-row scan.
 
 ### Performance
 - table: Wrap native column buffers instead of copying through NumPy
+  (the extension exports a read-only buffer view, so fixed columns, numeric
+  vectors, and fixed-width byte strings are zero-copy end to end; Arrow keeps
+  the tensor storage alive).
+- table: Apply the FITS `uint16`/`uint32` offset by flipping the sign bit in
+  place instead of upcasting to `int64` and allocating twice.
+- table: Wrap VLA offsets and 2-D numeric columns without a second copy.
 
 ### Docs
 - Finish the 2.14 lane sweep
@@ -1581,7 +1604,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/astroai/torchfits/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/astroai/torchfits/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/astroai/torchfits/compare/v1.2.0...v1.2.2
 [1.2.0]: https://github.com/astroai/torchfits/compare/v1.1.3...v1.2.0

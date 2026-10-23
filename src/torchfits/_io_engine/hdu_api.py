@@ -61,15 +61,12 @@ def _header_truthy(value: Any) -> bool:
         return bool(value)
 
 
-def find_first_hdu(
-    path: str,
-    handle_cache_capacity: int = 16,
-) -> Optional[int]:
+def find_first_hdu(path: str) -> Optional[int]:
     """Find first payload HDU, preferring image/compressed-image over table."""
     import torchfits._C as cpp
 
     path = coerce_fits_path(path)
-    file_handle, cached = get_cached_handle(path, handle_cache_capacity)
+    file_handle, cached = get_cached_handle(path)
     first_table_hdu: Optional[int] = None
     try:
         num_hdus = cpp.get_num_hdus(file_handle)
@@ -119,7 +116,7 @@ def find_first_hdu(
     return first_table_hdu
 
 
-def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
+def autodetect_hdu(path: str) -> int:
     """Return the first HDU with payload, preferring image/compressed-image HDUs."""
     path = coerce_fits_path(path)
     sig = path_signature(path)
@@ -133,7 +130,7 @@ def autodetect_hdu(path: str, handle_cache_capacity: int = 16) -> int:
     if cached_hdu is not None:
         return int(cached_hdu)
 
-    resolved = find_first_hdu(path, handle_cache_capacity=handle_cache_capacity)
+    resolved = find_first_hdu(path)
     # Cache the negative answer too (no payload HDU -> 0): uncached, every call
     # on a payload-less file re-opened it and re-walked every HDU header. The
     # stored signature rotates the answer when the file is replaced.
@@ -260,13 +257,13 @@ def _resolve_hdu_index(
     path: str,
     hdu: Union[int, str, None],
     *,
-    autodetect_hdu: Callable[[str, int], int],
+    autodetect_hdu: Callable[[str], int],
 ) -> int:
     """Resolve ``hdu`` to a 0-based index (supports ``None`` / ``\"auto\"`` / EXTNAME)."""
     path = coerce_fits_path(path)
     guard_fits_path(path)
     if hdu is None or (isinstance(hdu, str) and hdu.strip().lower() == "auto"):
-        return int(autodetect_hdu(path, 16))
+        return int(autodetect_hdu(path))
     if isinstance(hdu, int):
         # Every sibling entry point (read, read_tensor, read_subset, read_table,
         # read_fallback) rejects a negative index up front. Do the same here so
@@ -407,7 +404,7 @@ def get_header(
     path: str,
     hdu: Union[int, str, None] = None,
     *,
-    autodetect_hdu: Callable[[str, int], int],
+    autodetect_hdu: Callable[[str], int],
 ) -> Header:
     """Get the header of a FITS file."""
     from .. import _core_api

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import Any, Callable, Dict, Iterator, List, Optional, cast
 
 import torch
@@ -126,20 +125,12 @@ class TableHDU:
     def __init__(
         self,
         tensor_dict: dict[str, Any],
-        col_stats: Optional[dict[str, Any]] = None,
         header: Optional[Header] = None,
         source_path: Optional[str] = None,
         source_hdu: Optional[int] = None,
     ):
         import numpy as np
 
-        if col_stats:
-            warnings.warn(
-                "TableHDU(col_stats=...) is ignored and deprecated; the "
-                "parameter will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if not isinstance(tensor_dict, dict):
             raise TypeError("tensor_dict must be a dictionary of table columns")
         row_counts: dict[str, int] = {}
@@ -326,7 +317,7 @@ class TableHDU:
         if missing:
             raise KeyError(f"Columns not found: {missing}")
         selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in wanted}
-        return TableHDU(selected_dict, {}, self._derived_header())
+        return TableHDU(selected_dict, header=self._derived_header())
 
     def filter(self, condition: str) -> "TableHDU":
         import numpy as np
@@ -407,8 +398,7 @@ class TableHDU:
 
         return TableHDU(
             filtered,
-            {},
-            self._derived_header(),
+            header=self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -431,7 +421,7 @@ class TableHDU:
                     new_dict[k] = v[:keep]
                 else:
                     new_dict[k] = v
-            return TableHDU(new_dict, {}, self._derived_header())
+            return TableHDU(new_dict, header=self._derived_header())
         # A zero-column table has no column data to slice, but its row count
         # still comes from the header's NAXIS2 (see num_rows), so the only way
         # to honour head() is to narrow the derived header. Returning self
@@ -441,7 +431,7 @@ class TableHDU:
             return self
         derived = self._derived_header()
         derived["NAXIS2"] = keep
-        return TableHDU({}, {}, derived)
+        return TableHDU({}, header=derived)
 
     @staticmethod
     def _value_num_rows(value: Any) -> int:
@@ -540,8 +530,7 @@ class TableHDU:
         raw[name] = values
         return TableHDU(
             raw,
-            {},
-            self._derived_header(),
+            header=self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -557,8 +546,7 @@ class TableHDU:
         kept = {k: v for k, v in raw.items() if k not in to_drop}
         return TableHDU(
             kept,
-            {},
-            self._derived_header(),
+            header=self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -582,8 +570,7 @@ class TableHDU:
             renamed[new_name if key == old_name else key] = value
         return TableHDU(
             renamed,
-            {},
-            self._derived_header(),
+            header=self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -596,8 +583,7 @@ class TableHDU:
         if not raw:
             return TableHDU(
                 dict(rows),
-                {},
-                self._derived_header(),
+                header=self._derived_header(),
                 source_path=self._source_path,
                 source_hdu=self._source_hdu,
             )
@@ -625,8 +611,7 @@ class TableHDU:
 
         return TableHDU(
             appended,
-            {},
-            self._derived_header(),
+            header=self._derived_header(),
             source_path=self._source_path,
             source_hdu=self._source_hdu,
         )
@@ -704,7 +689,10 @@ class TableHDU:
             )
 
             return cls(
-                tensor_dict, {}, header, source_path=file_path, source_hdu=hdu_index
+                tensor_dict,
+                header=header,
+                source_path=file_path,
+                source_hdu=hdu_index,
             )
         except (IOError, RuntimeError) as e:
             from ..logging import logger

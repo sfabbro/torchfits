@@ -54,10 +54,11 @@ def torch_lib_dir() -> Path | None:
 def preload() -> None:
     """Map torch's shared libraries once. Missing files are skipped.
 
-    When ``torch`` can be imported, use its own loader. A raw ``CDLL`` of
-    ``libtorch`` ahead of that init interposes ``malloc`` and the macOS
-    allocation probe then reads zero. The import-blocked metadata checks
-    cannot take that path, so they fall back to loading by absolute path.
+    ``torch`` is deliberately not imported here: loading ``torchfits._C`` for an
+    Arrow or metadata read must not pay the ~750 ms Python-torch import. When
+    ``torch`` is already imported its own loader has mapped the libraries, so
+    there is nothing to do. Otherwise load them by absolute path: that registers
+    their sonames, and a later ``import torch`` reuses the same mappings.
     """
     global _DONE
     if _DONE:
@@ -65,10 +66,7 @@ def preload() -> None:
     _DONE = True
     if "torch" in sys.modules:
         return
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        _load_shared_libs()
+    _load_shared_libs()
 
 
 def _load_shared_libs() -> None:
@@ -76,8 +74,8 @@ def _load_shared_libs() -> None:
     if lib is None:
         return
     # RTLD_GLOBAL: _C resolves weak c10 symbols against these libraries.
-    # This path only runs when Python torch cannot be imported, so it does
-    # not replace the process allocator ahead of torch's own loader.
+    # This path runs when Python torch is not imported; the mappings are keyed
+    # by soname, so a later ``import torch`` finds them already loaded.
     mode = getattr(ctypes, "RTLD_GLOBAL", 0)
     for name in _LIBS:
         for suffix in (".so", ".dylib"):
