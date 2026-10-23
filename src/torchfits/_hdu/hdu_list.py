@@ -355,7 +355,9 @@ class HDUList:
             )
 
             if self._is_table_hdu(hdu):
-                dims = f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                dims = (
+                    f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                )
                 fmt = "Table"
             elif hasattr(hdu, "_get_shape_str"):
                 dims = getattr(hdu, "_get_shape_str")()
@@ -376,7 +378,9 @@ class HDUList:
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
             if self._is_table_hdu(hdu):
                 hdu_type = "TableHDU"
-                dims = f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                dims = (
+                    f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                )
                 fmt = "Table"
             elif hasattr(hdu, "_get_shape_str"):
                 hdu_type = (
