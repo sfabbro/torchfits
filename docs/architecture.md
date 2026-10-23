@@ -223,9 +223,9 @@ PyTorch. `torchfits.open()` lists HDUs and reads headers through the same core;
 the torch-linked reader is opened lazily when an HDU first touches its data.
 
 `torchfits.cache.clear_cache()` clears policy state and I/O metadata.
-`clear_file_cache(...)` clears the I/O metadata layers only.
-There is no shared pool of open FITS handles, so `clear_file_cache()` only
-drops cached header and scale metadata.
+`clear_file_cache(...)` clears the in-process I/O caches: cached read results,
+header/meta and HDU-type caches, counters, and the native shared metadata.
+There is no shared pool of open FITS handles for either call to drain.
 `clear_all_caches()` (or `clear_cache(disk=True)`) also removes on-disk
 roots under `cache_root()`. See
 [Cache Utilities](api-core-io.md#cache-utilities).

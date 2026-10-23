@@ -326,7 +326,12 @@ class TableHDU:
         if missing:
             raise KeyError(f"Columns not found: {missing}")
         selected_dict = {k: v for k, v in self._raw_data.items() if str(k) in wanted}
-        return TableHDU(selected_dict, header=self._derived_header())
+        return TableHDU(
+            selected_dict,
+            header=self._derived_header(),
+            source_path=self._source_path,
+            source_hdu=self._source_hdu,
+        )
 
     def filter(self, condition: str) -> "TableHDU":
         import numpy as np

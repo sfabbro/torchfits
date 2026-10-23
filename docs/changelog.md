@@ -8,12 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
-- cache: `cache_subsystem_policy()` no longer reports the removed `handles`
-  flag, so `clear_file_cache(**cache_subsystem_policy("all"))` works again.
-  The API reference and architecture notes no longer document the flag either.
-- hdu: `TableHDU(...)` takes `header`, `source_path` and `source_hdu` as
-  keyword-only arguments. A positional header can no longer bind as
-  `source_path` and silently drop the header cards on write.
+- Correct the cache docs and enforce the rc gate
+  `clear_file_cache` is documented for what it actually clears, the cache
+  policy is expanded in one place, `TableHDU.select` keeps its source path,
+  and the wheel workflow refuses a stable tag with no `vX.Y.Zrc*` tag.
+- Drop the stale handles flag and pin TableHDU header to keyword
+  `cache_subsystem_policy()` no longer reports the removed `handles` flag, so
+  `clear_file_cache(**cache_subsystem_policy("all"))` works again. `TableHDU`
+  takes `header`, `source_path` and `source_hdu` as keyword-only, so a
+  positional header can no longer bind as `source_path` and drop the header
+  cards on write.
+
+### Docs
+- release: Require an rc tag before every stable release
+  `scripts/check_release_rc.py` runs before PyPI upload and refuses a stable
+  tag with no matching `vX.Y.Zrc*` tag.
 
 ## [1.3.0] — 2026-10-22
 

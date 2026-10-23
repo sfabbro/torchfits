@@ -109,14 +109,7 @@ def clear_cache_subsystem(
 ) -> None:
     """Clear one named FITS I/O cache subsystem."""
     policy = cache_subsystem_policy(name)
-    clear_file_cache(
-        data=policy["data"],
-        meta=policy["meta"],
-        hdu_types=policy["hdu_types"],
-        stats=policy["stats"],
-        cpp=policy["cpp"],
-        cpp_module=cpp_module,
-    )
+    clear_file_cache(**policy, cpp_module=cpp_module)
 
 
 def path_signature(path: str) -> tuple[int, int, int] | None:
