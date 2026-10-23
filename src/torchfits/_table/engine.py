@@ -83,8 +83,13 @@ def _read_raw_ranges_as_chunk(
 
     out: dict[str, Any] = {}
     for name, parts in fixed_parts.items():
-        out[name] = np.concatenate(parts, axis=0)
+        # One range is the common case; concatenating a single part would copy
+        # the native buffer for no reason.
+        out[name] = parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
     for name, parts in vla_parts.items():
+        if len(parts) == 1:
+            out[name] = parts[0]
+            continue
         values = np.concatenate([part[0] for part in parts], axis=0)
         offsets = [parts[0][1]]
         running = int(parts[0][1][-1])

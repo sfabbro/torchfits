@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import operator
 import os
+import threading
 from dataclasses import dataclass
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, List, Optional, Type, Union
@@ -57,12 +58,44 @@ class _HDUInfo:
     header: Any
 
 
+class _LazyFileHandle:
+    """Open the tensor-backed reader on first data access.
+
+    ``torchfits.open`` reads headers through ``torchfits._core``, which does
+    not link libtorch, so a header-only open must not import ``torchfits._C``
+    (that import preloads PyTorch).  The first HDU that touches its data opens
+    the extension once and every file-backed HDU in the list shares it; closing
+    the HDUList closes it if it was ever opened.
+    """
+
+    def __init__(self, path: str):
+        self._path = path
+        self._handle: Any = None
+        self._lock = threading.Lock()
+
+    def get(self) -> Any:
+        with self._lock:
+            if self._handle is None:
+                import torchfits._C as cpp
+
+                self._handle = cpp.open_fits_file(self._path, "r")
+            return self._handle
+
+    def close(self) -> None:
+        with self._lock:
+            handle, self._handle = self._handle, None
+        if handle is not None:
+            handle.close()
+
+
 class HDUList:
     def __init__(
         self, hdus: Optional[List[Union[TensorHDU, TableHDU, TableHDURef]]] = None
     ):
         self._hdus: List[Union[TensorHDU, TableHDU, TableHDURef]] = hdus or []
         self._file_handle: Any = None
+        self._lazy_handle: Any = None
+        self._source_path: Optional[str] = None
         self._registry_key: Optional[str] = None
 
     @classmethod
@@ -88,46 +121,42 @@ class HDUList:
             raise FileNotFoundError(f"FITS file not found: {path}")
 
         hdul = cls()
+        hdul._source_path = path
+        lazy = _LazyFileHandle(path)
+        hdul._lazy_handle = lazy
 
         try:
-            import torchfits._C as cpp
+            # Headers come from the torch-free core. Importing ``torchfits._C``
+            # here would preload PyTorch (~1 s) just to list HDUs; the handle
+            # is opened lazily by the first HDU that touches its data.
+            from torchfits import _core as core
+            from torchfits.header_parser import fast_parse_header_cards
 
-            open_and_read_headers = getattr(cpp, "open_and_read_headers", None)
-            if open_and_read_headers is not None:
-                handle, hdu_infos = open_and_read_headers(path, 0 if mode == "r" else 1)
-            else:
-                # Legacy extension builds without the batch open: read per HDU.
-                # Presence is checked up front so an AttributeError raised
-                # *inside* the batch open surfaces instead of silently
-                # rerouting the whole read through this fallback.
-                handle = cpp.open_fits_file(path, mode)
-                hdu_infos = []
-                num_hdus = cpp.get_num_hdus(handle)
-                for i in range(num_hdus):
-                    header_dict = cpp.read_header(handle, i)
-                    hdu_type = cpp.get_hdu_type(handle, i)
-
-                    hdu_infos.append(
-                        _HDUInfo(index=i, type=hdu_type, header=header_dict)
-                    )
-
-            hdul._file_handle = handle
+            num_hdus = int(core.read_num_hdus(path))
+            hdu_infos = [
+                _HDUInfo(
+                    index=i,
+                    type=str(core.read_hdu_type(path, i)),
+                    # Parse the header string so keyword values keep their FITS
+                    # types (NAXIS is an int, not "2"), matching read_header.
+                    header=fast_parse_header_cards(core.read_header_string(path, i)),
+                )
+                for i in range(num_hdus)
+            ]
 
             from .._io_engine.caches import _register_open_hdulist
 
             try:
-                _register_open_hdulist(path, handle, hdul)
+                _register_open_hdulist(path, lazy, hdul)
             except Exception:
                 pass
 
             for info in hdu_infos:
-                # info.header already holds the full card list from the single
-                # batch read above; re-reading would double header I/O per open.
                 # LONGSTRN '&'+CONTINUE chains are rejoined at construction
-                # (r4b-13 root fix): cpp keeps the chain markers and detached
-                # CONTINUE cards verbatim, so without reassembly every >68-char
-                # string value read back truncated and every rewrite through
-                # this header corrupted it.
+                # (r4b-13 root fix): the core keeps the chain markers and
+                # detached CONTINUE cards verbatim, so without reassembly every
+                # >68-char string value read back truncated and every rewrite
+                # through this header corrupted it.
                 header = Header(_reassemble_longstr_cards(info.header))
 
                 hdu_type = info.type
@@ -135,7 +164,10 @@ class HDUList:
 
                 if hdu_type == "IMAGE":
                     hdu: Any = _hdu_class("TensorHDU")(
-                        header=header, file_handle=handle, hdu_index=i, source_path=path
+                        header=header,
+                        hdu_index=i,
+                        source_path=path,
+                        lazy_handle=lazy,
                     )
                 elif hdu_type in ["ASCII_TABLE", "BINARY_TABLE"]:
                     hdu = _hdu_class("TableHDURef")(
@@ -149,11 +181,10 @@ class HDUList:
             return hdul
 
         except Exception as e:
-            if hdul._file_handle:
-                try:
-                    hdul._file_handle.close()
-                except Exception:
-                    pass
+            try:
+                lazy.close()
+            except Exception:
+                pass
             raise RuntimeError(f"Failed to open FITS file '{path}': {str(e)}") from e
 
     def __len__(self) -> int:
@@ -197,19 +228,23 @@ class HDUList:
             pass
 
     def close(self) -> None:
-        if self._file_handle:
+        target = self._file_handle or self._lazy_handle
+        if target:
             # Unregister before closing so the registry doesn't hold a stale
             # entry. The removal itself runs under the registry lock (r4c-01):
             # an unlocked read-modify-write here lost concurrent registrations.
             try:
                 from .._io_engine.caches import _unregister_open_hdulist
 
-                _unregister_open_hdulist(self._registry_key, self._file_handle)
+                _unregister_open_hdulist(self._registry_key, target)
                 self._registry_key = None
             except Exception:
                 pass
-            self._file_handle.close()
-            self._file_handle = None
+            try:
+                target.close()
+            finally:
+                self._file_handle = None
+                self._lazy_handle = None
         for hdu in self._hdus:
             if isinstance(hdu, _hdu_class("TensorHDU")):
                 hdu.mark_closed()
@@ -242,7 +277,8 @@ class HDUList:
                     if hdu._data is not None:
                         _ = hdu._data.shape
                         _ = hdu._data.dtype
-                    elif hdu._file_handle is not None:
+                    elif hdu._file_handle is not None or hdu._lazy_handle is not None:
+                        # A lazy handle opens here; a detached one raises.
                         _ = hdu.data.shape
                         _ = hdu.data.dtype
                     elif hdu._source_path:
@@ -263,6 +299,26 @@ class HDUList:
         except Exception:
             return False
 
+    @staticmethod
+    def _is_table_hdu(hdu: Any) -> bool:
+        """Table test that does not import the tensor-backed HDU classes.
+
+        ``isinstance(hdu, TableHDU)`` loads ``table_hdu``, which imports
+        torch; ``hdul.info()`` is a header-only operation and must stay
+        torch-free. The class name covers in-memory tables, the header covers
+        file-backed ones.
+        """
+        name = type(hdu).__name__
+        if name in {"TableHDU", "TableHDURef"}:
+            return True
+        if name == "TensorHDU":
+            # Compressed images live in a BINTABLE but are images to the user.
+            return False
+        return str(hdu.header.get("XTENSION", "")).strip().upper() in {
+            "TABLE",
+            "BINTABLE",
+        }
+
     def info(self, output: Any = None) -> None:
         summary = self._get_summary()
         if output is None:
@@ -275,6 +331,8 @@ class HDUList:
         filename = "(No file associated)"
         if self._file_handle and hasattr(self._file_handle, "name"):
             filename = self._file_handle.name
+        elif self._source_path:
+            filename = self._source_path
 
         lines.append(f"Filename: {filename}")
         lines.append("No.    Name         Type       Cards   Dimensions   Format")
@@ -282,7 +340,7 @@ class HDUList:
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
 
-            if isinstance(hdu, _table_hdu_types()):
+            if self._is_table_hdu(hdu):
                 hdu_type = "TableHDU"
             else:
                 if idx == 0 and name == "PRIMARY":
@@ -296,12 +354,14 @@ class HDUList:
                 else len(hdu.header)
             )
 
-            if isinstance(hdu, _table_hdu_types()):
-                dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
+            if self._is_table_hdu(hdu):
+                dims = (
+                    f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                )
                 fmt = "Table"
-            elif isinstance(hdu, _hdu_class("TensorHDU")):
-                dims = hdu._get_shape_str()
-                fmt = hdu._get_dtype_str()
+            elif hasattr(hdu, "_get_shape_str"):
+                dims = getattr(hdu, "_get_shape_str")()
+                fmt = getattr(hdu, "_get_dtype_str")()
             else:
                 dims = ""
                 fmt = ""
@@ -316,15 +376,18 @@ class HDUList:
         rows = []
         for idx, hdu in enumerate(self._hdus):
             name = str(hdu.header.get("EXTNAME", "PRIMARY"))
-            if isinstance(hdu, _table_hdu_types()):
+            if self._is_table_hdu(hdu):
                 hdu_type = "TableHDU"
-                dims = f"({hdu.num_rows}R x {len(hdu.columns)}C)"
+                dims = (
+                    f"({getattr(hdu, 'num_rows')}R x {len(getattr(hdu, 'columns'))}C)"
+                )
                 fmt = "Table"
-            elif isinstance(hdu, _hdu_class("TensorHDU")):
+            elif hasattr(hdu, "_get_shape_str"):
                 hdu_type = (
                     "PrimaryHDU" if idx == 0 and name == "PRIMARY" else "ImageHDU"
                 )
-                dims, fmt = hdu._get_shape_str(), hdu._get_dtype_str()
+                dims = getattr(hdu, "_get_shape_str")()
+                fmt = getattr(hdu, "_get_dtype_str")()
             else:
                 hdu_type, dims, fmt = "Unknown", "", ""
 

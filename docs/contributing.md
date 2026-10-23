@@ -190,9 +190,9 @@ runpy.run_path(sys.argv[1], run_name="__main__")
 PY examples/example_mef_header.py
 ```
 
-Auditing `examples/` this way is how the `where=`-filter leak was found, and
-the remaining `torchfits.open()` leak is recorded in
-[Roadmap](roadmap.md#next).
+Auditing `examples/` this way is how the `where=`-filter leak and the
+`torchfits.open()` import were found. Both are fixed; run the audit when adding
+a new metadata entry point.
 
 ## Benchmarks
 

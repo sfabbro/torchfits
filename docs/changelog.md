@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- hdu: Make open() and header inspection torch-free
+
 ### Changed
 - PyTorch 2.14 lane: wheels are ABI-matched to `torch>=2.14,<2.15`, and the CUDA
   flavors are `cu126` and `cu130` (`cu128` and `cu129` are not published for
@@ -25,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ci: Stop publishing macOS cp315 wheels for the broken torch 2.14 ABI
 - table: Accept NumPy scalars as filter literals
 - table: Reject NumPy bool literals on every NumPy release
+
+### Performance
+- table: Wrap native column buffers instead of copying through NumPy
 
 ### Docs
 - Finish the 2.14 lane sweep

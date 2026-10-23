@@ -1,4 +1,9 @@
-"""``torchfits verify`` — checksum verification."""
+"""``torchfits verify`` — checksum verification.
+
+Self-contained by design: it reads DATASUM/CHECKSUM through the native reader
+and never shells out to ``fitsverify``. Cross-checking the verdict against that
+tool belongs in torchfits-harness, not in the library.
+"""
 
 from __future__ import annotations
 
