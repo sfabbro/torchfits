@@ -74,7 +74,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install numpy pytest nanobind scikit-build-core psutil pyarrow
       - name: Build and install
         run: pip install -e . --no-build-isolation
       - name: Pytest
@@ -136,7 +136,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install numpy pytest nanobind scikit-build-core psutil pyarrow
           pip install -e . --no-build-isolation
       - name: Docs integrity
         run: pytest tests/test_docs_integrity.py tests/test_docs_snippets.py tests/test_package_isolation.py -q
@@ -162,7 +162,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install numpy pytest nanobind scikit-build-core psutil pyarrow
           pip install "pyarrow>=25" "polars>=1.43.2" "duckdb>=1.5.5" "mypy>=2.3.1"
           pip install -e . --no-build-isolation
       - name: Mypy type check
