@@ -12,7 +12,7 @@ requires = [
     # protects a plain `pip install .` and the packager SDIST-README.txt is
     # written for. Keep it identical to the runtime pin below.
     "torch>=2.14,<2.15",
-    "numpy>=1.26"
+    "numpy>=2.4.6"
 ]
 build-backend = "scikit_build_core.build"
 
@@ -52,10 +52,12 @@ dependencies = [
     # lane (scripts/torch_lanes.json, docs/install.md). Every other runtime
     # dependency is deliberately uncapped.
     "torch>=2.14,<2.15",
-    # Floors name the oldest release with wheels for the minimum supported
-    # Python (3.11); they are not a statement about what is tested.
-    "numpy>=1.26",  # Core numerical operations
-    "pyarrow>=17.0",  # Table I/O (Arrow interchange)
+    # Floors name the oldest release that still has wheels for the minimum
+    # supported Python (3.11) and is within one minor of the newest release.
+    # numpy 2.5 dropped cp311, so 2.4.6 is the newest floor 3.11 can install;
+    # 3.12+ resolves 2.5.x from the same specifier.
+    "numpy>=2.4.6",  # Core numerical operations
+    "pyarrow>=25.0.0",  # Table I/O (Arrow interchange)
 ]
 
 [project.scripts]
@@ -74,13 +76,11 @@ dev = [
     "mypy>=2.3.1",
     "pandas>=2.2",
     "matplotlib>=3.11",
-    "tomli>=2.0; python_version < '3.11'",
 ]
 test = [
     "pytest>=9.0",
     "pytest-cov>=7.0",
     "psutil",
-    "pyarrow>=17.0",
 ]
 docs = [
     "zensical>=0.0.61",
@@ -169,6 +169,7 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "14.0", CMAKE_OSX_DEPLOYMENT_TARGET =
 repair-wheel-command = ""
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "performance: performance-oriented benchmark or stress tests",
     "integration: integration tests across multiple modules",

@@ -58,8 +58,12 @@ _PYPROJECT_VERSION_RE = re.compile(r'^(version = ")([^"]+)(")$', re.MULTILINE)
 _INIT_VERSION_RE = re.compile(r'^(__version__ = ")([^"]+)(")$', re.MULTILINE)
 _PIXI_VERSION_RE = re.compile(r'^(version = ")([^"]+)(")$', re.MULTILINE)
 _PIXI_PYTORCH_RE = re.compile(r'^(pytorch = ")(>=2\.\d+,<2\.\d+)(")$', re.MULTILINE)
+# Only the workspace pin is lane-coupled; [package.run-dependencies] carries
+# the same specifier and must not be rewritten by the same pattern.
 _PIXI_PYARROW_RE = re.compile(
-    r'^(pyarrow = ")(?:>=25\.0\.0,<26|>=24,<25)(")$', re.MULTILINE
+    r'^(# a version preference[^\n]*\n(?:#[^\n]*\n)*pyarrow = ")'
+    r'(?:>=25\.0\.0(?:,<26)?|>=24,<25)(")$',
+    re.MULTILINE,
 )
 _CONSTRAINTS_RE = re.compile(r"^(torch>=2\.\d+,<2\.\d+)$", re.MULTILINE)
 
@@ -121,7 +125,7 @@ PYPROJECT_BUILD_REQUIRES_BLOCK = """requires = [
     # protects a plain `pip install .` and the packager SDIST-README.txt is
     # written for. Keep it identical to the runtime pin below.
     "torch>={lane},<{next_lane}",
-    "numpy>=1.26"
+    "numpy>=2.4.6"
 ]"""
 
 # The [build-system] requires list is the only top-level `requires = [` in the
@@ -141,10 +145,12 @@ dependencies = [
     # lane (scripts/torch_lanes.json, docs/install.md). Every other runtime
     # dependency is deliberately uncapped.
     "torch>={lane},<{next_lane}",
-    # Floors name the oldest release with wheels for the minimum supported
-    # Python (3.11); they are not a statement about what is tested.
-    "numpy>=1.26",  # Core numerical operations
-    "pyarrow>=17.0",  # Table I/O (Arrow interchange)
+    # Floors name the oldest release that still has wheels for the minimum
+    # supported Python (3.11) and is within one minor of the newest release.
+    # numpy 2.5 dropped cp311, so 2.4.6 is the newest floor 3.11 can install;
+    # 3.12+ resolves 2.5.x from the same specifier.
+    "numpy>=2.4.6",  # Core numerical operations
+    "pyarrow>=25.0.0",  # Table I/O (Arrow interchange)
 ]"""
 
 _PYPROJECT_DEPS_RE = re.compile(
@@ -334,7 +340,7 @@ def render(
     if count == 0:
         raise SystemExit("no pixi pytorch pins found to render")
     pixi = updated
-    pyarrow_pin = _LANE_PIXI_PYARROW.get(lane, ">=25.0.0,<26")
+    pyarrow_pin = _LANE_PIXI_PYARROW.get(lane, ">=25.0.0")
     pixi = _replace_once(
         pixi,
         _PIXI_PYARROW_RE,

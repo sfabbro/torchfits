@@ -63,8 +63,8 @@ requirements:
     - python >=3.11
     - pytorch ${{ torch_pin }}
     - zlib >=1.2.13
-    - numpy >=1.26
-    - pyarrow >=17.0
+    - numpy >=2.4.6
+    - pyarrow >=25.0.0
 
 tests:
   - python:

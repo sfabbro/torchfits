@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vendored CFITSIO with `--coverage` at `-O0` (IPO off) for gcovr reports; the
   option fails at configure time on a compiler without gcov support.
 
+### Dependencies
+- packaging: Require numpy 2.4.6 and pyarrow 25
+
 ## [1.3.0] — 2026-10-22
 
 ### Added
