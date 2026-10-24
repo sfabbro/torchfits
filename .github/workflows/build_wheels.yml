@@ -100,11 +100,13 @@ jobs:
       # extension. Isolated mode would install [build-system].requires,
       # including the 2 GB torch wheel, which exhausted the runner's disk
       # quota (Errno 122) and left every tagged release without an sdist.
-      # --no-isolation uses the backend installed here instead.
+      # --no-isolation still validates those requirements against the
+      # environment, so --skip-dependency-check is what lets the sdist build
+      # without torch.
       - name: Build sdist
         run: |
           python -m pip install --upgrade pip build scikit-build-core nanobind
-          python -m build --sdist --no-isolation
+          python -m build --sdist --no-isolation --skip-dependency-check
       - uses: actions/upload-artifact@v7
         with:
           name: cibw-sdist

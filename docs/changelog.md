@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - release: Build the sdist without installing torch
 - release: Map wheel tags with portable sed
+- release: Skip the build dependency check for the sdist
 ### Docs
 - release: Require an rc tag before every stable release
   `scripts/check_release_rc.py` runs before PyPI upload and refuses a stable
