@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positional header can no longer bind as `source_path` and drop the header
   cards on write.
 
+- release: Build the sdist without installing torch
 ### Docs
 - release: Require an rc tag before every stable release
   `scripts/check_release_rc.py` runs before PyPI upload and refuses a stable
