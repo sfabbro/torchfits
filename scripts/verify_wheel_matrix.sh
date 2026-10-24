@@ -53,7 +53,9 @@ if not lane:
     base = re.sub(r"(rc|a|b)\d*$", "", v) if v else ""
     lane = next((l for l, c in lanes.items() if c["torchfits_version"] == base), "")
 print(lane)')"
-  py="$(basename "$wheel" | sed -n 's/^torchfits-[^-]*-cp\([0-9][0-9][0-9]\)-\?.*/\1/p' | sed 's/^3/3./')"
+  # `-.*`, not an optional hyphen: BSD sed has no optional-escape
+  # syntax, so the GNU spelling matched nothing on macOS.
+  py="$(basename "$wheel" | sed -n 's/^torchfits-[^-]*-cp\([0-9][0-9][0-9]\)-.*/\1/p' | sed 's/^3/3./')"
   if [[ -z "$lane" || -z "$py" ]]; then
     echo "[FAIL] $(basename "$wheel"): cannot map to lane/python" >&2
     return 1
