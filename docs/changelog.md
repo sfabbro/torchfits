@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Docs
+- home: Focus the home page on arrays, tables, and cutouts
+
 ## [1.3.1rc1] — 2026-10-24
 
 ### Fixed
