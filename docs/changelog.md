@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.3.1rc1] — 2026-10-24
+
 ### Fixed
 - Correct the cache docs and enforce the rc gate
   `clear_file_cache` is documented for what it actually clears, the cache
@@ -20,8 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cards on write.
 
 - release: Build the sdist without installing torch
+  The sdist job no longer installs the torch wheel. An isolated build pulled
+  that 2 GB wheel, filled the runner disk, and left the tag without an sdist.
 - release: Map wheel tags with portable sed
+  Wheel filenames are parsed with a sed expression that works on both GNU and
+  BSD sed, so macOS can map a wheel back to its Python tag.
 - release: Skip the build dependency check for the sdist
+  `--no-isolation` still checks build requirements, so the sdist build passes
+  `--skip-dependency-check` and does not require torch.
 ### Docs
 - release: Require an rc tag before every stable release
   `scripts/check_release_rc.py` runs before PyPI upload and refuses a stable
@@ -1633,7 +1641,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.1rc1...HEAD
+[1.3.1rc1]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc1
 [1.3.0]: https://github.com/astroai/torchfits/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/astroai/torchfits/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/astroai/torchfits/compare/v1.2.0...v1.2.2
