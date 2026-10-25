@@ -36,10 +36,3 @@ the notes. The changes that matter for what you call:
 ## Later
 
 A later major version may read tiles with its own codecs and move bytes from storage into GPU memory without a host copy. That is not scheduled. The 1.x read and write calls stay as they are.
-
-## Out of scope
-
-- Celestial coordinates and WCS (`astropy.wcs`)
-- Physical units (`astropy.units`)
-- Source extraction, PSF fitting, and continuum fitting
-- Anything outside the FITS standard
