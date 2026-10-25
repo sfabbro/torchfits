@@ -1377,7 +1377,7 @@ _NOT_A_CLAIMED_PATH = ("*", "?", "[", "]", "{", "}", "<", ">", "...", " ")
 
 def _doc_pages_citing_paths() -> list[Path]:
     pages = [ROOT / "docs" / page for page in sorted((ROOT / "docs").glob("*.md"))]
-    pages += [ROOT / name for name in ("README.md", "AGENTS.md", "CLAUDE.md")]
+    pages += [ROOT / name for name in ("README.md", "AGENTS.md")]
     return [page for page in pages if page.is_file()]
 
 

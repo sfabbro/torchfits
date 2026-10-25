@@ -40,11 +40,40 @@ if(_TORCHFITS_SANITIZER_COMPILE_OPTIONS)
         "${_TORCHFITS_SANITIZER_COMPILE_OPTIONS}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Source coverage — opt-in via CMake option.
+#   CMAKE_ARGS="-DTORCHFITS_COVERAGE=ON" pip install --no-build-isolation .
+# Instruments the extension, the torch-free core and (because the flags are
+# directory-scoped, and vendored CFITSIO is added as a subdirectory below) the
+# vendored C sources too. -O0 keeps line counts meaningful: gcov attributes
+# every statement the optimiser kept, and inlining merges lines silently.
+# ---------------------------------------------------------------------------
+option(TORCHFITS_COVERAGE "Instrument C/C++ sources and link the gcov runtime" OFF)
+set(_TORCHFITS_COVERAGE_COMPILE_OPTIONS "")
+set(_TORCHFITS_COVERAGE_LINK_OPTIONS "")
+if(TORCHFITS_COVERAGE)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR
+            "TORCHFITS_COVERAGE needs GCC or Clang (gcov/llvm-cov); "
+            "found ${CMAKE_C_COMPILER_ID}")
+    endif()
+    # Applied per target below, not directory-wide: the bundled nanobind-static
+    # is third-party code and would otherwise flood every gcov report.
+    set(_TORCHFITS_COVERAGE_COMPILE_OPTIONS --coverage -O0 -g)
+    set(_TORCHFITS_COVERAGE_LINK_OPTIONS --coverage)
+    message(STATUS
+        "Coverage: C/C++ instrumented with --coverage (optimisation pinned to -O0)")
+endif()
+
 # Enable IPO/LTO when available (portable opt-in)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
-if(IPO_SUPPORTED)
+if(IPO_SUPPORTED AND NOT TORCHFITS_COVERAGE)
+    # LTO runs after instrumentation and folds away counters; gcov data from an
+    # LTO build under-reports badly, so coverage always builds without it.
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+elseif(IPO_SUPPORTED)
+    message(STATUS "IPO/LTO disabled for coverage instrumentation")
 else()
     message(STATUS "IPO/LTO not supported: ${IPO_ERROR}")
 endif()
@@ -529,6 +558,12 @@ else()
             target_compile_options(
                 cfitsio PRIVATE ${_TORCHFITS_SANITIZER_COMPILE_OPTIONS})
         endif()
+        if(TORCHFITS_COVERAGE)
+            # CFITSIO is C and built in a subdirectory; directory-scoped flags
+            # are deliberately not used (see the coverage block at the top).
+            target_compile_options(
+                cfitsio PRIVATE ${_TORCHFITS_COVERAGE_COMPILE_OPTIONS})
+        endif()
         # Clang IPO stores LLVM bitcode in this static archive. torchfits_core
         # links it with --whole-archive and is not itself built with LTO, so
         # GNU ld rejects every member ("is not an object").
@@ -837,4 +872,20 @@ else()
     else()
         message(WARNING "torchfits: no Python executable found; extension only")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Coverage instrumentation for torchfits' own targets.
+# Kept out of the directory scope so bundled third-party code (nanobind) stays
+# uninstrumented; vendored CFITSIO is handled at its target, above.
+# ---------------------------------------------------------------------------
+if(TORCHFITS_COVERAGE)
+    foreach(_torchfits_cov_target IN ITEMS torchfits_core _core _C)
+        if(TARGET ${_torchfits_cov_target})
+            target_compile_options(${_torchfits_cov_target} PRIVATE
+                ${_TORCHFITS_COVERAGE_COMPILE_OPTIONS})
+            target_link_options(${_torchfits_cov_target} PRIVATE
+                ${_TORCHFITS_COVERAGE_LINK_OPTIONS})
+        endif()
+    endforeach()
 endif()

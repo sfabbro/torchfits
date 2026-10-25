@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "torch$TORCH_PIN" --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy pytest nanobind scikit-build-core psutil pyarrow tomli
+          pip install numpy pytest nanobind scikit-build-core psutil pyarrow
           pip install -e . --no-build-isolation
       # Same guards `ci.yml` runs on every push, re-asserted on a calendar. A
       # failure here means the code moved under the documentation, not that

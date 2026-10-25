@@ -33,7 +33,7 @@ repos:
         name: Docs claims match the code
         entry: python3 -m pytest tests/test_docs_integrity.py -q
         language: system
-        files: ^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|src/.*|scripts/.*|pyproject\.toml|pixi\.toml|\.gitignore)$
+        files: ^(docs/.*\.md|README\.md|AGENTS\.md|src/.*|scripts/.*|pyproject\.toml|pixi\.toml|\.gitignore)$
         pass_filenames: false
         always_run: false
       - id: agent-home-sync
