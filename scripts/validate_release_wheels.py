@@ -51,8 +51,13 @@ def _cell(python: str, platform: str) -> tuple[str, str, str] | None:
         return None
     platform_tags = set(platform.split("."))
     required = f"manylinux_2_28_{arch}"
-    allowed = {required, f"manylinux_2_26_{arch}"}
-    if required not in platform_tags or not platform_tags <= allowed:
+    if required not in platform_tags:
+        return None
+    for tag in platform_tags:
+        match = re.fullmatch(rf"manylinux_2_(\d+)_{arch}", tag)
+        if match is None or int(match.group(1)) > 28:
+            return None
+    if not platform_tags:
         return None
     return python, "manylinux", arch
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.3.1rc3] — 2026-10-26
+
+### Fixed
+- Accept auditwheel's compound manylinux tags when they include the required
+  manylinux 2.28 tag plus a compatible lower glibc floor for the same
+  architecture.
+
 ## [1.3.1rc2] — 2026-10-26
 
 ### Removed
@@ -1674,7 +1681,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.1rc2...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.1rc3...HEAD
+[1.3.1rc3]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc3
 [1.3.1rc2]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc2
 [1.3.1rc1]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc1
 [1.3.0]: https://github.com/astroai/torchfits/compare/v1.2.3...v1.3.0
