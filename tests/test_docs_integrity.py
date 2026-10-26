@@ -826,10 +826,8 @@ def test_documented_api_members_exist() -> None:
             "fits_collate_fn",
         ],
         cache: [
-            "configure_for_environment",
             "get_cache_stats",
             "clear_cache",
-            "optimize_for_dataset",
         ],
         where: [
             "evaluate_where",
@@ -874,6 +872,29 @@ def test_documented_api_members_exist() -> None:
         if not hasattr(mod, name)
     ]
     assert not missing, f"docs reference missing API members: {missing}"
+
+
+def test_every_public_namespace_export_is_documented() -> None:
+    import importlib
+
+    import torchfits
+
+    docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "docs").glob("api*.md"))
+    )
+    modules = [torchfits]
+    modules.extend(
+        importlib.import_module(module_name)
+        for module_name in torchfits._NAMESPACES.values()
+    )
+    missing = [
+        f"{module.__name__}.{name}"
+        for module in modules
+        for name in module.__all__
+        if re.search(rf"\b{re.escape(name)}\b", docs) is None
+    ]
+    assert not missing, f"public exports missing from API documentation: {missing}"
 
 
 def test_cli_docs_subcommands_match_parser() -> None:

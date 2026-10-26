@@ -133,3 +133,177 @@ def test_arith_split_hdu_output_must_not_clobber_another_input(tmp_path):
     assert result.returncode == 2, result.stderr
     assert REFUSAL in result.stderr
     assert prior.read_bytes() == before
+
+
+def test_arith_file_output_must_not_clobber_operand_a(tmp_path):
+    source = tmp_path / "source.fits"
+    torchfits.write(str(source), torch.ones(2, 2), overwrite=True)
+    before = source.read_bytes()
+    result = _run_cli(
+        "arith", str(source), "--op", "add", "--value", "1", "-o", str(source)
+    )
+    assert result.returncode == 2, result.stderr
+    assert REFUSAL in result.stderr
+    assert source.read_bytes() == before
+
+
+def test_arith_file_output_must_not_clobber_operand_b(tmp_path):
+    left = tmp_path / "left.fits"
+    right = tmp_path / "right.fits"
+    torchfits.write(str(left), torch.ones(2, 2), overwrite=True)
+    torchfits.write(str(right), torch.full((2, 2), 2.0), overwrite=True)
+    before = right.read_bytes()
+    result = _run_cli("arith", str(left), str(right), "--op", "add", "-o", str(right))
+    assert result.returncode == 2, result.stderr
+    assert REFUSAL in result.stderr
+    assert right.read_bytes() == before
+
+
+def test_arith_batch_preflights_every_generated_destination(tmp_path):
+    source_dir = tmp_path / "source"
+    output_dir = tmp_path / "output"
+    source_dir.mkdir()
+    output_dir.mkdir()
+    left = source_dir / "shared.fits"
+    other = source_dir / "other.fits"
+    operand = output_dir / "shared.fits"
+    torchfits.write(str(left), torch.ones(2, 2), overwrite=True)
+    torchfits.write(str(other), torch.ones(2, 2), overwrite=True)
+    torchfits.write(str(operand), torch.full((2, 2), 3.0), overwrite=True)
+    before = operand.read_bytes()
+    result = _run_cli(
+        "arith",
+        str(left),
+        str(other),
+        "--operand2",
+        str(operand),
+        "--op",
+        "add",
+        "--out-dir",
+        str(output_dir),
+        "-J",
+        "2",
+    )
+    assert result.returncode == 2, result.stderr
+    assert REFUSAL in result.stderr
+    assert operand.read_bytes() == before
+
+
+def _case_insensitive(directory) -> bool:
+    probe = directory / "CaseProbe"
+    probe.write_text("x")
+    insensitive = (directory / "caseprobe").exists()
+    probe.unlink()
+    return insensitive
+
+
+def test_arith_case_colliding_file_outputs_follow_filesystem(tmp_path):
+    left_dir = tmp_path / "left"
+    right_dir = tmp_path / "right"
+    left_dir.mkdir()
+    right_dir.mkdir()
+    upper = left_dir / "IMAGE.fits"
+    lower = right_dir / "image.fits"
+    torchfits.write(upper, torch.ones(2, 2))
+    torchfits.write(lower, torch.ones(2, 2))
+    output = tmp_path / "output"
+    result = _run_cli(
+        "arith",
+        str(upper),
+        str(lower),
+        "--op",
+        "add",
+        "--value",
+        "1",
+        "--out-dir",
+        str(output),
+        "-J",
+        "1",
+    )
+    if _case_insensitive(tmp_path):
+        assert result.returncode == 2, result.stderr
+        assert "duplicate basename" in result.stderr
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert (output / upper.name).exists()
+        assert (output / lower.name).exists()
+
+
+def test_arith_case_colliding_split_outputs_follow_filesystem(tmp_path):
+    left_dir = tmp_path / "left"
+    right_dir = tmp_path / "right"
+    left_dir.mkdir()
+    right_dir.mkdir()
+    upper = left_dir / "IMAGE.fits"
+    lower = right_dir / "image.fits"
+    torchfits.write(upper, torch.ones(2, 2))
+    torchfits.write(lower, torch.ones(2, 2))
+    output = tmp_path / "output"
+    result = _run_cli(
+        "arith",
+        str(upper),
+        str(lower),
+        "--op",
+        "add",
+        "--value",
+        "1",
+        "--split",
+        "hdu",
+        "--out-dir",
+        str(output),
+        "-J",
+        "1",
+    )
+    if _case_insensitive(tmp_path):
+        assert result.returncode == 2, result.stderr
+        assert "duplicate basename" in result.stderr
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert (output / "IMAGE_hdu00.fits").exists()
+        assert (output / "image_hdu00.fits").exists()
+
+
+def test_case_variant_same_path_refusal_follows_filesystem(tmp_path):
+    source = tmp_path / "IMAGE.fits"
+    destination = tmp_path / "image.fits"
+    torchfits.write(source, torch.ones(2, 2))
+    result = _run_cli(
+        "arith", str(source), "--op", "add", "--value", "1", "-o", str(destination)
+    )
+    if _case_insensitive(tmp_path):
+        assert result.returncode == 2, result.stderr
+        assert REFUSAL in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert destination.exists()
+
+
+def test_canonically_equivalent_outputs_follow_filesystem(tmp_path):
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    composed = first_dir / "caf\N{LATIN SMALL LETTER E WITH ACUTE}.fits"
+    decomposed = second_dir / "cafe\N{COMBINING ACUTE ACCENT}.fits"
+    torchfits.write(composed, torch.ones(2, 2))
+    torchfits.write(decomposed, torch.ones(2, 2))
+    output = tmp_path / "output"
+    result = _run_cli(
+        "arith",
+        str(composed),
+        str(decomposed),
+        "--op",
+        "add",
+        "--value",
+        "1",
+        "--out-dir",
+        str(output),
+    )
+    if sys.platform == "darwin":
+        assert result.returncode == 2, result.stderr
+        assert "duplicate basename" in result.stderr
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr

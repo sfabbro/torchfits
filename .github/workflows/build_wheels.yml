@@ -5,8 +5,19 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact existing v-prefixed tag to build
+        required: true
+        type: string
+      publish:
+        description: Publish validated artifacts
+        required: true
+        default: false
+        type: boolean
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -17,13 +28,16 @@ jobs:
   tests:
     name: Tests (Ubuntu, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    needs: release_gate
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: ${{ matrix.python-version }}
       # The wheel ABI lane is whatever the committed tree tracks (a release
@@ -72,8 +86,10 @@ jobs:
       CIBW_ARCHS: ${{ matrix.arch }}
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.13"
       - name: Fail fast - torch flavor extras resolve on the wheel ABI lane
@@ -81,8 +97,11 @@ jobs:
           python -m pip install -q --upgrade pip packaging
           python scripts/check_torch_extra_pins.py
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.3.1
-      - uses: actions/upload-artifact@v7
+        uses: pypa/cibuildwheel@61a6d5d56175ad7cc8478df487b849cd7b85e0ce
+      - name: Validate macOS wheel tag and native floor
+        if: runner.os == 'macOS'
+        run: python scripts/check_macos_wheel_floor.py wheelhouse/*.whl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
@@ -92,8 +111,10 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.13"
       # The sdist only needs the PEP 517 backend; it never compiles the
@@ -106,8 +127,12 @@ jobs:
       - name: Build sdist
         run: |
           python -m pip install --upgrade pip build scikit-build-core nanobind
+          bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
           python -m build --sdist --no-isolation --skip-dependency-check
-      - uses: actions/upload-artifact@v7
+          python scripts/validate_release_sdist.py dist/*.tar.gz --version "${RELEASE_TAG#v}"
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: cibw-sdist
           path: dist/*.tar.gz
@@ -115,60 +140,148 @@ jobs:
   release_gate:
     name: Release candidate gate
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release_kind: ${{ steps.validate_tag.outputs.release_kind }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           fetch-depth: 0
-      - name: Require an rc tag for a stable version
-        run: python scripts/check_release_rc.py --version "${GITHUB_REF_NAME#v}"
+      - name: Validate exact release tag
+        id: validate_tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          RELEASE_KIND="$(python scripts/check_release_tag.py --tag "$RELEASE_TAG" --event "$GITHUB_EVENT_NAME")"
+          echo "release_kind=$RELEASE_KIND" >> "$GITHUB_OUTPUT"
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n1 "$RELEASE_TAG")"
+          VERSION="${RELEASE_TAG#v}"
+          PROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$VERSION" = "$PROJECT_VERSION"
+      - name: Require the latest successful equivalent release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            RC_TAG="$(python scripts/check_release_rc.py --version "$VERSION" --print-tag)"
+            RC_SHA="$(git rev-list -n1 "$RC_TAG")"
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow build_wheels.yml --branch "$RC_TAG" --event push --limit 100 --json conclusion,event,headBranch,headSha | python scripts/check_release_run.py --tag "$RC_TAG" --sha "$RC_SHA"
+          else
+            python scripts/check_release_rc.py --version "$VERSION"
+          fi
+
+  validate_release:
+    name: Validate release artifacts
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: cibw-wheels-*
+          path: dist/wheels
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: cibw-sdist
+          path: dist/sdist
+      - name: Validate contents, metadata, tags, matrix, and Linux linkage
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          python -m pip install --upgrade auditwheel twine
+          python scripts/check_wheel_contents.py dist/wheels/*.whl
+          python scripts/validate_release_sdist.py dist/sdist/*.tar.gz --version "${RELEASE_TAG#v}"
+          python scripts/validate_release_wheels.py dist/wheels --version "${RELEASE_TAG#v}" --sdist dist/sdist/*.tar.gz --manifest dist/RELEASE-MANIFEST.sha256
+          twine check dist/wheels/*.whl
+          for wheel in dist/wheels/*manylinux*.whl; do auditwheel show "$wheel"; done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validated-release-artifacts
+          path: |
+            dist/wheels/*.whl
+            dist/sdist/*.tar.gz
+            dist/RELEASE-MANIFEST.sha256
 
   upload_pypi:
-    needs: [release_gate, build_wheels]
+    needs: [release_gate, validate_release]
     runs-on: ubuntu-latest
     environment: pypi
     # Trusted publishing is registered for astroai/torchfits only. The same
     # tag is pushed to the fork, which has no PyPI publisher.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'astroai/torchfits'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && needs.release_gate.outputs.release_kind == 'stable' && github.repository == 'astroai/torchfits'
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # Wheels only. An sdist on PyPI makes pip compile on unmatched
-          # CPython / arch (Ubuntu 26.04 = 3.14 had no wheel on rc5).
-          pattern: cibw-wheels-*
+          ref: ${{ inputs.tag }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: validated-release-artifacts
           path: dist
-          merge-multiple: true
+      - name: Verify validated artifact manifest
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python scripts/validate_release_sdist.py dist/sdist/*.tar.gz --version "${RELEASE_TAG#v}"
+          python scripts/validate_release_wheels.py dist/wheels --version "${RELEASE_TAG#v}" --sdist dist/sdist/*.tar.gz --verify-manifest dist/RELEASE-MANIFEST.sha256
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
         with:
-          packages-dir: dist
+          packages-dir: dist/wheels
           verbose: true
 
   github_release:
     name: Create GitHub Release
-    needs: [release_gate, build_wheels, build_sdist]
+    needs: [release_gate, validate_release]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      ${{ github.repository == 'astroai/torchfits' &&
+          ((github.event_name == 'push' && needs.release_gate.outputs.release_kind == 'rc') ||
+           (github.event_name == 'workflow_dispatch' && inputs.publish && needs.release_gate.outputs.release_kind == 'stable')) }}
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - name: Extract curated release notes from changelog
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           python scripts/release_notes.py \
-            --version "${GITHUB_REF_NAME#v}" \
+            --version "${RELEASE_TAG#v}" \
             --out "${RUNNER_TEMP}/release_notes.md"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          pattern: cibw-*
+          name: validated-release-artifacts
           path: dist
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v3
+      - name: Verify validated artifact manifest
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          python scripts/validate_release_sdist.py dist/sdist/*.tar.gz --version "${RELEASE_TAG#v}"
+          python scripts/validate_release_wheels.py dist/wheels --version "${RELEASE_TAG#v}" --sdist dist/sdist/*.tar.gz --verify-manifest dist/RELEASE-MANIFEST.sha256
+      - uses: softprops/action-gh-release@5113cdc90fd4d541c801c55356214017bf5ae34b
         with:
-          files: dist/*
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            dist/wheels/*.whl
+            dist/sdist/*.tar.gz
+            dist/RELEASE-MANIFEST.sha256
           body_path: ${{ runner.temp }}/release_notes.md
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'b') || contains(github.ref_name, 'a') }}
+          prerelease: ${{ needs.release_gate.outputs.release_kind == 'rc' }}

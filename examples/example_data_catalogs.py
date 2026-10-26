@@ -53,7 +53,7 @@ def main() -> None:
         print(f"FitsTableIterableDataset filtered rows: {len(streamed)}")
         print(f"  first flux={streamed[0]['flux'].item():.1f}")
 
-        loader = make_loader(stream_ds, batch_size=4, optimize_cache=False)
+        loader = make_loader(stream_ds, batch_size=4)
         batch = next(iter(loader))
         print(f"  loader batch flux shape: {batch['flux'].shape}")
 

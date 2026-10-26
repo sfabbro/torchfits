@@ -152,9 +152,18 @@ def read(
     device: str = "cpu",
     mmap: bool | str = "auto",
     mode: str = "auto",
-    options: Any = None,
     return_header: bool = False,
-    **kwargs: Any,
+    *,
+    fp16: bool = False,
+    bf16: bool = False,
+    raw_scale: bool = False,
+    scale_on_device: bool = True,
+    use_cache: bool | None = None,
+    columns: list[str] | None = None,
+    start_row: int = 1,
+    num_rows: int = -1,
+    cache_capacity: int = 10,
+    fast_header: bool = True,
 ) -> Any:
     """Read a FITS image or table from the given path and HDU.
 
@@ -168,8 +177,6 @@ def read(
     :func:`torchfits.table.read` or :func:`torchfits.table.read_polars`.
     For explicit image tensors, prefer :func:`read_tensor`.
     """
-    kwargs = dict(kwargs)
-    kwargs["mode"] = mode
     from ._io_engine._read_pipeline import read_unified as _read_unified_impl
     from ._io_engine.image import batch_to_device as _batch_to_device_impl
 
@@ -179,9 +186,21 @@ def read(
         hdu=hdu,
         device=device,
         mmap=mmap,
-        options=options,
+        options=None,
         return_header=return_header,
-        kwargs=kwargs,
+        kwargs={
+            "mode": mode,
+            "fp16": fp16,
+            "bf16": bf16,
+            "raw_scale": raw_scale,
+            "scale_on_device": scale_on_device,
+            "use_cache": use_cache,
+            "columns": columns,
+            "start_row": start_row,
+            "num_rows": num_rows,
+            "cache_capacity": cache_capacity,
+            "fast_header": fast_header,
+        },
         autodetect_hdu=_autodetect_hdu_impl,
         batch_to_device=_batch_to_device_impl,
         resolve_image_mmap=_resolve_image_mmap,
@@ -573,7 +592,7 @@ def verify_checksums(path: str, hdu: int = 0) -> dict[str, Any]:
 
 
 def _normalize_cpp_table_data(table_dict: dict[str, Any]) -> dict[str, Any]:
-    from ._io_engine.write_api import (  # type: ignore[attr-defined]
+    from ._io_engine._write_helpers import (
         _normalize_cpp_table_data as _impl,
     )
 

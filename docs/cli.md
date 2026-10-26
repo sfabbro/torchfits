@@ -4,6 +4,7 @@ After installing `torchfits`, the `torchfits` command line interface lets you
 inspect, manipulate, and transform FITS files directly from your shell, backed by the same high-performance C++ engine and vendored CFITSIO as the Python library.
 
 Run `torchfits --help` or `torchfits <subcommand> --help` anytime for the complete list of options.
+Run `torchfits --version` to print the installed torchfits version.
 
 ---
 
@@ -53,7 +54,7 @@ Shared flags (availability varies by subcommand):
 
 | Flag | Name | Purpose | Default | Available on |
 |---|---|---|---|---|
-| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`); a repeated index (`-e 0,0`) is a usage error | All HDUs or 0/1 depending on command | every subcommand except `copy`, `diff` |
+| `-e` | `--hdu` | Target HDU index (e.g. `-e 0`, `-e 1,2`, or `-e all` for `setkey`); a repeated index (`-e 0,0`) is a usage error | All HDUs or 0/1 depending on command | every subcommand except `copy`, `diff`; table-only on `convert`, local-only on `probe`, and requires `--split hdu` on compression commands |
 | `-f` | `--format` | Output format: `text`, `json`, or `jsonl` (aliases `--json`, `--jsonl`) | `text` | `info`, `header`, `verify`, `stats`, `table`, `probe` |
 | `-o` | `--out` | Output path (alias of the positional `OUTPUT`) | positional `OUTPUT` | `convert`, `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
 | `--out-dir` | `--out-dir` | Output directory for batch file processing | unset (required for multi-input batches) | `copy`, `arith`, `cutout`, `compress`, `decompress`, `transform`, `setkey` |
@@ -183,7 +184,10 @@ Output statuses:
 
 ### `diff`
 
-Compares two FITS files HDU by HDU. Compares all header keywords (ignoring transient `CHECKSUM`/`DATASUM`) and evaluates pixel shapes, minimums, maximums, and means for image extensions. Returns exit code `0` if identical, `1` if different.
+Compares two FITS files HDU by HDU. Header card order, repeated cards, values,
+and comments must match (transient `CHECKSUM`/`DATASUM` cards are ignored).
+Image extensions also compare shapes, minimums, maximums, and means. Returns
+exit code `0` if identical, `1` if different.
 
 ```bash
 # Compare two files
@@ -287,6 +291,11 @@ torchfits convert multi_band.fits -o preview.png --bands 0,1,2 --to png
 
 With several input files, `--bands` is one HDU index **per input file** and its length must match the number of inputs. A band read that fails names the file and HDU it was reading (for example `g.fits: HDU 1: Could not move to HDU`), so a bad index is attributable.
 
+Table-only flags (`--hdu`, `--where`, `--columns`) are rejected for PNG
+output. PNG-only flags (`--bands`, `--recipe`, `--brightness`, `--saturation`,
+`--calibrated`, `--zeropoints`, `--q`, `--stretch`) are rejected for table
+output instead of being silently ignored.
+
 ---
 
 ### `copy`
@@ -309,6 +318,9 @@ torchfits copy *.fits --out-dir /backup/fits -J 0
 ### `arith`
 
 Performs scalar and image-to-image arithmetic (`add`, `sub`, `mul`, `div`). Same-shape HDUs are stacked for accelerated PyTorch vector execution.
+`--hdu2` is valid only with an image operand B. `--split hdu` requires
+`--out-dir` and rejects `--out`. Every generated destination is checked before
+processing so it cannot overwrite either input operand.
 
 ```bash
 # Add scalar value
@@ -330,10 +342,14 @@ torchfits arith *.fits --op mul --value 2.0 --out-dir /tmp/scaled -J 0
 
 Tile-compresses image HDUs using CFITSIO's compression architecture. Preserves non-image HDUs and table extensions.
 
-Supported algorithms: `RICE_1` (default), `GZIP_1`, `GZIP_2`, `HCOMPRESS_1`, `PLIO_1`.
+The default `GZIP_1` codec is lossless for integer and floating-point images.
+Also available: `RICE_1`, `GZIP_2`, `HCOMPRESS_1`, and `PLIO_1`; `BZIP2_1` is
+listed when the build includes bzip2. The non-default codecs use CFITSIO float
+quantization and are lossy for floating-point images; `PLIO_1` rejects floats.
+`--hdu` applies only with `--split hdu`.
 
 ```bash
-# Compress with default RICE_1
+# Compress losslessly with default GZIP_1
 torchfits compress science.fits science.fits.fz
 
 # Compress using GZIP algorithm
@@ -364,9 +380,14 @@ torchfits decompress *.fits.fz --out-dir /tmp/uncompressed -J 0
 
 ### `transform`
 
-Applies any astronomical normalization or stretch transform from `torchfits.transforms` directly from the shell.
-
-Supported transforms include: `ArcsinhStretch`, `LogStretch`, `SqrtStretch`, `ZScaleNormalize`, `RobustNormalize`, `BackgroundSubtract`, `PercentileClipNormalize`, `MinMaxNormalize`, `GlobalScalarNorm`.
+Applies a registered astronomical normalization or stretch transform directly
+from the shell. Supported names are `AffineTransform`, `ArcsinhStretch`,
+`AsymmetricSigmaClip`, `BackgroundSubtract`, `GlobalScalarNorm`,
+`InterquantileNormalize`, `InterquantileScale`, `LogStretch`,
+`MeshBackgroundSubtract`, `MinMaxNormalize`, `PercentileClipNormalize`,
+`RobustNormalize`, `SigmaClip`, `SigmaNormalize`, `SqrtStretch`, and
+`ZScaleNormalize`. Constructor values after `:` are parsed as booleans,
+integers, floats, or strings; duplicate and unknown names are usage errors.
 
 ```bash
 # Apply Arcsinh stretch
@@ -416,6 +437,9 @@ torchfits setkey science.fits --delete TEMPKEY
 
 # Batch update files from a text file list (@list syntax)
 torchfits setkey @file_list.txt -k PROCESSED --value "TRUE" --out-dir /tmp/updated -J 0
+
+# Standard input may be the only path source
+printf '%s\n' a.fits b.fits | torchfits setkey --stdin -k PROCESSED --value true
 ```
 
 ---
@@ -423,6 +447,10 @@ torchfits setkey @file_list.txt -k PROCESSED --value "TRUE" --out-dir /tmp/updat
 ### `probe`
 
 Inspects local files or peeks at remote FITS headers over HTTP(S) and VOSpace using HTTP Range requests without downloading the full file.
+`--hdu` is local-only. `--header-bytes` and `--timeout` are remote-only;
+`--header-bytes` must be between 2880 and 16777216. A remote response that does
+not contain a complete FITS header ending in an `END` card within that limit is
+an I/O error rather than a partial result.
 
 ```bash
 # Probe local file

@@ -16,29 +16,46 @@ torchfits.read(
     device="cpu",
     mmap="auto",
     mode="auto",
-    options=None,
     return_header=False,
-    **kwargs,
+    *,
+    fp16=False,
+    bf16=False,
+    raw_scale=False,
+    scale_on_device=True,
+    use_cache=None,
+    columns=None,
+    start_row=1,
+    num_rows=-1,
+    cache_capacity=10,
+    fast_header=True,
 )
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `path` | `str` or `PathLike` | *(required)* | FITS file path |
-| `hdu` | `int` or `str` or `None` | `0` | HDU index, EXTNAME, or `None`/`"auto"` for autodetection |
+| `path` | `str`, `PathLike`, or sequence | *(required)* | One FITS path or a list/tuple of paths; a sequence returns one result per path |
+| `hdu` | `int`, `str`, sequence, or `None` | `0` | HDU index, EXTNAME, a list/tuple of HDUs from one path, or `None`/`"auto"` for autodetection |
 | `device` | `str` | `"cpu"` | `"cpu"`, `"cuda"`, `"mps"` |
 | `mmap` | `bool` or `str` | `"auto"` | `True`, `False`, or `"auto"` |
 | `mode` | `str` | `"auto"` | `"auto"`, `"image"`, or `"table"` |
 | `return_header` | `bool` | `False` | Return `(data, Header)` tuple |
+| `fp16` | `bool` | `False` | Convert image results to `torch.float16`; if both precision flags are true, `fp16` takes precedence |
+| `bf16` | `bool` | `False` | Convert image results to `torch.bfloat16` |
+| `raw_scale` | `bool` | `False` | Return image storage values without applying BSCALE/BZERO |
+| `scale_on_device` | `bool` | `True` | For non-CPU image reads, transfer logical values directly; `False` selects the host scaling path before transfer |
+| `use_cache` | `bool` or `None` | `None` | `False` disables the read cache; `True` enables it (using capacity 10 when `cache_capacity <= 0`); `None` follows `cache_capacity` |
+| `columns` | `list[str]` or `None` | `None` | Table columns to return; invalid with `mode="image"` |
+| `start_row` | `int` | `1` | 1-based first table row; invalid with `mode="image"` |
+| `num_rows` | `int` | `-1` | Number of table rows (`-1` reads through the end); invalid with `mode="image"` |
+| `cache_capacity` | `int` | `10` | Read-cache capacity; `0` disables cached reads |
+| `fast_header` | `bool` | `True` | Use the fast header path in the unified-reader fallback |
 
 **Returns:** `torch.Tensor` (images), a column mapping for tables (scalar
 columns are tensors; VLA columns may use list/tuple values), or a tuple if
-`return_header=True`.
+`return_header=True`. Multiple paths or HDUs return results in input order.
 
-!!! note "Advanced options"
-    Prefer the explicit parameters and keyword arguments shown here. The
-    internal `options=` helper is not part of the public facade — do not
-    import it from a private module in application code.
+The options after `return_header` are keyword-only. Unknown keywords raise
+`TypeError`; `use_cache` must be a boolean or `None`.
 
 !!! tip "When to mmap"
     Mmap can help eligible large local integer IMAGE HDUs and repeated
@@ -101,8 +118,9 @@ torchfits.read_tensor(
 
 !!! tip "GPU reads"
     Pass `device="cuda"` or `device="mps"` to place the result on device.
-    Generic BSCALE/BZERO scaling still yields `float32` unless you opt into
-    storage dtypes with `raw_scale=True`. For example, signed-byte and
+    Generic BSCALE/BZERO scaling yields `float32` for BITPIX 8/16 and `float64`
+    for BITPIX 32/64 unless you opt into storage dtypes with `raw_scale=True`.
+    For example, signed-byte and
     pseudo-unsigned conventions expose their on-disk `uint8` / `int16` storage
     dtypes rather than the logical `int8` / `uint16` dtypes.
 
@@ -523,7 +541,8 @@ result = torchfits.verify_checksums(path, hdu=0)
 
 | Layer | Entry points | Role |
 |---|---|---|
-| Disk / policy | `torchfits.cache.configure_for_environment()`, `get_cache_stats()`, `clear_cache()`, `clear_cache(disk=True)` / `clear_all_caches()`, `optimize_for_dataset(paths, avg_file_size_mb=10.0)` | Environment policy and on-disk roots |
+| Disk downloads | `torchfits.cache.clear_cache(disk=True)` / `clear_all_caches()` | Remote and sample files under the configured cache root |
+| Aggregate statistics | `torchfits.cache.get_cache_stats()` | In-process I/O cache counters |
 | I/O metadata | `get_cache_performance()`, `clear_file_cache(...)` | In-process header / meta / data caches |
 | Shared metadata (C++) | `clear_file_cache(..., cpp=True)` | Per-path metadata across private CFITSIO handles |
 
@@ -531,31 +550,22 @@ result = torchfits.verify_checksums(path, hdu=0)
 torchfits.clear_file_cache(data=True, meta=True, hdu_types=True, stats=True, cpp=True)
 torchfits.get_cache_performance()
 
-torchfits.cache.configure_for_environment()
 torchfits.cache.get_cache_stats()
 torchfits.cache.clear_cache()  # in-process only (default)
-torchfits.clear_all_caches()  # in-process + disk cache_root()
-torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
+torchfits.clear_all_caches()  # in-process + configured disk cache
 ```
 
-`clear_cache()` clears in-process policy, data, and metadata caches. Pass
+`clear_cache()` clears in-process data and metadata caches. Pass
 `disk=True` (or call root `clear_all_caches()`) to also remove downloaded
-files under `cache_root()`.
+files under the configured disk cache root.
 
 `clear_file_cache` keyword-only flags (all default `True`): `data`, `meta`,
 `hdu_types`, `stats`, `cpp`. Optional `cpp_module=` overrides the extension
 module used for the C++ clear. The legacy `handles=` flag was removed in
 1.3.0: there is no shared CFITSIO handle pool to clear.
 
-`CacheConfig.max_files` and `max_memory_mb` do not size any live cache.
-
 Advanced helpers on `torchfits.io`: `cache_subsystem_policy(name)` /
 `clear_cache_subsystem(name)` (`"all"` clears every subsystem).
-
-!!! tip "Many-file datasets"
-    Call `torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=...)`
-    before multi-worker loops. `make_loader(..., optimize_cache=True)` does
-    this automatically. Each read uses a private CFITSIO handle.
 
 ### Disk cache directories
 

@@ -15,12 +15,17 @@ which is the reference contract.
 
 from __future__ import annotations
 
+from dataclasses import fields
+from unittest import mock
+
 import numpy as np
 import pytest
 import torch
 
 import torchfits
 import torchfits._C as cpp
+from torchfits._io_engine import _read_pipeline
+from torchfits._io_engine.options import ReadOptions
 
 
 @pytest.fixture
@@ -245,3 +250,151 @@ def test_plain_image_list_read_matches_single_read_values(images):
         expected = torchfits.read(path)
         assert torch.equal(got, expected), f"{path}: batch result differs"
         assert float(got[0, 0]) in (1.0, 2.0)
+
+
+_OPTION_CASES = [
+    ("fp16", True),
+    ("bf16", True),
+    ("raw_scale", True),
+    ("scale_on_device", False),
+    ("use_cache", False),
+    ("columns", ["A"]),
+    ("start_row", 2),
+    ("num_rows", 3),
+    ("cache_capacity", 23),
+    ("fast_header", False),
+    ("mode", "table"),
+]
+
+
+def test_option_equivalence_cases_cover_every_read_option():
+    assert {name for name, _ in _OPTION_CASES} == {
+        field.name for field in fields(ReadOptions)
+    }
+
+
+@pytest.mark.parametrize(("name", "value"), _OPTION_CASES)
+def test_list_read_preserves_each_normalized_option(name, value):
+    expected = ReadOptions(**{name: value})
+    if name == "use_cache":
+        expected.cache_capacity = 0
+
+    with mock.patch.object(
+        _read_pipeline, "_read_batch_paths", return_value=[]
+    ) as batch:
+        torchfits.read(["a.fits", "b.fits"], **{name: value})
+
+    assert batch.call_args.kwargs["options"] == expected
+
+
+@pytest.mark.parametrize(("name", "value"), _OPTION_CASES)
+def test_nondefault_option_uses_equivalent_per_path_dispatch(name, value):
+    options = ReadOptions()
+    setattr(options, name, value)
+    native = mock.Mock()
+
+    with mock.patch.object(
+        _read_pipeline, "read_unified", return_value=torch.zeros((2, 2))
+    ) as recursive:
+        result = _read_pipeline._read_batch_paths(
+            cpp_module=native,
+            path=["a.fits", "b.fits"],
+            hdu=0,
+            device="cpu",
+            mmap=True,
+            options=options,
+            return_header=False,
+            autodetect_hdu=lambda path: 0,
+            batch_to_device=lambda tensors, device: tensors,
+            resolve_image_mmap=lambda *args: True,
+            read_check_cache=lambda *args: (False, None, None),
+            read_header=lambda *args: {},
+            debug_scale=False,
+            cold_nocache=False,
+            read_exc_types=(RuntimeError, OSError, ValueError),
+            logger=mock.Mock(),
+        )
+
+    assert len(result) == 2
+    assert recursive.call_count == 2
+    native.read_images_batch.assert_not_called()
+
+
+def test_batch_recursion_carries_the_complete_options_object():
+    options = ReadOptions(
+        fp16=True,
+        raw_scale=True,
+        scale_on_device=False,
+        use_cache=False,
+        columns=["A"],
+        start_row=2,
+        num_rows=3,
+        cache_capacity=0,
+        fast_header=False,
+        mode="table",
+    )
+
+    with mock.patch.object(
+        _read_pipeline, "read_unified", return_value={"A": torch.arange(3)}
+    ) as recursive:
+        result = _read_pipeline._read_batch_paths(
+            cpp_module=mock.Mock(),
+            path=["a.fits", "b.fits"],
+            hdu=1,
+            device="cpu",
+            mmap=False,
+            options=options,
+            return_header=False,
+            autodetect_hdu=lambda path: 1,
+            batch_to_device=lambda tensors, device: tensors,
+            resolve_image_mmap=lambda *args: False,
+            read_check_cache=lambda *args: (False, None, None),
+            read_header=lambda *args: {},
+            debug_scale=False,
+            cold_nocache=False,
+            read_exc_types=(RuntimeError, OSError, ValueError),
+            logger=mock.Mock(),
+        )
+
+    assert len(result) == 2
+    assert recursive.call_count == 2
+    assert all(
+        call.kwargs["options"] == options and call.kwargs["kwargs"] == {}
+        for call in recursive.call_args_list
+    )
+
+
+def test_use_cache_false_selects_nocache_for_every_list_path(monkeypatch):
+    calls = []
+
+    def read_full_nocache(path, hdu, mmap):
+        calls.append((path, hdu, mmap))
+        return torch.zeros((2, 2))
+
+    monkeypatch.setattr(cpp, "read_full_nocache", read_full_nocache)
+    result = torchfits.read(
+        ["a.fits", "b.fits"],
+        mmap=False,
+        use_cache=False,
+        scale_on_device=False,
+    )
+
+    assert len(result) == 2
+    assert calls == [("a.fits", 0, False), ("b.fits", 0, False)]
+
+
+@pytest.mark.parametrize("cache_kwargs", [{"use_cache": False}, {"cache_capacity": 0}])
+def test_disabled_cache_selects_nocache_for_single_cpu_image(monkeypatch, cache_kwargs):
+    expected = torch.arange(4).reshape(2, 2)
+    read_full_nocache = mock.Mock(return_value=expected)
+    monkeypatch.setattr(cpp, "read_full_nocache", read_full_nocache)
+
+    result = torchfits.read("image.fits", mmap=False, **cache_kwargs)
+
+    assert result is expected
+    read_full_nocache.assert_called_once_with("image.fits", 0, False)
+
+
+def test_read_rejects_removed_options_object():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'options'"):
+        torchfits.read("unused.fits", options=ReadOptions())

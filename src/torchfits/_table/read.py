@@ -18,43 +18,8 @@ from ._read_scan import (
     _scan_torch_iter,
     _validate_scan_request,
 )
-from ._read_schema import schema
-from ._read_schema import (  # noqa: F401  # re-export private but keep internal use
-    _validate_projection_columns,
-)
-from ._read_where import (  # noqa: F401  # re-export private but keep internal use
-    _compile_where_to_simple_predicates,
-    _read_table_with_where,
-    _where_mask_for_table,
-)
-
-# Re-export private helpers for backward-compatible imports from this module.
-from ._read_schema import (  # noqa: F401
-    _arrow_type_from_tform,
-    _build_fits_metadata,
-    _can_use_full_read_path,
-    _can_use_mmap_row_path_for_full_read,
-    _can_use_torch_table_path_for_full_read,
-    _column_tform_code_and_repeat,
-    _column_tforms_for_decode,
-    _empty_table_with_schema,
-    _fits_tform_is_bit,
-    _row_slice_from_start_num,
-    _schema_from_header,
-    _unsigned_column_dtypes,
-)
-from ._read_where import (  # noqa: F401
-    _TORCH_WHERE_MAX_ROWS,
-    _filter_table_with_where,
-    _torch_cmp_mask,
-    _try_cpp_where_pushdown,
-    _try_torch_tensor_where_filter,
-)
-from ._read_scan import (  # noqa: F401
-    _iter_chunks_cpp_table,
-    _read_table_unfiltered,
-    _resolve_rows_from_where_cpp,
-)
+from ._read_schema import _empty_table_with_schema, _validate_projection_columns, schema
+from ._read_where import _read_table_with_where
 
 
 _COMPLEX_ERR = (
@@ -279,9 +244,8 @@ def read_torch(
     """
     path = coerce_fits_path(path)
     guard_fits_path(path)
-    # Torch dict reads serve complex columns, so only the projection is
-    # validated here (r5a-03).
-    _header, columns = _read_prelude(path, hdu, columns, None, arrow_api=False)
+    if not (isinstance(hdu, int) and columns is None):
+        _header, columns = _read_prelude(path, hdu, columns, None, arrow_api=False)
     import torchfits
 
     # Lazy import: table_api path must not pull hdu during _table.read import.

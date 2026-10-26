@@ -278,13 +278,18 @@ def test_signed_int16_table_column_round_trips_as_signed(tmp_path):
         },
         overwrite=True,
     )
-    out = torchfits.read(str(path), hdu=1, mode="table")
+    out = torchfits.read(str(path), hdu=1, mode="table", mmap=False, use_cache=False)
     # This is the route the unsigned dtype map feeds: the table-tensor
     # destination, where a misclassification would silently change a signed
     # column's dtype.
     assert out["OFFSET"].dtype == torch.int16, out["OFFSET"].dtype
     assert out["BIG"].dtype == torch.int32, out["BIG"].dtype
     assert out["OFFSET"].tolist() == [1, 2, 3]
+
+    direct = torchfits.table.read_torch(str(path), hdu=1, mmap=False, cache_capacity=0)
+    assert direct.keys() == out.keys()
+    for name in direct:
+        assert torch.equal(direct[name], out[name])
 
     # And the Arrow route agrees.
     arrow = torchfits.table.read(str(path), hdu=1)

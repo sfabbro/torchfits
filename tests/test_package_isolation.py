@@ -145,16 +145,35 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert "cp314-*" in str(cibw.get("build", ""))
     assert "cp31?t-*" in str(cibw.get("skip", ""))
     assert "ubuntu-24.04-arm" in wheel_workflow
-    # Require the v4 cibuildwheel line rather than one exact patch, so a
-    # dependency bump does not have to touch this test (the workflow pin is
-    # maintained by dependabot, and the wheel-smoke job validates behaviour).
-    cibw_pin = re.search(r"pypa/cibuildwheel@v(\d+)\.", wheel_workflow)
+    cibw_pin = re.search(r"pypa/cibuildwheel@([0-9a-f]{40})", wheel_workflow)
     assert cibw_pin is not None, "cibuildwheel action pin not found"
-    assert int(cibw_pin.group(1)) >= 4
+    action_refs = re.findall(
+        r"^\s*-?\s*uses:\s*[^@\s]+@([^\s]+)", wheel_workflow, re.MULTILINE
+    )
+    assert action_refs
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
     # PyPI must not get an sdist — unmatched CPython/arch would compile.
     assert "pattern: cibw-wheels-*" in wheel_workflow
     # The fork receives the same tag and has no PyPI trusted publisher.
     assert "github.repository == 'astroai/torchfits'" in wheel_workflow
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.publish" in wheel_workflow
+    )
+    assert "needs.release_gate.outputs.release_kind == 'stable'" in wheel_workflow
+    assert "needs.release_gate.outputs.release_kind == 'rc'" in wheel_workflow
+    assert "name: validated-release-artifacts" in wheel_workflow
+    assert "python scripts/check_wheel_contents.py dist/wheels/*.whl" in wheel_workflow
+    assert "python scripts/validate_release_wheels.py" in wheel_workflow
+    assert wheel_workflow.count("--verify-manifest dist/RELEASE-MANIFEST.sha256") == 2
+    assert wheel_workflow.count("python scripts/validate_release_sdist.py") == 4
+    assert "--sdist dist/sdist/*.tar.gz" in wheel_workflow
+    assert (
+        "python scripts/check_macos_wheel_floor.py wheelhouse/*.whl" in wheel_workflow
+    )
+    assert "_PYTHON_HOST_PLATFORM" in str(cibw["macos"]["environment"])
+    assert cibw["macos"]["environment"]["_PYTHON_HOST_PLATFORM"] == (
+        "macosx-14.0-arm64"
+    )
     cmake_args = " ".join(pyproject["tool"]["scikit-build"]["cmake"]["args"])
     assert "CONDA_PREFIX" not in cmake_args
     assert "-DUSE_CUDA=OFF" in cmake_args
@@ -172,6 +191,12 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert (REPO_ROOT / "scripts" / "cibw_before_build.sh").is_file()
     assert (REPO_ROOT / "scripts" / "cibw_test.sh").is_file()
     assert (REPO_ROOT / "scripts" / "cibuildwheel.sh").is_file()
+    assert pyproject["tool"]["scikit-build"]["sdist"]["force-include"] == {
+        "extern/cfitsio": "extern/cfitsio"
+    }
+    assert (
+        "bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt" in wheel_workflow
+    )
 
     # [dev] is the library toolchain. Comparators live in torchfits-harness.
     dev = set(pyproject["project"]["optional-dependencies"]["dev"])

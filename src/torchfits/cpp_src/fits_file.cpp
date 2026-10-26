@@ -459,12 +459,8 @@ torch::Tensor FITSFile::read_image_raw(int hdu_num, bool use_mmap) {
     return tensor;
 }
 
-bool FITSFile::write_image(nb::ndarray<> tensor, int /*hdu_num*/, double /*bscale*/, double /*bzero*/) {
+bool FITSFile::write_image(nb::ndarray<> tensor) {
     std::lock_guard<std::recursive_mutex> lock(io_mutex_);
-    // Note: hdu_num is unused — fits_create_img always appends a new HDU.
-    // bscale/bzero are accepted for API compatibility but ignored: calling
-    // fits_set_bscale here would inverse-scale pixels without writing
-    // BSCALE/BZERO cards, so a later read would denormalize unlabeled data.
     int status = 0;
     int naxis = tensor.ndim();
     std::vector<long> naxes(naxis);
@@ -671,7 +667,7 @@ bool FITSFile::write_hdus(nb::list hdus, bool /*overwrite*/) {
         }
         if (has_data) {
             nb::ndarray<> tensor = nb::cast<nb::ndarray<>>(data_obj);
-            write_image(tensor, hdu_count, 1.0, 0.0);
+            write_image(tensor);
         } else {
             int status = 0;
             long naxes[1] = {0};

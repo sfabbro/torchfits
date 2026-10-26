@@ -366,7 +366,6 @@ def _pair_loader(
         batch_size=batch,
         shuffle=True,
         num_workers=0,
-        optimize_cache=False,
     )
 
 

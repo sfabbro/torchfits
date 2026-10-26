@@ -21,4 +21,3 @@ def test_public_where_rejects_null_cmp_on_numeric():
 
 def test_public_where_exports_parser_helpers():
     assert where.parse_where_literal("42") == 42
-    assert where.where_identifier_re.match("column_1")

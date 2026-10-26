@@ -130,11 +130,11 @@ torchfits transform science.fits --name PercentileClipNormalize:lower_pct=1.0,up
 ## 7. Tile Compression & Decompression (`fpack` / `funpack`)
 
 ```bash
-# Compress using RICE_1 tile compression (creates .fits.fz)
+# Compress losslessly using the default GZIP_1 codec (creates .fits.fz)
 torchfits compress science.fits /tmp/science.fits.fz
 
-# Compress using GZIP or HCOMPRESS algorithms
-torchfits compress science.fits /tmp/science.fits.fz --algorithm GZIP_1
+# Select Rice or Hcompress explicitly (lossy for floating-point images)
+torchfits compress science.fits /tmp/science.fits.fz --algorithm RICE_1
 
 # Decompress a tile-compressed file back to standard FITS
 torchfits decompress /tmp/science.fits.fz /tmp/science_decompressed.fits

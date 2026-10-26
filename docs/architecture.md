@@ -214,7 +214,7 @@ Caches sit in three places:
 
 | Layer | Where | Role |
 |---|---|---|
-| Disk / policy | `torchfits.cache` | Environment policy, on-disk remote and sample roots, `optimize_for_dataset` |
+| Disk downloads | `torchfits.cache` | On-disk remote and sample roots, clearing, and statistics |
 | Python I/O metadata | engine caches (via `clear_file_cache`) | Path-keyed header / meta / data LRU |
 | Shared metadata (C++) | native extension | Per-path image / scale / HDU-name metadata shared across private CFITSIO opens |
 
@@ -282,9 +282,9 @@ flowchart LR
 
 HTTP(S) and vos/vault paths on Dataset classes download into the remote cache
 (`TORCHFITS_CACHE_DIR` / `TORCHFITS_REMOTE_CACHE`, or `cache_dir=` on the
-Dataset). `make_loader(..., optimize_cache=True)` can start prefetch for URLs
-in `dataset.files` (skipped for `FitsCutoutDataset`, which prefers HTTP Range
-cutouts). Short forms `vos:<user>/...` and `vault:<user>/...` normalize to
+Dataset). Remote-capable datasets materialize URLs in the configured cache on
+access; `FitsCutoutDataset` prefers HTTP Range cutouts instead. Short forms
+`vos:<user>/...` and `vault:<user>/...` normalize to
 `vos://cadc.nrc.ca~vault/<user>/...` via the optional `vos` client.
 
 `read_subset` / CLI `cutout` on **uncompressed 2D** HTTP(S) images Range-fetch

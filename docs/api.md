@@ -46,6 +46,8 @@ For step-by-step code tutorials, see [Python Workflows](python-workflows.md) and
 | Table colnames / info (skinny) | `read_colnames` / `read_table_info` | [Core I/O](api-core-io.md#skinny-colnames-table-info) |
 | Multi-HDU context manager | `open(path, mode="r")` | [Core I/O](api-core-io.md#open) |
 | Batch-read many files | `read_batch(file_paths, hdu=0)` | [Core I/O](api-core-io.md#read_batch) |
+| Inspect a batch before reading | `read_batch_info(file_paths, hdu=0)` | [Core I/O](api-core-io.md#read_batch_info) |
+| Write images, tables, or HDU lists | `write(path, data, overwrite=False)` | [Core I/O](api-core-io.md#write) |
 | Insert an HDU | `insert_hdu(path, data, index=1)` | [Core I/O](api-core-io.md#hdu-mutation) |
 | Replace an HDU | `replace_hdu(path, hdu, data)` | [Core I/O](api-core-io.md#hdu-mutation) |
 | Delete an HDU | `delete_hdu(path, hdu)` | [Core I/O](api-core-io.md#hdu-mutation) |
@@ -157,7 +159,8 @@ The root `torchfits.__all__` (public surface; see `__all__`):
   `TableHDURef`
 - **Namespaces:** `table`, `cache`, `transforms`, `data`, `where`, `hdu`
 
-Each entry has a quick-path row and a reference page above.
+Each entry has a reference on the pages above; common calls also have a
+quick-path row.
 
 ---
 

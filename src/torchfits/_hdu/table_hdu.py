@@ -383,7 +383,7 @@ class TableHDU:
                 pa_arrays[name] = pa.array(arr)
         pa_table = pa.table(pa_arrays)
 
-        from .._table.read import _where_mask_for_table  # type: ignore[attr-defined]
+        from .._table._read_where import _where_mask_for_table
 
         mask_chunked = _where_mask_for_table(pa_table, condition)
         mask_arr = mask_chunked.to_numpy()  # type: ignore[attr-defined]

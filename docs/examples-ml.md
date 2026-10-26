@@ -328,16 +328,15 @@ loader = make_loader(
     num_workers=4,
     pin_memory=True,  # Accelerate host-to-GPU memory copies
     persistent_workers=True,  # Prevent re-spawning workers between epochs
-    optimize_cache=True,  # Warm system page caches across worker pool
 )
 ```
 
 | Feature | Standard `torch.utils.data.DataLoader` | `torchfits.data.make_loader` |
 |---|---|---|
 | **Multi-worker FITS Collation** | Requires custom `collate_fn` | Built-in `fits_collate_fn` handles tensors & dicts |
-| **Worker Cache Warmup** | Manual implementation | Automatic with `optimize_cache=True` |
-| **Remote HTTP URL Handling** | Fails or downloads synchronously | Prefetches remote URL batches asynchronously |
-| **Memory Pinning** | `pin_memory=False` by default | Enabled by default for CUDA environments |
+| **Collation and shuffle defaults** | Manual implementation | Supplied by `make_loader` |
+| **Remote HTTP URL Handling** | Dataset-specific | Dataset-specific caching and range reads |
+| **Memory Pinning** | `pin_memory=False` by default | `pin_memory=False` by default |
 
 ---
 

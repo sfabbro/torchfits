@@ -41,7 +41,7 @@ from .datasets import (
     _resolve_rank_and_world_size,
     discover_bands,
 )
-from .remote import is_remote_url, prefetch_urls, resolve_local_path
+from .remote import resolve_local_path
 
 _log = logging.getLogger(__name__)
 
@@ -665,19 +665,9 @@ def make_loader(
     pin_memory: bool = False,
     prefetch_factor: int = 2,
     drop_last: bool = False,
-    *,
-    optimize_cache: bool = True,
-    avg_file_size_mb: float = 10.0,
     **loader_kwargs: Any,
 ) -> DataLoader[Any]:
-    """Create a DataLoader with sensible defaults and optional download warm-up.
-
-    When *optimize_cache* is True and the dataset exposes a ``files``
-    attribute, remote files are fetched once into the shared on-disk cache
-    and :func:`torchfits.cache.optimize_for_dataset` tunes the cache policy
-    hints for the dataset size. Cutout datasets are excluded: they stream
-    HTTP byte ranges or stage their own ephemeral copies instead of caching
-    whole files.
+    """Create a DataLoader with sensible defaults.
 
     Parameters
     ----------
@@ -695,11 +685,6 @@ def make_loader(
         Prefetch factor for multi-worker loading.
     drop_last : bool
         Drop the last incomplete batch.
-    optimize_cache : bool
-        Call ``cache.optimize_for_dataset`` before creating the loader.
-    avg_file_size_mb : float
-        Average file size in MB, used to estimate whether the dataset fits
-        the disk cache.
     **loader_kwargs :
         Passed through to :class:`torch.utils.data.DataLoader`.
 
@@ -716,29 +701,6 @@ def make_loader(
     # prefetch_factor is only valid with num_workers > 0
     if num_workers == 0:
         prefetch_factor = None  # type: ignore[assignment]
-
-    if optimize_cache:
-        file_list = getattr(dataset, "files", None)
-        if file_list:
-            from torchfits.cache import optimize_for_dataset
-
-            cache_dir = getattr(dataset, "cache_dir", None)
-            # Cutout datasets stream HTTP byte ranges or stage their own
-            # ephemeral copies; caching whole files here would download each
-            # remote twice (the cache copy would never be read).
-            if not isinstance(
-                dataset, (FitsCutoutDataset, FitsStagedCutoutIterableDataset)
-            ):
-                remote = [p for p in file_list if is_remote_url(str(p))]
-                if remote:
-                    prefetch_urls(remote, cache_dir=cache_dir)
-                local = [
-                    resolve_local_path(str(p), cache_dir=cache_dir) for p in file_list
-                ]
-            else:
-                local = [str(p) for p in file_list if not is_remote_url(str(p))]
-            if local:
-                optimize_for_dataset(local, avg_file_size_mb=avg_file_size_mb)
 
     return DataLoader(
         dataset,

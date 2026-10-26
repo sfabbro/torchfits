@@ -65,7 +65,7 @@ def write(
         hdr = header
     import torchfits
     from .._io_engine._write_helpers import QuantizeError
-    from .._io_engine.write_api import (  # type: ignore[attr-defined]
+    from .._io_engine._write_helpers import (
         _prepare_quantized_table_data_for_write,
         _prepare_unsigned_table_data_for_write,
     )

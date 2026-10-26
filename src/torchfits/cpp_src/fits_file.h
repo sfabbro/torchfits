@@ -53,7 +53,7 @@ public:
 
     torch::Tensor read_tensor(int hdu_num, bool use_mmap = true);
     torch::Tensor read_image_raw(int hdu_num, bool use_mmap = true);
-    bool write_image(nb::ndarray<> tensor, int hdu_num, double bscale, double bzero);
+    bool write_image(nb::ndarray<> tensor);
     std::vector<std::tuple<std::string, std::string, std::string>> get_header(int hdu_num);
     std::vector<long> get_shape(int hdu_num);
     int get_dtype(int hdu_num);

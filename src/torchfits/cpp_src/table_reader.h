@@ -37,6 +37,7 @@
 #include "fits_detail.h"
 #include "table_types.h"
 #include "security.h"
+#include "checked_arithmetic.h"
 
 namespace nb = nanobind;
 
@@ -65,7 +66,11 @@ public:
             status = 0;
             fits_movabs_hdu(fptr_, target_hdu_, nullptr, &status);
             if (status != 0) {
-                throw std::runtime_error("Failed to move to table HDU");
+                char err_msg[81];
+                fits_get_errstatus(status, err_msg);
+                throw std::runtime_error(
+                    "Invalid table geometry for HDU " + std::to_string(hdu_num_) +
+                    ": " + std::string(err_msg));
             }
             analyze_table();
         } catch (...) {
@@ -81,7 +86,11 @@ public:
         target_hdu_ = hdu_num + 1;
         fits_movabs_hdu(fptr_, target_hdu_, nullptr, &status);
         if (status != 0) {
-            throw std::runtime_error("Failed to move to table HDU");
+            char err_msg[81];
+            fits_get_errstatus(status, err_msg);
+            throw std::runtime_error(
+                "Invalid table geometry for HDU " + std::to_string(hdu_num_) +
+                ": " + std::string(err_msg));
         }
         // Needed for VLA heap pread coalesce (diskfile path).
         char fname[FLEN_FILENAME] = {0};
@@ -188,12 +197,11 @@ public:
             fits_get_coltype(fptr_, i, &typecode, &repeat_long, &width_long, &col_status);
 
             if (col_status != 0) {
-                 #ifdef DEBUG_TABLE
                  char err_msg[81];
                  fits_get_errstatus(col_status, err_msg);
-                 fprintf(stderr, "Warning: Failed to get column %d info: %s\n", i, err_msg);
-                 #endif
-                 continue;
+                 throw std::runtime_error(
+                     "Invalid table geometry for column " + std::string(ttype) +
+                     ": " + std::string(err_msg));
             }              // A repeat of 0 is legal in a TFORM and astropy reads such a column
               // as zero-width (shape (nrows, 0)). It must not reach the read
               // paths: col.repeat drives the element count, so a zero-repeat
@@ -375,11 +383,21 @@ public:
                             " for column " + std::string(ttype)
                         );
                 }
-                if (col.type == FITSColumnType::BIT) {
-                    col.storage_bytes = (col.repeat + 7L) / 8L;
+                const std::string geometry =
+                    "Invalid table geometry for column " + col.name;
+                if (is_ascii_) {
+                    col.storage_bytes = internal::checked_nonnegative_cast<long>(
+                        width_long, geometry + " width");
+                } else if (col.type == FITSColumnType::BIT) {
+                    col.storage_bytes = internal::checked_nonnegative_add<long>(
+                        static_cast<long>(col.repeat), 7L, geometry + " storage") / 8L;
                 } else {
-                    col.storage_bytes =
-                        static_cast<long>(col.width) * static_cast<long>(col.repeat);
+                    col.storage_bytes = internal::checked_nonnegative_multiply<long>(
+                        static_cast<long>(col.width), static_cast<long>(col.repeat),
+                        geometry + " storage");
+                }
+                if (col.width <= 0 || col.repeat <= 0 || col.storage_bytes <= 0) {
+                    throw std::runtime_error(geometry + ": non-positive width or repeat");
                 }
             }
 
@@ -400,9 +418,31 @@ public:
 
         // Calculate offsets
         long current_offset = 0;
-        for (auto& col : columns_) {
-            col.byte_offset = current_offset;
-            current_offset += col.storage_bytes;
+        for (size_t i = 0; i < columns_.size(); ++i) {
+            auto& col = columns_[i];
+            if (is_ascii_) {
+                long tbcol = 0;
+                int tbcol_status = 0;
+                char tbcol_key[FLEN_KEYWORD];
+                snprintf(tbcol_key, FLEN_KEYWORD, "TBCOL%zu", i + 1);
+                fits_read_key(
+                    fptr_, TLONG, tbcol_key, &tbcol, nullptr, &tbcol_status);
+                if (tbcol_status != 0 || tbcol <= 0) {
+                    throw std::runtime_error(
+                        "Invalid table geometry for column " + col.name + ": TBCOL");
+                }
+                col.byte_offset = tbcol - 1;
+                current_offset = std::max(
+                    current_offset,
+                    internal::checked_nonnegative_add<long>(
+                        col.byte_offset, col.storage_bytes,
+                        "Invalid table geometry for column " + col.name + " byte offset"));
+            } else {
+                col.byte_offset = current_offset;
+                current_offset = internal::checked_nonnegative_add<long>(
+                    current_offset, col.storage_bytes,
+                    "Invalid table geometry for column " + col.name + " byte offset");
+            }
         }
         long declared_row_width = 0;
         int row_width_status = 0;
@@ -414,10 +454,18 @@ public:
             nullptr,
             &row_width_status
         );
-        row_width_bytes_ =
-            (row_width_status == 0 && declared_row_width > 0)
-            ? declared_row_width
-            : current_offset;
+        if (row_width_status != 0 || declared_row_width < 0 ||
+            (declared_row_width == 0 && ncols_ != 0)) {
+            throw std::runtime_error("Invalid table geometry: NAXIS1");
+        }
+        if (current_offset > declared_row_width) {
+            throw std::runtime_error(
+                "Invalid table geometry: aggregate column storage " +
+                std::to_string(current_offset) + " exceeds NAXIS1 " +
+                std::to_string(declared_row_width));
+        }
+        row_width_bytes_ = declared_row_width;
+        validate_physical_table_extent();
     }
 
     // Helper struct to hold column data (either fixed or VLA)
@@ -637,6 +685,9 @@ public:
         if (nrows_ == 0) {
             return {};
         }
+        if (num_rows <= 0) {
+            throw std::runtime_error("Invalid table row count: " + std::to_string(num_rows));
+        }
 
         // Validate rows
         if (start_row < 1 || start_row > nrows_) {
@@ -710,6 +761,28 @@ public:
                  shape.push_back(col.repeat);
             }
 
+            const int64_t row_elements =
+                col.type == FITSColumnType::STRING && is_ascii_
+                ? static_cast<int64_t>(col.width)
+                : static_cast<int64_t>(col.repeat);
+            const int64_t allocation_elements =
+                internal::checked_nonnegative_multiply<int64_t>(
+                static_cast<int64_t>(num_rows), row_elements,
+                "Invalid table geometry for column " + col.name + " allocation");
+            const size_t allocation_element_bytes =
+                col.type == FITSColumnType::BIT || col.type == FITSColumnType::LOGICAL ||
+                    col.type == FITSColumnType::BYTE || col.type == FITSColumnType::STRING
+                ? 1
+                : internal::checked_nonnegative_cast<size_t>(
+                      col.width,
+                      "Invalid table geometry for column " + col.name + " element width");
+            internal::checked_nonnegative_multiply<size_t>(
+                internal::checked_nonnegative_cast<size_t>(
+                    allocation_elements,
+                    "Invalid table geometry for column " + col.name + " allocation"),
+                allocation_element_bytes,
+                "Invalid table geometry for column " + col.name + " allocation");
+
             // Create tensor
             torch::Tensor tensor = torch::empty(shape, torch::TensorOptions().dtype(col.torch_type));
 
@@ -737,7 +810,9 @@ public:
                 // long math: width/repeat are int and their product can
                 // overflow int for absurd TFORM repeats before it lands in
                 // this long accumulator.
-                requested_bytes += static_cast<long>(col.width) * static_cast<long>(col.repeat);
+                requested_bytes = internal::checked_nonnegative_add<long>(
+                    requested_bytes, col.storage_bytes,
+                    "Invalid table geometry for projected columns");
             }
         }
 
@@ -775,16 +850,34 @@ public:
                     int datatype = cfitsio_read_datatype(col);
 
                     long firstelem = 1;
-                    long nelements = num_rows * col.repeat;
+                    long nelements = internal::checked_nonnegative_multiply<long>(
+                        num_rows, static_cast<long>(col.repeat),
+                        "Invalid table geometry for column " + col.name + " element count");
 
                     if (col.type == FITSColumnType::STRING) {
                          if (is_ascii_) {
                              // ASCII table: read as strings
-                             std::vector<char*> pointers(nelements);
-                             std::vector<char> buffer(nelements * (col.width + 1));
+                              const size_t pointer_count =
+                                  internal::checked_nonnegative_cast<size_t>(
+                                      nelements,
+                                      "Invalid ASCII table geometry for column " + col.name);
+                              const size_t string_stride =
+                                  internal::checked_nonnegative_add<size_t>(
+                                      internal::checked_nonnegative_cast<size_t>(
+                                          col.width,
+                                          "Invalid ASCII table geometry for column " + col.name),
+                                      1,
+                                      "Invalid ASCII table geometry for column " + col.name);
+                              const size_t buffer_size =
+                                  internal::checked_nonnegative_multiply<size_t>(
+                                      pointer_count, string_stride,
+                                      "Invalid ASCII table geometry for column " + col.name);
+                              std::vector<char*> pointers(pointer_count);
+                              std::vector<char> buffer(buffer_size);
 
                              for (long i = 0; i < nelements; i++) {
-                                 pointers[i] = &buffer[i * (col.width + 1)];
+                                  pointers[static_cast<size_t>(i)] =
+                                      &buffer[static_cast<size_t>(i) * string_stride];
                              }
 
                              fits_read_col(fptr_, TSTRING, col_idx + 1, start_row, firstelem, nelements,
@@ -998,6 +1091,50 @@ public:
                 + " but the file holds only "
                 + std::to_string(static_cast<long long>(file_size))
                 + "; the copy is incomplete or corrupt");
+        }
+    }
+
+    void validate_physical_table_extent() const {
+        if (!direct_io_ok()) {
+            return;
+        }
+        struct stat st;
+        if (::stat(filename_.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+            return;
+        }
+        LONGLONG data_offset = 0;
+        LONGLONG data_end = 0;
+        int status = 0;
+        fits_get_hduaddrll(fptr_, nullptr, &data_offset, &data_end, &status);
+        if (status != 0 || data_offset < 0 || data_end < data_offset) {
+            throw std::runtime_error("Invalid table geometry: HDU extent");
+        }
+        LONGLONG pcount = 0;
+        status = 0;
+        fits_read_key(
+            fptr_, TLONGLONG, const_cast<char*>("PCOUNT"), &pcount, nullptr, &status);
+        if (status != 0 || pcount < 0) {
+            throw std::runtime_error("Invalid table geometry: PCOUNT");
+        }
+        const LONGLONG table_bytes =
+            internal::checked_nonnegative_multiply<LONGLONG>(
+                internal::checked_nonnegative_cast<LONGLONG>(
+                    row_width_bytes_, "Invalid table geometry: row width"),
+                internal::checked_nonnegative_cast<LONGLONG>(
+                    nrows_, "Invalid table geometry: row count"),
+                "Invalid table geometry: table extent");
+        const LONGLONG required = internal::checked_nonnegative_add<LONGLONG>(
+            data_offset,
+            internal::checked_nonnegative_add<LONGLONG>(
+                table_bytes, pcount, "Invalid table geometry: HDU data extent"),
+            "Invalid table geometry: HDU data extent");
+        const LONGLONG file_size = internal::checked_nonnegative_cast<LONGLONG>(
+            st.st_size, "Invalid table geometry: physical file size");
+        if (required > file_size) {
+            throw std::runtime_error(
+                "Invalid table geometry: declared HDU data extent " +
+                std::to_string(required) + " exceeds physical file size " +
+                std::to_string(file_size));
         }
     }
 
@@ -2460,34 +2597,137 @@ public:
     std::pair<torch::Tensor, torch::Tensor> read_vla_column_flat(
         int col_idx, long start_row, long num_rows, const ColumnInfo& col
     ) {
-        std::vector<long> repeats(num_rows, 0);
-        std::vector<long> heap_offsets(num_rows, 0);
+        const size_t descriptor_count = internal::checked_nonnegative_cast<size_t>(
+            num_rows, "Invalid VLA geometry for column " + col.name + " row count");
+        std::vector<LONGLONG> repeats(descriptor_count, 0);
+        std::vector<LONGLONG> heap_offsets(descriptor_count, 0);
         int status = 0;
-        fits_read_descripts(
+        fits_read_descriptsll(
             fptr_, col_idx + 1, start_row, num_rows, repeats.data(), heap_offsets.data(), &status
         );
         if (status != 0) {
             status = 0;
             for (long i = 0; i < num_rows; i++) {
                 long row = start_row + i;
-                fits_read_descript(fptr_, col_idx + 1, row, &repeats[i], &heap_offsets[i], &status);
+                fits_read_descriptll(
+                    fptr_, col_idx + 1, row, &repeats[i], &heap_offsets[i], &status);
                 if (status != 0) {
                     char err_msg[81];
                     fits_get_errstatus(status, err_msg);
-                    throw std::runtime_error("Failed to read VLA descriptor: " + std::string(err_msg));
+                    throw std::runtime_error(
+                        "Failed to read VLA descriptor for column " + col.name +
+                        " row " + std::to_string(row) + ": " + std::string(err_msg));
                 }
             }
         }
 
-        std::vector<int64_t> offsets(num_rows + 1, 0);
+        size_t elem_bytes = 0;
+        switch (col.torch_type) {
+            case torch::kBool:
+            case torch::kUInt8:
+            case torch::kInt8: elem_bytes = 1; break;
+            case torch::kInt16: elem_bytes = 2; break;
+            case torch::kInt32:
+            case torch::kFloat32: elem_bytes = 4; break;
+            case torch::kInt64:
+            case torch::kFloat64: elem_bytes = 8; break;
+            default:
+                throw std::runtime_error("Unsupported VLA scalar type for column " + col.name);
+        }
+
+        const size_t offsets_count = internal::checked_nonnegative_add<size_t>(
+            descriptor_count, 1, "Invalid VLA geometry for column " + col.name + " offsets");
+        std::vector<int64_t> offsets(offsets_count, 0);
         int64_t total = 0;
         for (long i = 0; i < num_rows; i++) {
-            long rep = repeats[i];
-            if (rep < 0) {
-                rep = 0;
+            const long row = start_row + i;
+            if (repeats[i] < 0) {
+                throw std::runtime_error(
+                    "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + ": negative repeat " +
+                    std::to_string(repeats[i]));
             }
-            total += static_cast<int64_t>(rep);
+            if (heap_offsets[i] < 0) {
+                throw std::runtime_error(
+                    "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + ": negative heap offset " +
+                    std::to_string(heap_offsets[i]));
+            }
+            const int64_t rep = internal::checked_nonnegative_cast<int64_t>(
+                repeats[i], "Invalid VLA geometry for column " + col.name +
+                                " row " + std::to_string(row) + " repeat");
+            total = internal::checked_nonnegative_add<int64_t>(
+                total, rep, "Invalid VLA geometry for column " + col.name +
+                                " row " + std::to_string(row) + " aggregate repeat");
             offsets[i + 1] = total;
+        }
+
+        const size_t total_size = internal::checked_nonnegative_cast<size_t>(
+            total, "Invalid VLA geometry for column " + col.name + " allocation");
+        internal::checked_nonnegative_multiply<size_t>(
+            total_size, elem_bytes,
+            "Invalid VLA geometry for column " + col.name + " allocation");
+
+        LONGLONG datastart = 0, dataend = 0;
+        status = 0;
+        fits_get_hduaddrll(fptr_, nullptr, &datastart, &dataend, &status);
+        if (status != 0 || datastart < 0 || dataend < datastart) {
+            throw std::runtime_error("Invalid VLA geometry for column " + col.name + ": HDU extent");
+        }
+        const LONGLONG table_bytes = internal::checked_nonnegative_multiply<LONGLONG>(
+            internal::checked_nonnegative_cast<LONGLONG>(
+                row_width_bytes_, "Invalid VLA geometry for column " + col.name + " row width"),
+            internal::checked_nonnegative_cast<LONGLONG>(
+                nrows_, "Invalid VLA geometry for column " + col.name + " row count"),
+            "Invalid VLA geometry for column " + col.name + " table bytes");
+        LONGLONG pcount = 0;
+        int pcount_status = 0;
+        fits_read_key(
+            fptr_, TLONGLONG, const_cast<char*>("PCOUNT"), &pcount, nullptr, &pcount_status);
+        if (pcount_status != 0 || pcount < 0) {
+            throw std::runtime_error("Invalid VLA geometry for column " + col.name + ": PCOUNT");
+        }
+        LONGLONG theap = table_bytes;
+        int theap_status = 0;
+        fits_read_key(
+            fptr_, TLONGLONG, const_cast<char*>("THEAP"), &theap, nullptr, &theap_status);
+        if (theap_status != 0) {
+            theap = table_bytes;
+        }
+        if (theap < table_bytes) {
+            throw std::runtime_error("Invalid VLA geometry for column " + col.name + ": THEAP");
+        }
+        const LONGLONG data_extent = internal::checked_nonnegative_add<LONGLONG>(
+            datastart,
+            internal::checked_nonnegative_add<LONGLONG>(
+                table_bytes, pcount,
+                "Invalid VLA geometry for column " + col.name + " data extent"),
+            "Invalid VLA geometry for column " + col.name + " data extent");
+        const LONGLONG heap_base = internal::checked_nonnegative_add<LONGLONG>(
+            datastart, theap, "Invalid VLA geometry for column " + col.name + " heap base");
+        if (heap_base > data_extent || data_extent > dataend) {
+            throw std::runtime_error("Invalid VLA geometry for column " + col.name + ": heap extent");
+        }
+        for (long i = 0; i < num_rows; i++) {
+            const long row = start_row + i;
+            const LONGLONG length = internal::checked_nonnegative_multiply<LONGLONG>(
+                repeats[i], internal::checked_nonnegative_cast<LONGLONG>(
+                                elem_bytes, "Invalid VLA geometry for column " + col.name),
+                "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + " heap length");
+            const LONGLONG end = internal::checked_nonnegative_add<LONGLONG>(
+                heap_offsets[i], length,
+                "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + " heap range");
+            const LONGLONG absolute_end = internal::checked_nonnegative_add<LONGLONG>(
+                heap_base, end,
+                "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + " file range");
+            if (absolute_end > data_extent) {
+                throw std::runtime_error(
+                    "Invalid VLA geometry for column " + col.name + " row " +
+                    std::to_string(row) + ": heap range exceeds HDU extent");
+            }
         }
 
         torch::Tensor values = torch::empty(
@@ -2523,17 +2763,7 @@ public:
             case torch::kBool: type_code = TLOGICAL; break;
             default: type_code = TFLOAT;
         }
-        size_t elem_bytes = 0;
-        switch (values.scalar_type()) {
-            case torch::kUInt8:
-            case torch::kInt8: elem_bytes = 1; break;
-            case torch::kInt16: elem_bytes = 2; break;
-            case torch::kInt32:
-            case torch::kFloat32: elem_bytes = 4; break;
-            case torch::kInt64:
-            case torch::kFloat64: elem_bytes = 8; break;
-            default: break;  // BOOL/LOGICAL: CFITSIO conversion required
-        }
+        const bool heap_element_supported = values.scalar_type() != torch::kBool;
 
         // Contiguous heap → one pread + endian convert (skips N× fits_read_col).
         // Default off until THEAP/offset edge cases are fully proven vs CFITSIO.
@@ -2545,7 +2775,7 @@ public:
             internal::env_flag_default_false("TORCHFITS_VLA_HEAP_PREAD");
         bool heap_contiguous =
             heap_pread_enabled && direct_io_ok() &&
-            (elem_bytes > 0 && total > 0);
+            (heap_element_supported && total > 0);
         // uint64 math: long offsets × repeats from hostile headers must not
         // wrap and fake contiguity (wrong bytes out, silently). Negative
         // heap offsets disqualify the fast path outright.
@@ -2584,28 +2814,52 @@ public:
 
         if (heap_contiguous && have_first &&
             first_heap <= static_cast<uint64_t>(std::numeric_limits<LONGLONG>::max())) {
-            LONGLONG headstart = 0, datastart = 0, dataend = 0;
-            status = 0;
-            fits_get_hduaddrll(fptr_, &headstart, &datastart, &dataend, &status);
-            long theap = 0;
-            int ks = 0;
-            fits_read_key_lng(fptr_, "THEAP", &theap, nullptr, &ks);
-            if (ks != 0 || theap <= 0) {
-                theap = row_width_bytes_ * nrows_;
-            }
-            if (status == 0) {
-                const off_t file_off = static_cast<off_t>(
-                    datastart + static_cast<LONGLONG>(theap) + static_cast<LONGLONG>(first_heap));
-                const size_t nbytes = static_cast<size_t>(total) * elem_bytes;
+            const LONGLONG absolute_offset = internal::checked_nonnegative_add<LONGLONG>(
+                heap_base, static_cast<LONGLONG>(first_heap),
+                "Invalid VLA geometry for column " + col.name + " pread offset");
+            const off_t file_off = internal::checked_nonnegative_cast<off_t>(
+                absolute_offset,
+                "Invalid VLA geometry for column " + col.name + " pread offset");
+            const size_t nbytes = internal::checked_nonnegative_multiply<size_t>(
+                total_size, elem_bytes,
+                "Invalid VLA geometry for column " + col.name + " pread size");
+            if (internal::checked_nonnegative_add<LONGLONG>(
+                    absolute_offset,
+                    internal::checked_nonnegative_cast<LONGLONG>(
+                        nbytes, "Invalid VLA geometry for column " + col.name + " pread size"),
+                    "Invalid VLA geometry for column " + col.name + " pread range") <= data_extent) {
                 int fd = ::open(filename_.c_str(), O_RDONLY);
                 if (fd >= 0) {
+                    struct stat file_stat;
+                    if (::fstat(fd, &file_stat) != 0 || file_stat.st_size < 0 ||
+                        internal::checked_nonnegative_cast<LONGLONG>(
+                            file_stat.st_size,
+                            "Invalid VLA geometry for column " + col.name + " file size") <
+                            internal::checked_nonnegative_add<LONGLONG>(
+                                absolute_offset,
+                                internal::checked_nonnegative_cast<LONGLONG>(
+                                    nbytes,
+                                    "Invalid VLA geometry for column " + col.name + " pread size"),
+                                "Invalid VLA geometry for column " + col.name + " pread range")) {
+                        ::close(fd);
+                        throw std::runtime_error(
+                            "Invalid VLA geometry for column " + col.name +
+                            ": pread range exceeds file extent");
+                    }
                     std::vector<uint8_t> raw(nbytes);
                     size_t got = 0;
                     bool ok = true;
                     while (got < nbytes) {
                         const ssize_t n = ::pread(
                             fd, raw.data() + got, nbytes - got,
-                            file_off + static_cast<off_t>(got));
+                            internal::checked_nonnegative_add<off_t>(
+                                file_off,
+                                internal::checked_nonnegative_cast<off_t>(
+                                    got,
+                                    "Invalid VLA geometry for column " + col.name +
+                                        " pread progress"),
+                                "Invalid VLA geometry for column " + col.name +
+                                    " pread progress"));
                         if (n < 0) {
                             if (errno == EINTR) continue;
                             ok = false;
@@ -2660,7 +2914,7 @@ public:
 
         int64_t cursor = 0;
         for (long i = 0; i < num_rows; i++) {
-            long rep = repeats[i];
+            LONGLONG rep = repeats[i];
             if (rep <= 0) {
                 continue;
             }
@@ -2707,7 +2961,11 @@ public:
                 fits_get_errstatus(status, err_msg);
                 throw std::runtime_error("Failed to read VLA data: " + std::string(err_msg));
             }
-            cursor += rep;
+            cursor = internal::checked_nonnegative_add<int64_t>(
+                cursor, internal::checked_nonnegative_cast<int64_t>(
+                            rep, "Invalid VLA geometry for column " + col.name +
+                                     " row " + std::to_string(row) + " repeat"),
+                "Invalid VLA geometry for column " + col.name + " cursor");
         }
 
         return finish();
@@ -2742,8 +3000,12 @@ public:
         // Reuse the persistent scratch buffer so its pages stay resident
         // across calls (a fresh per-call allocation would refault ~6k pages
         // per 12 MiB read, ~5-10 ms on a busy host).
-        const size_t need_bytes =
-            static_cast<size_t>(rows_per_chunk) * row_width_bytes_;
+        const size_t row_width_size = internal::checked_nonnegative_cast<size_t>(
+            row_width_bytes_, "Invalid table geometry for scratch row width");
+        const size_t need_bytes = internal::checked_nonnegative_multiply<size_t>(
+            internal::checked_nonnegative_cast<size_t>(
+                rows_per_chunk, "Invalid table geometry for scratch row count"),
+            row_width_size, "Invalid table geometry for scratch buffer");
         if (scratch_buffer_.size() < need_bytes) {
             scratch_buffer_.resize(need_bytes);
         }
@@ -2780,13 +3042,15 @@ public:
         // hiding it beats two thread handoffs (~0.1 ms): measured regression
         // on 13 MB tables with warm page cache, gain on multi-hundred-MB
         // payloads / cold storage.
+        const size_t requested_table_bytes = internal::checked_nonnegative_multiply<size_t>(
+            internal::checked_nonnegative_cast<size_t>(
+                num_rows, "Invalid table geometry for prefetch row count"),
+            row_width_size, "Invalid table geometry for prefetch size");
         const bool prefetch =
-            data_fd >= 0 && num_rows > 1 &&
-            static_cast<size_t>(num_rows) * row_width_bytes_ >= (64u << 20);
+            data_fd >= 0 && num_rows > 1 && requested_table_bytes >= (64u << 20);
         std::vector<uint8_t> second_buffer;
         if (prefetch) {
-            second_buffer.resize(
-                static_cast<size_t>(rows_per_chunk) * row_width_bytes_);
+            second_buffer.resize(need_bytes);
         }
 
         long rows_done = 0;
@@ -2798,22 +3062,42 @@ public:
             const long rows = std::min(rows_per_chunk, num_rows - rows_done);
             uint8_t* chunk_buf =
                 (prefetch && cur == 1) ? second_buffer.data() : buffer.data();
-            assert(!prefetch || cur == 0 ||
-                   second_buffer.size() >=
-                       static_cast<size_t>(rows) * row_width_bytes_);
+            assert(!prefetch || cur == 0 || second_buffer.size() >=
+                       internal::checked_nonnegative_multiply<size_t>(
+                           internal::checked_nonnegative_cast<size_t>(
+                               rows, "Invalid table geometry for chunk row count"),
+                           row_width_size, "Invalid table geometry for chunk size"));
 
             // Join the prefetch (if any): this chunk's bytes are already in
             // place, or the read failed and we surface it exactly like the
             // serial path would.
             std::atomic<bool> pf_ok{true};
             auto pread_range = [&](uint8_t* dst, long row_index, long nrows) -> bool {
-                const off_t off = static_cast<off_t>(
-                    data_offset_ + static_cast<LONGLONG>(row_index) * row_width_bytes_);
-                const size_t nbytes = static_cast<size_t>(nrows) * row_width_bytes_;
+                const LONGLONG relative_offset =
+                    internal::checked_nonnegative_multiply<LONGLONG>(
+                        internal::checked_nonnegative_cast<LONGLONG>(
+                            row_index, "Invalid table geometry for pread row"),
+                        internal::checked_nonnegative_cast<LONGLONG>(
+                            row_width_bytes_, "Invalid table geometry for pread row width"),
+                        "Invalid table geometry for pread offset");
+                const off_t off = internal::checked_nonnegative_cast<off_t>(
+                    internal::checked_nonnegative_add<LONGLONG>(
+                        data_offset_, relative_offset,
+                        "Invalid table geometry for pread offset"),
+                    "Invalid table geometry for pread offset");
+                const size_t nbytes = internal::checked_nonnegative_multiply<size_t>(
+                    internal::checked_nonnegative_cast<size_t>(
+                        nrows, "Invalid table geometry for pread row count"),
+                    row_width_size, "Invalid table geometry for pread size");
                 size_t got = 0;
                 while (got < nbytes) {
                     const ssize_t n = ::pread(data_fd, dst + got, nbytes - got,
-                                              off + static_cast<off_t>(got));
+                                              internal::checked_nonnegative_add<off_t>(
+                                                  off,
+                                                  internal::checked_nonnegative_cast<off_t>(
+                                                      got,
+                                                      "Invalid table geometry for pread progress"),
+                                                  "Invalid table geometry for pread progress"));
                     if (n < 0) {
                         if (errno == EINTR) continue;
                         return false;
@@ -2838,7 +3122,10 @@ public:
                 } else {
                     fits_read_tblbytes(
                         fptr_, start_row + rows_done, 1,
-                        rows * row_width_bytes_, chunk_buf, &status);
+                        internal::checked_nonnegative_multiply<long>(
+                            rows, row_width_bytes_,
+                            "Invalid table geometry for buffered read size"),
+                        chunk_buf, &status);
                 }
                 if (status != 0) {
                     if (data_fd >= 0) {
@@ -2872,7 +3159,12 @@ public:
                     const auto& col = columns_[col_idx];
                     torch::Tensor tensor = result[col_idx].fixed_data;
                     uint8_t* dest_ptr =
-                        (uint8_t*)get_tensor_data_ptr(tensor, rows_done * col.repeat);
+                        (uint8_t*)get_tensor_data_ptr(
+                            tensor,
+                            internal::checked_nonnegative_multiply<long>(
+                                rows_done, static_cast<long>(col.repeat),
+                                "Invalid table geometry for column " + col.name +
+                                    " destination offset"));
                     extract_column_data(chunk_buf, rows, col, dest_ptr);
                 }
             } catch (...) {
@@ -2923,10 +3215,18 @@ public:
         if (col.width <= 0 || col.repeat <= 0 || row_width_bytes_ <= 0) {
             throw std::runtime_error("extract_column_data: invalid column geometry");
         }
-        const size_t col_width = static_cast<size_t>(col.width);  // bytes per element
-        const size_t total_width = col_width * static_cast<size_t>(col.repeat);  // bytes per cell
-        const size_t row_stride = static_cast<size_t>(row_width_bytes_);
-        const size_t col_offset = static_cast<size_t>(col.byte_offset);
+        const size_t col_width = internal::checked_nonnegative_cast<size_t>(
+            col.width, "extract_column_data: invalid column width");  // bytes per element
+        const size_t total_width = internal::checked_nonnegative_cast<size_t>(
+            col.storage_bytes, "extract_column_data: invalid column storage");  // bytes per cell
+        const size_t row_stride = internal::checked_nonnegative_cast<size_t>(
+            row_width_bytes_, "extract_column_data: invalid row width");
+        const size_t col_offset = internal::checked_nonnegative_cast<size_t>(
+            col.byte_offset, "extract_column_data: invalid column offset");
+        internal::checked_nonnegative_multiply<size_t>(
+            internal::checked_nonnegative_cast<size_t>(
+                num_rows, "extract_column_data: invalid row count"),
+            total_width, "extract_column_data: invalid output size");
 
         // Optimized loops for common types.
         // FITS binary tables are big-endian; swap on little-endian hosts only.

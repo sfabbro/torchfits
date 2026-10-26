@@ -1521,9 +1521,7 @@ void bind_fits(nb::module_& m) {
             return type;
         })
         .def("close", &FITSFile::close)
-        .def("write_image", [](FITSFile& self, nb::ndarray<> tensor, int hdu_num, double bscale, double bzero) {
-            return self.write_image(tensor, hdu_num, bscale, bzero);
-        }, nb::arg("tensor"), nb::arg("hdu_num") = 0, nb::arg("bscale") = 1.0, nb::arg("bzero") = 0.0)
+        .def("write_image", &FITSFile::write_image, nb::arg("tensor"))
         .def("write_hdus", &FITSFile::write_hdus)
         .def("get_shape", [](FITSFile& self, int hdu_num) {
             std::vector<long> shape;
