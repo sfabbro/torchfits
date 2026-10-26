@@ -45,7 +45,12 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         default=None,
         help="output format (default: infer from output extension)",
     )
-    add_hdu_arg(parser, type=int, default=1, help="table HDU (default: 1)")
+    add_hdu_arg(
+        parser,
+        type=int,
+        default=None,
+        help="table HDU (table only; default: 1)",
+    )
     parser.add_argument(
         "-w",
         "--where",
@@ -67,8 +72,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument(
         "--recipe",
         choices=("auto", "lupton"),
-        default="auto",
-        help="png mapping: auto (default, blue→red) or lupton (reddest first)",
+        default=None,
+        help="png mapping (png only): auto (default, blue→red) or lupton (reddest first)",
     )
     parser.add_argument(
         "--brightness",
@@ -240,7 +245,19 @@ def _convert_table(args: argparse.Namespace, fmt: str) -> int:
     if len(args.inputs) != 1:
         raise UsageError("table convert accepts one input FITS file")
     path = args.inputs[0]
-    hdu = args.hdu
+    for flag, given in (
+        ("--bands", args.bands is not None),
+        ("--recipe", args.recipe is not None),
+        ("--brightness", args.brightness is not None),
+        ("--saturation", args.saturation is not None),
+        ("--calibrated", args.calibrated),
+        ("--zeropoints", args.zeropoints is not None),
+        ("--q", args.q is not None),
+        ("--stretch", args.stretch is not None),
+    ):
+        if given:
+            raise UsageError(f"{flag} applies only to png convert")
+    hdu = 1 if args.hdu is None else args.hdu
     columns = _parse_columns(args.columns)
     where = args.where
     if where or columns or fmt == "fits":
@@ -302,9 +319,12 @@ def _convert_png(args: argparse.Namespace) -> int:
         write_rgb_image,
     )
 
+    if args.hdu is not None:
+        raise UsageError("--hdu applies only to table convert; use --bands for png")
+    recipe = "auto" if args.recipe is None else args.recipe
     if args.where or args.columns:
         raise UsageError("--where / --columns apply only to table convert")
-    if args.recipe == "lupton":
+    if recipe == "lupton":
         for flag, given in (
             ("--zeropoints", args.zeropoints is not None),
             ("--calibrated", args.calibrated),

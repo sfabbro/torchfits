@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 import pyarrow as pa
+import torch
 from torchfits._where import (
     _parse_where_literal,
     _tokenize_where_expression,
@@ -9,7 +10,19 @@ from torchfits._where import (
     parse_where_expression,
     _where_columns_from_ast,
 )
-from torchfits._table.read import _where_mask_for_table
+from torchfits._table._read_where import _torch_cmp_mask, _where_mask_for_table
+
+
+@pytest.mark.parametrize("op", ["==", ">", ">=", "<", "<="])
+def test_torch_cmp_mask_uses_ieee_nan_result_for_non_inequality(op):
+    values = torch.tensor([float("nan"), 1.0, 2.0])
+    mask = _torch_cmp_mask(values, op, 1.0)
+    assert not bool(mask[0])
+
+
+def test_torch_cmp_mask_excludes_nan_from_inequality():
+    values = torch.tensor([float("nan"), 1.0, 2.0])
+    assert _torch_cmp_mask(values, "!=", 1.0).tolist() == [False, False, True]
 
 
 def test_parse_where_literal():

@@ -25,7 +25,7 @@ from torchfits._torch_libs import install as _install_torch_lib_preload
 
 _install_torch_lib_preload()
 
-__version__ = "1.3.1rc1"
+__version__ = "1.3.1rc2"
 
 _NAMESPACES: dict[str, str] = {
     "table": "torchfits.table",
@@ -157,13 +157,11 @@ _ATTR_LOCK = threading.RLock()
 
 
 def _ensure_runtime_init() -> None:
-    """Initialize optional runtime caches when an I/O entry point is used."""
+    """Initialize the tensor runtime when an I/O entry point is used."""
     global _RUNTIME_INITIALIZED
     if _RUNTIME_INITIALIZED:
         return
 
-    cache = import_module("torchfits.cache")
-    cache.configure_for_environment()
     # Pre-import torch so its dependency libraries (libcudart.so.12,
     # libtorch_cuda.so, libtorch_python.so) are loaded before torchfits._C.
     import torch  # noqa: F401

@@ -221,7 +221,7 @@ def read_table(
     _resolve_mmap(mmap)  # raises on an unknown mmap mode; the value is unused
 
     if where is not None and str(where).strip():
-        from torchfits._table.read import _compile_where_to_simple_predicates  # type: ignore[attr-defined]
+        from torchfits._table._read_where import _compile_where_to_simple_predicates
 
         predicates = _compile_where_to_simple_predicates(str(where))
         if predicates is None:

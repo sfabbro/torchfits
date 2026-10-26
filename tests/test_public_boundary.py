@@ -11,7 +11,6 @@ import torchfits.where as where
 
 def test_hdu_and_table_public_surfaces_are_importable():
     assert hdu.DataView is not None
-    assert hdu.TableDataAccessor is not None
     assert callable(table.read)
     assert callable(table.write)
     assert callable(table.clear_cache)
@@ -20,6 +19,8 @@ def test_hdu_and_table_public_surfaces_are_importable():
     assert "read_fast" not in torchfits.__all__
     assert "SpectralBinning" not in torchfits.__all__
     assert "can_use_mmap_row_path_for_full_read" not in table.__all__
+    assert "TableDataAccessor" not in hdu.__all__
+    assert "where_identifier_re" not in where.__all__
     import torchfits.io as io
 
     assert not hasattr(io, "read_fast")
@@ -55,7 +56,17 @@ def test_removed_cache_knobs_are_gone():
     from torchfits._io_engine.options import ReadOptions
 
     assert not hasattr(torchfits.cache, "configure_cache")
-    assert not hasattr(torchfits.cache.CacheManager, "configure_cpp_cache")
+    for name in (
+        "CacheConfig",
+        "CacheManager",
+        "configure_for_environment",
+        "get_cache_manager",
+        "get_optimal_cache_config",
+        "optimize_for_dataset",
+        "clear",
+        "stats",
+    ):
+        assert not hasattr(torchfits.cache, name)
     with pytest.raises(TypeError):
         ReadOptions(handle_cache_capacity=16)
     with pytest.raises(TypeError):

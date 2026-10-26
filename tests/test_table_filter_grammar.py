@@ -6,7 +6,7 @@ import pytest
 import torch
 
 import torchfits
-from torchfits._table.read import _where_mask_for_table
+from torchfits._table._read_where import _where_mask_for_table
 from torchfits.hdu import Header, TableHDU
 
 

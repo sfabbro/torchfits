@@ -86,7 +86,7 @@ def _parse_read_options(
             + ", ".join(repr(k) for k in unknown)
         )
     if options is not None:
-        colliding = (set(kwargs) & _READ_OPTION_FIELD_NAMES) - {"mode"}
+        colliding = set(kwargs) & _READ_OPTION_FIELD_NAMES
         if colliding:
             raise TypeError(
                 "Pass either options= or individual read kwargs, not both; "
@@ -165,11 +165,18 @@ def read_unified(
     opts = _parse_read_options(options, kwargs)
     device = str(device)
 
+    if opts.use_cache is not None and not isinstance(opts.use_cache, bool):
+        raise ValueError("use_cache must be bool when provided")
+    if opts.use_cache is True:
+        if opts.cache_capacity <= 0:
+            opts.cache_capacity = 10
+    elif opts.use_cache is False:
+        opts.cache_capacity = 0
+
     fp16 = opts.fp16
     bf16 = opts.bf16
     raw_scale = opts.raw_scale
     scale_on_device = opts.scale_on_device
-    use_cache = opts.use_cache
     columns = opts.columns
     start_row = opts.start_row
     num_rows = opts.num_rows
@@ -198,16 +205,8 @@ def read_unified(
             hdu=hdu,
             device=device,
             mmap=mmap,
-            fp16=fp16,
-            bf16=bf16,
-            raw_scale=raw_scale,
-            columns=columns,
-            start_row=start_row,
-            num_rows=num_rows,
-            cache_capacity=cache_capacity,
-            fast_header=fast_header,
+            options=opts,
             return_header=return_header,
-            mode=mode,
             autodetect_hdu=autodetect_hdu,
             batch_to_device=batch_to_device,
             resolve_image_mmap=resolve_image_mmap,
@@ -222,14 +221,6 @@ def read_unified(
     if not isinstance(path, str):
         raise ValueError("Path must be a string or list of strings")
     guard_fits_path(path)
-
-    if use_cache is not None and not isinstance(use_cache, bool):
-        raise ValueError("use_cache must be bool when provided")
-    if use_cache is True:
-        if cache_capacity <= 0:
-            cache_capacity = 10
-    elif use_cache is False:
-        cache_capacity = 0
 
     # Fixed: pass hdu then device (matches function signature order)
     force_image, force_table = _validate_single_path_params(
@@ -281,6 +272,24 @@ def read_unified(
             cold_nocache=cold_nocache,
             read_exc_types=read_exc_types,
             logger=logger,
+        )
+
+    if (
+        force_table
+        and not return_header
+        and isinstance(hdu, int)
+        and cache_capacity <= 0
+    ):
+        from .table_api import _thin_read_table_torch
+
+        return _thin_read_table_torch(
+            path,
+            hdu=hdu,
+            columns=columns,
+            start_row=start_row,
+            num_rows=num_rows,
+            device=device,
+            mmap=mmap,
         )
 
     # --- strategy 1: CPU image fast path ---
@@ -383,16 +392,8 @@ def _read_batch_paths(
     hdu: Any,
     device: str,
     mmap: bool | str,
-    fp16: bool,
-    bf16: bool,
-    raw_scale: bool,
-    columns: Any,
-    start_row: int,
-    num_rows: int,
-    cache_capacity: int,
-    fast_header: bool,
+    options: ReadOptions,
     return_header: bool,
-    mode: str,
     autodetect_hdu: Callable[[str], int],
     batch_to_device: Callable[[list[Tensor], str], list[Tensor]],
     resolve_image_mmap: Callable[[str, int, bool | str, int], bool],
@@ -417,8 +418,10 @@ def _read_batch_paths(
     column selection and row windows reach the per-file loop instead of being
     dropped on the floor.
     """
-    force_image, force_table = _validate_read_params(hdu, device, mmap, mode)
-    if force_image and (columns is not None or start_row != 1 or num_rows != -1):
+    force_image, force_table = _validate_read_params(hdu, device, mmap, options.mode)
+    if force_image and (
+        options.columns is not None or options.start_row != 1 or options.num_rows != -1
+    ):
         raise ValueError("mode='image' does not support table row/column options")
 
     hdu_batch = hdu
@@ -448,13 +451,9 @@ def _read_batch_paths(
     # Take it only for a plain whole-image read and let the per-file loop
     # handle everything else, where it applies the full contract.
     plain_image_read = (
-        not force_table
-        and not return_header
-        and columns is None
-        and start_row == 1
-        and num_rows == -1
+        not force_table and not return_header and options == ReadOptions()
     )
-    if plain_image_read and mmap is True and not (fp16 or bf16 or raw_scale):
+    if plain_image_read and mmap is True:
         for item_path in path:
             require_bz2_support(item_path)
         try:
@@ -486,19 +485,9 @@ def _read_batch_paths(
                 hdu=hdu,
                 device=device,
                 mmap=mmap,
-                options=None,
+                options=options,
                 return_header=return_header,
-                kwargs=dict(
-                    mode=mode,
-                    fp16=fp16,
-                    bf16=bf16,
-                    raw_scale=raw_scale,
-                    columns=columns,
-                    start_row=start_row,
-                    num_rows=num_rows,
-                    cache_capacity=cache_capacity,
-                    fast_header=fast_header,
-                ),
+                kwargs={},
                 autodetect_hdu=autodetect_hdu,
                 batch_to_device=batch_to_device,
                 resolve_image_mmap=resolve_image_mmap,

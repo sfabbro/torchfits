@@ -83,6 +83,13 @@ def test_stub_matches_live_extension() -> None:
         )
 
 
+def test_fitsfile_write_image_has_no_ignored_parameters() -> None:
+    import torchfits._C as cpp
+
+    signature = cpp.FITSFile.write_image.__nb_signature__[0][0]
+    assert signature == "def write_image(self, tensor: ndarray[]) -> bool"
+
+
 def test_stubgen_child_can_find_torchs_shared_libraries() -> None:
     """The stubgen child inherits torch's shared libraries.
 

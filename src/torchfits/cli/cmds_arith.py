@@ -413,6 +413,33 @@ def _arith_one_file(
         )
 
 
+def _planned_destinations(
+    a_paths: list[str],
+    *,
+    out: str | None,
+    out_dir: Path | None,
+    split: str,
+    hdu: str | None,
+) -> list[str]:
+    if split == "file":
+        if out_dir is not None:
+            return [
+                str(out_dir / Path(cfitsio_base_path(path)).name) for path in a_paths
+            ]
+        return [str(out)] if out is not None else []
+    if out_dir is None:
+        return []
+    destinations: list[str] = []
+    for path in a_paths:
+        indices = _image_indices(path, hdu)
+        width = _hdu_width(indices)
+        stem = Path(cfitsio_base_path(path)).stem
+        destinations.extend(
+            str(out_dir / f"{stem}_hdu{index:0{width}d}.fits") for index in indices
+        )
+    return destinations
+
+
 def run(args: argparse.Namespace) -> int:
     a_paths, value, operand2 = _resolve_operands(args)
     if args.out and args.out_dir:
@@ -423,17 +450,34 @@ def run(args: argparse.Namespace) -> int:
         raise UsageError("output path required (-o/--out)")
     if args.split == "hdu" and not args.out_dir:
         raise UsageError("--split hdu requires --out-dir")
+    if args.split == "hdu" and args.out:
+        raise UsageError("--split hdu uses --out-dir (not -o/--out)")
+    if value is not None and args.hdu2 is not None:
+        raise UsageError("--hdu2 applies only to image operand B")
 
     hdu2 = _parse_hdu2(args.hdu2)
-    file_jobs = resolve_file_jobs(int(args.file_jobs), len(a_paths))
-    configure_torch_jobs(int(args.jobs))
-
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir is not None:
-        ensure_unique_basenames(a_paths)
+        ensure_unique_basenames(a_paths, directory=out_dir)
         if args.split == "hdu":
-            ensure_unique_split_stems(a_paths)
+            ensure_unique_split_stems(a_paths, directory=out_dir)
+
+    destinations = _planned_destinations(
+        a_paths,
+        out=args.out,
+        out_dir=out_dir,
+        split=args.split,
+        hdu=args.hdu,
+    )
+    sources = [*a_paths, *([operand2] if operand2 is not None else [])]
+    for destination in destinations:
+        for source in sources:
+            reject_same_path(source, destination)
+
+    if out_dir is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
+    file_jobs = resolve_file_jobs(int(args.file_jobs), len(a_paths))
+    configure_torch_jobs(int(args.jobs))
 
     def _one(path_a: str) -> None:
         if out_dir is not None and args.split == "file":

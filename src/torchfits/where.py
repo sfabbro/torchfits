@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     import numpy as np
 
 from ._where import (
-    _WHERE_IDENT_RE as where_identifier_re,
     _normalize_where_syntax as normalize_where_syntax,
     _parse_where_expression as parse_where_expression,
     _parse_where_literal as parse_where_literal,
@@ -147,6 +146,5 @@ __all__ = [
     "parse_where_expression",
     "parse_where_literal",
     "tokenize_where_expression",
-    "where_identifier_re",
     "where_columns_from_ast",
 ]

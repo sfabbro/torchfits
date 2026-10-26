@@ -8,6 +8,8 @@ import sys
 import traceback
 from typing import Callable
 
+from torchfits import __version__
+
 from .cmds_arith import add_parser as add_arith
 from .cmds_compress import add_compress_parser as add_compress
 from .cmds_compress import add_decompress_parser as add_decompress
@@ -46,6 +48,11 @@ _SUBCOMMANDS: tuple[tuple[str, Callable[..., None], str], ...] = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="torchfits", description="FITS I/O CLI")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     for _name, add_fn, _help in _SUBCOMMANDS:
         add_fn(subparsers)

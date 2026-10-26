@@ -145,7 +145,7 @@ def _torch_cmp_mask(tensor: torch.Tensor, op: str, literal: Any) -> torch.Tensor
     else:
         raise ValueError(f"Unsupported where operator '{op}'")
     # Scaled TNULL/BLANK pixels are NaN; SQL three-valued logic never matches NULL.
-    if tensor.is_floating_point():
+    if op == "!=" and tensor.is_floating_point():
         out = out & ~torch.isnan(tensor)
     return out
 

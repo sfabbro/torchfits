@@ -35,12 +35,6 @@ from ._mutation_coerce import (
     _read_table_for_rewrite,
 )
 
-# Re-export private helpers for backward-compatible imports from this module.
-from ._mutation_coerce import (  # noqa: F401
-    _default_table_column_values,
-    _infer_fits_scalar_code,
-)
-
 
 def insert_column(
     path: str,

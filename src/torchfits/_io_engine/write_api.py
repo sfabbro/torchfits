@@ -45,26 +45,10 @@ from ._write_helpers import (
     _write_header_cards_if_supported,
 )
 
-# Re-export public and private symbols for backward-compatible imports.
-from ._hdu_rewrite import (  # noqa: F401
-    _atomic_rewrite_hdus,
-    _detach_hdus_for_rewrite,
-    _sanitize_header_for_compressed_write,
-    _sanitize_table_header_for_write,
+from ._hdu_rewrite import (
     delete_hdu,
     insert_hdu,
     replace_hdu,
-)
-from ._write_helpers import (  # noqa: F401
-    _delete_header_key_if_supported,
-    _host_tensor_for_fits_write,
-    _normalize_list_sequence,
-    _normalize_ndarray_column,
-    _normalize_vla_item,
-    _resolve_compression_algorithm,
-    _table_schema_scale_header_cards,
-    _unsigned_table_storage_for_fits_write,
-    _unsigned_table_tform,
 )
 
 __all__ = [

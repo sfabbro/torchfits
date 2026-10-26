@@ -21,12 +21,12 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.set_defaults(func=run)
 
 
-def _header_map(header: Any) -> dict[str, Any]:
-    return {
-        card.key: card.value
+def _header_cards(header: Any) -> list[tuple[str, Any, str]]:
+    return [
+        (card.key, card.value, card.comment)
         for card in header.cards
         if card.key not in _SKIP_HEADER_KEYS
-    }
+    ]
 
 
 def _image_record(path: str, index: int) -> dict[str, Any]:
@@ -62,6 +62,18 @@ def _values_equal(a: Any, b: Any) -> bool:
         return bool(a == b)
 
 
+def _cards_equal(
+    card_a: tuple[str, Any, str] | None, card_b: tuple[str, Any, str] | None
+) -> bool:
+    if card_a is None or card_b is None:
+        return card_a is card_b
+    return (
+        card_a[0] == card_b[0]
+        and _values_equal(card_a[1], card_b[1])
+        and card_a[2] == card_b[2]
+    )
+
+
 def _diff_pair(path_a: str, path_b: str) -> list[str]:
     diffs: list[str] = []
     try:
@@ -75,14 +87,15 @@ def _diff_pair(path_a: str, path_b: str) -> list[str]:
                 type_b = hdu_type_name(header_b, hdul_b[index])
                 if type_a != type_b:
                     diffs.append(f"HDU {index} type: {type_a} vs {type_b}")
-                map_a = _header_map(header_a)
-                map_b = _header_map(header_b)
-                keys = sorted(set(map_a) | set(map_b))
-                for key in keys:
-                    val_a = map_a.get(key)
-                    val_b = map_b.get(key)
-                    if not _values_equal(val_a, val_b):
-                        diffs.append(f"HDU {index} {key}: {val_a!r} vs {val_b!r}")
+                cards_a = _header_cards(header_a)
+                cards_b = _header_cards(header_b)
+                for position in range(max(len(cards_a), len(cards_b))):
+                    card_a = cards_a[position] if position < len(cards_a) else None
+                    card_b = cards_b[position] if position < len(cards_b) else None
+                    if not _cards_equal(card_a, card_b):
+                        diffs.append(
+                            f"HDU {index} card {position + 1}: {card_a!r} vs {card_b!r}"
+                        )
                 if type_a == "IMAGE" and type_b == "IMAGE":
                     stats_a = _image_record(path_a, index)
                     stats_b = _image_record(path_b, index)

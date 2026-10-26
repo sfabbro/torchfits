@@ -21,7 +21,7 @@ re-running `scripts/release_lane.py --apply`.
 Apply the lane everywhere in one step:
 
 ```bash
-python scripts/release_lane.py --lane <X.Y> --apply
+pixi run python scripts/release_lane.py --lane <X.Y> --apply
 pixi run check-lane
 ```
 
@@ -37,7 +37,7 @@ Release candidates (pre-tag validation runs) render the lane base plus a PEP 440
 prerelease suffix:
 
 ```bash
-python scripts/release_lane.py --lane <X.Y> --prerelease rc<N> --apply
+pixi run python scripts/release_lane.py --lane <X.Y> --prerelease rc<N> --apply
 ```
 
 e.g. `--prerelease rc5` on lane 2.14 appends `rc5` to that lane's `torchfits_version`, and
@@ -115,9 +115,13 @@ Benchmark runs, published CSVs, and the parity matrix live in
 
 Repository: https://github.com/astroai/torchfits.
 
-**PyPI publishing:** `astroai/torchfits` is registered; tag pushes trigger
-`.github/workflows/build_wheels.yml` (publishes via OIDC trusted
-publishing on the `pypi` GitHub Environment; no API token).
+**Publishing:** `astroai/torchfits` is registered on PyPI. A release-candidate
+tag push builds and validates the complete artifact matrix and creates a GitHub
+prerelease, but never uploads to PyPI. A stable tag push only builds and
+validates. After that workflow succeeds, run it manually from the exact stable
+tag with `publish=true`; the guarded jobs publish through OIDC on the `pypi`
+GitHub Environment and create the stable GitHub release. Fork runs cannot
+publish.
 
 Do not make new performance claims unless the benchmark run is archived in
 torchfits-harness.
@@ -164,7 +168,7 @@ twine check dist/*
 ## 9. Tag and push
 
 ```bash
-python scripts/check_release_rc.py --version X.Y.Z
+pixi run python scripts/check_release_rc.py --version X.Y.Z
 git add -A
 git commit -m "release: vX.Y.Z"
 git tag vX.Y.Z

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sys
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, TextIO, TypeVar
@@ -242,8 +243,42 @@ def reject_same_path(src: str, dst: str) -> None:
     """Refuse OUTPUT that resolves to the same file as INPUT."""
     src_real = os.path.realpath(cfitsio_base_path(src))
     dst_real = os.path.realpath(dst)
+    if sys.platform == "darwin":
+        src_real = unicodedata.normalize("NFC", src_real)
+        dst_real = unicodedata.normalize("NFC", dst_real)
+    if _filesystem_is_case_insensitive(dst_real):
+        src_real = src_real.casefold()
+        dst_real = dst_real.casefold()
     if src_real == dst_real:
         raise UsageError(f"refusing same-path rewrite in place: {src}")
+
+
+def _filesystem_is_case_insensitive(path: str | Path) -> bool:
+    candidate = Path(os.path.abspath(path))
+    while not os.path.lexists(candidate):
+        parent = candidate.parent
+        if parent == candidate:
+            return False
+        candidate = parent
+    name = candidate.name
+    for index, character in enumerate(name):
+        if character.isalpha():
+            alternate = candidate.with_name(
+                name[:index] + character.swapcase() + name[index + 1 :]
+            )
+            try:
+                return os.path.samefile(candidate, alternate)
+            except (FileNotFoundError, OSError):
+                return False
+    if candidate.parent != candidate:
+        return _filesystem_is_case_insensitive(candidate.parent)
+    return False
+
+
+def _destination_name_key(name: str, directory: str | Path) -> str:
+    if sys.platform == "darwin":
+        name = unicodedata.normalize("NFC", name)
+    return name.casefold() if _filesystem_is_case_insensitive(directory) else name
 
 
 def add_hdu_arg(
@@ -369,32 +404,38 @@ def run_file_jobs(
     return [ordered[i] for i in range(len(items))]
 
 
-def ensure_unique_basenames(paths: list[str], *, label: str = "inputs") -> None:
+def ensure_unique_basenames(
+    paths: list[str], *, directory: str | Path, label: str = "inputs"
+) -> None:
     """Reject multi-file batches whose basenames would collide under ``--out-dir``."""
     seen: dict[str, str] = {}
     for path in paths:
         name = Path(cfitsio_base_path(path)).name
-        prior = seen.get(name)
+        key = _destination_name_key(name, directory)
+        prior = seen.get(key)
         if prior is not None:
             raise UsageError(
                 f"duplicate basename under --out-dir for {label}: {name!r} "
                 f"({prior} and {path})"
             )
-        seen[name] = path
+        seen[key] = path
 
 
-def ensure_unique_split_stems(paths: list[str], *, label: str = "inputs") -> None:
+def ensure_unique_split_stems(
+    paths: list[str], *, directory: str | Path, label: str = "inputs"
+) -> None:
     """Reject ``--split hdu`` batches whose ``{stem}_hduNN`` outputs would collide."""
     seen: dict[str, str] = {}
     for path in paths:
         stem = Path(cfitsio_base_path(path)).stem
-        prior = seen.get(stem)
+        key = _destination_name_key(stem, directory)
+        prior = seen.get(key)
         if prior is not None:
             raise UsageError(
                 f"duplicate stem under --split hdu for {label}: {stem!r} "
                 f"({prior} and {path})"
             )
-        seen[stem] = path
+        seen[key] = path
 
 
 def expand_at_list_paths(paths: list[str]) -> list[str]:
@@ -435,9 +476,8 @@ def resolve_batch_io_pairs(
         raise UsageError("use either --out-dir or -o/--out, not both")
 
     if out_dir:
-        ensure_unique_basenames(paths)
         directory = Path(out_dir)
-        directory.mkdir(parents=True, exist_ok=True)
+        ensure_unique_basenames(paths, directory=directory)
         pairs = [
             (path, str(directory / Path(cfitsio_base_path(path)).name))
             for path in paths
@@ -456,6 +496,8 @@ def resolve_batch_io_pairs(
     if refuse_same_path:
         for src, dst in pairs:
             reject_same_path(src, dst)
+    if out_dir:
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
     return pairs
 
 

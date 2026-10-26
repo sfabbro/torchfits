@@ -1,8 +1,7 @@
 """Example: ``make_loader`` vs a plain ``torch.utils.data.DataLoader``.
 
-Both wrap the same ``FitsImageDataset``; ``make_loader`` only adds cache
-warm-up (via ``optimize_cache``, which requires the dataset to expose a
-``.files`` attribute) and sane defaults on top of ``DataLoader``.
+Both wrap the same ``FitsImageDataset``; ``make_loader`` supplies torchfits'
+collation and map-style shuffle defaults on top of ``DataLoader``.
 """
 
 from __future__ import annotations
@@ -40,15 +39,10 @@ def main() -> int:
             f"plain DataLoader: batch images={tuple(images.shape)} labels={labels.tolist()}"
         )
 
-        loader = make_loader(dataset, batch_size=2, optimize_cache=True)
+        loader = make_loader(dataset, batch_size=2, shuffle=False)
         images, labels = next(iter(loader))
         print(
             f"make_loader: batch images={tuple(images.shape)} labels={labels.tolist()}"
-        )
-        print(
-            "note: optimize_cache=True calls cache.optimize_for_dataset(dataset.files); "
-            "datasets without a `.files` list (e.g. custom IterableDataset) should pass "
-            "optimize_cache=False."
         )
     finally:
         shutil.rmtree(data_dir, ignore_errors=True)

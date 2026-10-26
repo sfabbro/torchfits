@@ -30,7 +30,6 @@ from ._hdu.header import Header as Header
 if TYPE_CHECKING:
     from ._hdu.dataview import DataView as DataView
     from ._hdu.hdu_list import HDUList as HDUList
-    from ._hdu.table_hdu import TableDataAccessor as TableDataAccessor
     from ._hdu.table_hdu import TableHDU as TableHDU
     from ._hdu.table_hdu_ref import TableHDURef as TableHDURef
     from ._hdu.tensor_hdu import TensorHDU as TensorHDU
@@ -38,7 +37,6 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "DataView": ("._hdu.dataview", "DataView"),
     "HDUList": ("._hdu.hdu_list", "HDUList"),
-    "TableDataAccessor": ("._hdu.table_hdu", "TableDataAccessor"),
     "TableHDU": ("._hdu.table_hdu", "TableHDU"),
     "TableHDURef": ("._hdu.table_hdu_ref", "TableHDURef"),
     "TensorHDU": ("._hdu.tensor_hdu", "TensorHDU"),
@@ -62,7 +60,6 @@ __all__ = [
     "Header",
     "HDUList",
     "TableHDU",
-    "TableDataAccessor",
     "TableHDURef",
     "TensorHDU",
 ]

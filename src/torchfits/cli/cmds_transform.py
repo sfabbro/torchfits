@@ -22,6 +22,25 @@ from .common import (
     run_file_jobs,
 )
 
+CLI_TRANSFORM_NAMES = (
+    "AffineTransform",
+    "ArcsinhStretch",
+    "AsymmetricSigmaClip",
+    "BackgroundSubtract",
+    "GlobalScalarNorm",
+    "InterquantileNormalize",
+    "InterquantileScale",
+    "LogStretch",
+    "MeshBackgroundSubtract",
+    "MinMaxNormalize",
+    "PercentileClipNormalize",
+    "RobustNormalize",
+    "SigmaClip",
+    "SigmaNormalize",
+    "SqrtStretch",
+    "ZScaleNormalize",
+)
+
 
 def _coerce_transform_kwarg_value(raw: str) -> bool | int | float | str:
     """Coerce a ``key=val`` string value to bool/int/float, else leave as str."""
@@ -53,6 +72,8 @@ def _parse_transform_spec(spec: str) -> tuple[str, dict[str, Any]]:
         key = key.strip()
         if not eq or not key:
             raise UsageError(f"invalid --name kwarg (expected key=val): {piece!r}")
+        if key in kwargs:
+            raise UsageError(f"duplicate --name kwarg: {key}")
         kwargs[key] = _coerce_transform_kwarg_value(value.strip())
     return name, kwargs
 
@@ -62,8 +83,9 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "transform",
         help="apply a torchfits.transforms class",
         description=(
-            "Apply a named transform. Multiple inputs need --out-dir; "
-            "-j = torch threads; -J = file workers."
+            "Apply a registered image transform. Multiple inputs need --out-dir; "
+            "-j = torch threads; -J = file workers. Available names: "
+            + ", ".join(CLI_TRANSFORM_NAMES)
         ),
     )
     parser.add_argument(
@@ -76,7 +98,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         required=True,
         help=(
             "transform class name; append :key=val,key2=val2 to pass "
-            "constructor kwargs, e.g. ArcsinhStretch:a=2.0"
+            "bool/int/float/string constructor kwargs, e.g. ArcsinhStretch:a=2.0; "
+            "choices: " + ", ".join(CLI_TRANSFORM_NAMES)
         ),
     )
     add_hdu_arg(parser, type=int, default=0, help="source HDU index")
@@ -95,16 +118,20 @@ def _build_transform(name_spec: str) -> tuple[str, Any]:
     import torchfits.transforms as tf_transforms
 
     name, kwargs = _parse_transform_spec(name_spec)
-    public = set(tf_transforms.__all__)
-    if name not in public:
-        raise UsageError(f"unknown transform: {name}")
+    if name not in CLI_TRANSFORM_NAMES:
+        raise UsageError(
+            f"unknown transform: {name}; choose from {', '.join(CLI_TRANSFORM_NAMES)}"
+        )
     cls = getattr(tf_transforms, name)
     if kwargs:
         valid_params = set(inspect.signature(cls).parameters)
         unknown = sorted(set(kwargs) - valid_params)
         if unknown:
             raise UsageError(f"unknown kwarg(s) for {name}: {unknown}")
-    return name, cls(**kwargs)
+    try:
+        return name, cls(**kwargs)
+    except Exception as exc:
+        raise UsageError(f"invalid {name} constructor: {exc}") from exc
 
 
 def _transform_one(

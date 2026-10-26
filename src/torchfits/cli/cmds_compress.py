@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 import torchfits
-from torchfits._io_engine.paths import cfitsio_base_path
+from torchfits._io_engine.paths import cfitsio_base_path, has_bz2_support
 
 from .common import (
     EXIT_OK,
@@ -27,6 +27,12 @@ from .common import (
     run_file_jobs,
     selected_hdu_indices,
 )
+
+_CODECS = ("GZIP_1", "GZIP_2", "RICE_1", "HCOMPRESS_1", "PLIO_1", "BZIP2_1")
+
+
+def _available_codecs() -> tuple[str, ...]:
+    return _CODECS if has_bz2_support() else _CODECS[:-1]
 
 
 def _add_shared_args(parser: argparse.ArgumentParser) -> None:
@@ -57,19 +63,21 @@ def add_compress_parser(
         "compress",
         help="write tile-compressed FITS",
         description=(
-            "Tile-compress image HDUs (Rice by default via CFITSIO). "
+            "Tile-compress image HDUs (lossless GZIP_1 by default). "
             "-j = PyTorch intra-op threads; -J = parallel file workers. "
             "Use --split hdu --out-dir for one file per image HDU; "
-            "--algorithm selects the codec."
+            "RICE_1, GZIP_2, HCOMPRESS_1, and BZIP2_1 are lossy for floats; "
+            "PLIO_1 rejects floats."
         ),
     )
     _add_shared_args(parser)
     parser.add_argument(
         "--algorithm",
-        default="RICE_1",
+        choices=_available_codecs(),
+        default="GZIP_1",
         help=(
-            "compression algorithm (default: RICE_1); "
-            "also RICE, GZIP_1, GZIP_2, HCOMPRESS_1"
+            "codec (default: GZIP_1, lossless for integers and floats); "
+            "other codecs use CFITSIO float quantization and are lossy"
         ),
     )
     parser.set_defaults(func=run_compress)
@@ -188,10 +196,10 @@ def _rewrite_split_hdu(args: argparse.Namespace, *, compress: bool | str) -> Non
         raise UsageError("--split hdu uses --out-dir (not -o/--out)")
 
     out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     inputs = [str(p) for p in args.paths]
-    ensure_unique_basenames(inputs)
-    ensure_unique_split_stems(inputs)
+    ensure_unique_basenames(inputs, directory=out_dir)
+    ensure_unique_split_stems(inputs, directory=out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(inputs))
     configure_torch_jobs(int(args.jobs))
     counts = run_file_jobs(
@@ -206,13 +214,50 @@ def _rewrite_split_hdu(args: argparse.Namespace, *, compress: bool | str) -> Non
         raise IoError("no image HDUs to process")
 
 
+def _validate_compression_inputs(
+    inputs: list[str], algorithm: str, hdu: str | None
+) -> None:
+    if algorithm == "BZIP2_1" and not has_bz2_support():
+        raise UsageError("BZIP2_1 is unavailable in this torchfits build")
+    if algorithm != "PLIO_1":
+        return
+    for path in inputs:
+        try:
+            with torchfits.open(path) as hdul:
+                for index in selected_hdu_indices(len(hdul), hdu):
+                    if hdu_type_name(hdul[index].header, hdul[index]) != "IMAGE":
+                        continue
+                    bitpix = int(
+                        hdul[index].header.get(
+                            "ZBITPIX", hdul[index].header.get("BITPIX", 0)
+                        )
+                        or 0
+                    )
+                    if bitpix < 0:
+                        raise UsageError(
+                            f"PLIO_1 does not support floating-point image data: {path}:{index}"
+                        )
+        except UsageError:
+            raise
+        except Exception as exc:
+            raise IoError(f"{path}: {exc}") from exc
+
+
 def _run_rewrite(args: argparse.Namespace, *, compress: bool | str) -> int:
     split = getattr(args, "split", "file")
+    if split == "file" and args.hdu is not None:
+        raise UsageError("--hdu applies only with --split hdu")
     if split == "hdu":
+        if isinstance(compress, str):
+            _validate_compression_inputs(
+                [str(path) for path in args.paths], compress, args.hdu
+            )
         _rewrite_split_hdu(args, compress=compress)
         return EXIT_OK
 
     pairs = _resolve_file_pairs(args)
+    if isinstance(compress, str):
+        _validate_compression_inputs([pair[0] for pair in pairs], compress, None)
     file_jobs = resolve_file_jobs(int(args.file_jobs), len(pairs))
     configure_torch_jobs(int(args.jobs))
     run_file_jobs(
@@ -225,7 +270,11 @@ def _run_rewrite(args: argparse.Namespace, *, compress: bool | str) -> int:
 
 
 def run_compress(args: argparse.Namespace) -> int:
-    algo = str(getattr(args, "algorithm", "RICE_1") or "RICE_1").strip() or "RICE_1"
+    algo = str(getattr(args, "algorithm", "GZIP_1") or "GZIP_1").strip().upper()
+    if algo not in _available_codecs():
+        raise UsageError(
+            f"invalid --algorithm {algo!r}; choose from {', '.join(_available_codecs())}"
+        )
     return _run_rewrite(args, compress=algo)
 
 

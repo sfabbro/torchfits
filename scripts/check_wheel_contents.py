@@ -20,6 +20,8 @@ import re
 import zipfile
 from pathlib import Path
 
+from archive_safety import zip_safety_problems
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # Third-party licence text that must travel with the wheel (vendored CFITSIO).
@@ -64,7 +66,11 @@ def check(wheel: Path) -> int:
         return _fail([f"no such wheel: {wheel}"])
 
     with zipfile.ZipFile(wheel) as zf:
-        names = zf.namelist()
+        infos = zf.infolist()
+        safety = zip_safety_problems(infos)
+        if safety:
+            return _fail([f"{wheel.name}: {problem}" for problem in safety])
+        names = [info.filename for info in infos]
         metadata_name = next(
             (n for n in names if n.endswith(".dist-info/METADATA")), None
         )

@@ -4,9 +4,8 @@ FITS tables are columnar catalogs. Read them as Arrow (`table.read`), as a
 column → tensor map (`table.read_torch`), or as Polars (`table.read_polars`).
 
 Arrow is the **contract**, not the native representation. The C++ engine
-produces per-column `torch.Tensor` buffers and the Arrow table is a zero-copy
-view over that memory: the extension exports each column as a read-only buffer
-(no Python `torch` import, no `bytearray` copy), and clean numeric or
+exports each column as a Python-owned read-only buffer without constructing a
+Python tensor or importing Python `torch`. Clean numeric or
 fixed-width byte columns go straight into `pa.Array.from_buffers`. See
 [Architecture](architecture.md#the-torch-boundary) for the boundary and what is
 still to move.
@@ -513,6 +512,7 @@ sc = torchfits.table.scanner("catalog.fits", columns=["RA", "DEC"])
 torchfits.table.write_parquet("out.parquet", "catalog.fits", hdu=1)
 torchfits.table.write_parquet("bright.parquet", "catalog.fits", where="MAG < 20")
 torchfits.table.write_csv("bright.csv", "catalog.fits", where="MAG < 20")
+torchfits.table.write_ipc("bright.arrow", "catalog.fits", where="MAG < 20")
 
 # Cache cleanup
 torchfits.table.clear_cache()
@@ -520,3 +520,10 @@ torchfits.table.clear_cache()
 
 The public constant `torchfits.table.TABLE_BACKENDS` lists recognized table
 backend names for callers that select an explicit backend.
+
+`torchfits.table.write_ipc(dest, data, *, stream=False, compression="zstd",
+**read_kwargs)` writes Arrow IPC/Feather V2. `data` may be a FITS path, Arrow
+table, record-batch reader, or batch iterable. For a FITS path, read keywords
+such as `hdu`, `columns`, and `where` are forwarded to `table.read` or
+`table.reader`; keywords are rejected for already-materialized input. Set
+`stream=True` to write batches without materializing the full table.

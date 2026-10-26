@@ -61,19 +61,10 @@ should branch on dict vs tensor if they need mask-aware wiring — see
 | Cache | What it stores | How to clear / size |
 |---|---|---|
 | Disk | Remote downloads, example samples | `TORCHFITS_*_CACHE` env / `cache_dir=` |
-| Policy + I/O metadata | Env policy (`torchfits.cache`) and in-process LRUs | `cache.clear_cache()`, `clear_file_cache(...)` |
-| Everything (incl. disk) | Same + `cache_root()` downloads/samples | `clear_all_caches()` / `cache.clear_cache(disk=True)` |
+| I/O metadata | In-process LRUs | `cache.clear_cache()`, `clear_file_cache(...)` |
+| Everything (incl. disk) | Same + configured download/sample roots | `clear_all_caches()` / `cache.clear_cache(disk=True)` |
 
 A single-file `read_tensor` does not need warm-up.
-
-**`make_loader(ds, optimize_cache=True)`** (default) calls
-`cache.optimize_for_dataset(ds.files, avg_file_size_mb=...)` when the dataset
-exposes a `files` list (`FitsImageDataset`, `FitsCubeDataset`,
-`FitsSpectrumDataset`, `FitsTensorIterableDataset`, `FitsCutoutDataset`, and
-other `FitsTensorDataset` peers). For remote URLs it also starts prefetch into
-the disk cache, except `FitsCutoutDataset` (Range cutouts — no full-file
-prefetch). Table datasets read one file and do not expose `files`;
-`optimize_cache=True` is then a no-op.
 
 ```python
 from torchfits import cache
@@ -470,6 +461,9 @@ ds = FitsCutoutDataset(cutouts, transform=None, device="cpu")
 ```
 
 Accepts `(path, hdu, x, y, size)` or `(path, hdu, x1, y1, x2, y2)` tuples.
+The public `CutoutSpec` type alias names the normalized six-item form:
+`tuple[str, int, int, int, int, int]`, corresponding to
+`(path, hdu, x1, y1, x2, y2)` with half-open upper bounds.
 
 Every spec must describe a window that actually selects pixels. The origin must
 be non-negative (`x1 >= 0`, `y1 >= 0`) and the half-open window must be
@@ -501,8 +495,8 @@ that pairs `read_subset` calls with labels.
 
 ## `make_loader()`
 
-Builds a `torch.utils.data.DataLoader` and, when `optimize_cache=True`,
-calls `cache.optimize_for_dataset` if the dataset exposes `files`.
+Builds a `torch.utils.data.DataLoader` with torchfits collation and shuffle
+defaults.
 
 ```python
 from torchfits.data import make_loader
@@ -512,13 +506,11 @@ loader = make_loader(
     batch_size=32,
     num_workers=4,
     pin_memory=True,
-    optimize_cache=True,
     shuffle=True,  # default for map-style; False for iterable
 )
 ```
 
-Use a plain `DataLoader` when you already own `collate_fn` / samplers, or
-when the dataset has no `files` list (`optimize_cache` would no-op). See
+Use a plain `DataLoader` when you already own `collate_fn` or samplers. See
 `examples/example_make_loader_vs_dataloader.py`.
 
 | Parameter | Type | Default | Description |
@@ -530,8 +522,6 @@ when the dataset has no `files` list (`optimize_cache` would no-op). See
 | `pin_memory` | `bool` | `False` | Pin for GPU transfers |
 | `prefetch_factor` | `int` | `2` | Prefetch per worker |
 | `drop_last` | `bool` | `False` | Drop incomplete batches |
-| `optimize_cache` | `bool` | `True` | Call `cache.optimize_for_dataset` (+ remote prefetch when applicable) |
-| `avg_file_size_mb` | `float` | `10.0` | For cache sizing |
 | `**loader_kwargs` | | | Passed to `DataLoader` (`collate_fn` defaults to `fits_collate_fn`) |
 
 **Returns:** `torch.utils.data.DataLoader`

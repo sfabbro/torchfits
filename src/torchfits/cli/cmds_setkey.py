@@ -38,13 +38,13 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     )
     parser.add_argument(
         "inputs",
-        nargs="+",
-        help="input FITS path(s); @list expands one path per line; --stdin adds more",
+        nargs="*",
+        help="input FITS path(s); @list expands one path per line; --stdin may be the only source",
     )
     parser.add_argument(
         "--stdin",
         action="store_true",
-        help="read additional paths from stdin (one per line)",
+        help="read paths from stdin (one per line; may be used without positional paths)",
     )
     parser.add_argument(
         "-k",
@@ -284,7 +284,7 @@ def run(args: argparse.Namespace) -> int:
 
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir is not None:
-        ensure_unique_basenames(paths)
+        ensure_unique_basenames(paths, directory=out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
     jobs: list[tuple[str, str, str, tuple[Any, ...]]] = []

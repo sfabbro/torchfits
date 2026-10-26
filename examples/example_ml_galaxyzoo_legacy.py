@@ -218,7 +218,7 @@ def main() -> int:
         f"dataset: n={len(dataset)} spiral={n_spiral} elliptical={len(labels) - n_spiral}"
     )
 
-    loader = make_loader(dataset, batch_size=16, num_workers=0, optimize_cache=False)
+    loader = make_loader(dataset, batch_size=16, num_workers=0)
 
     model = TinyCNN()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)

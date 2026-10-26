@@ -4,7 +4,7 @@ torchfits reads and writes FITS as tensors and tables. World coordinates, units,
 
 ## Where things stand
 
-**1.3.0** (2026-10-22) is the current release, on the PyTorch 2.14 lane. It moves
+The **1.3 release series** uses the PyTorch 2.14 lane. It moves
 to Python 3.11–3.15 (3.10 is dropped), makes `torchfits.open()` and header/HDU
 inspection run without importing PyTorch, and wraps native table buffers in
 Arrow instead of staging them through a copy. The [changelog](changelog.md) has

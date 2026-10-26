@@ -22,10 +22,18 @@ import re
 import subprocess
 import sys
 
-_VERSION_RE = re.compile(
-    r"^(?P<base>\d+\.\d+\.\d+)(?P<pre>(?:rc|a|b|alpha|beta|dev)\d*)?$"
+_VERSION_RE = re.compile(r"^(?P<base>\d+\.\d+\.\d+)(?P<pre>rc\d+)?$")
+_RC_TAG_RE = re.compile(r"^v(?P<base>\d+\.\d+\.\d+)rc(?P<number>\d+)$")
+ALLOWED_STABLE_CHANGES = frozenset(
+    {
+        "docs/changelog.md",
+        "packaging/conda/recipe.yaml",
+        "pixi.toml",
+        "pyproject.toml",
+        "src/torchfits/__init__.py",
+    }
 )
-_RC_TAG_RE = re.compile(r"^v(?P<base>\d+\.\d+\.\d+)rc\d+$")
+VERSION_FILES = ALLOWED_STABLE_CHANGES - {"docs/changelog.md"}
 
 
 def split_version(version: str) -> tuple[str, str | None]:
@@ -46,7 +54,7 @@ def rc_tags(version: str, tags: list[str]) -> list[str]:
         match = _RC_TAG_RE.fullmatch(tag)
         if match is not None and match.group("base") == base:
             found.append(tag)
-    return sorted(found)
+    return sorted(found, key=lambda tag: int(_RC_TAG_RE.fullmatch(tag).group("number")))
 
 
 def git_tags() -> list[str]:
@@ -60,6 +68,46 @@ def git_tags() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _git_text(revision: str, path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
+def validate_source_tree(rc_tag: str, target: str = "HEAD") -> list[str]:
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", rc_tag, target],
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError(f"{rc_tag} is not an ancestor of {target}")
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{rc_tag}..{target}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    forbidden = sorted(set(changed) - ALLOWED_STABLE_CHANGES)
+    if forbidden:
+        raise ValueError(f"source changed after {rc_tag}: {', '.join(forbidden)}")
+    match = _RC_TAG_RE.fullmatch(rc_tag)
+    if match is None:
+        raise ValueError(f"not an rc tag: {rc_tag}")
+    rc_version = rc_tag.removeprefix("v")
+    stable_version = match.group("base")
+    for path in sorted(set(changed) & VERSION_FILES):
+        before = _git_text(rc_tag, path).replace(rc_version, "<VERSION>")
+        after = _git_text(target, path).replace(stable_version, "<VERSION>")
+        if before != after:
+            raise ValueError(f"non-version content changed after {rc_tag}: {path}")
+    return changed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -67,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="tag version without the 'v' prefix (e.g. 1.3.1)",
     )
+    parser.add_argument("--print-tag", action="store_true")
     args = parser.parse_args(argv)
 
     version = args.version.strip().removeprefix("v")
@@ -82,7 +131,20 @@ def main(argv: list[str] | None = None) -> int:
 
     found = rc_tags(version, git_tags())
     if found:
-        print(f"release-rc gate: {version} has {', '.join(found)}")
+        selected = found[-1]
+        try:
+            changed = validate_source_tree(selected)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            print(f"release-rc gate: {exc}", file=sys.stderr)
+            return 1
+        if args.print_tag:
+            print(selected)
+        else:
+            detail = ", ".join(changed) if changed else "no files"
+            print(
+                f"release-rc gate: {version} uses {selected}; "
+                f"stable-only changes: {detail}"
+            )
         return 0
 
     print(

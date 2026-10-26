@@ -25,6 +25,12 @@ from ._read_schema import (
 logger = logging.getLogger(__name__)
 
 
+def _reraise_invalid_geometry(exc: BaseException) -> None:
+    message = str(exc)
+    if "Invalid table geometry" in message or "Invalid VLA geometry" in message:
+        raise exc
+
+
 def _iter_chunks_cpp_table(
     path: str,
     hdu: int,
@@ -68,6 +74,7 @@ def _iter_chunks_cpp_table(
                     # batch) dominate the mmap row path for batched scans.
                     mmap_reader = cpp.open_fits_mmap_reader(path, hdu)
                 except (RuntimeError, OSError) as exc:
+                    _reraise_invalid_geometry(exc)
                     logger.debug(
                         "mmap reader open failed; falling back to handle read: %s", exc
                     )
@@ -83,6 +90,7 @@ def _iter_chunks_cpp_table(
                         row += size
                         continue
                     except (RuntimeError, OSError) as exc:
+                        _reraise_invalid_geometry(exc)
                         logger.debug(
                             "mmap row read failed; falling back to handle read: %s", exc
                         )
@@ -580,6 +588,7 @@ def _read_cpp_table_chunk(
             try:
                 chunk = cpp.read_fits_table_raw(path, hdu, col_list, True)
             except (RuntimeError, OSError) as exc:
+                _reraise_invalid_geometry(exc)
                 logger.debug("mmap full table read failed; retrying: %s", exc)
                 chunk = None
         if chunk is None:
@@ -590,6 +599,7 @@ def _read_cpp_table_chunk(
                 else:
                     chunk = cpp.read_fits_table_raw(path, hdu, col_list, False)
             except (RuntimeError, OSError) as exc:
+                _reraise_invalid_geometry(exc)
                 logger.debug("full table read failed; falling back: %s", exc)
                 chunk = None
 
@@ -646,6 +656,7 @@ def _read_cpp_table_chunk(
                     path, hdu, col_list, start_row, num_rows, True
                 )
             except (RuntimeError, OSError) as exc:
+                _reraise_invalid_geometry(exc)
                 # VLA, scaled, and ASCII tables cannot use the mmap layout.
                 # Retry the buffered reader before falling back to the
                 # row-by-row Python scan, which is an order of magnitude slower.
@@ -656,6 +667,7 @@ def _read_cpp_table_chunk(
                 reader = _acquire_cpp_reader(path, hdu, cpp)
                 chunk = reader.read_rows_raw(col_list, start_row, num_rows)
             except (RuntimeError, OSError) as exc:
+                _reraise_invalid_geometry(exc)
                 logger.debug("row-slice table read failed: %s", exc)
                 chunk = None
     if chunk is None:

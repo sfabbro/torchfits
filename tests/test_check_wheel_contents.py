@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
 import zipfile
 from pathlib import Path
 
@@ -51,6 +52,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_wheel_contents.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from archive_safety import MAX_MEMBER_SIZE  # noqa: E402
 
 # What `nanobind_add_module` + `install(TARGETS ...)` produce per platform.
 # Linux is the one the contract got wrong; Windows is here because `.pyd` is
@@ -66,7 +70,7 @@ LAYOUTS = {
         "_core.cpython-313-aarch64-linux-gnu.so",
         "libtorchfits_core.so",
     ),
-    "macosx_11_0_arm64": (
+    "macosx_14_0_arm64": (
         "_C.cpython-313-darwin.so",
         "_core.cpython-313-darwin.so",
         "libtorchfits_core.dylib",
@@ -321,3 +325,31 @@ def test_a_wheel_with_a_stale_second_core_library_is_rejected(
 
     assert rc != 0, f"{tag}: a wheel carrying two core libraries was accepted"
     assert "libtorchfits_core" in report
+
+
+def test_oversized_member_is_rejected_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wheel = tmp_path / "oversized.whl"
+    wheel.write_bytes(b"fixture")
+
+    class Archive:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def infolist(self):
+            info = zipfile.ZipInfo("torchfits/payload")
+            info.file_size = MAX_MEMBER_SIZE + 1
+            info.compress_size = 1
+            return [info]
+
+        def read(self, *args):
+            raise AssertionError("read must not be called")
+
+    monkeypatch.setattr(CHECKER.zipfile, "ZipFile", lambda *args: Archive())
+    rc, report = _run(wheel)
+    assert rc == 1
+    assert "uncompressed size" in report

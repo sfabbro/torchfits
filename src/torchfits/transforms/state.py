@@ -2,9 +2,9 @@
 
 A transform that silently re-applies calibration the reader already applied is
 a correctness bug: ``read_tensor`` returns *physical* values (BSCALE/BZERO
-applied) and ``table.read_torch`` returns physical column values
-(TSCAL/TZERO applied, TNULL already NaN). Feeding that into
-:class:`~torchfits.transforms.FITSHeaderScale.forward` scales it twice.
+applied) and ``table.read_torch`` applies TSCAL/TZERO. Quantized integer TNULL
+values become NaN; unscaled integer TNULL values remain sentinels. Feeding that
+into :class:`~torchfits.transforms.FITSHeaderScale.forward` scales it twice.
 
 This module makes the assumption explicit:
 
