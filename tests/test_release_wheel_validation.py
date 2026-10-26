@@ -126,12 +126,16 @@ def test_release_matrix_rejects_duplicate_cell(tmp_path: Path) -> None:
     assert "wheel matrix contains duplicate cells" in problems
 
 
-def test_release_matrix_accepts_compressed_linux_platform_tags(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lower_floor", ["26", "27"])
+def test_release_matrix_accepts_compressed_linux_platform_tags(
+    tmp_path: Path, lower_floor: str
+) -> None:
     _matrix(tmp_path)
     source = next(tmp_path.glob("*cp311*manylinux_2_28_x86_64.whl"))
     compressed = Path(
         str(source).replace(
-            "manylinux_2_28_x86_64", "manylinux_2_28_x86_64.manylinux_2_26_x86_64"
+            "manylinux_2_28_x86_64",
+            f"manylinux_2_28_x86_64.manylinux_2_{lower_floor}_x86_64",
         )
     )
     with zipfile.ZipFile(source) as archive:
@@ -141,7 +145,7 @@ def test_release_matrix_accepts_compressed_linux_platform_tags(tmp_path: Path) -
     entries[wheel_name] = entries[wheel_name].replace(
         b"Tag: cp311-cp311-manylinux_2_28_x86_64\n",
         b"Tag: cp311-cp311-manylinux_2_28_x86_64\n"
-        b"Tag: cp311-cp311-manylinux_2_26_x86_64\n",
+        + f"Tag: cp311-cp311-manylinux_2_{lower_floor}_x86_64\n".encode(),
     )
     with zipfile.ZipFile(compressed, "w") as archive:
         for name, payload in entries.items():
