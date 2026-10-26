@@ -127,7 +127,9 @@ jobs:
     needs: [release_gate, build_wheels]
     runs-on: ubuntu-latest
     environment: pypi
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Trusted publishing is registered for astroai/torchfits only. The same
+    # tag is pushed to the fork, which has no PyPI publisher.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'astroai/torchfits'
     permissions:
       id-token: write
       contents: read

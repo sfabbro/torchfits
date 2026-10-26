@@ -115,9 +115,10 @@ Benchmark runs, published CSVs, and the parity matrix live in
 
 Repository: https://github.com/astroai/torchfits.
 
-**PyPI publishing:** `astroai/torchfits` is registered; tag pushes trigger
+**PyPI publishing:** `astroai/torchfits` is registered; tag pushes there trigger
 `.github/workflows/build_wheels.yml` (publishes via OIDC trusted
-publishing on the `pypi` GitHub Environment; no API token).
+publishing on the `pypi` GitHub Environment; no API token). The same tag
+on a fork builds wheels and skips the PyPI upload.
 
 Do not make new performance claims unless the benchmark run is archived in
 torchfits-harness.

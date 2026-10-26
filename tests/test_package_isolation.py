@@ -153,6 +153,8 @@ def test_native_torch_abi_range_is_consistent() -> None:
     assert int(cibw_pin.group(1)) >= 4
     # PyPI must not get an sdist — unmatched CPython/arch would compile.
     assert "pattern: cibw-wheels-*" in wheel_workflow
+    # The fork receives the same tag and has no PyPI trusted publisher.
+    assert "github.repository == 'astroai/torchfits'" in wheel_workflow
     cmake_args = " ".join(pyproject["tool"]["scikit-build"]["cmake"]["args"])
     assert "CONDA_PREFIX" not in cmake_args
     assert "-DUSE_CUDA=OFF" in cmake_args
