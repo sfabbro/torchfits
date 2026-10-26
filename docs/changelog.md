@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [1.3.1] — 2026-10-26
+
+### Changed
+- Make `torchfits.read` fully discoverable with explicit keyword-only options
+  and remove ineffective cache-policy objects, ignored tuning arguments, and
+  private compatibility exports.
+- Make every CLI command self-describing, add root `--version`, register the
+  supported transforms explicitly, and reject inapplicable or conflicting
+  options before touching output files.
+
+### Fixed
+- Reject overflowing, truncated, or out-of-bounds binary, ASCII, and
+  variable-length table geometry before allocation or I/O while preserving
+  valid empty tables.
+- Preserve every normalized option in multi-file reads and keep explicit mode,
+  cache, scaling, dtype, row-window, and device behavior consistent across
+  single-file and batch paths.
+- Keep compression lossless by default, validate codec/dtype combinations,
+  compare repeated header cards in order, complete multi-block remote headers,
+  enforce probe deadlines, and prevent case or Unicode-equivalent output
+  collisions.
+- Build self-contained source archives and validate the exact wheel matrix,
+  metadata, licenses, native linkage, macOS deployment floor, release-candidate
+  provenance, archive safety, and artifact digests before publication.
+
+### Performance
+- Avoid redundant floating-point NaN masks and unnecessary table-read dispatch
+  work without benchmark-specific routing or sampling heuristics.
+
+### Documentation
+- Synchronize the public API, CLI recipes, examples, supported Python/PyTorch
+  lane, platform requirements, and guarded release procedure with the shipped
+  implementation.
+
 ## [1.3.1rc3] — 2026-10-26
 
 ### Fixed
@@ -1681,7 +1715,8 @@ README, API reference, roadmap, and parity matrix for supported behavior.
 [0.2.1]: https://github.com/astroai/torchfits/releases/tag/v0.2.1
 [0.3.0]: https://github.com/astroai/torchfits/releases/tag/v0.3.0
 [0.3.1]: https://github.com/astroai/torchfits/releases/tag/v0.3.1
-[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.1rc3...HEAD
+[Unreleased]: https://github.com/astroai/torchfits/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1
 [1.3.1rc3]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc3
 [1.3.1rc2]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc2
 [1.3.1rc1]: https://github.com/astroai/torchfits/compare/v1.3.0...v1.3.1rc1
